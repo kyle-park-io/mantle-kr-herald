@@ -6,6 +6,16 @@ import { normalizeTweet, parseTweetList } from "./schemas";
 export class TwitterApiSourceGateway implements SourceGateway {
   constructor(private readonly client: IHttpClient) {}
 
+  /** Normalize a raw tweet, skipping (not aborting) any that fail validation. */
+  private normalizeOrSkip(raw: unknown): SourceTweet | null {
+    try {
+      return normalizeTweet(raw);
+    } catch (err) {
+      console.warn(`[twitterapi] skipping malformed tweet: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
   async *fetchAuthoredTweets(
     userName: string,
     sinceTime?: string,
@@ -23,7 +33,10 @@ export class TwitterApiSourceGateway implements SourceGateway {
         cursor,
       });
       const { tweets, hasNextPage, nextCursor } = parseTweetList(data);
-      for (const raw of tweets) yield normalizeTweet(raw);
+      for (const raw of tweets) {
+        const t = this.normalizeOrSkip(raw);
+        if (t) yield t;
+      }
       if (!hasNextPage || !nextCursor) break;
       cursor = nextCursor;
     }
@@ -38,7 +51,10 @@ export class TwitterApiSourceGateway implements SourceGateway {
         cursor,
       });
       const { tweets, hasNextPage, nextCursor } = parseTweetList(data);
-      for (const raw of tweets) out.push(normalizeTweet(raw));
+      for (const raw of tweets) {
+        const t = this.normalizeOrSkip(raw);
+        if (t) out.push(t);
+      }
       if (!hasNextPage || !nextCursor) break;
       cursor = nextCursor;
     }
@@ -51,6 +67,8 @@ export class TwitterApiSourceGateway implements SourceGateway {
       tweet_ids: ids.join(","),
     });
     const { tweets } = parseTweetList(data);
-    return tweets.map((raw) => normalizeTweet(raw));
+    return tweets
+      .map((raw) => this.normalizeOrSkip(raw))
+      .filter((t): t is SourceTweet => t !== null);
   }
 }

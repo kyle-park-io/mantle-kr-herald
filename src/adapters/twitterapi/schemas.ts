@@ -13,7 +13,10 @@ const TweetRaw = z
     createdAt: z.string(),
     conversationId: z.string().optional(),
     isReply: z.boolean().optional(),
-    author: z.object({ userName: z.string() }).passthrough(),
+    // Live data sometimes omits the author (or its userName) on peripheral tweets
+    // (e.g. gap-filled thread roots from deleted/suspended accounts). Tolerate it
+    // rather than aborting the whole collect.
+    author: z.object({ userName: z.string().optional() }).passthrough().optional(),
     quoted_tweet: z.unknown().nullable().optional(),
     likeCount: z.number().optional(),
     retweetCount: z.number().optional(),
@@ -66,7 +69,7 @@ export function normalizeTweet(raw: unknown): SourceTweet {
     text: t.text,
     createdAt: new Date(t.createdAt).toISOString(),
     url: t.url,
-    authorUserName: t.author.userName,
+    authorUserName: t.author?.userName ?? "",
     isReply: t.isReply ?? false,
     isQuote: t.quoted_tweet !== null && t.quoted_tweet !== undefined,
     media: toMedia(t),

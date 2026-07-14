@@ -74,6 +74,19 @@ describe("TwitterApiSourceGateway", () => {
     expect(http.calls[0].params?.tweetId).toBe("a");
   });
 
+  it("skips a malformed tweet instead of aborting the whole batch", async () => {
+    const bad = { url: "u", text: "t", createdAt: "Mon Jun 29 05:58:17 +0000 2026" }; // missing required id
+    const http = new FakeHttpClient(() => ({
+      tweets: [raw("1"), bad, raw("2")],
+      has_next_page: false,
+      next_cursor: "",
+    }));
+    const gw = new TwitterApiSourceGateway(http);
+    const ids: string[] = [];
+    for await (const t of gw.fetchAuthoredTweets("Mantle_Official")) ids.push(t.id);
+    expect(ids).toEqual(["1", "2"]);
+  });
+
   it("fetchByIds sends comma-separated tweet_ids and returns alive tweets", async () => {
     const http = new FakeHttpClient(() => ({ tweets: [raw("1")], status: "success" }));
     const gw = new TwitterApiSourceGateway(http);
