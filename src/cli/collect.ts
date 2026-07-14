@@ -8,7 +8,7 @@ const target = process.argv[2] ?? "Mantle_Official";
 
 const client = new TwitterClient(loadConfig().apiKey);
 const source = new TwitterApiSourceGateway(client);
-const store = new LocalJsonStore("output");
+const store = new LocalJsonStore("output/x");
 const usecase = new CollectAuthoredContent(source, store, store);
 
 const result = await usecase.run(target);

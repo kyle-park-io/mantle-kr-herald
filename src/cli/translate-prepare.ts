@@ -16,8 +16,8 @@ function argValue(flag: string): string | undefined {
 }
 
 const sourceArg = argValue("--source"); // "x" | "lark" | undefined (both)
-const xSource = new XContentSource("output/items.json");
-const larkSource = new LarkContentSource("output/lark-items.json");
+const xSource = new XContentSource("output/x/items.json");
+const larkSource = new LarkContentSource("output/lark/items.json");
 const source: ContentSource =
   sourceArg === "x" ? xSource : sourceArg === "lark" ? larkSource : new CompositeContentSource([xSource, larkSource]);
 
@@ -37,17 +37,17 @@ const usecase = new PrepareTranslations(
   new JsonGlossaryStore("translation"),
   new JsonFewShotStore("translation"),
   new FileTranslationConfig("translation"),
-  new JsonTranslationStore("output"),
+  new JsonTranslationStore("output/translations"),
 );
 
 const { worksheet, pending } = await usecase.run(selector);
 
-await mkdir("output", { recursive: true });
+await mkdir("output/translations/worksheets", { recursive: true });
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const worksheetPath = join("output", `translation-batch-${stamp}.md`);
+const worksheetPath = join("output/translations/worksheets", `batch-${stamp}.md`);
 await writeFile(worksheetPath, worksheet, "utf8");
 await writeFile(
-  join("output", "translation-pending.json"),
+  join("output/translations", "pending.json"),
   `${JSON.stringify(pending, null, 2)}\n`,
   "utf8",
 );

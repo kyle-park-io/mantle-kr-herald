@@ -13,8 +13,8 @@ export class LarkLocalStore implements LarkRepository, WatermarkStore {
   private readonly statePath: string;
 
   constructor(private readonly dir: string) {
-    this.itemsPath = join(dir, "lark-items.json");
-    this.statePath = join(dir, "lark-state.json");
+    this.itemsPath = join(dir, "items.json");
+    this.statePath = join(dir, "state.json");
   }
 
   async loadAll(): Promise<LarkMessage[]> {

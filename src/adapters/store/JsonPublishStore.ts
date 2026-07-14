@@ -9,7 +9,7 @@ interface StateFile {
 export class JsonPublishStore implements PublishStore {
   private readonly path: string;
   constructor(private readonly dir: string) {
-    this.path = join(dir, "publish-state.json");
+    this.path = join(dir, "state.json");
   }
 
   async listPublished(): Promise<Set<string>> {

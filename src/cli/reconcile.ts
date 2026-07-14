@@ -6,7 +6,7 @@ import { ReconcileDeletions } from "../app/ReconcileDeletions";
 
 const client = new TwitterClient(loadConfig().apiKey);
 const source = new TwitterApiSourceGateway(client);
-const store = new LocalJsonStore("output");
+const store = new LocalJsonStore("output/x");
 const usecase = new ReconcileDeletions(source, store);
 
 const result = await usecase.run();

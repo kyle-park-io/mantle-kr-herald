@@ -23,7 +23,7 @@ pnpm test               # run unit tests
 pnpm typecheck          # type-check
 ```
 
-Output is written to `output/` (git-ignored): `items.json` (collected threads) and `state.json` (watermark).
+Output is written to `output/x/` (git-ignored): `items.json` (collected threads) and `state.json` (watermark).
 
 ## Module B — Lark data collection
 
@@ -40,7 +40,7 @@ See `docs/guides/lark-setup-guide.md` for how to create the Lark app and find `c
 pnpm collect-lark       # collect new messages from all configured chats
 ```
 
-Output is written to `output/` (git-ignored): `lark-items.json` and `lark-state.json` (per-chat watermarks).
+Output is written to `output/lark/` (git-ignored): `items.json` and `state.json` (per-chat watermarks).
 
 ## Module C — Korean translation (agent-assisted)
 
@@ -54,14 +54,14 @@ Living config in `translation/` (git-tracked): `glossary.json`, `style-guide.md`
 
 ```bash
 pnpm translate:prepare [--source x|lark] [--ids a,b] [--since <ISO>] [--limit 20]
-#   → writes output/translation-batch-<ts>.md (worksheet) + output/translation-pending.json
+#   → writes output/translations/worksheets/batch-<ts>.md (worksheet) + output/translations/pending.json
 #   → the agent translates each item's 원문 into its 번역 section
 pnpm translate:save --id <itemId> --file <korean.txt> [--approve]   # ingest; --approve promotes to few-shot
 pnpm glossary                                                       # list entries
 pnpm glossary add --term <t> --rule <translate|transliterate|keep> [--target <ko>] [--source <url>]
 ```
 
-Worksheets/translations are written to `output/` (git-ignored).
+Worksheets/translations are written to `output/translations/` (git-ignored).
 
 ## Module D — Drive upload (Google + Lark)
 
@@ -81,4 +81,4 @@ pnpm drive:init                              # creates + shares the folders, pri
 pnpm drive:publish [--target google|lark|both]
 ```
 
-Idempotent per drive via `output/publish-state.json`.
+Idempotent per drive via `output/publish/state.json`.

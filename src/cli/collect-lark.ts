@@ -11,7 +11,7 @@ const authHttp = new HttpClient(config.baseUrl);
 const auth = new LarkAuth(authHttp, config.appId, config.appSecret);
 const client = new LarkClient(config.baseUrl, auth);
 const source = new LarkSourceGateway(client);
-const store = new LarkLocalStore("output");
+const store = new LarkLocalStore("output/lark");
 const usecase = new CollectLarkMessages(source, store, store);
 
 const result = await usecase.run(config.chatIds);

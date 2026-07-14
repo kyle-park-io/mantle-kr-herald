@@ -31,7 +31,7 @@ if (uploaders.length === 0) {
   throw new Error('No target selected. Use --target google|lark|both');
 }
 
-const usecase = new PublishTranslations(new JsonTranslationStore("output"), uploaders, new JsonPublishStore("output"));
+const usecase = new PublishTranslations(new JsonTranslationStore("output/translations"), uploaders, new JsonPublishStore("output/publish"));
 const result = await usecase.run();
 console.log(`published ${result.uploaded} file(s) across ${uploaders.length} drive(s); ${result.failed} failure(s)`);
 console.log(`  by drive: ${JSON.stringify(result.byDrive)}`);

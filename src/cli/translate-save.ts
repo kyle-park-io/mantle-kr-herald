@@ -17,15 +17,15 @@ if (!id || !file) {
   throw new Error("Usage: pnpm translate:save --id <itemId> --file <korean.txt> [--approve]");
 }
 
-const pending = await readJsonFile<ContentItem[]>("output/translation-pending.json", []);
+const pending = await readJsonFile<ContentItem[]>("output/translations/pending.json", []);
 const item = pending.find((p) => p.id === id);
 if (!item) {
-  throw new Error(`Item ${id} not found in output/translation-pending.json (run translate:prepare first)`);
+  throw new Error(`Item ${id} not found in output/translations/pending.json (run translate:prepare first)`);
 }
 
 const koreanText = (await readFile(file, "utf8")).trim();
 
-const usecase = new SaveTranslation(new JsonTranslationStore("output"), new JsonFewShotStore("translation"));
+const usecase = new SaveTranslation(new JsonTranslationStore("output/translations"), new JsonFewShotStore("translation"));
 const res = await usecase.run({
   itemId: item.id,
   source: item.source,
