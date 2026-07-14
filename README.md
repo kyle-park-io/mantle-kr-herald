@@ -41,3 +41,24 @@ pnpm collect-lark       # collect new messages from all configured chats
 ```
 
 Output is written to `output/` (git-ignored): `lark-items.json` and `lark-state.json` (per-chat watermarks).
+
+## Module C — Korean translation (agent-assisted)
+
+Assembles 6-element translation prompts from collected X/Lark content (shared context once per batch + per-item text) and stores agent-produced Korean translations, with a few-shot flywheel. The local Claude agent does the actual translation — no Claude API.
+
+### Data
+
+Living config in `data/` (git-tracked): `glossary.json`, `style-guide.md`, `locale.json`, `few-shot.json`. Edit these to steer tone/terminology.
+
+### Commands
+
+```bash
+pnpm translate:prepare [--source x|lark] [--ids a,b] [--since <ISO>] [--limit 20]
+#   → writes output/translation-batch-<ts>.md (worksheet) + output/translation-pending.json
+#   → the agent translates each item's 원문 into its 번역 section
+pnpm translate:save --id <itemId> --file <korean.txt> [--approve]   # ingest; --approve promotes to few-shot
+pnpm glossary                                                       # list entries
+pnpm glossary add --term <t> --rule <translate|transliterate|keep> [--target <ko>] [--source <url>]
+```
+
+Worksheets/translations are written to `output/` (git-ignored).

@@ -8,6 +8,9 @@
     "collect": "tsx --env-file-if-exists=.env src/cli/collect.ts",
     "collect-lark": "tsx --env-file-if-exists=.env src/cli/collect-lark.ts",
     "reconcile": "tsx --env-file-if-exists=.env src/cli/reconcile.ts",
+    "translate:prepare": "tsx src/cli/translate-prepare.ts",
+    "translate:save": "tsx src/cli/translate-save.ts",
+    "glossary": "tsx src/cli/glossary.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
