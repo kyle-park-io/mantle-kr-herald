@@ -3,6 +3,7 @@ import { api } from "./api";
 import type { Translation } from "./types";
 import { TranslationList } from "./components/TranslationList";
 import { TranslationDetail } from "./components/TranslationDetail";
+import { PublishBar } from "./components/PublishBar";
 
 export function App() {
   const [items, setItems] = useState<Translation[]>([]);
@@ -37,7 +38,10 @@ export function App() {
 
   return (
     <div className="app">
-      <header className="topbar">Mantle KR — Review</header>
+      <header className="topbar">
+        <span>Mantle KR — Review</span>
+        <PublishBar />
+      </header>
       {error && <div className="banner error">{error}</div>}
       <div className="main">
         <aside className="sidebar">

@@ -21,3 +21,11 @@ textarea { width: 100%; min-height: 220px; font: inherit; padding: 8px; }
 .btn-primary { background: #4f46e5; color: #fff; border-color: #4f46e5; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 hr { border: none; border-top: 1px solid #ddd; margin: 12px 0; }
+.topbar { justify-content: space-between; }
+.publishbar { display: flex; align-items: center; gap: 8px; }
+.publish-result { font-size: 12px; font-weight: 400; }
+.filter { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid #eee; }
+.chip { font-size: 12px; padding: 3px 10px; border: 1px solid #ccc; border-radius: 999px; background: #fff; cursor: pointer; }
+.chip-on { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
+.detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.detail-actions { display: flex; gap: 10px; margin-top: 12px; }
