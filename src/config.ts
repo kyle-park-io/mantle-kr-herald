@@ -36,36 +36,58 @@ export function loadLarkConfig(): LarkConfig {
 }
 
 export interface GoogleDriveConfig {
-  saKeyFile: string;
   reviewFolderId: string;
   approvedFolderId: string;
 }
 
 export function loadGoogleDriveConfig(): GoogleDriveConfig {
-  const saKeyFile = process.env.GOOGLE_SA_KEY_FILE;
   const reviewFolderId = process.env.GDRIVE_REVIEW_FOLDER_ID;
   const approvedFolderId = process.env.GDRIVE_APPROVED_FOLDER_ID;
-  if (!saKeyFile) throw new Error("Missing required environment variable: GOOGLE_SA_KEY_FILE");
   if (!reviewFolderId) throw new Error("Missing required environment variable: GDRIVE_REVIEW_FOLDER_ID");
   if (!approvedFolderId) throw new Error("Missing required environment variable: GDRIVE_APPROVED_FOLDER_ID");
-  return { saKeyFile, reviewFolderId, approvedFolderId };
+  return { reviewFolderId, approvedFolderId };
 }
 
 export interface GoogleDriveInitConfig {
-  saKeyFile: string;
   shareEmails: string[];
   parentFolderName: string;
 }
 
 export function loadGoogleDriveInitConfig(): GoogleDriveInitConfig {
-  const saKeyFile = process.env.GOOGLE_SA_KEY_FILE;
-  if (!saKeyFile) throw new Error("Missing required environment variable: GOOGLE_SA_KEY_FILE");
   const shareEmails = (process.env.GDRIVE_SHARE_EMAILS ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   const parentFolderName = process.env.GDRIVE_PARENT_FOLDER_NAME?.trim() || "Mantle KR Herald";
-  return { saKeyFile, shareEmails, parentFolderName };
+  return { shareEmails, parentFolderName };
+}
+
+export type GoogleAuthConfig =
+  | { mode: "service_account"; saKeyFile: string }
+  | { mode: "oauth"; clientId: string; clientSecret: string; refreshToken: string };
+
+// Selection: explicit GOOGLE_AUTH_MODE wins; otherwise infer (refresh token → oauth, else SA key → service_account).
+export function loadGoogleAuthConfig(): GoogleAuthConfig {
+  const explicit = process.env.GOOGLE_AUTH_MODE?.trim();
+  if (explicit && explicit !== "oauth" && explicit !== "service_account") {
+    throw new Error(`Invalid GOOGLE_AUTH_MODE: ${explicit} (expected "oauth" or "service_account")`);
+  }
+  const mode = explicit || (process.env.GOOGLE_OAUTH_REFRESH_TOKEN ? "oauth" : process.env.GOOGLE_SA_KEY_FILE ? "service_account" : "");
+  if (mode === "oauth") {
+    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+    if (!clientId) throw new Error("Missing required environment variable: GOOGLE_OAUTH_CLIENT_ID");
+    if (!clientSecret) throw new Error("Missing required environment variable: GOOGLE_OAUTH_CLIENT_SECRET");
+    if (!refreshToken) throw new Error("Missing required environment variable: GOOGLE_OAUTH_REFRESH_TOKEN");
+    return { mode, clientId, clientSecret, refreshToken };
+  }
+  if (mode === "service_account") {
+    const saKeyFile = process.env.GOOGLE_SA_KEY_FILE;
+    if (!saKeyFile) throw new Error("Missing required environment variable: GOOGLE_SA_KEY_FILE");
+    return { mode, saKeyFile };
+  }
+  throw new Error("No Google auth configured: set GOOGLE_OAUTH_REFRESH_TOKEN (OAuth) or GOOGLE_SA_KEY_FILE (service account).");
 }
 
 export interface LarkDriveConfig {

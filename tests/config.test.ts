@@ -1,5 +1,12 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { loadConfig, loadLarkConfig, loadGoogleDriveConfig, loadGoogleDriveInitConfig, loadLarkDriveConfig } from "../src/config";
+import {
+  loadConfig,
+  loadLarkConfig,
+  loadGoogleDriveConfig,
+  loadGoogleDriveInitConfig,
+  loadLarkDriveConfig,
+  loadGoogleAuthConfig,
+} from "../src/config";
 
 const original = process.env.TWITTERAPI_IO_KEY;
 afterEach(() => {
@@ -61,70 +68,111 @@ describe("loadLarkConfig", () => {
 });
 
 describe("loadGoogleDriveConfig", () => {
-  const keys = ["GOOGLE_SA_KEY_FILE", "GDRIVE_REVIEW_FOLDER_ID", "GDRIVE_APPROVED_FOLDER_ID"];
+  const keys = ["GDRIVE_REVIEW_FOLDER_ID", "GDRIVE_APPROVED_FOLDER_ID"];
   const original: Record<string, string | undefined> = {};
   beforeEach(() => { for (const k of keys) original[k] = process.env[k]; });
   afterEach(() => { for (const k of keys) { if (original[k] === undefined) delete process.env[k]; else process.env[k] = original[k]; } });
 
-  it("reads the three Google env vars", () => {
-    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
+  it("reads the folder id env vars", () => {
     process.env.GDRIVE_REVIEW_FOLDER_ID = "R";
     process.env.GDRIVE_APPROVED_FOLDER_ID = "A";
-    expect(loadGoogleDriveConfig()).toEqual({ saKeyFile: "/k.json", reviewFolderId: "R", approvedFolderId: "A" });
+    expect(loadGoogleDriveConfig()).toEqual({ reviewFolderId: "R", approvedFolderId: "A" });
   });
 
-  it("throws when the key file var is missing", () => {
-    delete process.env.GOOGLE_SA_KEY_FILE;
-    process.env.GDRIVE_REVIEW_FOLDER_ID = "R";
+  it("throws when a folder id var is missing", () => {
+    delete process.env.GDRIVE_REVIEW_FOLDER_ID;
     process.env.GDRIVE_APPROVED_FOLDER_ID = "A";
-    expect(() => loadGoogleDriveConfig()).toThrow(/GOOGLE_SA_KEY_FILE/);
+    expect(() => loadGoogleDriveConfig()).toThrow(/GDRIVE_REVIEW_FOLDER_ID/);
   });
 });
 
 describe("loadGoogleDriveInitConfig", () => {
-  const keys = ["GOOGLE_SA_KEY_FILE", "GDRIVE_SHARE_EMAILS", "GDRIVE_PARENT_FOLDER_NAME"];
+  const keys = ["GDRIVE_SHARE_EMAILS", "GDRIVE_PARENT_FOLDER_NAME"];
   const original: Record<string, string | undefined> = {};
   beforeEach(() => { for (const k of keys) original[k] = process.env[k]; });
   afterEach(() => { for (const k of keys) { if (original[k] === undefined) delete process.env[k]; else process.env[k] = original[k]; } });
 
-  it("parses the key file and comma-separated share emails (trimmed, empties filtered)", () => {
-    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
+  it("parses comma-separated share emails (trimmed, empties filtered)", () => {
     process.env.GDRIVE_SHARE_EMAILS = "a@b.com, c@d.com,,  e@f.com  ";
     delete process.env.GDRIVE_PARENT_FOLDER_NAME;
     expect(loadGoogleDriveInitConfig()).toEqual({
-      saKeyFile: "/k.json",
       shareEmails: ["a@b.com", "c@d.com", "e@f.com"],
       parentFolderName: "Mantle KR Herald",
     });
   });
 
-  it("throws when the key file var is missing", () => {
-    delete process.env.GOOGLE_SA_KEY_FILE;
-    process.env.GDRIVE_SHARE_EMAILS = "a@b.com";
-    expect(() => loadGoogleDriveInitConfig()).toThrow(/GOOGLE_SA_KEY_FILE/);
-  });
-
   it("defaults shareEmails to an empty array when GDRIVE_SHARE_EMAILS is unset", () => {
-    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
     delete process.env.GDRIVE_SHARE_EMAILS;
     delete process.env.GDRIVE_PARENT_FOLDER_NAME;
     expect(loadGoogleDriveInitConfig()).toEqual({
-      saKeyFile: "/k.json",
       shareEmails: [],
       parentFolderName: "Mantle KR Herald",
     });
   });
 
   it("uses a trimmed GDRIVE_PARENT_FOLDER_NAME when set", () => {
-    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
     process.env.GDRIVE_PARENT_FOLDER_NAME = "  Custom Parent  ";
     expect(loadGoogleDriveInitConfig().parentFolderName).toBe("Custom Parent");
   });
 
   it("falls back to the default parentFolderName when GDRIVE_PARENT_FOLDER_NAME is blank", () => {
-    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
     process.env.GDRIVE_PARENT_FOLDER_NAME = "   ";
     expect(loadGoogleDriveInitConfig().parentFolderName).toBe("Mantle KR Herald");
+  });
+});
+
+describe("loadGoogleAuthConfig", () => {
+  const keys = [
+    "GOOGLE_AUTH_MODE",
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "GOOGLE_OAUTH_REFRESH_TOKEN",
+    "GOOGLE_SA_KEY_FILE",
+  ];
+  const original: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of keys) {
+      original[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterEach(() => { for (const k of keys) { if (original[k] === undefined) delete process.env[k]; else process.env[k] = original[k]; } });
+
+  it("infers oauth mode when a refresh token is present (no explicit mode)", () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = "cid";
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = "csecret";
+    process.env.GOOGLE_OAUTH_REFRESH_TOKEN = "rt";
+    expect(loadGoogleAuthConfig()).toEqual({
+      mode: "oauth",
+      clientId: "cid",
+      clientSecret: "csecret",
+      refreshToken: "rt",
+    });
+  });
+
+  it("throws when oauth mode is missing GOOGLE_OAUTH_CLIENT_ID", () => {
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = "csecret";
+    process.env.GOOGLE_OAUTH_REFRESH_TOKEN = "rt";
+    expect(() => loadGoogleAuthConfig()).toThrow(/GOOGLE_OAUTH_CLIENT_ID/);
+  });
+
+  it("infers service_account mode when only GOOGLE_SA_KEY_FILE is present", () => {
+    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
+    expect(loadGoogleAuthConfig()).toEqual({ mode: "service_account", saKeyFile: "/k.json" });
+  });
+
+  it("throws when GOOGLE_AUTH_MODE=service_account but GOOGLE_SA_KEY_FILE is missing", () => {
+    process.env.GOOGLE_AUTH_MODE = "service_account";
+    expect(() => loadGoogleAuthConfig()).toThrow(/GOOGLE_SA_KEY_FILE/);
+  });
+
+  it("throws on an invalid GOOGLE_AUTH_MODE", () => {
+    process.env.GOOGLE_AUTH_MODE = "bogus";
+    expect(() => loadGoogleAuthConfig()).toThrow(/Invalid GOOGLE_AUTH_MODE/);
+  });
+
+  it("throws when nothing is configured", () => {
+    expect(() => loadGoogleAuthConfig()).toThrow(/No Google auth configured/);
   });
 });
 

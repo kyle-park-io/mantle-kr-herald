@@ -1,10 +1,10 @@
-import { GoogleServiceAccountAuth } from "../adapters/drive/GoogleServiceAccountAuth";
+import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { GoogleDriveProvisioner } from "../adapters/drive/GoogleDriveProvisioner";
-import { loadGoogleDriveInitConfig } from "../config";
+import { loadGoogleDriveInitConfig, loadGoogleAuthConfig } from "../config";
 
 const force = process.argv.includes("--force");
 const config = loadGoogleDriveInitConfig();
-const auth = await GoogleServiceAccountAuth.fromKeyFile(config.saKeyFile);
+const auth = await createGoogleAuth(loadGoogleAuthConfig());
 const provisioner = new GoogleDriveProvisioner(auth);
 
 async function ensureFolder(
