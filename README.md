@@ -74,7 +74,7 @@ See `docs/guides/google-drive-setup-guide.md` (service account + `pnpm drive:ini
 ### Commands
 
 ```bash
-pnpm drive:init                              # one-time: service account creates + shares the folders, prints IDs
+pnpm drive:init                              # service account creates + shares the folders, prints IDs (idempotent; --force to recreate)
 pnpm drive:publish [--target google|lark|both]
 ```
 
