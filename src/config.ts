@@ -72,18 +72,18 @@ export function loadGoogleAuthConfig(): GoogleAuthConfig {
   if (explicit && explicit !== "oauth" && explicit !== "service_account") {
     throw new Error(`Invalid GOOGLE_AUTH_MODE: ${explicit} (expected "oauth" or "service_account")`);
   }
-  const mode = explicit || (process.env.GOOGLE_OAUTH_REFRESH_TOKEN ? "oauth" : process.env.GOOGLE_SA_KEY_FILE ? "service_account" : "");
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN?.trim();
+  const saKeyFile = process.env.GOOGLE_SA_KEY_FILE?.trim();
+  const mode = explicit || (refreshToken ? "oauth" : saKeyFile ? "service_account" : "");
   if (mode === "oauth") {
-    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-    const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
+    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
     if (!clientId) throw new Error("Missing required environment variable: GOOGLE_OAUTH_CLIENT_ID");
     if (!clientSecret) throw new Error("Missing required environment variable: GOOGLE_OAUTH_CLIENT_SECRET");
     if (!refreshToken) throw new Error("Missing required environment variable: GOOGLE_OAUTH_REFRESH_TOKEN");
     return { mode, clientId, clientSecret, refreshToken };
   }
   if (mode === "service_account") {
-    const saKeyFile = process.env.GOOGLE_SA_KEY_FILE;
     if (!saKeyFile) throw new Error("Missing required environment variable: GOOGLE_SA_KEY_FILE");
     return { mode, saKeyFile };
   }

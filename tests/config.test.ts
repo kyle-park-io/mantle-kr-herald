@@ -166,6 +166,22 @@ describe("loadGoogleAuthConfig", () => {
     expect(() => loadGoogleAuthConfig()).toThrow(/GOOGLE_SA_KEY_FILE/);
   });
 
+  it("explicit GOOGLE_AUTH_MODE=service_account wins even when a refresh token is present", () => {
+    process.env.GOOGLE_AUTH_MODE = "service_account";
+    process.env.GOOGLE_OAUTH_REFRESH_TOKEN = "rt";
+    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
+    expect(loadGoogleAuthConfig()).toEqual({ mode: "service_account", saKeyFile: "/k.json" });
+  });
+
+  it("explicit GOOGLE_AUTH_MODE=oauth wins even when a service-account key is present", () => {
+    process.env.GOOGLE_AUTH_MODE = "oauth";
+    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
+    process.env.GOOGLE_OAUTH_CLIENT_ID = "cid";
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = "csecret";
+    process.env.GOOGLE_OAUTH_REFRESH_TOKEN = "rt";
+    expect(loadGoogleAuthConfig()).toEqual({ mode: "oauth", clientId: "cid", clientSecret: "csecret", refreshToken: "rt" });
+  });
+
   it("throws on an invalid GOOGLE_AUTH_MODE", () => {
     process.env.GOOGLE_AUTH_MODE = "bogus";
     expect(() => loadGoogleAuthConfig()).toThrow(/Invalid GOOGLE_AUTH_MODE/);

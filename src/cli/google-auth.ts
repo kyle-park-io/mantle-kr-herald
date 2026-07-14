@@ -27,7 +27,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (error) {
-    res.writeHead(200, { "Content-Type": "text/plain" }).end(`Authorization failed: ${error}. You can close this tab.`);
+    res.writeHead(200, { "Content-Type": "text/plain", Connection: "close" }).end(`Authorization failed: ${error}. You can close this tab.`);
     console.error(`Authorization failed: ${error}`);
     server.close(() => process.exit(1));
     return;
@@ -39,12 +39,12 @@ const server = createServer(async (req, res) => {
       clientSecret,
       redirectUri,
     });
-    res.writeHead(200, { "Content-Type": "text/plain" }).end("Authorized. You can close this tab and return to the terminal.");
+    res.writeHead(200, { "Content-Type": "text/plain", Connection: "close" }).end("Authorized. You can close this tab and return to the terminal.");
     console.log("\nSuccess! Add this line to your .env:\n");
     console.log(`GOOGLE_OAUTH_REFRESH_TOKEN=${refreshToken}\n`);
     server.close(() => process.exit(0));
   } catch (e) {
-    res.writeHead(200, { "Content-Type": "text/plain" }).end("Token exchange failed. Check the terminal.");
+    res.writeHead(200, { "Content-Type": "text/plain", Connection: "close" }).end("Token exchange failed. Check the terminal.");
     console.error(e instanceof Error ? e.message : String(e));
     server.close(() => process.exit(1));
   }
