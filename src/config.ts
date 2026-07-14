@@ -51,6 +51,21 @@ export function loadGoogleDriveConfig(): GoogleDriveConfig {
   return { saKeyFile, reviewFolderId, approvedFolderId };
 }
 
+export interface GoogleDriveInitConfig {
+  saKeyFile: string;
+  shareEmails: string[];
+}
+
+export function loadGoogleDriveInitConfig(): GoogleDriveInitConfig {
+  const saKeyFile = process.env.GOOGLE_SA_KEY_FILE;
+  if (!saKeyFile) throw new Error("Missing required environment variable: GOOGLE_SA_KEY_FILE");
+  const shareEmails = (process.env.GDRIVE_SHARE_EMAILS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return { saKeyFile, shareEmails };
+}
+
 export interface LarkDriveConfig {
   appId: string;
   appSecret: string;

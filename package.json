@@ -12,6 +12,7 @@
     "translate:save": "tsx src/cli/translate-save.ts",
     "glossary": "tsx src/cli/glossary.ts",
     "drive:publish": "tsx --env-file-if-exists=.env src/cli/publish.ts",
+    "drive:init": "tsx --env-file-if-exists=.env src/cli/drive-init.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

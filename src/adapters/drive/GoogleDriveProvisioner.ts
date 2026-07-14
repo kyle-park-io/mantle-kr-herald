@@ -1,0 +1,37 @@
+interface TokenSource {
+  getToken(): Promise<string>;
+}
+
+const FILES_URL = "https://www.googleapis.com/drive/v3/files";
+
+export class GoogleDriveProvisioner {
+  constructor(
+    private readonly auth: TokenSource,
+    private readonly fetchFn: typeof fetch = fetch,
+  ) {}
+
+  /** Create a Drive folder owned by the service account. */
+  async createFolder(name: string): Promise<{ id: string; name: string }> {
+    const token = await this.auth.getToken();
+    const res = await this.fetchFn(FILES_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder" }),
+    });
+    if (!res.ok) throw new Error(`Google Drive createFolder failed: HTTP ${res.status}`);
+    const data = (await res.json()) as { id?: string; name?: string };
+    if (!data.id) throw new Error("Google Drive createFolder response missing id");
+    return { id: data.id, name: data.name ?? name };
+  }
+
+  /** Share a file/folder with a user (role "writer" = editor, "reader" = viewer). No email notification. */
+  async share(fileId: string, email: string, role: "writer" | "reader" = "writer"): Promise<void> {
+    const token = await this.auth.getToken();
+    const res = await this.fetchFn(`${FILES_URL}/${fileId}/permissions?sendNotificationEmail=false`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "user", role, emailAddress: email }),
+    });
+    if (!res.ok) throw new Error(`Google Drive share failed: HTTP ${res.status}`);
+  }
+}

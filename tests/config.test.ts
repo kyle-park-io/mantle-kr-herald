@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { loadConfig, loadLarkConfig, loadGoogleDriveConfig, loadLarkDriveConfig } from "../src/config";
+import { loadConfig, loadLarkConfig, loadGoogleDriveConfig, loadGoogleDriveInitConfig, loadLarkDriveConfig } from "../src/config";
 
 const original = process.env.TWITTERAPI_IO_KEY;
 afterEach(() => {
@@ -78,6 +78,34 @@ describe("loadGoogleDriveConfig", () => {
     process.env.GDRIVE_REVIEW_FOLDER_ID = "R";
     process.env.GDRIVE_APPROVED_FOLDER_ID = "A";
     expect(() => loadGoogleDriveConfig()).toThrow(/GOOGLE_SA_KEY_FILE/);
+  });
+});
+
+describe("loadGoogleDriveInitConfig", () => {
+  const keys = ["GOOGLE_SA_KEY_FILE", "GDRIVE_SHARE_EMAILS"];
+  const original: Record<string, string | undefined> = {};
+  beforeEach(() => { for (const k of keys) original[k] = process.env[k]; });
+  afterEach(() => { for (const k of keys) { if (original[k] === undefined) delete process.env[k]; else process.env[k] = original[k]; } });
+
+  it("parses the key file and comma-separated share emails (trimmed, empties filtered)", () => {
+    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
+    process.env.GDRIVE_SHARE_EMAILS = "a@b.com, c@d.com,,  e@f.com  ";
+    expect(loadGoogleDriveInitConfig()).toEqual({
+      saKeyFile: "/k.json",
+      shareEmails: ["a@b.com", "c@d.com", "e@f.com"],
+    });
+  });
+
+  it("throws when the key file var is missing", () => {
+    delete process.env.GOOGLE_SA_KEY_FILE;
+    process.env.GDRIVE_SHARE_EMAILS = "a@b.com";
+    expect(() => loadGoogleDriveInitConfig()).toThrow(/GOOGLE_SA_KEY_FILE/);
+  });
+
+  it("defaults shareEmails to an empty array when GDRIVE_SHARE_EMAILS is unset", () => {
+    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
+    delete process.env.GDRIVE_SHARE_EMAILS;
+    expect(loadGoogleDriveInitConfig()).toEqual({ saKeyFile: "/k.json", shareEmails: [] });
   });
 });
 
