@@ -82,3 +82,18 @@ pnpm drive:publish [--target google|lark|both]
 ```
 
 Idempotent per drive via `output/publish/state.json`.
+
+## Module E — Review dashboard (local)
+
+A local web dashboard to review, edit, approve, and publish the Korean translations — the human-in-the-loop step between C (translation) and D (upload). A `node:http` server serves a React + Vite + Tailwind frontend plus a thin JSON API over the existing use-cases; it reads/writes the same `output/translations` stores as the CLIs, so the UI and CLI stay in sync. Local tool, no auth.
+
+### Commands
+
+```bash
+pnpm build:web      # build the React frontend (Vite + Tailwind v4) → web/dist
+pnpm serve          # start the dashboard on http://localhost:5757 (serves web/dist + JSON API)
+pnpm dev:web        # (dev) Vite dev server with HMR, proxying /api to :5757
+pnpm typecheck:web  # type-check the frontend
+```
+
+Open `http://localhost:5757`: list translations (filter by status), view source (`---` between thread tweets) + editable Korean, save / approve, and publish to Drive from the top bar.
