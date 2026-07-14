@@ -30,7 +30,8 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
       if (url.pathname.startsWith("/api/")) {
         const body = req.method === "POST" || req.method === "PUT" ? await readBody(req) : undefined;
         const result = await handleApi(deps, req.method ?? "GET", url.pathname, body);
-        res.writeHead(result.status, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify(result.json));
+        const payload = JSON.stringify(result.json);
+        res.writeHead(result.status, { "Content-Type": "application/json; charset=utf-8" }).end(payload);
         return;
       }
       // static: map path to a file under staticDir, default to index.html (SPA fallback)
@@ -45,7 +46,12 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
       }
       res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "application/octet-stream" }).end(data);
     } catch (err) {
-      res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      const message = err instanceof Error ? err.message : String(err);
+      if (res.headersSent) {
+        res.end();
+      } else {
+        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: message }));
+      }
     }
   });
   server.listen(opts.port, "127.0.0.1");
