@@ -74,8 +74,11 @@ tests/
 ```
 
 ### 3-1. `shared/` 추출 (모듈 A 리팩터)
-- 모듈 A의 `adapters/twitterapi/{IHttpClient,HttpClient}.ts` → `shared/http/`로 이동. twitterapi
-  특유의 401/402 메시지는 `TwitterClient` 층으로 옮겨 모듈 A 동작을 보존.
+- 모듈 A의 `adapters/twitterapi/{IHttpClient,HttpClient}.ts` → `shared/http/`로 이동. 저수준
+  `HttpClient`의 에러 메시지는 **범용화**한다(`HTTP <status>: <detail>`, 401/402는 일반 힌트 포함).
+  기존 twitterapi 전용 문구("top up at twitterapi.io/dashboard" 등)는 **의도적으로 유지하지 않는다** —
+  상태 코드와 서버의 `detail`이 그대로 노출되므로 운영 메시지는 충분히 명확하며, vendor 문구를
+  `TwitterClient` 층에 문자열 매칭으로 복원하는 것은 취약하다고 판단(최종 리뷰에서 이 선택을 수용).
 - 모듈 A의 `LocalJsonStore`의 원자적 read/write + 손상읽기 거부 로직 → `shared/store/jsonFile.ts`
   헬퍼로 추출, `LocalJsonStore`가 이를 사용하도록 이관. `WatermarkStore` 포트 → `shared/store/`.
 - 이 이관은 **모듈 A의 기존 테스트로 보증**(그린 유지). B 브랜치에서 전체 스위트 + CI로 재검증 후 머지.
