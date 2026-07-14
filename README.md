@@ -31,7 +31,7 @@ Collects text/post messages from target Lark group chats into local JSON, increm
 
 ### Setup
 
-See `docs/lark-setup-guide.md` for how to create the Lark app and find `chat_id`s. Then fill `.env`:
+See `docs/guides/lark-setup-guide.md` for how to create the Lark app and find `chat_id`s. Then fill `.env`:
 `LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_CHAT_IDS` (comma-separated), and optionally `LARK_BASE_URL`.
 
 ### Commands
