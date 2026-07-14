@@ -24,4 +24,16 @@ describe("extractText", () => {
   it("returns empty string when content is not valid JSON", () => {
     expect(extractText("text", "{ not json")).toBe("");
   });
+
+  it("returns empty string when content parses to null (text)", () => {
+    expect(extractText("text", "null")).toBe("");
+  });
+
+  it("returns empty string when content parses to null (post)", () => {
+    expect(extractText("post", "null")).toBe("");
+  });
+
+  it("skips null elements inside a post paragraph", () => {
+    expect(extractText("post", '{"content":[[null,{"tag":"text","text":"ok"}]]}')).toBe("ok");
+  });
 });
