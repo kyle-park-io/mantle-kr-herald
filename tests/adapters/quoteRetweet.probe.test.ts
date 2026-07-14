@@ -20,5 +20,5 @@ describe.skipIf(!apiKey)("PROBE: quote-retweet inclusion in authored search", ()
     // eslint-disable-next-line no-console
     console.log(`[probe] scanned ${total} authored tweets; ${quotes} are quote-tweets (isQuote=true)`);
     expect(total).toBeGreaterThan(0);
-  });
+  }, 60000); // live pagination over the network needs more than vitest's 5s default
 });

@@ -74,4 +74,11 @@ describe("parseTweetList", () => {
     expect(parsed.hasNextPage).toBe(false);
     expect(parsed.nextCursor).toBe("");
   });
+
+  it("tolerates null pagination fields (last page of the live API)", () => {
+    const parsed = parseTweetList({ tweets: null, has_next_page: false, next_cursor: null });
+    expect(parsed.tweets).toEqual([]);
+    expect(parsed.hasNextPage).toBe(false);
+    expect(parsed.nextCursor).toBe("");
+  });
 });

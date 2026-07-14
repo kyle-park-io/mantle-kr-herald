@@ -26,9 +26,11 @@ const TweetRaw = z
   .passthrough();
 
 const TweetListResponse = z.object({
-  tweets: z.array(z.unknown()).optional(),
-  has_next_page: z.boolean().optional(),
-  next_cursor: z.string().optional(),
+  // The live API returns null (not just absent) for these on the last page,
+  // so accept string | null | undefined and normalize in parseTweetList.
+  tweets: z.array(z.unknown()).nullish(),
+  has_next_page: z.boolean().nullish(),
+  next_cursor: z.string().nullish(),
 });
 
 function toMedia(raw: z.infer<typeof TweetRaw>): MediaItem[] | undefined {
