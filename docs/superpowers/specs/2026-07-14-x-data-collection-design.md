@@ -5,8 +5,8 @@
 - **상태:** 설계 확정 대기 → 구현 계획(writing-plans)으로 이어짐
 
 > 코드/식별자/주석은 영어, 설명은 한국어. 이 문서는 `mantle-kr-herald` 파이프라인의 첫
-> 서브시스템 설계입니다. 전체 분해는 `proposal.md` 및 헥사고날 가이드
-> (`docs/architecture/hexagonal-architecture.md`) 참고.
+> 서브시스템 설계입니다. 전체 분해는 `design/social-media-automation-proposal.md`
+> (로컬 전용, git 미추적) 및 헥사고날 가이드(`docs/architecture/hexagonal-architecture.md`) 참고.
 
 ---
 

@@ -1,0 +1,14 @@
+# Local-only design/planning material (not committed)
+design/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies / build
+node_modules/
+dist/
+
+# Collector output (local JSON)
+output/
