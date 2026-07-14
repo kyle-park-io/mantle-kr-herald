@@ -40,11 +40,12 @@
    (또는 **IAM & Admin → Service Accounts → Create Service Account**)
 2. 이름 입력 (예: `mantle-kr-herald-uploader`) → **Create and Continue** → 역할은 비워도 됨 → **Done**
 3. 그 서비스 계정 → **Keys** 탭 → **Add Key → Create new key → JSON** → **Create**
-   - `.json` 파일이 다운로드됩니다. 로컬 안전한 위치로 옮기세요 (예: `~/keys/mantle-sa.json`).
-   - ⚠️ 이 키는 비밀번호와 같은 **장기 자격증명**입니다 — 절대 커밋·공유 금지. `chmod 600` 권장, 주기적 회전.
-4. `.env`에 그 **파일 경로**를 넣습니다:
+   - `.json` 파일이 다운로드됩니다. **레포의 `keys/` 폴더**로 옮기세요 (예: `keys/mantle-sa.json`).
+     이 폴더는 `.gitignore`로 **실제 키가 커밋되지 않습니다**(`keys/README.md`만 추적). 자세한 건 `keys/README.md`.
+   - ⚠️ 이 키는 비밀번호와 같은 **장기 자격증명**입니다 — 절대 커밋·공유 금지. `chmod 600 keys/*.json` 권장, 주기적 회전.
+4. `.env`에 그 **파일 경로**를 넣습니다 (레포 루트 기준 상대경로 OK):
    ```bash
-   GOOGLE_SA_KEY_FILE=/home/kyle/keys/mantle-sa.json
+   GOOGLE_SA_KEY_FILE=keys/mantle-sa.json
    ```
 
 > (`drive.file` 스코프라 이 키가 유출돼도 도달 범위는 **서비스 계정이 만든 파일만**입니다 — 드라이브 전체가
