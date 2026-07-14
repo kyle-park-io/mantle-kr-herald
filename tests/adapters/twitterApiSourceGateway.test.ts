@@ -74,6 +74,26 @@ describe("TwitterApiSourceGateway", () => {
     expect(http.calls[0].params?.tweetId).toBe("a");
   });
 
+  it("stops at the watermark: yields only tweets newer than sinceTime and fetches no more pages", async () => {
+    const newer = raw("new", { createdAt: "Mon Jun 29 05:58:17 +0000 2026" });
+    const older = raw("old", { createdAt: "Sun Jun 28 05:58:17 +0000 2026" });
+    // has_next_page is true, but the older tweet is at/before the watermark, so we must stop.
+    const http = new FakeHttpClient(() => ({ tweets: [newer, older], has_next_page: true, next_cursor: "c1" }));
+    const gw = new TwitterApiSourceGateway(http);
+    const ids: string[] = [];
+    for await (const t of gw.fetchAuthoredTweets("Mantle_Official", "2026-06-29T00:00:00.000Z")) ids.push(t.id);
+    expect(ids).toEqual(["new"]);
+    expect(http.calls).toHaveLength(1); // did NOT request page 2 despite has_next_page
+  });
+
+  it("stops when the cursor stops advancing (guards against an infinite pagination loop)", async () => {
+    const http = new FakeHttpClient(() => ({ tweets: [raw("1")], has_next_page: true, next_cursor: "stuck" }));
+    const gw = new TwitterApiSourceGateway(http);
+    let count = 0;
+    for await (const _ of gw.fetchAuthoredTweets("Mantle_Official")) count++;
+    expect(http.calls.length).toBe(2); // page 1 (cursor ""), page 2 (cursor "stuck"), then cursor repeats → stop
+  });
+
   it("skips a malformed tweet instead of aborting the whole batch", async () => {
     const bad = { url: "u", text: "t", createdAt: "Mon Jun 29 05:58:17 +0000 2026" }; // missing required id
     const http = new FakeHttpClient(() => ({
