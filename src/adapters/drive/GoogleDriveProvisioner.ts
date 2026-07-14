@@ -24,6 +24,21 @@ export class GoogleDriveProvisioner {
     return { id: data.id, name: data.name ?? name };
   }
 
+  /** Find an SA-created folder by exact name (drive.file lists only app-created files). Returns undefined if none. */
+  async findFolder(name: string): Promise<{ id: string; name: string } | undefined> {
+    const token = await this.auth.getToken();
+    const q = `name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const url = `${FILES_URL}?q=${encodeURIComponent(q)}&spaces=drive&fields=${encodeURIComponent("files(id,name)")}`;
+    const res = await this.fetchFn(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`Google Drive findFolder failed: HTTP ${res.status}`);
+    const data = (await res.json()) as { files?: Array<{ id: string; name: string }> };
+    const first = data.files?.[0];
+    return first ? { id: first.id, name: first.name } : undefined;
+  }
+
   /** Share a file/folder with a user (role "writer" = editor, "reader" = viewer). No email notification. */
   async share(fileId: string, email: string, role: "writer" | "reader" = "writer"): Promise<void> {
     const token = await this.auth.getToken();

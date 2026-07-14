@@ -37,6 +37,49 @@ describe("GoogleDriveProvisioner", () => {
     });
   });
 
+  describe("findFolder", () => {
+    it("GETs a folder-mimeType query with bearer token and returns the first match", async () => {
+      const cap: { url?: string; method?: string; headers?: Record<string, string> } = {};
+      const fetchFn = (async (url: string, init?: RequestInit) => {
+        cap.url = String(url);
+        cap.method = init?.method;
+        cap.headers = init?.headers as Record<string, string>;
+        return new Response(JSON.stringify({ files: [{ id: "fold1", name: "Mantle KR — review" }] }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+      }) as unknown as typeof fetch;
+      const provisioner = new GoogleDriveProvisioner(auth, fetchFn);
+
+      const result = await provisioner.findFolder("Mantle KR — review");
+
+      expect(result).toEqual({ id: "fold1", name: "Mantle KR — review" });
+      expect(cap.url?.startsWith("https://www.googleapis.com/drive/v3/files")).toBe(true);
+      expect(cap.method).toBe("GET");
+      expect(cap.headers?.["Authorization"]).toBe("Bearer ya29.tok");
+      expect(cap.url).toContain("q=");
+      expect(cap.url).toContain("mimeType");
+      expect(cap.url).toContain("vnd.google-apps.folder");
+    });
+
+    it("returns undefined when no folder matches", async () => {
+      const fetchFn = (async () =>
+        new Response(JSON.stringify({ files: [] }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        })) as unknown as typeof fetch;
+      const provisioner = new GoogleDriveProvisioner(auth, fetchFn);
+
+      const result = await provisioner.findFolder("Mantle KR — review");
+
+      expect(result).toBeUndefined();
+    });
+
+    it("throws on a non-ok response", async () => {
+      const badFetch = (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch;
+      const provisioner = new GoogleDriveProvisioner(auth, badFetch);
+      await expect(provisioner.findFolder("x")).rejects.toThrow(/403/);
+    });
+  });
+
   describe("share", () => {
     it("POSTs a permissions request with bearer token, defaulting role to writer", async () => {
       const cap: { url?: string; headers?: Record<string, string>; body?: string } = {};

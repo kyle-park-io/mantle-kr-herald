@@ -2,23 +2,31 @@ import { GoogleAuth } from "../adapters/drive/GoogleAuth";
 import { GoogleDriveProvisioner } from "../adapters/drive/GoogleDriveProvisioner";
 import { loadGoogleDriveInitConfig } from "../config";
 
+const force = process.argv.includes("--force");
 const config = loadGoogleDriveInitConfig();
 const auth = await GoogleAuth.fromKeyFile(config.saKeyFile);
 const provisioner = new GoogleDriveProvisioner(auth);
 
-const review = await provisioner.createFolder("Mantle KR — review");
-const approved = await provisioner.createFolder("Mantle KR — approved");
-
-for (const email of config.shareEmails) {
-  await provisioner.share(review.id, email, "writer");
-  await provisioner.share(approved.id, email, "writer");
+async function ensureFolder(name: string): Promise<{ id: string; created: boolean }> {
+  if (!force) {
+    const existing = await provisioner.findFolder(name);
+    if (existing) return { id: existing.id, created: false };
+  }
+  const created = await provisioner.createFolder(name);
+  for (const email of config.shareEmails) {
+    await provisioner.share(created.id, email, "writer");
+  }
+  return { id: created.id, created: true };
 }
 
-console.log("Created Google Drive folders (owned by the service account).");
-if (config.shareEmails.length > 0) {
-  console.log(`Shared (editor) with: ${config.shareEmails.join(", ")}`);
-} else {
-  console.log("WARNING: GDRIVE_SHARE_EMAILS is empty — no one can see these folders yet. Set it and re-run, or share via API later.");
+const review = await ensureFolder("Mantle KR — review");
+const approved = await ensureFolder("Mantle KR — approved");
+
+for (const [label, r] of [["review", review], ["approved", approved]] as const) {
+  console.log(r.created ? `${label}: created + shared` : `${label}: already exists (reused; sharing unchanged)`);
+}
+if (config.shareEmails.length === 0) {
+  console.log("WARNING: GDRIVE_SHARE_EMAILS is empty — newly created folders were not shared with anyone.");
 }
 console.log("");
 console.log("Put these in your .env:");
