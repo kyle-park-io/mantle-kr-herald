@@ -15,17 +15,22 @@ if (!clientId || !clientSecret) {
 // Least-privilege by default; override with GOOGLE_OAUTH_SCOPE only if you need broader access.
 const scope = process.env.GOOGLE_OAUTH_SCOPE?.trim() || DRIVE_FILE_SCOPE;
 
+// Fixed once the server is listening. The handler must NOT call server.address():
+// after server.close() it returns null, which crashed on late requests (e.g. favicon).
+let redirectUri = "";
+let handled = false;
+
 const server = createServer(async (req, res) => {
-  const port = (server.address() as AddressInfo).port;
-  const redirectUri = `http://127.0.0.1:${port}`;
-  const url = new URL(req.url ?? "/", redirectUri);
+  const url = new URL(req.url ?? "/", redirectUri || "http://127.0.0.1");
   const code = url.searchParams.get("code");
   const error = url.searchParams.get("error");
 
-  if (!code && !error) {
-    res.writeHead(204).end(); // ignore favicon and other stray requests
+  if (handled || (!code && !error)) {
+    res.writeHead(204, { Connection: "close" }).end(); // ignore favicon, retries, and post-completion hits
     return;
   }
+  handled = true;
+
   if (error) {
     res.writeHead(200, { "Content-Type": "text/plain", Connection: "close" }).end(`Authorization failed: ${error}. You can close this tab.`);
     console.error(`Authorization failed: ${error}`);
@@ -52,7 +57,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(0, "127.0.0.1", () => {
   const port = (server.address() as AddressInfo).port;
-  const redirectUri = `http://127.0.0.1:${port}`;
+  redirectUri = `http://127.0.0.1:${port}`;
   const consentUrl = buildConsentUrl({ clientId, redirectUri, scope });
   console.log("1. Open this URL in a browser on THIS machine and approve access:\n");
   console.log(consentUrl + "\n");
