@@ -37,6 +37,8 @@ describe("XContentSource", () => {
     expect(pending[0].source).toBe("x");
     expect(pending[0].text).toContain("Line A");
     expect(pending[0].text).toContain("Line B");
+    // tweets within a thread are separated by a horizontal rule, not just a blank line
+    expect(pending[0].text).toBe("Line A\n\n---\n\nLine B");
     expect(pending[0].refUrl).toBe("u/100");
   });
 
