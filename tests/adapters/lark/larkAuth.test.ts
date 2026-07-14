@@ -4,12 +4,14 @@ import type { IHttpClient } from "../../../src/shared/http/IHttpClient";
 
 class FakeHttpClient implements IHttpClient {
   public postCount = 0;
+  public calls: Array<{ path: string; body: unknown }> = [];
   constructor(private readonly responder: () => unknown) {}
   async get<T>(): Promise<T> {
     throw new Error("not used");
   }
-  async post<T>(): Promise<T> {
+  async post<T>(path: string, body?: unknown): Promise<T> {
     this.postCount += 1;
+    this.calls.push({ path, body });
     return this.responder() as T;
   }
   async patch<T>(): Promise<T> {
@@ -28,6 +30,10 @@ describe("LarkAuth", () => {
     expect(await auth.getToken()).toBe("t-1");
     expect(await auth.getToken()).toBe("t-1");
     expect(http.postCount).toBe(1);
+    expect(http.calls[0]).toEqual({
+      path: "/open-apis/auth/v3/tenant_access_token/internal",
+      body: { app_id: "app", app_secret: "secret" },
+    });
   });
 
   it("refreshes when the cached token is near expiry", async () => {
@@ -39,6 +45,16 @@ describe("LarkAuth", () => {
     expect(await auth.getToken()).toBe("t-1");
     clock = (7200 - 30) * 1000; // within the 60s refresh window
     expect(await auth.getToken()).toBe("t-2");
+    expect(http.postCount).toBe(2);
+  });
+
+  it("force-refreshes even when the cached token is still valid", async () => {
+    let n = 0;
+    const http = new FakeHttpClient(() => ({ code: 0, tenant_access_token: `t-${++n}`, expire: 7200 }));
+    const auth = new LarkAuth(http, "app", "secret", () => 0);
+
+    expect(await auth.getToken()).toBe("t-1");
+    expect(await auth.getToken(true)).toBe("t-2"); // forced despite valid cache
     expect(http.postCount).toBe(2);
   });
 
