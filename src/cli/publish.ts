@@ -1,6 +1,6 @@
 import { HttpClient } from "../shared/http/HttpClient";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
-import { GoogleAuth } from "../adapters/drive/GoogleAuth";
+import { GoogleServiceAccountAuth } from "../adapters/drive/GoogleServiceAccountAuth";
 import { GoogleDriveUploader } from "../adapters/drive/GoogleDriveUploader";
 import { LarkDriveUploader } from "../adapters/drive/LarkDriveUploader";
 import { JsonPublishStore } from "../adapters/store/JsonPublishStore";
@@ -19,7 +19,7 @@ const uploaders: DriveUploader[] = [];
 
 if (target === "google" || target === "both") {
   const g = loadGoogleDriveConfig();
-  const auth = await GoogleAuth.fromKeyFile(g.saKeyFile);
+  const auth = await GoogleServiceAccountAuth.fromKeyFile(g.saKeyFile);
   uploaders.push(new GoogleDriveUploader(auth, { review: g.reviewFolderId, approved: g.approvedFolderId }));
 }
 if (target === "lark" || target === "both") {

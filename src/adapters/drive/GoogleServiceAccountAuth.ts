@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createSign } from "node:crypto";
+import type { TokenSource } from "./TokenSource";
 
 interface ServiceAccountKey {
   client_email: string;
@@ -18,7 +19,7 @@ function base64url(input: string | Buffer): string {
     .replace(/=+$/, "");
 }
 
-export class GoogleAuth {
+export class GoogleServiceAccountAuth implements TokenSource {
   private token?: string;
   private expiresAt = 0; // ms epoch
 
@@ -28,12 +29,12 @@ export class GoogleAuth {
     private readonly fetchFn: typeof fetch = fetch,
   ) {}
 
-  static async fromKeyFile(path: string): Promise<GoogleAuth> {
+  static async fromKeyFile(path: string): Promise<GoogleServiceAccountAuth> {
     const raw = JSON.parse(await readFile(path, "utf8")) as ServiceAccountKey;
     if (!raw.client_email || !raw.private_key) {
       throw new Error(`Invalid Google service account key file: ${path}`);
     }
-    return new GoogleAuth(raw);
+    return new GoogleServiceAccountAuth(raw);
   }
 
   async getToken(force = false): Promise<string> {

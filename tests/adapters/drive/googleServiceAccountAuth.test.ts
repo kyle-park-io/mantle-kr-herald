@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { GoogleAuth } from "../../../src/adapters/drive/GoogleAuth";
+import { GoogleServiceAccountAuth } from "../../../src/adapters/drive/GoogleServiceAccountAuth";
 
 const { privateKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
@@ -18,10 +18,10 @@ function fakeFetch(capture: { calls: Array<{ url: string; body: string }> }, tok
   }) as unknown as typeof fetch;
 }
 
-describe("GoogleAuth", () => {
+describe("GoogleServiceAccountAuth", () => {
   it("mints a token via a signed JWT assertion and caches it", async () => {
     const cap = { calls: [] as Array<{ url: string; body: string }> };
-    const auth = new GoogleAuth(key, () => 1_000_000, fakeFetch(cap, "ya29.token"));
+    const auth = new GoogleServiceAccountAuth(key, () => 1_000_000, fakeFetch(cap, "ya29.token"));
     expect(await auth.getToken()).toBe("ya29.token");
     expect(await auth.getToken()).toBe("ya29.token"); // cached
     expect(cap.calls).toHaveLength(1);
@@ -34,7 +34,7 @@ describe("GoogleAuth", () => {
   it("refreshes when the cached token is near expiry", async () => {
     const cap = { calls: [] as Array<{ url: string; body: string }> };
     let clock = 0;
-    const auth = new GoogleAuth(key, () => clock, fakeFetch(cap, "t"));
+    const auth = new GoogleServiceAccountAuth(key, () => clock, fakeFetch(cap, "t"));
     await auth.getToken();
     clock = (3600 - 30) * 1000; // within 60s refresh margin
     await auth.getToken();
@@ -43,7 +43,7 @@ describe("GoogleAuth", () => {
 
   it("throws when the token response lacks access_token", async () => {
     const badFetch = (async () => new Response(JSON.stringify({}), { status: 200 })) as unknown as typeof fetch;
-    const auth = new GoogleAuth(key, () => 0, badFetch);
+    const auth = new GoogleServiceAccountAuth(key, () => 0, badFetch);
     await expect(auth.getToken()).rejects.toThrow(/access_token/);
   });
 });
