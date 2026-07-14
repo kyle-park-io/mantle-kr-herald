@@ -1,5 +1,5 @@
-import { HttpClient } from "./HttpClient";
-import type { IHttpClient } from "./IHttpClient";
+import { HttpClient } from "../../shared/http/HttpClient";
+import type { IHttpClient } from "../../shared/http/IHttpClient";
 
 const BASE_URL = "https://api.twitterapi.io";
 

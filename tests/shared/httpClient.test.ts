@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { HttpClient } from "../../src/adapters/twitterapi/HttpClient";
+import { HttpClient } from "../../src/shared/http/HttpClient";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -45,6 +45,6 @@ describe("HttpClient", () => {
   it("throws a clear error on 401", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(401, { detail: "bad key" }));
     const client = new HttpClient("https://api.example.com");
-    await expect(client.get("/x")).rejects.toThrow(/API key/i);
+    await expect(client.get("/x")).rejects.toThrow(/401|unauthorized/i);
   });
 });

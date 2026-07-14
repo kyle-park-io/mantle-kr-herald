@@ -1,6 +1,6 @@
 import type { SourceTweet } from "../../domain/models";
 import type { SourceGateway } from "../../ports/SourceGateway";
-import type { IHttpClient } from "./IHttpClient";
+import type { IHttpClient } from "../../shared/http/IHttpClient";
 import { normalizeTweet, parseTweetList } from "./schemas";
 
 export class TwitterApiSourceGateway implements SourceGateway {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { TwitterApiSourceGateway } from "../../src/adapters/twitterapi/TwitterApiSourceGateway";
-import type { IHttpClient } from "../../src/adapters/twitterapi/IHttpClient";
+import type { IHttpClient } from "../../src/shared/http/IHttpClient";
 
 function raw(id: string, extra: Record<string, unknown> = {}) {
   return {
