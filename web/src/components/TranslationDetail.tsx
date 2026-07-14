@@ -8,12 +8,17 @@ export function TranslationDetail(props: {
   item: Translation;
   onSave: (id: string, koreanText: string) => Promise<void>;
   onApprove: (id: string) => Promise<void>;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
+  const { onDirtyChange } = props;
   const [korean, setKorean] = useState(props.item.koreanText);
   const [busy, setBusy] = useState(false);
   useEffect(() => setKorean(props.item.koreanText), [props.item.itemId, props.item.koreanText]);
 
   const dirty = korean !== props.item.koreanText;
+  useEffect(() => {
+    onDirtyChange(dirty);
+  }, [dirty, onDirtyChange]);
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
     try {
