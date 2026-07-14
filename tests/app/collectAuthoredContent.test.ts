@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { CollectAuthoredContent } from "../../src/app/CollectAuthoredContent";
 import type { SourceGateway } from "../../src/ports/SourceGateway";
 import type { CollectionRepository } from "../../src/ports/CollectionRepository";
-import type { WatermarkStore } from "../../src/ports/WatermarkStore";
+import type { WatermarkStore } from "../../src/shared/store/WatermarkStore";
 import type { CollectedThread, SourceTweet } from "../../src/domain/models";
 
 function tw(id: string, over: Partial<SourceTweet> = {}): SourceTweet {
@@ -51,12 +51,12 @@ class InMemoryRepo implements CollectionRepository {
 }
 
 class InMemoryWatermark implements WatermarkStore {
-  constructor(public value?: string) {}
-  async get() {
-    return this.value;
+  public marks = new Map<string, string>();
+  async get(key: string) {
+    return this.marks.get(key);
   }
-  async set(time: string) {
-    this.value = time;
+  async set(key: string, time: string) {
+    this.marks.set(key, time);
   }
 }
 
@@ -76,7 +76,7 @@ describe("CollectAuthoredContent", () => {
     expect(repo.saved[0].tweets.map((t) => t.id)).toEqual(["1", "2"]);
     expect(repo.saved[0].status).toBe("active");
     expect(repo.saved[0].firstSeenAt).toBe("2026-05-05T00:00:00.000Z");
-    expect(wm.value).toBe("2026-01-01T00:02:00.000Z");
+    expect(wm.marks.get("Mantle_Official")).toBe("2026-01-01T00:02:00.000Z");
   });
 
   it("gap-fills via fetchThread when a thread root is missing from the batch", async () => {
@@ -95,9 +95,10 @@ describe("CollectAuthoredContent", () => {
   });
 
   it("does not advance the watermark when nothing is fetched", async () => {
-    const wm = new InMemoryWatermark("2026-01-01T00:00:00.000Z");
+    const wm = new InMemoryWatermark();
+    wm.marks.set("Mantle_Official", "2026-01-01T00:00:00.000Z");
     const usecase = new CollectAuthoredContent(new FakeGateway([]), new InMemoryRepo(), wm, () => "now");
     await usecase.run("Mantle_Official");
-    expect(wm.value).toBe("2026-01-01T00:00:00.000Z");
+    expect(wm.marks.get("Mantle_Official")).toBe("2026-01-01T00:00:00.000Z");
   });
 });

@@ -106,9 +106,9 @@ describe("LocalJsonStore", () => {
 
   it("watermark get returns undefined initially, then the set value", async () => {
     const store = new LocalJsonStore(dir);
-    expect(await store.get()).toBeUndefined();
-    await store.set("2026-04-04T00:00:00.000Z");
-    expect(await store.get()).toBe("2026-04-04T00:00:00.000Z");
+    expect(await store.get("acct")).toBeUndefined();
+    await store.set("acct", "2026-04-04T00:00:00.000Z");
+    expect(await store.get("acct")).toBe("2026-04-04T00:00:00.000Z");
   });
 
   it("loadAll rejects on a corrupt items.json instead of silently returning [] (which would cause upsert to overwrite the store)", async () => {
