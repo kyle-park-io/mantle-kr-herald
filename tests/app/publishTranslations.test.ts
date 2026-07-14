@@ -7,7 +7,10 @@ import type { Translation } from "../../src/domain/translation/models";
 import type { UploadRequest, UploadResult } from "../../src/domain/publish/publishModels";
 
 function tr(itemId: string, status: Translation["status"]): Translation {
-  return { itemId, source: "x", sourceText: `src-${itemId}`, koreanText: `ko-${itemId}`, status, translatedAt: "t" };
+  return {
+    itemId, source: "x", sourceText: `src-${itemId}`, koreanText: `ko-${itemId}`, status,
+    translatedAt: "2026-01-01T00:00:00.000Z",
+  };
 }
 
 function translationStore(list: Translation[]): TranslationStore {
@@ -41,12 +44,17 @@ describe("PublishTranslations", () => {
 
     expect(res.uploaded).toBe(4); // 2 items × 2 drives
     expect(res.byDrive).toEqual({ google: 2, lark: 2 });
+    // find by content (filename is now <date>-<slug>-<id>.md, not the bare id)
+    const req1 = g.reqs.find((r) => r.content.includes("x:1"));
+    const req2 = g.reqs.find((r) => r.content.includes("x:2"));
     // review folder for translated, approved for approved
-    expect(g.reqs.find((r) => r.name === "x-1.md")?.folder).toBe("review");
-    expect(g.reqs.find((r) => r.name === "x-2.md")?.folder).toBe("approved");
+    expect(req1?.folder).toBe("review");
+    expect(req2?.folder).toBe("approved");
     // review doc contains source, approved doc does not
-    expect(g.reqs.find((r) => r.name === "x-1.md")?.content).toContain("src-x:1");
-    expect(g.reqs.find((r) => r.name === "x-2.md")?.content).not.toContain("src-x:2");
+    expect(req1?.content).toContain("src-x:1");
+    expect(req2?.content).not.toContain("src-x:2");
+    // descriptive filename: <date>-<slug>-<id>.md
+    expect(req1?.name).toMatch(/^2026-01-01-.*x-1\.md$/);
     expect(store.keys.has("x:1:translated:google")).toBe(true);
     expect(store.keys.has("x:2:approved:lark")).toBe(true);
   });

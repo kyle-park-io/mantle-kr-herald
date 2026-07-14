@@ -1,4 +1,4 @@
-import { renderApproved, renderReview, safeFileName } from "../domain/publish/renderers";
+import { renderApproved, renderReview, publishFileName } from "../domain/publish/renderers";
 import type { FolderKind } from "../domain/publish/publishModels";
 import type { TranslationStore } from "../ports/TranslationStore";
 import type { DriveUploader } from "../ports/DriveUploader";
@@ -26,7 +26,7 @@ export class PublishTranslations {
     for (const t of await this.translationStore.loadAll()) {
       const content = t.status === "approved" ? renderApproved(t) : renderReview(t);
       const folder: FolderKind = t.status === "approved" ? "approved" : "review";
-      const name = safeFileName(t.itemId);
+      const name = publishFileName(t);
 
       for (const uploader of this.uploaders) {
         const key = `${t.itemId}:${t.status}:${uploader.name}`;
