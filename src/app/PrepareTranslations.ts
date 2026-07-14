@@ -14,6 +14,7 @@ export interface Selector {
 }
 
 const DEFAULT_LIMIT = 20;
+const MAX_FEW_SHOTS = 8;
 
 export class PrepareTranslations {
   constructor(
@@ -37,7 +38,13 @@ export class PrepareTranslations {
       this.fewShotStore.load(),
     ]);
 
-    const header = assembleSharedContext({ role: this.role, glossary, styleGuide, locale, fewShots });
+    const header = assembleSharedContext({
+      role: this.role,
+      glossary,
+      styleGuide,
+      locale,
+      fewShots: fewShots.slice(-MAX_FEW_SHOTS),
+    });
     const blocks = pending.map((item) => assembleItemBlock(item));
     const worksheet = [header, ...blocks].join("\n");
 

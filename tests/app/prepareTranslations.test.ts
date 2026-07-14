@@ -47,4 +47,14 @@ describe("PrepareTranslations", () => {
     expect((await uc.run({ ids: ["x:2"] })).pending.map((p) => p.id)).toEqual(["x:2"]);
     expect((await uc.run({ since: "2026-03-01T00:00:00.000Z" })).pending.map((p) => p.id)).toEqual(["x:2"]);
   });
+
+  it("caps rendered few-shots to the most recent N, dropping the oldest", async () => {
+    const d = deps([item("x:1", "2026-01-01T00:00:00.000Z")]);
+    const manyFewShots = Array.from({ length: 10 }, (_, i) => ({ source: `f${i}`, target: `번역${i}` }));
+    d.fewShotStore.load = async () => manyFewShots;
+    const uc = new PrepareTranslations(d.source, d.glossaryStore, d.fewShotStore, d.config, d.translationStore);
+    const { worksheet } = await uc.run({});
+    expect(worksheet).toContain("f9");
+    expect(worksheet).not.toContain("f0");
+  });
 });

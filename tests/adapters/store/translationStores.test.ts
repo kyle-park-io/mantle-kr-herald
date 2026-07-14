@@ -41,6 +41,15 @@ describe("JsonFewShotStore", () => {
     await store.add({ source: "b", target: "나" });
     expect(await store.load()).toHaveLength(2);
   });
+
+  it("add upserts by itemId when present, keeping the latest target", async () => {
+    const store = new JsonFewShotStore(dir);
+    await store.add({ source: "a", target: "가", itemId: "x:1" });
+    await store.add({ source: "a-fixed", target: "가고침", itemId: "x:1" });
+    const all = await store.load();
+    expect(all).toHaveLength(1);
+    expect(all[0].target).toBe("가고침");
+  });
 });
 
 describe("JsonTranslationStore", () => {

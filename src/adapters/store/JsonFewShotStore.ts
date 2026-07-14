@@ -13,7 +13,13 @@ export class JsonFewShotStore implements FewShotStore {
   }
   async add(ex: FewShotExample): Promise<void> {
     const all = await this.load();
-    all.push(ex);
+    if (ex.itemId !== undefined) {
+      const idx = all.findIndex((e) => e.itemId === ex.itemId);
+      if (idx >= 0) all[idx] = ex;
+      else all.push(ex);
+    } else {
+      all.push(ex);
+    }
     await writeJsonFileAtomic(this.dir, this.path, all);
   }
 }

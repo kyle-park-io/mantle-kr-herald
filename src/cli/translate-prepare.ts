@@ -27,7 +27,10 @@ if (ids) selector.ids = ids.split(",").map((s) => s.trim()).filter((s) => s.leng
 const since = argValue("--since");
 if (since) selector.since = since;
 const limit = argValue("--limit");
-if (limit) selector.limit = Number(limit);
+if (limit) {
+  const n = Number(limit);
+  if (Number.isFinite(n)) selector.limit = n;
+}
 
 const usecase = new PrepareTranslations(
   source,

@@ -11,10 +11,12 @@ const command = process.argv[2];
 
 if (command === "add") {
   const term = argValue("--term");
-  const rule = argValue("--rule") as GlossaryRule | undefined;
-  if (!term || !rule) {
+  const ruleArg = argValue("--rule");
+  const validRules: GlossaryRule[] = ["translate", "transliterate", "keep"];
+  if (!term || !ruleArg || !validRules.includes(ruleArg as GlossaryRule)) {
     throw new Error('Usage: pnpm glossary add --term <term> --rule <translate|transliterate|keep> [--target <ko>] [--note <n>] [--source <url>]');
   }
+  const rule = ruleArg as GlossaryRule; // validated above
   await store.upsertEntry({
     term,
     rule,
