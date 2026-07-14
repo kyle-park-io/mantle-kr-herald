@@ -15,6 +15,7 @@
     "drive:init": "tsx --env-file-if-exists=.env src/cli/drive-init.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "probe": "vitest run -c vitest.probe.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

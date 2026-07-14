@@ -98,12 +98,16 @@ Mantle KR Herald   ← 상위 폴더 (팀에 공유; 이 하나만 공유하면 
 ## 5. 검증
 
 ```bash
-# 실제 업로드 probe (자격증명 있을 때만 실행됨)
-pnpm test tests/adapters/drive/drive.probe.test.ts
+# 실제 인증+업로드 probe (.env를 읽고, 자격증명 있는 것만 실행 — 없으면 skip)
+pnpm probe tests/adapters/drive/drive.probe.test.ts
 
 # 실제 업로드
 pnpm drive:publish --target google
 ```
+
+> `pnpm probe`는 `.env`를 로드해 라이브 probe를 돌립니다(일반 `pnpm test`는 `.env`를 안 읽어 항상 skip).
+> `GOOGLE_SA_KEY_FILE`만 있으면 인증 probe가 통과하고, `GDRIVE_REVIEW_FOLDER_ID`까지 있으면 review 폴더에
+> throwaway `.md`를 실제 업로드해 봅니다.
 review 폴더에 `.md` 파일이 올라오고, 공유한 팀원이 열어볼 수 있으면 성공입니다.
 
 ---

@@ -186,9 +186,12 @@ LARK_DRIVE_APPROVED_FOLDER_TOKEN=<승인 폴더 token>
 ### 10-4. 검증 & 오류
 
 ```bash
-pnpm test tests/adapters/drive/drive.probe.test.ts   # 실업로드 probe (자격증명 있을 때만)
+pnpm probe tests/adapters/drive/drive.probe.test.ts   # .env 읽어 실업로드 probe (자격증명 있는 것만)
 pnpm drive:publish --target lark
 ```
+
+> `pnpm probe`는 `.env`를 로드합니다(일반 `pnpm test`는 안 읽어 skip). `LARK_APP_ID`/`LARK_APP_SECRET`/
+> `LARK_DRIVE_REVIEW_FOLDER_TOKEN`이 모두 있으면 review 폴더에 throwaway `.md`를 실제 업로드해 봅니다.
 
 | 증상 | 원인 / 해결 |
 | --- | --- |
