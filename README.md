@@ -74,7 +74,7 @@ See `docs/guides/drive-setup-guide.md`. Fill `.env`: `GOOGLE_SA_KEY_FILE`, `GDRI
 ### Commands
 
 ```bash
-pnpm publish [--target google|lark|both]
+pnpm drive:publish [--target google|lark|both]
 ```
 
 Idempotent per drive via `output/publish-state.json`.
