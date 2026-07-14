@@ -5,10 +5,9 @@
 
 - **[Google Drive 셋업 가이드](./google-drive-setup-guide.md)** — 서비스 계정·JSON 키·폴더 ID
   (`GOOGLE_SA_KEY_FILE`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`)
-- **[Lark Drive 셋업 가이드](./lark-drive-setup-guide.md)** — Drive 스코프·폴더 token
-  (`LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN`; 앱 자격증명은 B에서 재사용)
-
-> Lark **앱 자체**(App ID/Secret) 만들기는 [lark-setup-guide.md](./lark-setup-guide.md) 참고.
+- **[Lark 셋업 가이드 §10 (Lark Drive)](./lark-setup-guide.md#10-lark-drive-업로드-서브시스템-d)** —
+  Drive 스코프·폴더 token (`LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN`).
+  Lark 앱·자격증명은 같은 문서(§0–§9)에서 이미 다룹니다.
 
 ## 실행
 

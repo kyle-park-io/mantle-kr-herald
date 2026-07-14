@@ -69,7 +69,7 @@ Publishes C's translations to Google Drive and Lark Drive as Markdown: `translat
 
 ### Setup
 
-See `docs/guides/google-drive-setup-guide.md` (service account, folder IDs) and `docs/guides/lark-drive-setup-guide.md` (drive scope, folder tokens) — index at `docs/guides/drive-setup-guide.md`. Fill `.env`: `GOOGLE_SA_KEY_FILE`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`, `LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN` (Lark app creds reused from Module B).
+See `docs/guides/google-drive-setup-guide.md` (service account, folder IDs) and `docs/guides/lark-setup-guide.md` §10 (drive scope, folder tokens) — index at `docs/guides/drive-setup-guide.md`. Fill `.env`: `GOOGLE_SA_KEY_FILE`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`, `LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN` (Lark app creds reused from Module B).
 
 ### Commands
 
