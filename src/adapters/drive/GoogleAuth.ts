@@ -7,7 +7,7 @@ interface ServiceAccountKey {
 }
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const SCOPE = "https://www.googleapis.com/auth/drive.file";
+const SCOPE = "https://www.googleapis.com/auth/drive";
 const REFRESH_MARGIN_SECONDS = 60;
 
 function base64url(input: string | Buffer): string {

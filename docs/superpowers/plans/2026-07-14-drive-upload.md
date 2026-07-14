@@ -17,7 +17,7 @@
 - Upload as **Markdown files** (`text/markdown`), no Google-Doc/Lark-Doc conversion.
 - `translated` → `renderReview` (source+Korean) → review folder; `approved` → `renderApproved` (Korean only) → approved folder.
 - Idempotency key is **per drive**: `<itemId>:<status>:<uploaderName>` (uploaderName ∈ {google, lark}). Record only after that drive's upload succeeds. Per-uploader failures are isolated (continue; report `failed`).
-- Google scope: `https://www.googleapis.com/auth/drive.file`. Google token endpoint is form-urlencoded (use native `fetch`, not the JSON HttpClient).
+- Google scope: `https://www.googleapis.com/auth/drive`. Google token endpoint is form-urlencoded (use native `fetch`, not the JSON HttpClient).
 - Lark reuses B's `LarkAuth` (`src/adapters/lark/LarkAuth.ts`) with the same `LARK_APP_ID/SECRET/BASE_URL`; drive scope required on the app.
 - Consumes C's `Translation` (`src/domain/translation/models.ts`) and `TranslationStore` (`src/adapters/store/JsonTranslationStore.ts`).
 - TDD: failing test first for every unit with logic. Commit after each green task.

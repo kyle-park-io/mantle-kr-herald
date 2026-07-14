@@ -95,7 +95,7 @@ export interface PublishStore {
 
 ### 6-1. `GoogleAuth` (서비스계정 JWT, node:crypto)
 - SA JSON 키(`client_email`, `private_key`)를 읽어, `getToken()`이 access_token을 캐시/갱신.
-- JWT: header `{alg:"RS256",typ:"JWT"}` + claim `{iss:client_email, scope:"https://www.googleapis.com/auth/drive.file", aud:"https://oauth2.googleapis.com/token", iat, exp:iat+3600}`.
+- JWT: header `{alg:"RS256",typ:"JWT"}` + claim `{iss:client_email, scope:"https://www.googleapis.com/auth/drive", aud:"https://oauth2.googleapis.com/token", iat, exp:iat+3600}`.
   base64url 인코딩 후 `crypto.sign("RSA-SHA256", data, private_key)`로 서명.
 - `POST https://oauth2.googleapis.com/token` (form-urlencoded: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `assertion=<JWT>`) → `{access_token, expires_in}`. 만료 60초 전 갱신(LarkAuth 패턴).
 - 토큰 엔드포인트는 form-urlencoded라 shared JSON HttpClient 대신 네이티브 `fetch` 사용.

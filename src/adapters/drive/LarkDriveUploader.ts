@@ -30,6 +30,7 @@ export class LarkDriveUploader implements DriveUploader {
       headers: { Authorization: `Bearer ${token}` },
       body: form,
     });
+    if (!res.ok) throw new Error(`Lark Drive upload failed: HTTP ${res.status}`);
     const data = (await res.json()) as { code?: number; msg?: string; data?: { file_token?: string } };
     if (data.code !== 0 || !data.data?.file_token) {
       throw new Error(`Lark Drive upload failed: code=${data.code} ${data.msg ?? ""}`.trim());
