@@ -1,0 +1,23 @@
+{
+  "name": "mantle-kr-herald",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "collect": "tsx --env-file-if-exists=.env src/cli/collect.ts",
+    "reconcile": "tsx --env-file-if-exists=.env src/cli/reconcile.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
