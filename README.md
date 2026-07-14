@@ -24,3 +24,20 @@ pnpm typecheck          # type-check
 ```
 
 Output is written to `output/` (git-ignored): `items.json` (collected threads) and `state.json` (watermark).
+
+## Subsystem B — Lark data collection
+
+Collects text/post messages from target Lark group chats into local JSON, incrementally per chat.
+
+### Setup
+
+See `docs/lark-setup-guide.md` for how to create the Lark app and find `chat_id`s. Then fill `.env`:
+`LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_CHAT_IDS` (comma-separated), and optionally `LARK_BASE_URL`.
+
+### Commands
+
+```bash
+pnpm collect-lark       # collect new messages from all configured chats
+```
+
+Output is written to `output/` (git-ignored): `lark-items.json` and `lark-state.json` (per-chat watermarks).
