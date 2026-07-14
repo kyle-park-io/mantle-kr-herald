@@ -34,11 +34,15 @@ function emptyToUndefined(value: string | undefined): string | undefined {
 export function normalizeMessage(raw: unknown): LarkMessage {
   const m = MessageRaw.parse(raw);
   const content = m.body.content;
+  const createTimeMs = Number(m.create_time);
+  const createdAt = Number.isFinite(createTimeMs)
+    ? new Date(createTimeMs).toISOString()
+    : new Date(0).toISOString();
   return {
     messageId: m.message_id,
     chatId: m.chat_id,
     msgType: m.msg_type,
-    createdAt: new Date(Number(m.create_time)).toISOString(),
+    createdAt,
     senderId: m.sender?.id,
     threadId: emptyToUndefined(m.thread_id),
     parentId: emptyToUndefined(m.parent_id),

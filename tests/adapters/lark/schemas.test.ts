@@ -28,6 +28,11 @@ describe("normalizeMessage", () => {
   it("throws when a required field is missing", () => {
     expect(() => normalizeMessage({ msg_type: "text" })).toThrow();
   });
+
+  it("does not throw when create_time is non-numeric, and falls back to epoch 0", () => {
+    const m = normalizeMessage({ ...rawMessage, create_time: "not-a-number" });
+    expect(m.createdAt).toBe(new Date(0).toISOString());
+  });
 });
 
 describe("parseMessagesData", () => {

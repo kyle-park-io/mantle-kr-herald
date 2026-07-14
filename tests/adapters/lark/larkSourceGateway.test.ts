@@ -52,6 +52,19 @@ describe("LarkSourceGateway", () => {
     expect(ids).toEqual(["om_2"]);
   });
 
+  it("skips malformed non-text/post items without throwing", async () => {
+    const client = new FakeClient(() => ({
+      code: 0,
+      data: { items: [{ message_id: "om_img", msg_type: "image" }, rawMsg("om_ok")], has_more: false },
+    }));
+    const gw = new LarkSourceGateway(client);
+
+    const ids: string[] = [];
+    for await (const m of gw.fetchMessages("oc_x")) ids.push(m.messageId);
+
+    expect(ids).toEqual(["om_ok"]);
+  });
+
   it("passes start_time (unix seconds) when sinceTime is given", async () => {
     const client = new FakeClient(() => ({ code: 0, data: { items: [], has_more: false } }));
     const gw = new LarkSourceGateway(client);

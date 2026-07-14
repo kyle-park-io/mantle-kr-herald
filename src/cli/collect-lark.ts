@@ -16,3 +16,6 @@ const usecase = new CollectLarkMessages(source, store, store);
 
 const result = await usecase.run(config.chatIds);
 console.log(`collected ${result.collected} Lark message(s) from ${config.chatIds.length} chat(s)`);
+if (result.failed.length > 0) {
+  console.error(`failed to collect from ${result.failed.length} chat(s): ${result.failed.join(", ")}`);
+}

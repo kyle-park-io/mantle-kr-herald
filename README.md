@@ -25,7 +25,7 @@ pnpm typecheck          # type-check
 
 Output is written to `output/` (git-ignored): `items.json` (collected threads) and `state.json` (watermark).
 
-## Subsystem B — Lark data collection
+## Module B — Lark data collection
 
 Collects text/post messages from target Lark group chats into local JSON, incrementally per chat.
 

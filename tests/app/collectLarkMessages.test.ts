@@ -18,6 +18,17 @@ class FakeGateway implements LarkSourceGateway {
   }
 }
 
+class ThrowingGateway implements LarkSourceGateway {
+  constructor(
+    private readonly badChat: string,
+    private readonly good: Record<string, LarkMessage[]>,
+  ) {}
+  async *fetchMessages(chatId: string): AsyncGenerator<LarkMessage> {
+    if (chatId === this.badChat) throw new Error("boom");
+    for (const m of this.good[chatId] ?? []) yield m;
+  }
+}
+
 class InMemoryRepo implements LarkRepository {
   public saved: LarkMessage[] = [];
   async loadAll() {
@@ -71,5 +82,18 @@ describe("CollectLarkMessages", () => {
     wm.marks.set("oc_a", "2026-05-05T00:00:00.000Z");
     await new CollectLarkMessages(gw, new InMemoryRepo(), wm).run(["oc_a"]);
     expect(wm.marks.get("oc_a")).toBe("2026-05-05T00:00:00.000Z");
+  });
+
+  it("contains a per-chat failure so other chats still get collected", async () => {
+    const gw = new ThrowingGateway("oc_bad", { oc_a: [msg("om_1", "oc_a", "2026-01-01T00:01:00.000Z")] });
+    const repo = new InMemoryRepo();
+    const wm = new InMemoryWatermark();
+    const usecase = new CollectLarkMessages(gw, repo, wm);
+
+    const result = await usecase.run(["oc_bad", "oc_a"]);
+
+    expect(result.failed).toEqual(["oc_bad"]);
+    expect(result.collected).toBe(1);
+    expect(repo.saved.map((m) => m.messageId)).toEqual(["om_1"]);
   });
 });

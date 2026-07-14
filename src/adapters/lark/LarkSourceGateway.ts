@@ -28,8 +28,9 @@ export class LarkSourceGateway implements LarkSourceGatewayPort {
       const data = await this.client.get<unknown>("/open-apis/im/v1/messages", params);
       const { items, pageToken: next, hasMore } = parseMessagesData(data);
       for (const raw of items) {
-        const message = normalizeMessage(raw);
-        if (COLLECTED_TYPES.has(message.msgType)) yield message;
+        const msgType = (raw as { msg_type?: unknown }).msg_type;
+        if (typeof msgType !== "string" || !COLLECTED_TYPES.has(msgType)) continue;
+        yield normalizeMessage(raw);
       }
       if (!hasMore || !next) break;
       pageToken = next;

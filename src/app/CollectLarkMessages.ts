@@ -5,6 +5,7 @@ import type { WatermarkStore } from "../shared/store/WatermarkStore";
 
 export interface CollectLarkResult {
   collected: number;
+  failed: string[];
 }
 
 export class CollectLarkMessages {
@@ -16,25 +17,30 @@ export class CollectLarkMessages {
 
   async run(chatIds: string[]): Promise<CollectLarkResult> {
     let collected = 0;
+    const failed: string[] = [];
 
     for (const chatId of chatIds) {
-      const since = await this.watermark.get(chatId);
+      try {
+        const since = await this.watermark.get(chatId);
 
-      const messages: LarkMessage[] = [];
-      for await (const m of this.source.fetchMessages(chatId, since)) messages.push(m);
+        const messages: LarkMessage[] = [];
+        for await (const m of this.source.fetchMessages(chatId, since)) messages.push(m);
 
-      if (messages.length === 0) continue;
+        if (messages.length === 0) continue;
 
-      await this.repo.upsert(messages);
-      collected += messages.length;
+        await this.repo.upsert(messages);
+        collected += messages.length;
 
-      const maxCreatedAt = this.maxCreatedAt(messages);
-      if (maxCreatedAt && (!since || maxCreatedAt > since)) {
-        await this.watermark.set(chatId, maxCreatedAt);
+        const maxCreatedAt = this.maxCreatedAt(messages);
+        if (maxCreatedAt && (!since || maxCreatedAt > since)) {
+          await this.watermark.set(chatId, maxCreatedAt);
+        }
+      } catch {
+        failed.push(chatId);
       }
     }
 
-    return { collected };
+    return { collected, failed };
   }
 
   private maxCreatedAt(messages: LarkMessage[]): string | undefined {
