@@ -69,11 +69,12 @@ Publishes C's translations to Google Drive and Lark Drive as Markdown: `translat
 
 ### Setup
 
-See `docs/guides/google-drive-setup-guide.md` (service account, folder IDs) and `docs/guides/lark-setup-guide.md` §10 (drive scope, folder tokens) — index at `docs/guides/drive-setup-guide.md`. Fill `.env`: `GOOGLE_SA_KEY_FILE`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`, `LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN` (Lark app creds reused from Module B).
+See `docs/guides/google-drive-setup-guide.md` (service account + `pnpm drive:init` which creates & shares the folders) and `docs/guides/lark-setup-guide.md` §10 (drive scope, folder tokens) — index at `docs/guides/drive-setup-guide.md`. Fill `.env`: `GOOGLE_SA_KEY_FILE`, `GDRIVE_SHARE_EMAILS`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`, `LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN` (Lark app creds reused from Module B). Google uses least-privilege `drive.file` scope.
 
 ### Commands
 
 ```bash
+pnpm drive:init                              # one-time: service account creates + shares the folders, prints IDs
 pnpm drive:publish [--target google|lark|both]
 ```
 

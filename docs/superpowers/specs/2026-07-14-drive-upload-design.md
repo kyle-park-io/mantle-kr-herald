@@ -95,7 +95,8 @@ export interface PublishStore {
 
 ### 6-1. `GoogleAuth` (서비스계정 JWT, node:crypto)
 - SA JSON 키(`client_email`, `private_key`)를 읽어, `getToken()`이 access_token을 캐시/갱신.
-- JWT: header `{alg:"RS256",typ:"JWT"}` + claim `{iss:client_email, scope:"https://www.googleapis.com/auth/drive", aud:"https://oauth2.googleapis.com/token", iat, exp:iat+3600}`.
+- JWT: header `{alg:"RS256",typ:"JWT"}` + claim `{iss:client_email, scope:"https://www.googleapis.com/auth/drive.file", aud:"https://oauth2.googleapis.com/token", iat, exp:iat+3600}`.
+  (최소 권한 `drive.file` — SA는 자기가 만든 파일만 접근. 그래서 폴더도 SA가 `drive:init`으로 직접 생성·공유.)
   base64url 인코딩 후 `crypto.sign("RSA-SHA256", data, private_key)`로 서명.
 - `POST https://oauth2.googleapis.com/token` (form-urlencoded: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `assertion=<JWT>`) → `{access_token, expires_in}`. 만료 60초 전 갱신(LarkAuth 패턴).
 - 토큰 엔드포인트는 form-urlencoded라 shared JSON HttpClient 대신 네이티브 `fetch` 사용.
@@ -153,8 +154,9 @@ return { uploaded, byDrive }
 - Lark: `LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN` (앱 토큰은 B의 `LARK_APP_ID/SECRET` 재사용)
 
 **Kyle 프로비저닝 체크리스트** (가이드 문서 `docs/guides/drive-setup-guide.md` 제공 예정):
-1. **Google**: GCP 프로젝트 → 서비스 계정 생성 → JSON 키 다운로드(`GOOGLE_SA_KEY_FILE`) → Drive API 활성화 →
-   대상 review/approved 폴더를 **서비스계정 이메일과 공유**(편집자) → 폴더 ID 확보.
+1. **Google**: GCP 프로젝트 → Drive API 활성화 → 서비스 계정 생성 → JSON 키 다운로드(`GOOGLE_SA_KEY_FILE`) →
+   `GDRIVE_SHARE_EMAILS`(팀 이메일) 설정 → **`pnpm drive:init`**(SA가 review/approved 폴더 생성 + 팀에 편집자
+   공유 + 폴더 ID 출력) → 출력 ID를 `.env`(`GDRIVE_*_FOLDER_ID`)에. (scope `drive.file` 최소 권한.)
 2. **Lark**: B 앱에 Drive 스코프(`drive:drive`) 추가 + 버전 릴리스 → review/approved 폴더 token 확보.
 
 ## 11. 테스트 (TDD)
