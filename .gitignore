@@ -17,3 +17,7 @@ dist/
 
 # Collector output (local JSON)
 output/
+
+# Frontend build output / deps
+web/dist/
+web/node_modules/
