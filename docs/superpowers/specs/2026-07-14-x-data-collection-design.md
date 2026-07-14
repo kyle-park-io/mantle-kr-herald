@@ -226,6 +226,21 @@ repo.markDeleted(missing, now())    // soft-mark, 저장본은 보존
 - **모듈:** ESM (`"type": "module"`), `target: ES2022`, Node 24, pnpm.
 - **선택(옵션):** `@biomejs/biome` lint+format — 필수 아님.
 
+### 10-1. twitterapi.io 접근 방식 (참고)
+
+twitterapi.io는 같은 REST API를 감싼 **세 가지 접근 옵션**이 있다. 우리는 **REST 직접
+호출**을 선택했다.
+
+| 옵션 | 정체 | 우리 채택 | 비고 |
+|---|---|:---:|---|
+| **REST 직접** | `api.twitterapi.io`를 타입드 클라이언트로 직접 호출 | ✅ | 헤드리스 CLI 자동화에 적합, 헥사고날/테스트 용이. 참고 프로젝트(`twitterapi-io`)도 코드는 이 방식 |
+| **Skill** (`kaitoInfra/twitterapi-io`) | 에이전트가 읽는 마크다운 지식 문서(실행코드 없음). `npx skills add`로 설치 | 참고만 | read+write 전체 API 지식(파라미터 케이싱·응답 envelope·write body 규칙)을 문서화. 이미 이 프로젝트 컨텍스트에 스킬로 로드됨 → **엔드포인트 확인용 참고 자료로 활용** |
+| **MCP 서버** (`@twitterapi_io/mcp-server`) | 실행되는 Node 프로세스, MCP(JSON-RPC/stdio)로 read-only 툴 12개 제공 | ❌ | 코드를 못 도는 챗 클라이언트(Claude Desktop/Cursor)용. **모듈 A엔 부적합**: `thread_context` 툴 없음(쓰레드 불가) + `compactResponse()`가 `extendedEntities` 제거(미디어 유실) |
+
+> 세 옵션 비교 원문: `/home/kyle/code/twitterapi-io/docs/twitterapi-io/skill-vs-mcp-server.md`.
+> MCP는 이 파이프라인의 **뒷단**(D 드라이브 = Google Drive MCP, G 시트 = Excel MCP,
+> 8-4 PR메일 = Gmail MCP)에서 에이전트 오케스트레이션 용도로 다시 등장한다.
+
 ## 11. 설정 / 시크릿
 
 - `TWITTERAPI_IO_KEY`를 `.env`에서 로딩 (`.env.example` 제공, `.env`는 gitignore).
