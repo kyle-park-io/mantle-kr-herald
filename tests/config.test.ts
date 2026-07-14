@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { loadConfig, loadLarkConfig } from "../src/config";
+import { loadConfig, loadLarkConfig, loadGoogleDriveConfig, loadLarkDriveConfig } from "../src/config";
 
 const original = process.env.TWITTERAPI_IO_KEY;
 afterEach(() => {
@@ -57,5 +57,53 @@ describe("loadLarkConfig", () => {
     process.env.LARK_APP_SECRET = "sec";
     process.env.LARK_CHAT_IDS = "";
     expect(() => loadLarkConfig()).toThrow(/LARK_CHAT_IDS/);
+  });
+});
+
+describe("loadGoogleDriveConfig", () => {
+  const keys = ["GOOGLE_SA_KEY_FILE", "GDRIVE_REVIEW_FOLDER_ID", "GDRIVE_APPROVED_FOLDER_ID"];
+  const original: Record<string, string | undefined> = {};
+  beforeEach(() => { for (const k of keys) original[k] = process.env[k]; });
+  afterEach(() => { for (const k of keys) { if (original[k] === undefined) delete process.env[k]; else process.env[k] = original[k]; } });
+
+  it("reads the three Google env vars", () => {
+    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
+    process.env.GDRIVE_REVIEW_FOLDER_ID = "R";
+    process.env.GDRIVE_APPROVED_FOLDER_ID = "A";
+    expect(loadGoogleDriveConfig()).toEqual({ saKeyFile: "/k.json", reviewFolderId: "R", approvedFolderId: "A" });
+  });
+
+  it("throws when the key file var is missing", () => {
+    delete process.env.GOOGLE_SA_KEY_FILE;
+    process.env.GDRIVE_REVIEW_FOLDER_ID = "R";
+    process.env.GDRIVE_APPROVED_FOLDER_ID = "A";
+    expect(() => loadGoogleDriveConfig()).toThrow(/GOOGLE_SA_KEY_FILE/);
+  });
+});
+
+describe("loadLarkDriveConfig", () => {
+  const keys = ["LARK_APP_ID", "LARK_APP_SECRET", "LARK_BASE_URL", "LARK_DRIVE_REVIEW_FOLDER_TOKEN", "LARK_DRIVE_APPROVED_FOLDER_TOKEN"];
+  const original: Record<string, string | undefined> = {};
+  beforeEach(() => { for (const k of keys) original[k] = process.env[k]; });
+  afterEach(() => { for (const k of keys) { if (original[k] === undefined) delete process.env[k]; else process.env[k] = original[k]; } });
+
+  it("reads app creds + folder tokens and defaults baseUrl", () => {
+    process.env.LARK_APP_ID = "cli_x";
+    process.env.LARK_APP_SECRET = "sec";
+    delete process.env.LARK_BASE_URL;
+    process.env.LARK_DRIVE_REVIEW_FOLDER_TOKEN = "R";
+    process.env.LARK_DRIVE_APPROVED_FOLDER_TOKEN = "A";
+    expect(loadLarkDriveConfig()).toEqual({
+      appId: "cli_x", appSecret: "sec", baseUrl: "https://open.larksuite.com",
+      reviewFolderToken: "R", approvedFolderToken: "A",
+    });
+  });
+
+  it("throws when a folder token is missing", () => {
+    process.env.LARK_APP_ID = "cli_x";
+    process.env.LARK_APP_SECRET = "sec";
+    process.env.LARK_DRIVE_REVIEW_FOLDER_TOKEN = "R";
+    delete process.env.LARK_DRIVE_APPROVED_FOLDER_TOKEN;
+    expect(() => loadLarkDriveConfig()).toThrow(/LARK_DRIVE_APPROVED_FOLDER_TOKEN/);
   });
 });

@@ -62,3 +62,19 @@ pnpm glossary add --term <t> --rule <translate|transliterate|keep> [--target <ko
 ```
 
 Worksheets/translations are written to `output/` (git-ignored).
+
+## Module D — Drive upload (Google + Lark)
+
+Publishes C's translations to Google Drive and Lark Drive as Markdown: `translated` → source+Korean review docs, `approved` → Korean-only finals. Headless (coded REST), no Claude API.
+
+### Setup
+
+See `docs/guides/drive-setup-guide.md`. Fill `.env`: `GOOGLE_SA_KEY_FILE`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`, `LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN` (Lark app creds reused from Module B).
+
+### Commands
+
+```bash
+pnpm publish [--target google|lark|both]
+```
+
+Idempotent per drive via `output/publish-state.json`.
