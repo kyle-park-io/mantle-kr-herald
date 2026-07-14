@@ -1,11 +1,16 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { CollectedThread } from "../../domain/models";
 import type { CollectionRepository } from "../../ports/CollectionRepository";
 import type { WatermarkStore } from "../../ports/WatermarkStore";
 
 interface StateFile {
   watermark?: string;
+}
+
+function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
+  return err instanceof Error && "code" in err;
 }
 
 export class LocalJsonStore implements CollectionRepository, WatermarkStore {
@@ -20,14 +25,20 @@ export class LocalJsonStore implements CollectionRepository, WatermarkStore {
   private async readJson<T>(path: string, fallback: T): Promise<T> {
     try {
       return JSON.parse(await readFile(path, "utf8")) as T;
-    } catch {
-      return fallback;
+    } catch (err: unknown) {
+      if (isErrnoException(err) && err.code === "ENOENT") {
+        return fallback;
+      }
+      const cause = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to read JSON store file at ${path}: ${cause}`, { cause: err });
     }
   }
 
   private async writeJson(path: string, data: unknown): Promise<void> {
     await mkdir(this.dir, { recursive: true });
-    await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+    const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
+    await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+    await rename(tmpPath, path);
   }
 
   async loadAll(): Promise<CollectedThread[]> {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalJsonStore } from "../../src/adapters/store/LocalJsonStore";
@@ -69,5 +69,27 @@ describe("LocalJsonStore", () => {
     expect(await store.get()).toBeUndefined();
     await store.set("2026-04-04T00:00:00.000Z");
     expect(await store.get()).toBe("2026-04-04T00:00:00.000Z");
+  });
+
+  it("loadAll rejects on a corrupt items.json instead of silently returning [] (which would cause upsert to overwrite the store)", async () => {
+    const itemsPath = join(dir, "items.json");
+    await writeFile(itemsPath, "{ not json", "utf8");
+    const store = new LocalJsonStore(dir);
+
+    await expect(store.loadAll()).rejects.toThrow();
+
+    // The corrupt file must be left untouched -- no silent overwrite.
+    expect(await readFile(itemsPath, "utf8")).toBe("{ not json");
+  });
+
+  it("upsert rejects (and does not overwrite) when items.json is corrupt", async () => {
+    const itemsPath = join(dir, "items.json");
+    await writeFile(itemsPath, "{ not json", "utf8");
+    const store = new LocalJsonStore(dir);
+
+    await expect(store.upsert([thread("1", ["1"])])).rejects.toThrow();
+
+    // Must not have discarded the (unreadable) prior content by writing just the new batch.
+    expect(await readFile(itemsPath, "utf8")).toBe("{ not json");
   });
 });
