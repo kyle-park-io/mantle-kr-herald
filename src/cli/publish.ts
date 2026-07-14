@@ -14,7 +14,7 @@ function argValue(flag: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-const target = argValue("--target") ?? "both"; // google | lark | both
+const target = argValue("--target") ?? "google"; // google | lark | both (Lark is opt-in)
 const uploaders: DriveUploader[] = [];
 
 if (target === "google" || target === "both") {
