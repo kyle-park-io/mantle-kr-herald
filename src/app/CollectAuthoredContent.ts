@@ -2,7 +2,7 @@ import { assembleThreads } from "../domain/threadAssembler";
 import type { CollectedThread, SourceTweet } from "../domain/models";
 import type { SourceGateway } from "../ports/SourceGateway";
 import type { CollectionRepository } from "../ports/CollectionRepository";
-import type { WatermarkStore } from "../ports/WatermarkStore";
+import type { WatermarkStore } from "../shared/store/WatermarkStore";
 import { systemClock, type Clock } from "../ports/Clock";
 
 export interface CollectResult {
@@ -19,7 +19,7 @@ export class CollectAuthoredContent {
   ) {}
 
   async run(userName: string): Promise<CollectResult> {
-    const since = await this.watermark.get();
+    const since = await this.watermark.get(userName);
 
     const fetched: SourceTweet[] = [];
     for await (const t of this.source.fetchAuthoredTweets(userName, since)) fetched.push(t);
@@ -39,7 +39,7 @@ export class CollectAuthoredContent {
 
     const maxCreatedAt = this.maxCreatedAt(fetched);
     if (maxCreatedAt && (!since || maxCreatedAt > since)) {
-      await this.watermark.set(maxCreatedAt);
+      await this.watermark.set(userName, maxCreatedAt);
     }
 
     return { fetchedCount: fetched.length, threadCount: collected.length };

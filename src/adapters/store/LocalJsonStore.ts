@@ -1,16 +1,11 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import type { CollectedThread, SourceTweet } from "../../domain/models";
 import type { CollectionRepository } from "../../ports/CollectionRepository";
-import type { WatermarkStore } from "../../ports/WatermarkStore";
+import type { WatermarkStore } from "../../shared/store/WatermarkStore";
+import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
 
 interface StateFile {
-  watermark?: string;
-}
-
-function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
-  return err instanceof Error && "code" in err;
+  watermarks?: Record<string, string>;
 }
 
 export class LocalJsonStore implements CollectionRepository, WatermarkStore {
@@ -22,27 +17,8 @@ export class LocalJsonStore implements CollectionRepository, WatermarkStore {
     this.statePath = join(dir, "state.json");
   }
 
-  private async readJson<T>(path: string, fallback: T): Promise<T> {
-    try {
-      return JSON.parse(await readFile(path, "utf8")) as T;
-    } catch (err: unknown) {
-      if (isErrnoException(err) && err.code === "ENOENT") {
-        return fallback;
-      }
-      const cause = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to read JSON store file at ${path}: ${cause}`, { cause: err });
-    }
-  }
-
-  private async writeJson(path: string, data: unknown): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
-    const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
-    await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-    await rename(tmpPath, path);
-  }
-
   async loadAll(): Promise<CollectedThread[]> {
-    return this.readJson<CollectedThread[]>(this.itemsPath, []);
+    return readJsonFile<CollectedThread[]>(this.itemsPath, []);
   }
 
   async upsert(threads: CollectedThread[]): Promise<void> {
@@ -56,11 +32,9 @@ export class LocalJsonStore implements CollectionRepository, WatermarkStore {
         firstSeenAt: prev?.firstSeenAt ?? incoming.firstSeenAt,
       });
     }
-    await this.writeJson(this.itemsPath, [...byRoot.values()]);
+    await writeJsonFileAtomic(this.dir, this.itemsPath, [...byRoot.values()]);
   }
 
-  // Union existing + incoming tweets by id (incoming wins for duplicates),
-  // re-sorted chronologically so no previously-stored tweet is ever dropped.
   private mergeTweets(existing: SourceTweet[], incoming: SourceTweet[]): SourceTweet[] {
     const byId = new Map<string, SourceTweet>();
     for (const t of existing) byId.set(t.id, t);
@@ -92,15 +66,17 @@ export class LocalJsonStore implements CollectionRepository, WatermarkStore {
         changed = true;
       }
     }
-    if (changed) await this.writeJson(this.itemsPath, all);
+    if (changed) await writeJsonFileAtomic(this.dir, this.itemsPath, all);
   }
 
-  async get(): Promise<string | undefined> {
-    const state = await this.readJson<StateFile>(this.statePath, {});
-    return state.watermark;
+  async get(key: string): Promise<string | undefined> {
+    const state = await readJsonFile<StateFile>(this.statePath, {});
+    return state.watermarks?.[key];
   }
 
-  async set(time: string): Promise<void> {
-    await this.writeJson(this.statePath, { watermark: time } satisfies StateFile);
+  async set(key: string, time: string): Promise<void> {
+    const state = await readJsonFile<StateFile>(this.statePath, {});
+    const watermarks = { ...(state.watermarks ?? {}), [key]: time };
+    await writeJsonFileAtomic(this.dir, this.statePath, { watermarks } satisfies StateFile);
   }
 }

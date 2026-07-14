@@ -6,9 +6,18 @@ design/
 .env.*
 !.env.example
 
+# Local keys (Google service account JSON, etc.) — never commit the actual keys
+keys/*
+!keys/.gitkeep
+!keys/README.md
+
 # Dependencies / build
 node_modules/
 dist/
 
 # Collector output (local JSON)
 output/
+
+# Frontend build output / deps
+web/dist/
+web/node_modules/

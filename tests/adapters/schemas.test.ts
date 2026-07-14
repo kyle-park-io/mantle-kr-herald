@@ -59,6 +59,12 @@ describe("normalizeTweet", () => {
     });
     expect(t.media).toEqual([{ type: "photo", url: "https://x/y.jpg" }]);
   });
+
+  it("tolerates a missing author or userName (authorUserName defaults to '')", () => {
+    const base = { id: "9", url: "u", text: "hi", createdAt: "Mon Jun 29 05:58:17 +0000 2026" };
+    expect(normalizeTweet({ ...base, author: {} }).authorUserName).toBe("");
+    expect(normalizeTweet(base).authorUserName).toBe("");
+  });
 });
 
 describe("parseTweetList", () => {

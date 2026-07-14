@@ -43,9 +43,8 @@ export class HttpClient implements IHttpClient {
         } catch {
           // ignore parse error
         }
-        if (res.status === 401) throw new Error("Invalid API key or expired login cookies");
-        if (res.status === 402)
-          throw new Error("Insufficient credits — top up at twitterapi.io/dashboard");
+        if (res.status === 401) throw new Error(`HTTP 401: unauthorized — ${detail}`);
+        if (res.status === 402) throw new Error(`HTTP 402: payment required — ${detail}`);
         throw new Error(`HTTP ${res.status}: ${detail}`);
       }
 
