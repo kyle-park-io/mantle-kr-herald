@@ -82,7 +82,7 @@ describe("loadGoogleDriveConfig", () => {
 });
 
 describe("loadGoogleDriveInitConfig", () => {
-  const keys = ["GOOGLE_SA_KEY_FILE", "GDRIVE_SHARE_EMAILS"];
+  const keys = ["GOOGLE_SA_KEY_FILE", "GDRIVE_SHARE_EMAILS", "GDRIVE_PARENT_FOLDER_NAME"];
   const original: Record<string, string | undefined> = {};
   beforeEach(() => { for (const k of keys) original[k] = process.env[k]; });
   afterEach(() => { for (const k of keys) { if (original[k] === undefined) delete process.env[k]; else process.env[k] = original[k]; } });
@@ -90,9 +90,11 @@ describe("loadGoogleDriveInitConfig", () => {
   it("parses the key file and comma-separated share emails (trimmed, empties filtered)", () => {
     process.env.GOOGLE_SA_KEY_FILE = "/k.json";
     process.env.GDRIVE_SHARE_EMAILS = "a@b.com, c@d.com,,  e@f.com  ";
+    delete process.env.GDRIVE_PARENT_FOLDER_NAME;
     expect(loadGoogleDriveInitConfig()).toEqual({
       saKeyFile: "/k.json",
       shareEmails: ["a@b.com", "c@d.com", "e@f.com"],
+      parentFolderName: "Mantle KR Herald",
     });
   });
 
@@ -105,7 +107,24 @@ describe("loadGoogleDriveInitConfig", () => {
   it("defaults shareEmails to an empty array when GDRIVE_SHARE_EMAILS is unset", () => {
     process.env.GOOGLE_SA_KEY_FILE = "/k.json";
     delete process.env.GDRIVE_SHARE_EMAILS;
-    expect(loadGoogleDriveInitConfig()).toEqual({ saKeyFile: "/k.json", shareEmails: [] });
+    delete process.env.GDRIVE_PARENT_FOLDER_NAME;
+    expect(loadGoogleDriveInitConfig()).toEqual({
+      saKeyFile: "/k.json",
+      shareEmails: [],
+      parentFolderName: "Mantle KR Herald",
+    });
+  });
+
+  it("uses a trimmed GDRIVE_PARENT_FOLDER_NAME when set", () => {
+    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
+    process.env.GDRIVE_PARENT_FOLDER_NAME = "  Custom Parent  ";
+    expect(loadGoogleDriveInitConfig().parentFolderName).toBe("Custom Parent");
+  });
+
+  it("falls back to the default parentFolderName when GDRIVE_PARENT_FOLDER_NAME is blank", () => {
+    process.env.GOOGLE_SA_KEY_FILE = "/k.json";
+    process.env.GDRIVE_PARENT_FOLDER_NAME = "   ";
+    expect(loadGoogleDriveInitConfig().parentFolderName).toBe("Mantle KR Herald");
   });
 });
 

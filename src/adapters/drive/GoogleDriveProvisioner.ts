@@ -10,13 +10,18 @@ export class GoogleDriveProvisioner {
     private readonly fetchFn: typeof fetch = fetch,
   ) {}
 
-  /** Create a Drive folder owned by the service account. */
-  async createFolder(name: string): Promise<{ id: string; name: string }> {
+  /** Create a Drive folder owned by the service account, optionally nested under parentId. */
+  async createFolder(name: string, parentId?: string): Promise<{ id: string; name: string }> {
     const token = await this.auth.getToken();
+    const body: { name: string; mimeType: string; parents?: string[] } = {
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+    };
+    if (parentId) body.parents = [parentId];
     const res = await this.fetchFn(FILES_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder" }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`Google Drive createFolder failed: HTTP ${res.status}`);
     const data = (await res.json()) as { id?: string; name?: string };
@@ -24,10 +29,11 @@ export class GoogleDriveProvisioner {
     return { id: data.id, name: data.name ?? name };
   }
 
-  /** Find an SA-created folder by exact name (drive.file lists only app-created files). Returns undefined if none. */
-  async findFolder(name: string): Promise<{ id: string; name: string } | undefined> {
+  /** Find an SA-created folder by exact name (drive.file lists only app-created files), optionally scoped to a parent. Returns undefined if none. */
+  async findFolder(name: string, parentId?: string): Promise<{ id: string; name: string } | undefined> {
     const token = await this.auth.getToken();
-    const q = `name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    let q = `name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    if (parentId) q += ` and '${parentId}' in parents`;
     const url = `${FILES_URL}?q=${encodeURIComponent(q)}&spaces=drive&fields=${encodeURIComponent("files(id,name)")}`;
     const res = await this.fetchFn(url, {
       method: "GET",

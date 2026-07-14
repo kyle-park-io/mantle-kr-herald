@@ -35,6 +35,24 @@ describe("GoogleDriveProvisioner", () => {
       const provisioner = new GoogleDriveProvisioner(auth, badFetch);
       await expect(provisioner.createFolder("x")).rejects.toThrow(/403/);
     });
+
+    it("includes parents in the body when a parentId is given", async () => {
+      const cap: { body?: string } = {};
+      const provisioner = new GoogleDriveProvisioner(auth, fakeFetch(cap));
+
+      await provisioner.createFolder("review", "PARENT_ID");
+
+      expect(cap.body).toContain('"parents":["PARENT_ID"]');
+    });
+
+    it("omits parents from the body when no parentId is given", async () => {
+      const cap: { body?: string } = {};
+      const provisioner = new GoogleDriveProvisioner(auth, fakeFetch(cap));
+
+      await provisioner.createFolder("review");
+
+      expect(cap.body).not.toContain("parents");
+    });
   });
 
   describe("findFolder", () => {
@@ -77,6 +95,21 @@ describe("GoogleDriveProvisioner", () => {
       const badFetch = (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch;
       const provisioner = new GoogleDriveProvisioner(auth, badFetch);
       await expect(provisioner.findFolder("x")).rejects.toThrow(/403/);
+    });
+
+    it("scopes the query to a parent folder when parentId is given", async () => {
+      const cap: { url?: string } = {};
+      const fetchFn = (async (url: string) => {
+        cap.url = String(url);
+        return new Response(JSON.stringify({ files: [] }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+      }) as unknown as typeof fetch;
+      const provisioner = new GoogleDriveProvisioner(auth, fetchFn);
+
+      await provisioner.findFolder("review", "PARENT_ID");
+
+      expect(decodeURIComponent(cap.url ?? "")).toContain("'PARENT_ID' in parents");
     });
   });
 

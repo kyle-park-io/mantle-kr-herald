@@ -7,26 +7,34 @@ const config = loadGoogleDriveInitConfig();
 const auth = await GoogleAuth.fromKeyFile(config.saKeyFile);
 const provisioner = new GoogleDriveProvisioner(auth);
 
-async function ensureFolder(name: string): Promise<{ id: string; created: boolean }> {
+async function ensureFolder(
+  name: string,
+  parentId: string | undefined,
+  share: boolean,
+): Promise<{ id: string; created: boolean }> {
   if (!force) {
-    const existing = await provisioner.findFolder(name);
+    const existing = await provisioner.findFolder(name, parentId);
     if (existing) return { id: existing.id, created: false };
   }
-  const created = await provisioner.createFolder(name);
-  for (const email of config.shareEmails) {
-    await provisioner.share(created.id, email, "writer");
+  const created = await provisioner.createFolder(name, parentId);
+  if (share) {
+    for (const email of config.shareEmails) {
+      await provisioner.share(created.id, email, "writer");
+    }
   }
   return { id: created.id, created: true };
 }
 
-const review = await ensureFolder("Mantle KR — review");
-const approved = await ensureFolder("Mantle KR — approved");
+// Parent folder is shared with the team; review/approved inherit its permissions.
+const parent = await ensureFolder(config.parentFolderName, undefined, true);
+const review = await ensureFolder("review", parent.id, false);
+const approved = await ensureFolder("approved", parent.id, false);
 
-for (const [label, r] of [["review", review], ["approved", approved]] as const) {
-  console.log(r.created ? `${label}: created + shared` : `${label}: already exists (reused; sharing unchanged)`);
-}
+console.log(`parent "${config.parentFolderName}": ${parent.created ? "created + shared" : "already exists (reused)"} → ${parent.id}`);
+console.log(`  review:   ${review.created ? "created" : "already exists"} → ${review.id}`);
+console.log(`  approved: ${approved.created ? "created" : "already exists"} → ${approved.id}`);
 if (config.shareEmails.length === 0) {
-  console.log("WARNING: GDRIVE_SHARE_EMAILS is empty — newly created folders were not shared with anyone.");
+  console.log("WARNING: GDRIVE_SHARE_EMAILS is empty — the parent folder was not shared with anyone.");
 }
 console.log("");
 console.log("Put these in your .env:");

@@ -54,6 +54,7 @@ export function loadGoogleDriveConfig(): GoogleDriveConfig {
 export interface GoogleDriveInitConfig {
   saKeyFile: string;
   shareEmails: string[];
+  parentFolderName: string;
 }
 
 export function loadGoogleDriveInitConfig(): GoogleDriveInitConfig {
@@ -63,7 +64,8 @@ export function loadGoogleDriveInitConfig(): GoogleDriveInitConfig {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
-  return { saKeyFile, shareEmails };
+  const parentFolderName = process.env.GDRIVE_PARENT_FOLDER_NAME?.trim() || "Mantle KR Herald";
+  return { saKeyFile, shareEmails, parentFolderName };
 }
 
 export interface LarkDriveConfig {
