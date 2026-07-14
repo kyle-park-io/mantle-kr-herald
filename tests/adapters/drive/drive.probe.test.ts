@@ -1,18 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { readFile } from "node:fs/promises";
-import { GoogleServiceAccountAuth } from "../../../src/adapters/drive/GoogleServiceAccountAuth";
+import { createGoogleAuth } from "../../../src/adapters/drive/createGoogleAuth";
+import { loadGoogleAuthConfig } from "../../../src/config";
 import { GoogleDriveUploader } from "../../../src/adapters/drive/GoogleDriveUploader";
 import { LarkDriveUploader } from "../../../src/adapters/drive/LarkDriveUploader";
 import { LarkAuth } from "../../../src/adapters/lark/LarkAuth";
 import { HttpClient } from "../../../src/shared/http/HttpClient";
 
-const saKeyFile = process.env.GOOGLE_SA_KEY_FILE;
+// Configured via OAuth (refresh token) or a service-account key file — probe the active one.
+const googleAuthConfigured = !!process.env.GOOGLE_OAUTH_REFRESH_TOKEN || !!process.env.GOOGLE_SA_KEY_FILE;
 
-// Skipped unless a Google service-account key file is configured.
-describe.skipIf(!saKeyFile)("PROBE: Google service-account auth", () => {
-  it("mints a real access token from the service account key", async () => {
-    await readFile(saKeyFile!, "utf8"); // fail fast if unreadable
-    const auth = await GoogleServiceAccountAuth.fromKeyFile(saKeyFile!);
+describe.skipIf(!googleAuthConfigured)("PROBE: Google auth", () => {
+  it("mints a real access token from the configured auth (oauth or service account)", async () => {
+    const auth = await createGoogleAuth(loadGoogleAuthConfig());
     const token = await auth.getToken();
     // eslint-disable-next-line no-console
     console.log(`[probe] Google token acquired (len ${token.length})`);
@@ -27,9 +26,9 @@ const larkReviewToken = process.env.LARK_DRIVE_REVIEW_FOLDER_TOKEN;
 const larkBase = process.env.LARK_BASE_URL?.trim() || "https://open.larksuite.com";
 const stamp = Date.now();
 
-describe.skipIf(!saKeyFile || !gdriveReview)("PROBE: Google Drive upload", () => {
+describe.skipIf(!googleAuthConfigured || !gdriveReview)("PROBE: Google Drive upload", () => {
   it("uploads a throwaway markdown file to the review folder", async () => {
-    const auth = await GoogleServiceAccountAuth.fromKeyFile(saKeyFile!);
+    const auth = await createGoogleAuth(loadGoogleAuthConfig());
     const uploader = new GoogleDriveUploader(auth, { review: gdriveReview!, approved: gdriveReview! });
     const res = await uploader.upload({ name: `probe-${stamp}.md`, content: "# probe", folder: "review" });
     // eslint-disable-next-line no-console

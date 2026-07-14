@@ -69,12 +69,15 @@ Publishes C's translations to Google Drive and Lark Drive as Markdown: `translat
 
 ### Setup
 
-See `docs/guides/google-drive-setup-guide.md` (service account + `pnpm drive:init` which creates & shares the folders) and `docs/guides/lark-setup-guide.md` §10 (drive scope, folder tokens) — index at `docs/guides/drive-setup-guide.md`. Fill `.env`: `GOOGLE_SA_KEY_FILE`, `GDRIVE_SHARE_EMAILS`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`, `LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN` (Lark app creds reused from Module B). Google uses least-privilege `drive.file` scope.
+See `docs/guides/google-drive-setup-guide.md` and `docs/guides/lark-setup-guide.md` §10 (drive scope, folder tokens) — index at `docs/guides/drive-setup-guide.md`.
+
+Google Drive auth has two methods (least-privilege `drive.file` scope either way): **OAuth** (recommended for a personal Gmail — files owned by you; run `pnpm google:auth` to mint `GOOGLE_OAUTH_REFRESH_TOKEN`) or **service account** (Google Workspace Shared Drive only — a service account has no storage quota so it can't upload to a personal Drive). Then `pnpm drive:init` creates & shares the folders. Fill `.env`: Google auth (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`/`REFRESH_TOKEN`, or `GOOGLE_SA_KEY_FILE` + `GOOGLE_AUTH_MODE=service_account`), `GDRIVE_SHARE_EMAILS`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`, and `LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN` (Lark app creds reused from Module B).
 
 ### Commands
 
 ```bash
-pnpm drive:init                              # service account creates + shares the folders, prints IDs (idempotent; --force to recreate)
+pnpm google:auth                             # one-time OAuth consent → prints GOOGLE_OAUTH_REFRESH_TOKEN (personal Gmail)
+pnpm drive:init                              # creates + shares the folders, prints IDs (idempotent; --force to recreate)
 pnpm drive:publish [--target google|lark|both]
 ```
 

@@ -1,126 +1,174 @@
 # Google Drive 셋업 가이드 (서브시스템 D)
 
-> `pnpm drive:publish`가 Google Drive에 업로드하려면 `.env`에 아래 값을 채워야 합니다:
-> `GOOGLE_SA_KEY_FILE`, `GDRIVE_SHARE_EMAILS`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`.
+> `pnpm drive:publish`가 Google Drive에 업로드하려면 `.env`에 **인증**(아래 방법 A 또는 B) + **폴더 ID**
+> (`GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`)가 필요합니다.
 >
-> **최소 권한 설계:** OAuth 스코프는 좁은 **`drive.file`** 이라, 서비스 계정은 **자기가 만든 파일만**
-> 접근합니다(다른 드라이브 전체엔 손 못 댐). 그래서 **폴더도 서비스 계정이 직접 만들고**(`pnpm drive:init`),
-> 그 폴더를 팀에 공유합니다 — 사람이 미리 만든 폴더를 넘겨줄 필요가 없어요.
+> **핵심:** **서비스계정은 저장 용량이 0**이라 **개인 Gmail 드라이브에는 파일을 못 올립니다**(업로드 시
+> `403 storageQuotaExceeded`). 그래서 개인 계정은 **방법 A(OAuth)**, Google Workspace의 **공유 드라이브
+> (Shared Drive)** 가 있을 때만 **방법 B(서비스계정)** 를 씁니다.
 
 ---
 
-## 0. 준비물
+## 0. 어떤 방식을 쓸까?
 
-- Google 계정 + [Google Cloud Console](https://console.cloud.google.com) 접근 권한
-- 폴더를 공유받을 **팀원 이메일**들 (편집자 권한을 줄 대상)
+| | **방법 A — OAuth** (개인 Gmail 권장) | **방법 B — 서비스계정** (Workspace 확장용) |
+| --- | --- | --- |
+| 파일 소유자 | **너 자신** | 공유 드라이브 |
+| 저장 할당량 | 있음(네 15GB) | 공유 드라이브 |
+| 개인 Gmail | ✅ 됨 | ❌ 업로드 403 |
+| 셋업 | OAuth 동의 1회 → refresh token | SA 키 + 공유 드라이브 |
 
----
-
-## 1. GCP 프로젝트 선택/생성
-
-1. https://console.cloud.google.com 접속
-2. 상단 프로젝트 선택기 → 기존 프로젝트 선택 또는 **New Project** 생성 (예: `mantle-kr-herald`)
-
-> GCP는 **인증/API 관문**일 뿐이고, 실제 파일은 일반 구글 드라이브에 저장됩니다. 무료(프로젝트 생성·Drive
-> API 쿼터 무료)이고 VM 같은 인프라는 안 띄웁니다.
+→ **개인 Gmail이면 방법 A.** Workspace + 공유 드라이브가 있을 때만 방법 B가 의미 있습니다.
+스코프는 두 방식 모두 좁은 **`drive.file`**(앱이 만든 파일만 접근) 최소권한을 씁니다.
 
 ---
 
-## 2. Google Drive API 사용 설정
+## 공통 1. GCP 프로젝트 + Drive API 사용 설정
 
-1. 왼쪽 메뉴 **APIs & Services → Library** (또는 검색창에 "Google Drive API")
-2. **Google Drive API** 클릭 → **Enable**
-   - 안 켜면 업로드 시 403(API not enabled) 오류가 납니다.
+1. https://console.cloud.google.com → 상단 프로젝트 선택기 → 기존 선택 또는 **New Project**(예: `mantle-kr-herald`)
+2. **APIs & Services → Library** → "Google Drive API" → **Enable**
+   - 안 켜면 업로드 시 403(API not enabled).
+
+> GCP는 **인증/API 관문**일 뿐, 실제 파일은 일반 구글 드라이브에 저장됩니다. 무료이고 VM 등은 안 띄웁니다.
 
 ---
 
-## 3. 서비스 계정 생성 + JSON 키 → `GOOGLE_SA_KEY_FILE`
+## 방법 A — OAuth (개인 Gmail 권장)
 
-1. **APIs & Services → Credentials** → **Create Credentials** → **Service account**
-   (또는 **IAM & Admin → Service Accounts → Create Service Account**)
-2. 이름 입력 (예: `mantle-kr-herald-uploader`) → **Create and Continue** → 역할은 비워도 됨 → **Done**
-3. 그 서비스 계정 → **Keys** 탭 → **Add Key → Create new key → JSON** → **Create**
-   - `.json` 파일이 다운로드됩니다. **레포의 `keys/` 폴더**로 옮기세요 (예: `keys/mantle-sa.json`).
-     이 폴더는 `.gitignore`로 **실제 키가 커밋되지 않습니다**(`keys/README.md`만 추적). 자세한 건 `keys/README.md`.
-   - ⚠️ 이 키는 비밀번호와 같은 **장기 자격증명**입니다 — 절대 커밋·공유 금지. `chmod 600 keys/*.json` 권장, 주기적 회전.
-4. `.env`에 그 **파일 경로**를 넣습니다 (레포 루트 기준 상대경로 OK):
+앱이 **"너로서"** 동작하므로 파일이 네 소유가 되고(할당량 O), 업로드가 됩니다.
+
+### A-1. OAuth 동의 화면 구성
+1. **APIs & Services → OAuth consent screen** → User Type **External** → Create
+2. 앱 이름 / 지원 이메일 입력 (나머진 기본값)
+3. **Test users** 에 **네 Gmail 주소를 추가** (테스트 모드에선 등록된 사용자만 로그인 가능)
+
+### A-2. OAuth 클라이언트 ID 생성 (Desktop app)
+1. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
+2. Application type: **Desktop app** ← 중요(로컬 `127.0.0.1` 리디렉트가 자동 허용됨)
+3. 생성된 **Client ID / Client secret** 을 `.env`에:
    ```bash
-   GOOGLE_SA_KEY_FILE=keys/mantle-sa.json
+   GOOGLE_OAUTH_CLIENT_ID=xxxx.apps.googleusercontent.com
+   GOOGLE_OAUTH_CLIENT_SECRET=xxxx
+   ```
+   > Desktop 앱의 secret은 엄밀히는 "진짜 비밀"이 아니지만(배포 앱에 내장되는 값), 그래도 `.env`(git-ignored)에만 둡니다.
+
+### A-3. refresh token 발급 → `pnpm google:auth`
+```bash
+pnpm google:auth
+```
+1. 출력된 URL을 **같은 PC의 브라우저**에서 열고 네 계정으로 **승인**
+2. "이 앱은 Google에서 확인하지 않았습니다" 경고가 나오면 **고급 → (안전하지 않은 페이지로) 이동** — 테스트 유저라 정상입니다
+3. 승인하면 터미널에 아래가 출력됩니다. 그 줄을 `.env`에 붙여넣으세요:
+   ```bash
+   GOOGLE_OAUTH_REFRESH_TOKEN=1//0g...
    ```
 
-> (`drive.file` 스코프라 이 키가 유출돼도 도달 범위는 **서비스 계정이 만든 파일만**입니다 — 드라이브 전체가
-> 아니라서 블래스트 반경이 작아요.)
+> **WSL 사용 시:** 서버는 WSL 안 `127.0.0.1:<포트>`에서 대기합니다. URL을 복사해 **Windows 브라우저**에 붙여
+> 넣으면, 승인 후 `127.0.0.1`로의 리디렉트가 WSL2 localhost 포워딩으로 WSL 서버까지 도달해 자동 완료됩니다.
+>
+> 스코프는 기본 `drive.file`(최소권한). 필요할 때만 `GOOGLE_OAUTH_SCOPE`로 넓히세요.
+
+→ **[공통 2. 폴더 생성](#공통-2-폴더-자동-생성--pnpm-driveinit)** 으로 이동.
 
 ---
 
-## 4. 폴더 자동 생성 + 팀 공유 → `pnpm drive:init`
+## 방법 B — 서비스계정 (Workspace + Shared Drive, 확장용)
 
-서비스 계정이 폴더 구조를 **직접 만들고** 팀에 **편집자(editor)** 로 공유합니다. 구조는:
+> ⚠️ **개인 Gmail에선 업로드 불가**(SA 저장 용량 0 → `403 storageQuotaExceeded`). Google Workspace의
+> **공유 드라이브(Shared Drive)** 가 있을 때만 의미가 있습니다. 지금은 방법 A를 권장하고, 이 경로는 향후
+> 조직 계정으로 확장할 때를 위해 남겨둡니다.
+
+### B-1. 서비스계정 + JSON 키
+1. **APIs & Services → Credentials → Create Credentials → Service account** (또는 **IAM & Admin → Service Accounts**)
+2. 이름 입력 → Create → 역할 비워도 됨 → Done
+3. 해당 SA → **Keys** → **Add Key → Create new key → JSON** → 다운로드
+4. 받은 `.json`을 레포 **`keys/`** 폴더로 옮기고(예: `keys/mantle-sa.json`) `.env`에:
+   ```bash
+   GOOGLE_AUTH_MODE=service_account
+   GOOGLE_SA_KEY_FILE=keys/mantle-sa.json
+   ```
+   `keys/`는 `.gitignore`로 실제 키가 커밋되지 않습니다(`keys/README.md`만 추적). ⚠️ 키는 장기 자격증명 — 절대 커밋·공유 금지, `chmod 600` 권장.
+
+### B-2. 공유 드라이브에 SA 추가
+- Workspace **공유 드라이브** → 멤버 관리 → **SA 이메일**(`...@...iam.gserviceaccount.com`)을 **콘텐츠 관리자/편집자**로 추가.
+- 이후 폴더 생성/업로드는 공유 드라이브 안에서 이뤄져야 합니다(파일 소유자가 공유 드라이브라 SA 할당량 문제 없음).
+
+> 참고: 공유 드라이브 완전 지원(`supportsAllDrives`)은 추후 확장 항목입니다. 현재 검증된 경로는 방법 A(OAuth)예요.
+
+---
+
+## 공통 2. 폴더 자동 생성 → `pnpm drive:init`
+
+`drive:init`이 폴더 구조를 만들고 팀에 **편집자**로 공유합니다. 구조:
 
 ```
-Mantle KR Herald   ← 상위 폴더 (팀에 공유; 이 하나만 공유하면 됨)
-├─ review          ← GDRIVE_REVIEW_FOLDER_ID (상위 권한 상속)
-└─ approved        ← GDRIVE_APPROVED_FOLDER_ID (상위 권한 상속)
+Mantle KR Herald   ← 상위 폴더 (이 하나만 팀 공유; 하위는 상속)
+├─ review          ← GDRIVE_REVIEW_FOLDER_ID
+└─ approved        ← GDRIVE_APPROVED_FOLDER_ID
 ```
 
-> **`GDRIVE_REVIEW_FOLDER_ID`는 "경로"가 아니라 폴더 "ID"입니다.** `/내드라이브/…` 같은 경로가 아니라
-> `1AbCdEf…` 같은 문자열이에요. **직접 타이핑하지 말고** `drive:init`이 출력한 값을 그대로 붙여넣으세요.
-> 폴더 위치는 정할 필요가 없습니다 — 서비스 계정이 상위 폴더를 자기 드라이브에 만들고, 그걸 팀에 공유합니다.
+> **`GDRIVE_REVIEW_FOLDER_ID`는 "경로"가 아니라 폴더 "ID"**(`1AbCdEf…`)입니다. 직접 타이핑하지 말고
+> `drive:init` 출력값을 붙여넣으세요.
 
-1. `.env`에 공유할 **팀 이메일**을 콤마로 넣습니다:
+1. `.env`에 공유할 **팀 이메일**:
    ```bash
    GDRIVE_SHARE_EMAILS=alice@yourteam.com,bob@yourteam.com
    ```
-   (비워두면 폴더는 만들어지지만 아무도 못 봐요 — 나중에 채우고 **다시 돌리면 그때 공유됩니다**.)
-   상위 폴더 이름을 바꾸고 싶으면(선택) `GDRIVE_PARENT_FOLDER_NAME=...` (기본값 `Mantle KR Herald`).
+   (비워도 폴더는 생성됨 — 나중에 채우고 **다시 돌리면 그때 공유**됩니다.)
+   상위 폴더 이름 변경(선택): `GDRIVE_PARENT_FOLDER_NAME=...` (기본 `Mantle KR Herald`).
 2. 실행:
    ```bash
    pnpm drive:init
    ```
-3. 출력된 두 줄을 그대로 `.env`에 붙여넣습니다:
+3. 출력된 두 줄을 `.env`에 붙여넣기:
    ```bash
-   GDRIVE_REVIEW_FOLDER_ID=<출력된 review 폴더 ID>
-   GDRIVE_APPROVED_FOLDER_ID=<출력된 approved 폴더 ID>
+   GDRIVE_REVIEW_FOLDER_ID=<출력된 review ID>
+   GDRIVE_APPROVED_FOLDER_ID=<출력된 approved ID>
    ```
 
-> `drive:init`은 **재실행해도 안전**합니다(멱등) — 같은 이름의 폴더가 이미 있으면 **그걸 재사용**하고 새로
-> 만들지 않아요. 폴더 ID를 잃어버렸으면 그냥 다시 돌리면 같은 폴더 ID가 다시 출력됩니다.
-> **공유는 매 실행마다 "보장"** 됩니다 — 이미 공유된 이메일은 건너뛰고, `GDRIVE_SHARE_EMAILS`에 새로 추가된
-> 이메일만 상위 폴더에 편집자로 붙입니다. 그래서 **비운 채 한 번 돌리고 → 이메일 채우고 → 다시 돌리면** 공유가
-> 반영돼요. 일부러 **새 폴더**를 만들려면 `pnpm drive:init --force`.
+> **방법 A(OAuth)** 에선 폴더가 **네 My Drive**에 생기고 **네 소유**입니다(팀엔 편집자 공유). 원하는 위치가 있으면
+> (예: `1Meetup/MANTLE`) 생성된 "Mantle KR Herald"를 그 폴더로 **드래그**하면 됩니다 — 앱이 만든 파일이라 이동
+> 후에도 접근이 유지돼요.
 >
-> 상위 폴더 하나만 공유하면 그 안의 review/approved는 **권한을 상속**받습니다. 폴더는 서비스 계정 소유라 팀원의
-> **"공유 문서함(Shared with me)"** 에 나타납니다. 편집자 권한이라 드라이브에서 바로 확인·수정·승인할 수 있어요.
-> (원하면 각자 "내 드라이브에 바로가기 추가")
+> `drive:init`은 **멱등** — 같은 이름 폴더가 있으면 재사용하고 ID를 다시 출력합니다. **공유는 매 실행마다 보장**
+> (이미 공유된 이메일은 스킵, 새 이메일만 추가). 새로 만들려면 `--force`.
 
 ---
 
-## 5. 검증
+## 공통 3. 모드 선택 (`GOOGLE_AUTH_MODE`)
+
+- **자동 감지:** `GOOGLE_OAUTH_REFRESH_TOKEN`이 있으면 `oauth`, 없고 `GOOGLE_SA_KEY_FILE`이 있으면 `service_account`.
+- **강제:** `GOOGLE_AUTH_MODE=oauth` 또는 `service_account`.
+
+---
+
+## 공통 4. 검증
 
 ```bash
-# 실제 인증+업로드 probe (.env를 읽고, 자격증명 있는 것만 실행 — 없으면 skip)
+# .env를 읽어 라이브 probe 실행 (자격증명 있는 것만; 없으면 skip)
 pnpm probe tests/adapters/drive/drive.probe.test.ts
 
 # 실제 업로드
 pnpm drive:publish --target google
 ```
+review 폴더에 `.md`가 올라오고 공유한 팀원이 열어볼 수 있으면 성공입니다.
 
-> `pnpm probe`는 `.env`를 로드해 라이브 probe를 돌립니다(일반 `pnpm test`는 `.env`를 안 읽어 항상 skip).
-> `GOOGLE_SA_KEY_FILE`만 있으면 인증 probe가 통과하고, `GDRIVE_REVIEW_FOLDER_ID`까지 있으면 review 폴더에
-> throwaway `.md`를 실제 업로드해 봅니다.
-review 폴더에 `.md` 파일이 올라오고, 공유한 팀원이 열어볼 수 있으면 성공입니다.
+> `pnpm probe`는 `.env`를 로드합니다(일반 `pnpm test`는 안 읽어 skip). 인증 probe는 설정된 방식(oauth/서비스
+> 계정) 토큰을 발급해 보고, `GDRIVE_REVIEW_FOLDER_ID`까지 있으면 review 폴더에 throwaway `.md`를 올려 봅니다.
 
 ---
 
-## 6. 자주 나는 오류
+## 공통 5. 자주 나는 오류
 
 | 증상 | 원인 / 해결 |
 | --- | --- |
-| `HTTP 403 ... Google Drive API has not been used` | Drive API 미사용 설정(§2) |
-| `Invalid Google service account key file` | `GOOGLE_SA_KEY_FILE` 경로 오류 또는 JSON 손상 |
-| `HTTP 401` | 키 파일이 잘못됨/폐기됨 → 새 키 발급(§3) |
-| `drive:init` 후 팀원이 폴더를 못 봄 | `GDRIVE_SHARE_EMAILS` 비었거나 오타 → 채우고 재실행(또는 공유 추가) |
+| `403 ... Service Accounts do not have storage quota` (`storageQuotaExceeded`) | 개인 계정에 **서비스계정**을 씀 → **방법 A(OAuth)로 전환** |
+| `pnpm google:auth`가 refresh token을 안 냄 | 이미 동의한 앱 — 재실행하면 `prompt=consent`라 다시 발급됩니다. 그래도 안 나오면 계정의 "서드파티 앱 액세스"에서 제거 후 재시도 |
+| "이 앱은 Google에서 확인하지 않았습니다" | 테스트 모드라 정상 — **고급 → 이동**. 또는 OAuth 동의화면 **Test users**에 본인 이메일 추가 |
+| `redirect_uri_mismatch` | OAuth 클라이언트 타입이 **Desktop app**인지 확인(127.0.0.1 자동 허용) |
+| `403 ... Google Drive API has not been used` | Drive API 미사용 설정(공통 1) |
 | `HTTP 404 File not found: <folder id>` | `.env`의 폴더 ID가 `drive:init` 출력과 다름(오타) |
+| `drive:init` 후 팀원이 폴더를 못 봄 | `GDRIVE_SHARE_EMAILS` 비었거나 오타 → 채우고 재실행 |
 
-> **보안:** 서비스계정 JSON 키·access token·`.env`는 절대 공유·커밋하지 마세요. 각자 로컬에서만 사용합니다.
-> 스코프가 `drive.file`이라 서비스 계정은 **자기가 만든 폴더/파일 밖으론 접근 못 합니다**(최소 권한).
+> **보안:** OAuth refresh token·서비스계정 키·access token·`.env`는 절대 공유·커밋하지 마세요. 각자 로컬에서만
+> 사용합니다. 스코프는 `drive.file`이라 앱은 **자기가 만든 파일 밖으론 접근 못 합니다**(최소 권한).
