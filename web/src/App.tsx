@@ -37,21 +37,21 @@ export function App() {
   };
 
   return (
-    <div className="app">
-      <header className="topbar">
+    <div className="flex flex-col h-screen text-neutral-900">
+      <header className="flex items-center justify-between gap-3 px-4 py-2.5 bg-neutral-950 text-white font-semibold">
         <span>Mantle KR — Review</span>
         <PublishBar />
       </header>
-      {error && <div className="banner error">{error}</div>}
-      <div className="main">
-        <aside className="sidebar">
+      {error && <div className="bg-red-100 text-red-800 px-4 py-2 text-sm">{error}</div>}
+      <div className="flex flex-1 min-h-0">
+        <aside className="w-72 border-r border-neutral-200 overflow-y-auto">
           <TranslationList items={items} selectedId={selectedId} onSelect={setSelectedId} />
         </aside>
-        <section className="detail">
+        <section className="flex-1 p-6 overflow-y-auto">
           {selected ? (
             <TranslationDetail item={selected} onSave={onSave} onApprove={onApprove} />
           ) : (
-            <p className="empty">항목을 선택하세요.</p>
+            <p className="text-neutral-400">항목을 선택하세요.</p>
           )}
         </section>
       </div>

@@ -3,6 +3,9 @@ import type { Translation } from "../types";
 
 type Filter = "all" | "translated" | "approved";
 
+const badgeClass = (status: Translation["status"]) =>
+  status === "approved" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800";
+
 export function TranslationList(props: {
   items: Translation[];
   selectedId: string | null;
@@ -12,22 +15,26 @@ export function TranslationList(props: {
   const shown = props.items.filter((t) => filter === "all" || t.status === filter);
   return (
     <div>
-      <div className="filter">
+      <div className="flex gap-1.5 px-2.5 py-2 border-b border-neutral-200">
         {(["all", "translated", "approved"] as Filter[]).map((f) => (
-          <button key={f} className={`chip ${filter === f ? "chip-on" : ""}`} onClick={() => setFilter(f)}>
+          <button
+            key={f}
+            className={`text-xs px-2.5 py-1 rounded-full border ${filter === f ? "bg-neutral-900 text-white border-neutral-900" : "bg-white border-neutral-300"}`}
+            onClick={() => setFilter(f)}
+          >
             {f}
           </button>
         ))}
       </div>
-      <ul className="list">
+      <ul>
         {shown.map((t) => (
           <li
             key={t.itemId}
-            className={`list-item ${t.itemId === props.selectedId ? "selected" : ""}`}
+            className={`flex items-center justify-between gap-2 px-3.5 py-2.5 border-b border-neutral-100 cursor-pointer hover:bg-neutral-50 ${t.itemId === props.selectedId ? "bg-indigo-50" : ""}`}
             onClick={() => props.onSelect(t.itemId)}
           >
-            <span className="list-id">{t.itemId}</span>
-            <span className={`badge badge-${t.status}`}>{t.status}</span>
+            <span className="text-xs text-neutral-600 truncate">{t.itemId}</span>
+            <span className={`text-[11px] px-1.5 py-0.5 rounded ${badgeClass(t.status)}`}>{t.status}</span>
           </li>
         ))}
       </ul>

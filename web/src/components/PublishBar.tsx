@@ -20,16 +20,24 @@ export function PublishBar() {
   };
 
   return (
-    <div className="publishbar">
-      <select value={target} onChange={(e) => setTarget(e.target.value)}>
+    <div className="flex items-center gap-2">
+      <select
+        className="text-neutral-900 text-sm rounded px-1.5 py-1"
+        value={target}
+        onChange={(e) => setTarget(e.target.value)}
+      >
         <option value="google">google</option>
         <option value="lark">lark</option>
         <option value="both">both</option>
       </select>
-      <button className="btn" disabled={busy} onClick={publish}>
+      <button
+        className="px-3 py-1 rounded-md border border-white/30 text-sm disabled:opacity-50"
+        disabled={busy}
+        onClick={publish}
+      >
         발행 ⬆
       </button>
-      {result && <span className="publish-result">{result}</span>}
+      {result && <span className="text-xs font-normal">{result}</span>}
     </div>
   );
 }
