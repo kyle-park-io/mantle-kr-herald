@@ -34,9 +34,9 @@ if (limit) {
 
 const usecase = new PrepareTranslations(
   source,
-  new JsonGlossaryStore("data"),
-  new JsonFewShotStore("data"),
-  new FileTranslationConfig("data"),
+  new JsonGlossaryStore("translation"),
+  new JsonFewShotStore("translation"),
+  new FileTranslationConfig("translation"),
   new JsonTranslationStore("output"),
 );
 

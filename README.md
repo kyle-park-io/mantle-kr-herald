@@ -48,7 +48,7 @@ Assembles 6-element translation prompts from collected X/Lark content (shared co
 
 ### Data
 
-Living config in `data/` (git-tracked): `glossary.json`, `style-guide.md`, `locale.json`, `few-shot.json`. Edit these to steer tone/terminology.
+Living config in `translation/` (git-tracked): `glossary.json`, `style-guide.md`, `locale.json`, `few-shot.json`. Edit these to steer tone/terminology.
 
 ### Commands
 

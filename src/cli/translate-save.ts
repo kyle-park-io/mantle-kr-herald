@@ -25,7 +25,7 @@ if (!item) {
 
 const koreanText = (await readFile(file, "utf8")).trim();
 
-const usecase = new SaveTranslation(new JsonTranslationStore("output"), new JsonFewShotStore("data"));
+const usecase = new SaveTranslation(new JsonTranslationStore("output"), new JsonFewShotStore("translation"));
 const res = await usecase.run({
   itemId: item.id,
   source: item.source,

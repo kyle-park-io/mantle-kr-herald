@@ -6,7 +6,7 @@ function argValue(flag: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-const store = new JsonGlossaryStore("data");
+const store = new JsonGlossaryStore("translation");
 const command = process.argv[2];
 
 if (command === "add") {
