@@ -52,6 +52,7 @@
    GOOGLE_OAUTH_CLIENT_ID=xxxx.apps.googleusercontent.com
    GOOGLE_OAUTH_CLIENT_SECRET=xxxx
    ```
+   > 생성 후 화면에 **Client ID / Client secret**이 뜨고 **JSON 다운로드**도 제공되는데, OAuth 방식은 **JSON 파일은 쓰지 않습니다** — 이 **두 값만** 위처럼 `.env`에 복사하세요. (JSON을 파일로 저장해 쓰는 건 방법 B(서비스계정)뿐입니다.)
    > Desktop 앱의 secret은 엄밀히는 "진짜 비밀"이 아니지만(배포 앱에 내장되는 값), 그래도 `.env`(git-ignored)에만 둡니다.
 
 ### A-3. refresh token 발급 → `pnpm google:auth`
