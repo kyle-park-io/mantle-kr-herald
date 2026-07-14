@@ -10,31 +10,40 @@ const provisioner = new GoogleDriveProvisioner(auth);
 async function ensureFolder(
   name: string,
   parentId: string | undefined,
-  share: boolean,
 ): Promise<{ id: string; created: boolean }> {
   if (!force) {
     const existing = await provisioner.findFolder(name, parentId);
     if (existing) return { id: existing.id, created: false };
   }
   const created = await provisioner.createFolder(name, parentId);
-  if (share) {
-    for (const email of config.shareEmails) {
-      await provisioner.share(created.id, email, "writer");
-    }
-  }
   return { id: created.id, created: true };
 }
 
-// Parent folder is shared with the team; review/approved inherit its permissions.
-const parent = await ensureFolder(config.parentFolderName, undefined, true);
-const review = await ensureFolder("review", parent.id, false);
-const approved = await ensureFolder("approved", parent.id, false);
+// Parent folder holds review/approved (they inherit its permissions), so only the parent is shared.
+const parent = await ensureFolder(config.parentFolderName, undefined);
+const review = await ensureFolder("review", parent.id);
+const approved = await ensureFolder("approved", parent.id);
 
-console.log(`parent "${config.parentFolderName}": ${parent.created ? "created + shared" : "already exists (reused)"} → ${parent.id}`);
+// Ensure the parent is shared with every configured email on EVERY run (idempotent — skip already-shared).
+// This lets you run once with GDRIVE_SHARE_EMAILS empty, then fill it in and re-run to grant access.
+let newlyShared = 0;
+if (config.shareEmails.length > 0) {
+  const alreadyShared = await provisioner.listSharedEmails(parent.id);
+  for (const email of config.shareEmails) {
+    if (!alreadyShared.has(email)) {
+      await provisioner.share(parent.id, email, "writer");
+      newlyShared++;
+    }
+  }
+}
+
+console.log(`parent "${config.parentFolderName}": ${parent.created ? "created" : "already exists (reused)"} → ${parent.id}`);
 console.log(`  review:   ${review.created ? "created" : "already exists"} → ${review.id}`);
 console.log(`  approved: ${approved.created ? "created" : "already exists"} → ${approved.id}`);
 if (config.shareEmails.length === 0) {
   console.log("WARNING: GDRIVE_SHARE_EMAILS is empty — the parent folder was not shared with anyone.");
+} else {
+  console.log(`shared parent with ${config.shareEmails.length} email(s) as editor (${newlyShared} newly added, rest already had access).`);
 }
 console.log("");
 console.log("Put these in your .env:");

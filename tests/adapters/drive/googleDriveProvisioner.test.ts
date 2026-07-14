@@ -139,4 +139,43 @@ describe("GoogleDriveProvisioner", () => {
       await expect(provisioner.share("folder123", "a@b.com")).rejects.toThrow(/403/);
     });
   });
+
+  describe("listSharedEmails", () => {
+    it("GETs permissions and returns the set of emails already shared", async () => {
+      const cap: { url?: string; method?: string; headers?: Record<string, string> } = {};
+      const fetchFn = (async (url: string, init?: RequestInit) => {
+        cap.url = String(url);
+        cap.method = init?.method;
+        cap.headers = init?.headers as Record<string, string>;
+        return new Response(
+          JSON.stringify({ permissions: [{ emailAddress: "a@b.com" }, { emailAddress: "c@d.com" }, {}] }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }) as unknown as typeof fetch;
+      const provisioner = new GoogleDriveProvisioner(auth, fetchFn);
+
+      const emails = await provisioner.listSharedEmails("folder123");
+
+      expect(cap.url?.startsWith("https://www.googleapis.com/drive/v3/files/folder123/permissions")).toBe(true);
+      expect(cap.method).toBe("GET");
+      expect(cap.headers?.["Authorization"]).toBe("Bearer ya29.tok");
+      expect(emails).toEqual(new Set(["a@b.com", "c@d.com"]));
+    });
+
+    it("returns an empty set when there are no permissions", async () => {
+      const fetchFn = (async () =>
+        new Response(JSON.stringify({}), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        })) as unknown as typeof fetch;
+      const provisioner = new GoogleDriveProvisioner(auth, fetchFn);
+
+      expect(await provisioner.listSharedEmails("folder123")).toEqual(new Set());
+    });
+
+    it("throws on a non-ok response", async () => {
+      const badFetch = (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch;
+      const provisioner = new GoogleDriveProvisioner(auth, badFetch);
+      await expect(provisioner.listSharedEmails("folder123")).rejects.toThrow(/403/);
+    });
+  });
 });

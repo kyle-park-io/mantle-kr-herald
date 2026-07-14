@@ -45,6 +45,23 @@ export class GoogleDriveProvisioner {
     return first ? { id: first.id, name: first.name } : undefined;
   }
 
+  /** Emails that already have a permission on this file — used to make re-sharing idempotent. */
+  async listSharedEmails(fileId: string): Promise<Set<string>> {
+    const token = await this.auth.getToken();
+    const url = `${FILES_URL}/${fileId}/permissions?fields=${encodeURIComponent("permissions(emailAddress)")}`;
+    const res = await this.fetchFn(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`Google Drive list permissions failed: HTTP ${res.status}`);
+    const data = (await res.json()) as { permissions?: Array<{ emailAddress?: string }> };
+    return new Set(
+      (data.permissions ?? [])
+        .map((p) => p.emailAddress)
+        .filter((e): e is string => typeof e === "string"),
+    );
+  }
+
   /** Share a file/folder with a user (role "writer" = editor, "reader" = viewer). No email notification. */
   async share(fileId: string, email: string, role: "writer" | "reader" = "writer"): Promise<void> {
     const token = await this.auth.getToken();
