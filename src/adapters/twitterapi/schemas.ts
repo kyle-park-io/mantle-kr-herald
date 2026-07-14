@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { MediaItem, SourceTweet, TweetMetrics } from "../../domain/models";
 
 const MediaRaw = z
-  .object({ type: z.string(), media_url_https: z.string().optional() })
+  .object({ type: z.string().optional(), media_url_https: z.string().optional() })
   .passthrough();
 
 const TweetRaw = z

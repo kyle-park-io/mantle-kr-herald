@@ -64,6 +64,46 @@ describe("LocalJsonStore", () => {
     expect(all[0].deletedAt).toBe("2026-03-03T00:00:00.000Z");
   });
 
+  it("upsert preserves stored tweets when a later upsert supplies a subset of the thread", async () => {
+    const store = new LocalJsonStore(dir);
+    await store.upsert([thread("1", ["1", "2"])]);
+    await store.upsert([thread("1", ["2"])]);
+    const all = await store.loadAll();
+    expect(all).toHaveLength(1);
+    expect(
+      all[0].tweets.map((t) => t.id).sort(),
+    ).toEqual(["1", "2"]); // tweet "1" must not be dropped
+  });
+
+  it("upsert lets the incoming tweet win for a duplicate id", async () => {
+    const store = new LocalJsonStore(dir);
+    const first: CollectedThread = {
+      rootId: "1",
+      tweets: [
+        {
+          id: "1",
+          conversationId: "1",
+          text: "old",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          url: "u/1",
+          authorUserName: "Mantle_Official",
+          isReply: false,
+          isQuote: false,
+        },
+      ],
+      status: "active",
+      firstSeenAt: "2026-01-01T00:00:00.000Z",
+    };
+    const second: CollectedThread = {
+      ...first,
+      tweets: [{ ...first.tweets[0], text: "new" }],
+    };
+    await store.upsert([first]);
+    await store.upsert([second]);
+    const all = await store.loadAll();
+    expect(all[0].tweets.find((t) => t.id === "1")?.text).toBe("new");
+  });
+
   it("watermark get returns undefined initially, then the set value", async () => {
     const store = new LocalJsonStore(dir);
     expect(await store.get()).toBeUndefined();

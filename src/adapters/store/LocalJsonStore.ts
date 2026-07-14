@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { CollectedThread } from "../../domain/models";
+import type { CollectedThread, SourceTweet } from "../../domain/models";
 import type { CollectionRepository } from "../../ports/CollectionRepository";
 import type { WatermarkStore } from "../../ports/WatermarkStore";
 
@@ -52,10 +52,22 @@ export class LocalJsonStore implements CollectionRepository, WatermarkStore {
       const prev = byRoot.get(incoming.rootId);
       byRoot.set(incoming.rootId, {
         ...incoming,
+        tweets: this.mergeTweets(prev?.tweets ?? [], incoming.tweets),
         firstSeenAt: prev?.firstSeenAt ?? incoming.firstSeenAt,
       });
     }
     await this.writeJson(this.itemsPath, [...byRoot.values()]);
+  }
+
+  // Union existing + incoming tweets by id (incoming wins for duplicates),
+  // re-sorted chronologically so no previously-stored tweet is ever dropped.
+  private mergeTweets(existing: SourceTweet[], incoming: SourceTweet[]): SourceTweet[] {
+    const byId = new Map<string, SourceTweet>();
+    for (const t of existing) byId.set(t.id, t);
+    for (const t of incoming) byId.set(t.id, t);
+    return [...byId.values()].sort(
+      (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+    );
   }
 
   async listActiveTweetIds(): Promise<string[]> {

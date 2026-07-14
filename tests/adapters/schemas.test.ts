@@ -45,6 +45,20 @@ describe("normalizeTweet", () => {
   it("throws when a required field is missing", () => {
     expect(() => normalizeTweet({ url: "u", text: "t" })).toThrow();
   });
+
+  it("normalizeTweet defaults media type to photo when a media entry omits type", () => {
+    const t = normalizeTweet({
+      id: "5",
+      url: "u",
+      text: "hi",
+      createdAt: "Mon Jun 29 05:58:17 +0000 2026",
+      author: { userName: "Mantle_Official" },
+      extendedEntities: {
+        media: [{ media_url_https: "https://x/y.jpg" }],
+      },
+    });
+    expect(t.media).toEqual([{ type: "photo", url: "https://x/y.jpg" }]);
+  });
 });
 
 describe("parseTweetList", () => {

@@ -84,11 +84,14 @@ describe("CollectAuthoredContent", () => {
     const reply = tw("101", { conversationId: "100", isReply: true, createdAt: "2026-01-01T00:03:00.000Z" });
     const root = tw("100", { conversationId: "100", createdAt: "2026-01-01T00:00:30.000Z" });
     const gw = new FakeGateway([reply], { "100": [root, reply] });
-    const usecase = new CollectAuthoredContent(gw, new InMemoryRepo(), new InMemoryWatermark(), () => "now");
+    const repo = new InMemoryRepo();
+    const usecase = new CollectAuthoredContent(gw, repo, new InMemoryWatermark(), () => "now");
 
     await usecase.run("Mantle_Official");
 
     expect(gw.threadCalls).toContain("100");
+    expect(repo.saved).toHaveLength(1);
+    expect(repo.saved[0].tweets.map((t) => t.id).sort()).toEqual(["100", "101"]);
   });
 
   it("does not advance the watermark when nothing is fetched", async () => {
