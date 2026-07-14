@@ -15,7 +15,7 @@
 
 C의 번역 결과를 **Google Drive와 Lark Drive 둘 다**에 코드(REST)로 업로드하여, KR 팀이 드라이브에서
 진행상황을 보고 1차 검수할 수 있게 한다(proposal §2 흐름: 번역 → **1차 드라이브 업로드** → 검수).
-헤드리스 `pnpm publish`로 자동화되며, A/B/C와 동일한 로컬 실행 원칙을 따른다.
+헤드리스 `pnpm drive:publish`로 자동화되며, A/B/C와 동일한 로컬 실행 원칙을 따른다.
 
 ## 2. 범위
 
@@ -115,7 +115,7 @@ export interface PublishStore {
 
 ## 7. 유스케이스 & 데이터 흐름
 
-### `PublishTranslations` (`pnpm publish`)
+### `PublishTranslations` (`pnpm drive:publish`)
 ```
 published = publishStore.listPublished()           # {"<itemId>:<status>:<drive>"}
 for t in translationStore.loadAll():
@@ -168,7 +168,7 @@ return { uploaded, byDrive }
 
 ## 12. CLI
 
-- `pnpm publish [--target google|lark|both]` → 미업로드 번역을 대상 드라이브에 업로드. 조립은 `cli/publish.ts`.
+- `pnpm drive:publish [--target google|lark|both]` → 미업로드 번역을 대상 드라이브에 업로드. 조립은 `cli/publish.ts`.
 
 ## 13. 향후 확장
 

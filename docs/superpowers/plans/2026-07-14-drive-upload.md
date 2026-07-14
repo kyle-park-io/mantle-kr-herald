@@ -894,7 +894,7 @@ git commit -m "feat: PublishTranslations use-case (per-drive idempotent, failure
 
 **Interfaces:**
 - Consumes: everything above + B's `LarkAuth`, shared `HttpClient`, C's `JsonTranslationStore`
-- Produces: `loadGoogleDriveConfig()`, `loadLarkDriveConfig()`; runnable `pnpm publish`
+- Produces: `loadGoogleDriveConfig()`, `loadLarkDriveConfig()`; runnable `pnpm drive:publish`
 
 - [ ] **Step 1: Write the failing config test**
 
@@ -1104,7 +1104,7 @@ LARK_DRIVE_APPROVED_FOLDER_TOKEN=
 ```markdown
 # 드라이브 셋업 가이드 — Google Drive + Lark Drive (서브시스템 D)
 
-> `pnpm publish`가 번역 결과를 두 드라이브에 올리려면 아래 값을 `.env`에 채워야 합니다.
+> `pnpm drive:publish`가 번역 결과를 두 드라이브에 올리려면 아래 값을 `.env`에 채워야 합니다.
 
 ## Google Drive
 
@@ -1131,9 +1131,9 @@ LARK_DRIVE_APPROVED_FOLDER_TOKEN=
 ## 실행
 
 ```bash
-pnpm publish                 # 둘 다
-pnpm publish --target google # 구글만
-pnpm publish --target lark   # Lark만
+pnpm drive:publish                 # 둘 다
+pnpm drive:publish --target google # 구글만
+pnpm drive:publish --target lark   # Lark만
 ```
 `output/publish-state.json`이 (아이템:상태:드라이브)별로 업로드 이력을 기록해 중복 업로드를 막습니다.
 ```
@@ -1153,7 +1153,7 @@ See `docs/guides/drive-setup-guide.md`. Fill `.env`: `GOOGLE_SA_KEY_FILE`, `GDRI
 ### Commands
 
 ```bash
-pnpm publish [--target google|lark|both]
+pnpm drive:publish [--target google|lark|both]
 ```
 
 Idempotent per drive via `output/publish-state.json`.
