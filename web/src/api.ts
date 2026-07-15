@@ -30,7 +30,7 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
-    }).then((r) => json<Rendering>(r)),
+    }).then((r) => json<Omit<Rendering, "convertedText">>(r)),
   approveRendering: (itemId: string, type: ConversionType, channel: Channel) =>
-    fetch(`${rPath(itemId, type, channel)}/approve`, { method: "POST" }).then((r) => json<Rendering>(r)),
+    fetch(`${rPath(itemId, type, channel)}/approve`, { method: "POST" }).then((r) => json<Omit<Rendering, "convertedText">>(r)),
 };
