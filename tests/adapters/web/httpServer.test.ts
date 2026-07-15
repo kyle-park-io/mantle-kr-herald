@@ -10,11 +10,23 @@ import type { ApiDeps } from "../../../src/adapters/web/apiHandlers";
 const servers: import("node:http").Server[] = [];
 afterEach(() => servers.forEach((s) => s.close()));
 
+// §7 renderings deps are irrelevant to these HttpServer-level tests (transport concerns
+// only), so they're stubbed out identically wherever an ApiDeps literal is needed.
+function fakeRenderingDeps(): Pick<ApiDeps, "formattingStore" | "conversionStore" | "saveRendering" | "approveRendering"> {
+  return {
+    formattingStore: { loadAll: async () => [], upsert: async () => {}, listRenderedKeys: async () => new Set() },
+    conversionStore: { loadAll: async () => [], upsert: async () => {}, listConvertedKeys: async () => new Set() },
+    saveRendering: { run: async () => ({ itemId: "x:1", type: "x", channel: "x" }) } as unknown as ApiDeps["saveRendering"],
+    approveRendering: { run: async () => undefined } as unknown as ApiDeps["approveRendering"],
+  };
+}
+
 function fakeDeps(): ApiDeps {
   return {
     translationStore: { loadAll: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }], upsert: async () => {}, listTranslatedIds: async () => new Set() },
     saveTranslation: { run: async () => ({ itemId: "x:1", promoted: false }) } as unknown as ApiDeps["saveTranslation"],
     buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
+    ...fakeRenderingDeps(),
   };
 }
 
@@ -61,6 +73,7 @@ describe("startServer", () => {
         },
       } as unknown as ApiDeps["saveTranslation"],
       buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
+      ...fakeRenderingDeps(),
     };
     const server = startServer(deps, { port: 0, staticDir: dir });
     servers.push(server);
@@ -91,6 +104,7 @@ describe("startServer", () => {
       },
       saveTranslation: { run: async () => ({ itemId: "x:1", promoted: false }) } as unknown as ApiDeps["saveTranslation"],
       buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
+      ...fakeRenderingDeps(),
     };
     const server = startServer(deps, { port: 0, staticDir: dir });
     servers.push(server);
