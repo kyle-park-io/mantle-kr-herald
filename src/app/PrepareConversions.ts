@@ -39,19 +39,25 @@ export class PrepareConversions {
     const types = selector.types ?? ALL_TYPES;
     const wantedIds = selector.ids && selector.ids.length > 0 ? new Set(selector.ids) : undefined;
 
-    let candidates: (PendingVariant & { at: string })[] = [];
-    for (const type of types) {
-      for (const t of approved) {
-        if (convertedKeys.has(`${t.itemId}:${type}`)) continue;
-        candidates.push({ itemId: t.itemId, type, sourceKorean: t.koreanText, at: t.approvedAt ?? t.translatedAt });
-      }
-    }
-    if (wantedIds) candidates = candidates.filter((c) => wantedIds.has(c.itemId));
+    // Apply the selector to the source translations FIRST, so --limit counts items and
+    // every selected item always carries all of its (not-yet-converted) types.
+    let selected = approved;
+    if (wantedIds) selected = selected.filter((t) => wantedIds.has(t.itemId));
     if (selector.since) {
       const since = selector.since;
-      candidates = candidates.filter((c) => c.at >= since);
+      selected = selected.filter((t) => (t.approvedAt ?? t.translatedAt) >= since);
     }
-    candidates = candidates.slice(0, selector.limit ?? DEFAULT_LIMIT);
+    selected = selected.slice(0, selector.limit ?? DEFAULT_LIMIT);
+
+    // Fan out each selected translation to its not-yet-converted types (type-major, so
+    // the worksheet sections stay grouped by type).
+    const candidates: PendingVariant[] = [];
+    for (const type of types) {
+      for (const t of selected) {
+        if (convertedKeys.has(`${t.itemId}:${type}`)) continue;
+        candidates.push({ itemId: t.itemId, type, sourceKorean: t.koreanText });
+      }
+    }
 
     const glossary = await this.glossaryStore.load();
     const locale = await this.config.loadLocale();
@@ -66,7 +72,6 @@ export class PrepareConversions {
     }
 
     const worksheet = assembleConversionWorksheet(sections);
-    const pending = candidates.map((c) => ({ itemId: c.itemId, type: c.type, sourceKorean: c.sourceKorean }));
-    return { worksheet, pending };
+    return { worksheet, pending: candidates };
   }
 }

@@ -53,4 +53,26 @@ describe("PrepareConversions", () => {
     const { pending } = await uc.run({ types: ["x"], ids: ["x:2"], limit: 5 });
     expect(pending).toEqual([{ itemId: "x:2", type: "x", sourceKorean: "b" }]);
   });
+
+  it("counts --limit by source item, keeping all types for each selected item (no type dropped)", async () => {
+    const uc = new PrepareConversions(
+      translationStore([tr("x:1", "approved", "a"), tr("x:2", "approved", "b"), tr("x:3", "approved", "c")]),
+      glossaryStore, config, conversionConfig, fewShotByType(), convStore(),
+    );
+    const { pending } = await uc.run({ limit: 2 });
+    // 2 items selected × 3 types = 6 variants; pr present for both selected items
+    expect(pending).toHaveLength(6);
+    expect(pending.filter((p) => p.type === "pr").map((p) => p.itemId)).toEqual(["x:1", "x:2"]);
+  });
+
+  it("filters by since against approvedAt (older items excluded)", async () => {
+    const older = tr("x:1", "approved", "old"); // approvedAt 2026-01-02
+    const newer = { ...tr("x:2", "approved", "new"), approvedAt: "2026-06-01T00:00:00.000Z" };
+    const uc = new PrepareConversions(
+      translationStore([older, newer]),
+      glossaryStore, config, conversionConfig, fewShotByType(), convStore(),
+    );
+    const { pending } = await uc.run({ types: ["x"], since: "2026-03-01T00:00:00.000Z" });
+    expect(pending).toEqual([{ itemId: "x:2", type: "x", sourceKorean: "new" }]);
+  });
 });

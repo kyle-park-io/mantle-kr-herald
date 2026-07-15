@@ -36,6 +36,10 @@ export function formatForChannel(text: string, channel: Channel, opts: FormatOpt
       return { text: out, warnings };
     }
     case "telegram":
+      // v1: legacy Telegram Markdown (`*bold*`), links preserved. Full MarkdownV2
+      // escaping of reserved characters is intentionally deferred to the `--refine`
+      // pass / §8 upload (which must choose an appropriate parse_mode or a plain-text
+      // fallback).
       return { text: collapseBlankLines(boldToTelegram(text)).trim(), warnings };
     case "kakao":
       return { text: collapseBlankLines(linksToPlain(stripBold(text))).trim(), warnings };
