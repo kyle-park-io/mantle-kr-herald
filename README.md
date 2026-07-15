@@ -97,3 +97,29 @@ pnpm typecheck:web  # type-check the frontend
 ```
 
 Open `http://localhost:5757`: list translations (filter by status), view source (`---` between thread tweets) + editable Korean, save / approve, and publish to Drive from the top bar.
+
+## Module F — Content shaping (item conversion + channel formatting)
+
+Turns an **approved** Korean translation (Module E) into channel-ready posts, in two stages.
+
+### §5 Item conversion (agent-assisted, like translation)
+
+```bash
+pnpm convert:prepare [--types x,kol,pr] [--ids a,b] [--since <ISO>] [--limit 20]
+#   → output/variants/worksheets/batch-<ts>.md — fill each 변환 section
+pnpm convert:save --id <itemId> --type <x|kol|pr> --file <ko.txt> [--approve]
+```
+
+Per-type steering config lives in `conversion/` (`x.md`, `kol.md`, `pr.md`, `few-shot.<type>.json`);
+it reuses `translation/glossary.json` and `translation/locale.json`. `--approve` feeds a per-type few-shot flywheel.
+
+### §6 Channel formatting (deterministic code + optional agent refinement)
+
+```bash
+pnpm format [--types x,kol,pr] [--channels x,telegram,kakao,pr_mail] [--ids a,b] [--x-bold unicode] [--refine]
+#   default: writes ChannelRenderings from the code formatter to output/formatted/renderings.json
+#   --refine: writes a refinement worksheet for the agent to fine-tune, then:
+pnpm format:save --id <itemId> --type <t> --channel <c> --file <txt>
+```
+
+Default channels per type: `x → x, kakao` · `kol → telegram` · `pr → pr_mail`.

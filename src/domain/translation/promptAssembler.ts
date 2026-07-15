@@ -1,13 +1,13 @@
 import type { ContentItem } from "./contentItem";
 import type { GlossaryEntry, Locale, SharedContext } from "./models";
 
-function renderGlossaryEntry(e: GlossaryEntry): string {
+export function renderGlossaryEntry(e: GlossaryEntry): string {
   const target = e.target ? `: ${e.target}` : "";
   const note = e.note ? ` (${e.note})` : "";
   return `- ${e.term} → ${e.rule}${target}${note}`;
 }
 
-function renderLocale(l: Locale): string {
+export function renderLocale(l: Locale): string {
   return [
     `- 날짜: ${l.dateFormat}`,
     `- 숫자: ${l.numberFormat}`,
