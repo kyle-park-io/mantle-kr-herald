@@ -1,6 +1,6 @@
 # mantle-kr-herald
 
-Social media automation pipeline for the Mantle KR team. See `docs/superpowers/specs/` for designs and `docs/architecture/hexagonal-architecture.md` for the architecture. Release history is in [`CHANGELOG.md`](CHANGELOG.md).
+Social media automation pipeline for the Mantle KR team. See `docs/superpowers/specs/` for designs, `docs/architecture/hexagonal-architecture.md` for the architecture, and [`docs/architecture/external-integrations.md`](docs/architecture/external-integrations.md) for the external APIs & MCP the project uses. Release history is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Module A — X data collection (twitterapi.io)
 
