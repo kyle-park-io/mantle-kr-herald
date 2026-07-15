@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm doctor`** — a setup-diagnosis command: offline config checks per integration
+  (twitterapi / Lark / Google Drive+Sheets), plus `--live` to mint tokens read-only and report the
+  granted OAuth scopes (catches e.g. a Google token missing the `spreadsheets` scope, or Lark auth).
+  Exits non-zero if any check fails.
 - **Content shaping (F)** — §5 item conversion (`convert:prepare` / `convert:save`) rewrites an
   approved translation into X / KOL / PR variants with per-type steering config in `conversion/`
   and a per-type few-shot flywheel; §6 channel formatting (`format` / `format:save`) renders a

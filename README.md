@@ -2,6 +2,15 @@
 
 Social media automation pipeline for the Mantle KR team. See `docs/superpowers/specs/` for designs, `docs/architecture/hexagonal-architecture.md` for the architecture, and [`docs/architecture/external-integrations.md`](docs/architecture/external-integrations.md) for the external APIs & MCP the project uses. Release history is in [`CHANGELOG.md`](CHANGELOG.md).
 
+## Setup check
+
+```bash
+pnpm doctor          # which integrations are configured (offline; exits non-zero if any is missing)
+pnpm doctor --live   # also mint tokens read-only and check OAuth scopes (e.g. Google drive.file / spreadsheets, Lark auth)
+```
+
+`--live` is the fast way to catch the scope gaps that otherwise surface as a cryptic mid-run error — e.g. a Google token missing the `spreadsheets` scope needed for the Sheet hub (§9a).
+
 ## Module A — X data collection (twitterapi.io)
 
 Collects `Mantle_Official`'s authored tweets (threads reconstructed) into local JSON, incrementally, with soft-mark deletion handling.
