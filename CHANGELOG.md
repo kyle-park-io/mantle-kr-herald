@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm status`** — a pipeline-visibility command: reads the local `output/` stores and prints a
+  per-stage funnel (collected → translated → converted → rendered → published, with approved
+  sub-counts) so you can see how far data has flowed. Offline.
 - **`pnpm doctor`** — a setup-diagnosis command: offline config checks per integration
   (twitterapi / Lark / Google Drive+Sheets), plus `--live` to mint tokens read-only and report the
   granted OAuth scopes (catches e.g. a Google token missing the `spreadsheets` scope, or Lark auth).

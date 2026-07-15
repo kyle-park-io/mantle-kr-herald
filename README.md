@@ -11,6 +11,10 @@ pnpm doctor --live   # also mint tokens read-only and check OAuth scopes (e.g. G
 
 `--live` is the fast way to catch the scope gaps that otherwise surface as a cryptic mid-run error — e.g. a Google token missing the `spreadsheets` scope needed for the Sheet hub (§9a).
 
+```bash
+pnpm status          # how far data has flowed: collected → translated → converted → rendered → published (offline)
+```
+
 ## Module A — X data collection (twitterapi.io)
 
 Collects `Mantle_Official`'s authored tweets (threads reconstructed) into local JSON, incrementally, with soft-mark deletion handling.
