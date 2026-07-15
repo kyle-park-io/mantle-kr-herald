@@ -20,6 +20,7 @@
     "targets:list": "tsx --env-file-if-exists=.env src/cli/targets-list.ts",
     "history:record": "tsx --env-file-if-exists=.env src/cli/history-record.ts",
     "sheet:init": "tsx --env-file-if-exists=.env src/cli/sheet-init.ts",
+    "doctor": "tsx --env-file-if-exists=.env src/cli/doctor.ts",
     "serve": "tsx --env-file-if-exists=.env src/cli/serve.ts",
     "dev:web": "vite --config web/vite.config.ts",
     "build:web": "vite build --config web/vite.config.ts",
