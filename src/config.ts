@@ -110,3 +110,13 @@ export function loadLarkDriveConfig(): LarkDriveConfig {
   const baseUrl = process.env.LARK_BASE_URL?.trim() || "https://open.larksuite.com";
   return { appId, appSecret, baseUrl, reviewFolderToken, approvedFolderToken };
 }
+
+export interface GoogleSheetConfig {
+  spreadsheetId: string;
+}
+
+export function loadGoogleSheetConfig(): GoogleSheetConfig {
+  const spreadsheetId = process.env.GSHEET_ID?.trim();
+  if (!spreadsheetId) throw new Error("Missing required environment variable: GSHEET_ID");
+  return { spreadsheetId };
+}

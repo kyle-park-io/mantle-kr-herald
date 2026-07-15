@@ -6,6 +6,7 @@ import {
   loadGoogleDriveInitConfig,
   loadLarkDriveConfig,
   loadGoogleAuthConfig,
+  loadGoogleSheetConfig,
 } from "../src/config";
 
 const original = process.env.TWITTERAPI_IO_KEY;
@@ -216,5 +217,23 @@ describe("loadLarkDriveConfig", () => {
     process.env.LARK_DRIVE_REVIEW_FOLDER_TOKEN = "R";
     delete process.env.LARK_DRIVE_APPROVED_FOLDER_TOKEN;
     expect(() => loadLarkDriveConfig()).toThrow(/LARK_DRIVE_APPROVED_FOLDER_TOKEN/);
+  });
+});
+
+describe("loadGoogleSheetConfig", () => {
+  const original = process.env.GSHEET_ID;
+  afterEach(() => {
+    if (original === undefined) delete process.env.GSHEET_ID;
+    else process.env.GSHEET_ID = original;
+  });
+
+  it("reads GSHEET_ID (trimmed)", () => {
+    process.env.GSHEET_ID = "  sheet_abc  ";
+    expect(loadGoogleSheetConfig()).toEqual({ spreadsheetId: "sheet_abc" });
+  });
+
+  it("throws when GSHEET_ID is missing", () => {
+    delete process.env.GSHEET_ID;
+    expect(() => loadGoogleSheetConfig()).toThrow(/GSHEET_ID/);
   });
 });
