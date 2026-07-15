@@ -1,4 +1,5 @@
 import "./registerErrorHandler";
+import { argValue } from "./args";
 import { HttpClient } from "../shared/http/HttpClient";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
@@ -9,11 +10,6 @@ import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { PublishTranslations } from "../app/PublishTranslations";
 import { loadGoogleDriveConfig, loadGoogleAuthConfig, loadLarkDriveConfig } from "../config";
 import type { DriveUploader } from "../ports/DriveUploader";
-
-function argValue(flag: string): string | undefined {
-  const i = process.argv.indexOf(flag);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
 
 const target = argValue("--target") ?? "google"; // google | lark | both (Lark is opt-in)
 const uploaders: DriveUploader[] = [];

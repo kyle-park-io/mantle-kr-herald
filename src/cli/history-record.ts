@@ -1,13 +1,9 @@
 import "./registerErrorHandler";
+import { argValue } from "./args";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { GoogleSheetClient } from "../adapters/sheets/GoogleSheetClient";
 import { RecordPublish } from "../app/RecordPublish";
 import { loadGoogleAuthConfig, loadGoogleSheetConfig } from "../config";
-
-function argValue(flag: string): string | undefined {
-  const i = process.argv.indexOf(flag);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
 
 const itemId = argValue("--item");
 const type = argValue("--type");

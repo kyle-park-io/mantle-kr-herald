@@ -1,15 +1,11 @@
 import "./registerErrorHandler";
+import { argValue } from "./args";
 import { readFile } from "node:fs/promises";
 import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { JsonFewShotStore } from "../adapters/store/JsonFewShotStore";
 import { SaveTranslation } from "../app/SaveTranslation";
 import { readJsonFile } from "../shared/store/jsonFile";
 import type { ContentItem } from "../domain/translation/contentItem";
-
-function argValue(flag: string): string | undefined {
-  const i = process.argv.indexOf(flag);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
 
 const id = argValue("--id");
 const file = argValue("--file");

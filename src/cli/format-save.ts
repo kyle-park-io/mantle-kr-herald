@@ -1,4 +1,5 @@
 import "./registerErrorHandler";
+import { argValue } from "./args";
 // src/cli/format-save.ts
 import { readFile } from "node:fs/promises";
 import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
@@ -7,11 +8,6 @@ import { readJsonFile } from "../shared/store/jsonFile";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import { ALL_CHANNELS, type Channel } from "../domain/formatting/models";
 import type { PendingRendering } from "../app/PrepareRefinements";
-
-function argValue(flag: string): string | undefined {
-  const i = process.argv.indexOf(flag);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
 
 const id = argValue("--id");
 const type = argValue("--type") as ConversionType | undefined;

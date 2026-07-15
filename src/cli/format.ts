@@ -1,4 +1,5 @@
 import "./registerErrorHandler";
+import { argValue, parseList } from "./args";
 // src/cli/format.ts
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,16 +9,6 @@ import { FormatVariants, type FormatSelector } from "../app/FormatVariants";
 import { PrepareRefinements } from "../app/PrepareRefinements";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import { ALL_CHANNELS, type Channel, type FormatOptions } from "../domain/formatting/models";
-
-function argValue(flag: string): string | undefined {
-  const i = process.argv.indexOf(flag);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
-function parseList(v: string | undefined): string[] | undefined {
-  if (!v) return undefined;
-  const parts = v.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-  return parts.length > 0 ? parts : undefined;
-}
 
 const selector: FormatSelector = {};
 const ids = parseList(argValue("--ids"));

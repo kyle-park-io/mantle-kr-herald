@@ -1,4 +1,5 @@
 import "./registerErrorHandler";
+import { argValue } from "./args";
 // src/cli/convert-save.ts
 import { readFile } from "node:fs/promises";
 import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
@@ -8,11 +9,6 @@ import { readJsonFile } from "../shared/store/jsonFile";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import type { PendingVariant } from "../app/PrepareConversions";
 import type { FewShotStore } from "../ports/FewShotStore";
-
-function argValue(flag: string): string | undefined {
-  const i = process.argv.indexOf(flag);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
 
 const id = argValue("--id");
 const type = argValue("--type") as ConversionType | undefined;
