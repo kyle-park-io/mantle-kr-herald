@@ -26,11 +26,28 @@ export class HttpClient implements IHttpClient {
     const init: RequestInit = { method, headers };
     if (options.body !== undefined) init.body = JSON.stringify(options.body);
 
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await fetch(url.toString(), init);
+    const MAX_ATTEMPTS = 3;
+    const backoff = (attempt: number) => new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+    let lastStatus = 0;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      let res: Response;
+      try {
+        res = await fetch(url.toString(), init);
+      } catch (err) {
+        // Network-level failure (DNS, reset, timeout) — retry like a 5xx.
+        lastError = err;
+        lastStatus = 0;
+        if (attempt < MAX_ATTEMPTS - 1) await backoff(attempt);
+        continue;
+      }
 
       if (res.status === 429 || res.status >= 500) {
-        await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+        lastStatus = res.status;
+        lastError = undefined;
+        // Don't sleep after the final attempt — it just delays the throw.
+        if (attempt < MAX_ATTEMPTS - 1) await backoff(attempt);
         continue;
       }
 
@@ -51,7 +68,11 @@ export class HttpClient implements IHttpClient {
       return res.json() as Promise<T>;
     }
 
-    throw new Error(`Request failed after 3 attempts: ${method} ${path}`);
+    const reason = lastError ? "network error" : `last HTTP ${lastStatus}`;
+    throw new Error(
+      `Request failed after ${MAX_ATTEMPTS} attempts (${reason}): ${method} ${path}`,
+      lastError ? { cause: lastError } : undefined,
+    );
   }
 
   get<T>(path: string, params?: Record<string, string>): Promise<T> {
