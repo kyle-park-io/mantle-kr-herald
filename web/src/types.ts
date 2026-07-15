@@ -27,3 +27,7 @@ export interface Rendering {
   approvedAt?: string;
   convertedText: string; // joined source context (variant convertedText)
 }
+
+/** Stable identity key for a rendering: (itemId, type, channel). */
+export const renderingKey = (r: Pick<Rendering, "itemId" | "type" | "channel">) =>
+  `${r.itemId}:${r.type}:${r.channel}`;

@@ -29,6 +29,10 @@ describe("formatForChannel — x", () => {
     const r = formatForChannel("a\n\n\n\nb", "x");
     expect(r.text).toBe("a\n\nb");
   });
+  it("rewrites markdown links to plain text (consistent with kakao/pr_mail)", () => {
+    const r = formatForChannel("공지 [자세히](https://x.io)", "x");
+    expect(r.text).toBe("공지 자세히 (https://x.io)");
+  });
 });
 
 describe("formatForChannel — telegram", () => {
@@ -36,6 +40,10 @@ describe("formatForChannel — telegram", () => {
     const r = formatForChannel("**중요** 링크 https://x.io", "telegram");
     expect(r.text).toBe("*중요* 링크 https://x.io");
     expect(r.warnings).toEqual([]);
+  });
+  it("handles a **bold** span that wraps across a newline (no leaked **)", () => {
+    const r = formatForChannel("**첫째 줄\n둘째 줄**", "telegram");
+    expect(r.text).toBe("*첫째 줄\n둘째 줄*");
   });
 });
 
