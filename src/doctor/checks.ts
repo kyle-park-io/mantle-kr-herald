@@ -23,3 +23,13 @@ export function scopeCheck(name: string, granted: string[], needed: string, hint
     ? { name, status: "ok", detail: `scope ${shortScope(needed)} granted` }
     : { name, status: "warn", detail: `scope ${shortScope(needed)} NOT granted — ${hint}` };
 }
+
+/** Interpret a Drive file-metadata fetch: ok if reachable, fail (404 → re-init hint). */
+export function accessResult(name: string, res: { ok: boolean; status: number; fileName?: string }): CheckResult {
+  if (res.ok) return { name, status: "ok", detail: `accessible${res.fileName ? ` (${res.fileName})` : ""}` };
+  const detail =
+    res.status === 404
+      ? "not found under this token — re-run pnpm drive:init (drive.file only sees files the app created)"
+      : `HTTP ${res.status}`;
+  return { name, status: "fail", detail };
+}

@@ -10,7 +10,7 @@ import {
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { HttpClient } from "../shared/http/HttpClient";
-import { configCheck, parseScopes, scopeCheck } from "../doctor/checks";
+import { configCheck, parseScopes, scopeCheck, accessResult } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -50,6 +50,29 @@ if (live) {
     results.push(
       scopeCheck("Google Sheet  live", granted, SHEETS_SCOPE, 'add spreadsheets to GOOGLE_OAUTH_SCOPE + pnpm google:auth'),
     );
+
+    // Are the configured Drive folders / Sheet actually reachable with this token?
+    // (drive.file only sees files the app created — a stale folder id gives 404.)
+    const fileAccess = async (label: string, id: string): Promise<void> => {
+      const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=id,name`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const fileName = r.ok ? ((await r.json()) as { name?: string }).name : undefined;
+      results.push(accessResult(label, { ok: r.ok, status: r.status, fileName }));
+    };
+    try {
+      const g = loadGoogleDriveConfig();
+      await fileAccess("Google Drive review   live", g.reviewFolderId);
+      await fileAccess("Google Drive approved  live", g.approvedFolderId);
+    } catch {
+      // Drive folders not configured — the offline config check already reported it.
+    }
+    try {
+      const gs = loadGoogleSheetConfig();
+      await fileAccess("Google Sheet file  live", gs.spreadsheetId);
+    } catch {
+      // GSHEET_ID not set — the offline config check already reported it.
+    }
   } catch (err) {
     results.push({ name: "Google auth  live", status: "fail", detail: err instanceof Error ? err.message : String(err) });
   }
