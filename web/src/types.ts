@@ -12,3 +12,18 @@ export interface PublishResult {
   failed: number;
   byDrive: Record<string, number>;
 }
+
+export type ConversionType = "x" | "kol" | "pr";
+export type Channel = "x" | "telegram" | "kakao" | "pr_mail";
+
+export interface Rendering {
+  itemId: string;
+  type: ConversionType;
+  channel: Channel;
+  text: string;
+  refined: boolean;
+  createdAt: string;
+  status: "rendered" | "approved";
+  approvedAt?: string;
+  convertedText: string; // joined source context (variant convertedText)
+}
