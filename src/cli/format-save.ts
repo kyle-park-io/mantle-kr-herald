@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 // src/cli/format-save.ts
 import { readFile } from "node:fs/promises";
 import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";

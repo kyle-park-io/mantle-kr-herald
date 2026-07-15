@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { GoogleDriveProvisioner } from "../adapters/drive/GoogleDriveProvisioner";
 import { loadGoogleDriveInitConfig, loadGoogleAuthConfig } from "../config";

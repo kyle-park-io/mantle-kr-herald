@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { XContentSource } from "../adapters/content/XContentSource";

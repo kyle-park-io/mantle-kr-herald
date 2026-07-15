@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 // src/cli/convert-prepare.ts
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";

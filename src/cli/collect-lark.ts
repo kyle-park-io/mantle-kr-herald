@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 import { loadLarkConfig } from "../config";
 import { HttpClient } from "../shared/http/HttpClient";
 import { LarkAuth } from "../adapters/lark/LarkAuth";

@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 import { readFile } from "node:fs/promises";
 import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { JsonFewShotStore } from "../adapters/store/JsonFewShotStore";

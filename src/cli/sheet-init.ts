@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { GoogleSheetClient } from "../adapters/sheets/GoogleSheetClient";
 import { TARGETS_HEADER, HISTORY_HEADER } from "../domain/sheet/models";

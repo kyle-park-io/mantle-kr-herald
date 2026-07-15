@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import type { GlossaryRule } from "../domain/translation/models";
 

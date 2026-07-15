@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 import { HttpClient } from "../shared/http/HttpClient";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
