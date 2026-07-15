@@ -39,7 +39,7 @@ export class FormatVariants {
       for (const channel of channels) {
         const result = formatForChannel(v.convertedText, channel, this.opts);
         const rendering: ChannelRendering = {
-          itemId: v.itemId, type: v.type, channel, text: result.text, refined: false, createdAt: this.now(),
+          itemId: v.itemId, type: v.type, channel, text: result.text, refined: false, createdAt: this.now(), status: "rendered",
         };
         await this.formattingStore.upsert(rendering);
         renderings.push(rendering);

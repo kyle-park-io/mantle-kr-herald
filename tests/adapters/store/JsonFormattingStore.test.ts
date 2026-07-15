@@ -6,7 +6,7 @@ import { JsonFormattingStore } from "../../../src/adapters/store/JsonFormattingS
 import type { ChannelRendering } from "../../../src/domain/formatting/models";
 
 function rendering(over: Partial<ChannelRendering> = {}): ChannelRendering {
-  return { itemId: "x:1", type: "x", channel: "x", text: "t", refined: false, createdAt: "2026-01-01T00:00:00.000Z", ...over };
+  return { itemId: "x:1", type: "x", channel: "x", text: "t", refined: false, createdAt: "2026-01-01T00:00:00.000Z", status: "rendered", ...over };
 }
 
 let dir: string;
