@@ -52,3 +52,7 @@ Claude) to eyeball or hand-edit a sheet — that is independent of, and not requ
 > **No LLM/AI API is called at runtime.** Translation (§3) and content shaping (§5/§6) are
 > performed by the operator's **local Claude agent** via worksheets, not a hosted model —
 > so there is no model API key in the pipeline.
+
+> **GitHub is dev/CI tooling only — never called at runtime.** The pipeline has no GitHub API
+> client and no GitHub MCP. GitHub is used only around the repo: the `gh` CLI for PRs/CI locally,
+> and GitHub Actions (`.github/workflows/ci.yml`) to run `test` on each PR.
