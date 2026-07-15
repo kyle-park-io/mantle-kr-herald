@@ -128,3 +128,22 @@ pnpm format:save --id <itemId> --type <t> --channel <c> --file <txt>
 ```
 
 Default channels per type: `x → x, kakao` · `kol → telegram` · `pr → pr_mail`.
+
+## Module G — Google Sheet data hub (§9a)
+
+A Google Sheet the team edits as the automation's data hub. §9a covers the foundation plus the first
+two roles; **③ impressions is §9b** (later). Uses the direct Google Sheets v4 REST API with the same
+Google auth as Drive — the OAuth token must include the `spreadsheets` scope (see
+`docs/architecture/external-integrations.md`).
+
+```bash
+pnpm sheet:init      # create the spreadsheet (tabs: targets, history) → prints GSHEET_ID for .env
+pnpm targets:list [--active-only]                          # ① read the distribution targets
+pnpm history:record --item <id> --type <t> --channel <c> --status <s> [--post-id <p>] [--url <u>]  # ② record a publish
+```
+
+Two tabs: **`targets`** (`channel | name | address | active | notes`) — the team-maintained
+distribution list (consumed later by §8/§10); **`history`**
+(`itemId | type | channel | postId | url | status | publishedAt | impressions | impressionsAt`) —
+publish log, upserted by `(itemId, type, channel)` (§8 will call `RecordPublish`; impressions columns
+are filled by §9b).

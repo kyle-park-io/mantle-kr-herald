@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Second review (§7)** — the local dashboard gains a **2차 검수** mode to list/filter, edit, and
   approve Module F channel renderings before posting. `ChannelRendering` gains a `rendered`/`approved`
   status; new `ApproveRendering` use-case and `/api/renderings` routes; approved text is copy-ready.
+- **Google Sheet data hub (§9a)** — a team-editable Sheet as the automation's data hub via the direct
+  Sheets v4 REST API (reusing the Google `TokenSource`): `sheet:init` provisions the `targets`/`history`
+  tabs, `targets:list` reads the distribution targets (①), and `history:record` upserts publish rows (②).
+  ③ impressions and §8 wiring are follow-ups.
 
 ## [0.1.0] - 2026-07-15
 
