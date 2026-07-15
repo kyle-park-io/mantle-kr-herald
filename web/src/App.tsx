@@ -23,7 +23,8 @@ export function App() {
   const selected = items.find((t) => t.itemId === selectedId) ?? null;
 
   const switchMode = (m: Mode) => {
-    if (m !== mode && dirty && !window.confirm("저장하지 않은 편집이 있습니다. 모드를 바꿀까요?")) return;
+    if (m === mode) return;
+    if (dirty && !window.confirm("저장하지 않은 편집이 있습니다. 모드를 바꿀까요?")) return;
     setDirty(false);
     setMode(m);
   };
