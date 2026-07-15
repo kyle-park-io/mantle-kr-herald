@@ -98,6 +98,11 @@ pnpm typecheck:web  # type-check the frontend
 
 Open `http://localhost:5757`: list translations (filter by status), view source (`---` between thread tweets) + editable Korean, save / approve, and publish to Drive from the top bar.
 
+The dashboard has two review modes (header toggle): **1차 검수 (번역)** reviews Module C
+translations, and **2차 검수 (채널)** reviews Module F channel renderings (§7) — list/filter by
+status·channel·type, view the converted source, edit the channel text, approve, and copy the
+approved text for manual posting. Renderings come from `pnpm format`; run it first if the list is empty.
+
 ## Module F — Content shaping (item conversion + channel formatting)
 
 Turns an **approved** Korean translation (Module E) into channel-ready posts, in two stages.
