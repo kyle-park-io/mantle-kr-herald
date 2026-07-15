@@ -1,9 +1,9 @@
-import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
+import type { ConversionType } from "../domain/conversion/models";
 import { formatForChannel } from "../domain/formatting/channelFormat";
 import { DEFAULT_CHANNELS_BY_TYPE, type Channel, type FormatOptions } from "../domain/formatting/models";
 import { assembleRefinementWorksheet, type RefinementDraft } from "../domain/formatting/refinementWorksheet";
 import type { ConversionStore } from "../ports/ConversionStore";
-import type { FormatSelector } from "./FormatVariants";
+import { selectApprovedVariants, type FormatSelector } from "./FormatVariants";
 
 export interface PendingRendering {
   itemId: string;
@@ -18,11 +18,7 @@ export class PrepareRefinements {
   ) {}
 
   async run(selector: FormatSelector): Promise<{ worksheet: string; pending: PendingRendering[] }> {
-    const types = selector.types ?? ALL_TYPES;
-    const wantedIds = selector.ids && selector.ids.length > 0 ? new Set(selector.ids) : undefined;
-    const approved = (await this.conversionStore.loadAll()).filter(
-      (v) => v.status === "approved" && types.includes(v.type) && (!wantedIds || wantedIds.has(v.itemId)),
-    );
+    const approved = await selectApprovedVariants(this.conversionStore, selector);
 
     const drafts: RefinementDraft[] = [];
     for (const v of approved) {

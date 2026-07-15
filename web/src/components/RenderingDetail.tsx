@@ -30,7 +30,7 @@ export function RenderingDetail(props: {
     }
   };
   const copy = async () => {
-    await navigator.clipboard.writeText(props.item.text);
+    await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -66,7 +66,7 @@ export function RenderingDetail(props: {
           승인 ✓
         </button>
         <button className="px-3.5 py-1.5 border border-neutral-300 rounded-md bg-white" onClick={copy}>
-          {copied ? "복사됨 ✓" : "승인본 복사"}
+          {copied ? "복사됨 ✓" : "복사"}
         </button>
       </div>
     </div>

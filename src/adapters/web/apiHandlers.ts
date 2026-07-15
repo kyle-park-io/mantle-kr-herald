@@ -76,13 +76,13 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
       const itemId = decodeURIComponent(segments[2]);
       const type = segments[3] as ConversionType;
       const channel = segments[4] as Channel;
-      const existing = (await deps.formattingStore.loadAll()).find(
-        (r) => r.itemId === itemId && r.type === type && r.channel === channel,
-      );
 
       if (method === "PUT" && segments.length === 5) {
         const text = (body as { text?: unknown })?.text;
         if (typeof text !== "string" || text.trim() === "") return { status: 400, json: { error: "text required" } };
+        const existing = (await deps.formattingStore.loadAll()).find(
+          (r) => r.itemId === itemId && r.type === type && r.channel === channel,
+        );
         if (!existing) return { status: 404, json: { error: "not found" } };
         await deps.saveRendering.run({ itemId, type, channel, text });
         const updated = (await deps.formattingStore.loadAll()).find(

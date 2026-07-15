@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Rendering } from "../types";
+import { renderingKey, type Rendering } from "../types";
 import { RenderingList } from "./RenderingList";
 import { RenderingDetail } from "./RenderingDetail";
-
-const keyOf = (r: Rendering) => `${r.itemId}:${r.type}:${r.channel}`;
 
 export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void }) {
   const { onDirtyChange } = props;
@@ -21,7 +19,7 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
     onDirtyChange(dirty);
   }, [dirty, onDirtyChange]);
 
-  const selected = items.find((r) => keyOf(r) === selectedKey) ?? null;
+  const selected = items.find((r) => renderingKey(r) === selectedKey) ?? null;
 
   const handleSelect = (k: string) => {
     if (dirty && !window.confirm("저장하지 않은 편집이 있습니다. 그래도 이동할까요?")) return;

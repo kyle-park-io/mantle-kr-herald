@@ -1,10 +1,8 @@
 import { useState } from "react";
-import type { Rendering } from "../types";
+import { renderingKey, type Rendering } from "../types";
 
 const badgeClass = (status: Rendering["status"]) =>
   status === "approved" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800";
-
-const keyOf = (r: Rendering) => `${r.itemId}:${r.type}:${r.channel}`;
 
 export function RenderingList(props: {
   items: Rendering[];
@@ -50,7 +48,7 @@ export function RenderingList(props: {
       </div>
       <ul>
         {shown.map((r) => {
-          const k = keyOf(r);
+          const k = renderingKey(r);
           return (
             <li
               key={k}

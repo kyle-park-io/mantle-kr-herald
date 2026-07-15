@@ -4,7 +4,7 @@ export { ALL_CHANNELS, DEFAULT_CHANNELS_BY_TYPE } from "./models";
 export type { Channel, FormatOptions, FormatResult, ChannelRendering } from "./models";
 
 const X_LIMIT = 280;
-const BOLD = /\*\*(.+?)\*\*/g;
+const BOLD = /\*\*([\s\S]+?)\*\*/g;
 const MD_LINK = /\[([^\]]+)\]\(([^)]+)\)/g;
 
 const collapseBlankLines = (t: string): string => t.replace(/\n{3,}/g, "\n\n");
@@ -31,7 +31,8 @@ export function formatForChannel(text: string, channel: Channel, opts: FormatOpt
   const warnings: string[] = [];
   switch (channel) {
     case "x": {
-      const out = collapseBlankLines(opts.xBold === "unicode" ? boldToUnicode(text) : stripBold(text)).trim();
+      const bolded = opts.xBold === "unicode" ? boldToUnicode(text) : stripBold(text);
+      const out = collapseBlankLines(linksToPlain(bolded)).trim();
       if ([...out].length > X_LIMIT) warnings.push(`exceeds ${X_LIMIT} chars (${[...out].length}); consider splitting into a thread`);
       return { text: out, warnings };
     }

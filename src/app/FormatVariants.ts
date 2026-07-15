@@ -1,4 +1,4 @@
-import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
+import { ALL_TYPES, type ConversionType, type ContentVariant } from "../domain/conversion/models";
 import { formatForChannel } from "../domain/formatting/channelFormat";
 import { DEFAULT_CHANNELS_BY_TYPE, type Channel, type ChannelRendering, type FormatOptions } from "../domain/formatting/models";
 import type { ConversionStore } from "../ports/ConversionStore";
@@ -17,6 +17,15 @@ export interface FormatWarning {
   messages: string[];
 }
 
+/** Load the approved variants matching the selector's types + ids. Shared by the §6 use-cases. */
+export async function selectApprovedVariants(store: ConversionStore, selector: FormatSelector): Promise<ContentVariant[]> {
+  const types = selector.types ?? ALL_TYPES;
+  const wantedIds = selector.ids && selector.ids.length > 0 ? new Set(selector.ids) : undefined;
+  return (await store.loadAll()).filter(
+    (v) => v.status === "approved" && types.includes(v.type) && (!wantedIds || wantedIds.has(v.itemId)),
+  );
+}
+
 export class FormatVariants {
   constructor(
     private readonly conversionStore: ConversionStore,
@@ -26,11 +35,7 @@ export class FormatVariants {
   ) {}
 
   async run(selector: FormatSelector): Promise<{ renderings: ChannelRendering[]; warnings: FormatWarning[] }> {
-    const types = selector.types ?? ALL_TYPES;
-    const wantedIds = selector.ids && selector.ids.length > 0 ? new Set(selector.ids) : undefined;
-    const approved = (await this.conversionStore.loadAll()).filter(
-      (v) => v.status === "approved" && types.includes(v.type) && (!wantedIds || wantedIds.has(v.itemId)),
-    );
+    const approved = await selectApprovedVariants(this.conversionStore, selector);
 
     const renderings: ChannelRendering[] = [];
     const warnings: FormatWarning[] = [];
