@@ -37,7 +37,16 @@ export class GoogleDriveUploader implements DriveUploader {
       },
       body,
     });
-    if (!res.ok) throw new Error(`Google Drive upload failed: HTTP ${res.status}`);
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const b = (await res.json()) as { error?: { message?: string } };
+        detail = b.error?.message ?? "";
+      } catch {
+        // non-JSON body — status alone is the detail
+      }
+      throw new Error(`Google Drive upload failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
+    }
     const data = (await res.json()) as { id?: string; name?: string };
     if (!data.id) throw new Error("Google Drive upload response missing id");
     return { id: data.id, name: data.name ?? req.name };

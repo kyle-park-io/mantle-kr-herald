@@ -77,6 +77,7 @@ describe("PublishTranslations", () => {
     const res = await uc.run();
     expect(res.uploaded).toBe(1);
     expect(res.failed).toBe(1);
+    expect(res.failures).toEqual([{ key: "x:1:translated:lark", error: "boom" }]);
     expect(store.keys.has("x:1:translated:google")).toBe(true);
     expect(store.keys.has("x:1:translated:lark")).toBe(false);
   });
