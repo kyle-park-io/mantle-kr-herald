@@ -32,4 +32,5 @@ const usecase = new PublishTranslations(new JsonTranslationStore("output/transla
 const result = await usecase.run();
 console.log(`published ${result.uploaded} file(s) across ${uploaders.length} drive(s); ${result.failed} failure(s)`);
 console.log(`  by drive: ${JSON.stringify(result.byDrive)}`);
+for (const f of result.failures) console.error(`  ✗ ${f.key}: ${f.error}`);
 if (result.failed > 0) process.exitCode = 1;
