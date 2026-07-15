@@ -57,9 +57,12 @@ describe("GoogleSheetClient", () => {
     expect(body.sheets.map((s: { properties: { title: string } }) => s.properties.title)).toEqual(["targets", "history"]);
   });
 
-  it("throws on a non-ok response", async () => {
-    const badFetch = (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch;
+  it("throws on a non-ok response (all methods)", async () => {
+    const badFetch = (async () => new Response("nope", { status: 500 })) as unknown as typeof fetch;
     const c = new GoogleSheetClient(auth, "SID", badFetch);
-    await expect(c.getValues("targets!A2:E")).rejects.toThrow(/403/);
+    await expect(c.getValues("targets!A2:E")).rejects.toThrow(/500/);
+    await expect(c.appendValues("history!A2:G", [["a"]])).rejects.toThrow(/500/);
+    await expect(c.updateValues("history!A5:G5", [["a"]])).rejects.toThrow(/500/);
+    await expect(c.createSpreadsheet("t", [{ title: "x" }])).rejects.toThrow(/500/);
   });
 });

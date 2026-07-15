@@ -40,4 +40,18 @@ describe("FormatVariants", () => {
     expect(renderings.map((r) => r.channel)).toEqual(["x"]);
     expect(warnings[0].messages.some((m) => m.includes("280"))).toBe(true);
   });
+
+  it("filters by --ids (only the requested items are formatted)", async () => {
+    const s = stores([variant({ itemId: "x:1", type: "x" }), variant({ itemId: "x:2", type: "x" })]);
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore, {}, () => "t");
+    const { renderings } = await uc.run({ ids: ["x:2"], channels: ["x"] });
+    expect(renderings.map((r) => r.itemId)).toEqual(["x:2"]);
+  });
+
+  it("filters by --types (only the requested types are formatted)", async () => {
+    const s = stores([variant({ itemId: "x:1", type: "x" }), variant({ itemId: "x:1", type: "kol" })]);
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore, {}, () => "t");
+    const { renderings } = await uc.run({ types: ["kol"], channels: ["telegram"] });
+    expect(renderings.map((r) => r.type)).toEqual(["kol"]);
+  });
 });
