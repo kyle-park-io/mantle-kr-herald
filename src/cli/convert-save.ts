@@ -18,10 +18,18 @@ if (!id || !type || !file || !ALL_TYPES.includes(type)) {
   throw new Error("Usage: pnpm convert:save --id <itemId> --type <x|kol|pr> --file <ko.txt> [--approve]");
 }
 
+const conversionStore = new JsonConversionStore("output/variants");
+
 const pending = await readJsonFile<PendingVariant[]>("output/variants/pending.json", []);
-const item = pending.find((p) => p.itemId === id && p.type === type);
-if (!item) {
-  throw new Error(`Variant ${id}/${type} not found in output/variants/pending.json (run convert:prepare first)`);
+let sourceKorean = pending.find((p) => p.itemId === id && p.type === type)?.sourceKorean;
+if (sourceKorean === undefined) {
+  // Not in the current worksheet batch — fall back to an already-saved variant, so you
+  // can re-approve a "converted" variant after pending.json was overwritten by a later prepare.
+  const existing = (await conversionStore.loadAll()).find((v) => v.itemId === id && v.type === type);
+  if (!existing) {
+    throw new Error(`Variant ${id}/${type} not found in output/variants/{pending,variants}.json (run convert:prepare first)`);
+  }
+  sourceKorean = existing.sourceKorean;
 }
 
 const convertedText = (await readFile(file, "utf8")).trim();
@@ -32,7 +40,7 @@ const fewShotByType: Record<ConversionType, FewShotStore> = {
   pr: new JsonTypedFewShotStore("conversion", "pr"),
 };
 
-const usecase = new SaveConversion(new JsonConversionStore("output/variants"), fewShotByType);
-const res = await usecase.run({ itemId: item.itemId, type: item.type, sourceKorean: item.sourceKorean, convertedText, approve });
+const usecase = new SaveConversion(conversionStore, fewShotByType);
+const res = await usecase.run({ itemId: id, type, sourceKorean, convertedText, approve });
 
 console.log(`saved ${res.itemId}/${res.type}${res.promoted ? " (approved → few-shot)" : ""}`);
