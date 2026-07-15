@@ -47,4 +47,45 @@ describe("HttpClient", () => {
     const client = new HttpClient("https://api.example.com");
     await expect(client.get("/x")).rejects.toThrow(/401|unauthorized/i);
   });
+
+  it("exhausts retries without a final backoff and names the last status", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(503, { detail: "down" }));
+    const timeoutMock = vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+    const client = new HttpClient("https://api.example.com");
+
+    await expect(client.get("/x")).rejects.toThrow(/3 attempts.*503/);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(timeoutMock).toHaveBeenCalledTimes(2); // no backoff after the 3rd (final) attempt
+  });
+
+  it("retries a network error and wraps it with context on exhaustion", async () => {
+    const boom = new Error("ECONNRESET");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(boom);
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+    const client = new HttpClient("https://api.example.com");
+
+    await expect(client.get("/x")).rejects.toThrow(/3 attempts.*network error/);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("recovers when a network error is followed by success", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("ECONNRESET"))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: 3 }));
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+    const client = new HttpClient("https://api.example.com");
+
+    expect(await client.get<{ ok: number }>("/x")).toEqual({ ok: 3 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
