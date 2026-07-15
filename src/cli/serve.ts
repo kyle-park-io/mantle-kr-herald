@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 // src/cli/serve.ts
 import { join } from "node:path";
 import { startServer } from "../adapters/web/HttpServer";

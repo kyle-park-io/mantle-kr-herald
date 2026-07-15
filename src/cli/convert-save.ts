@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 // src/cli/convert-save.ts
 import { readFile } from "node:fs/promises";
 import { JsonConversionStore } from "../adapters/store/JsonConversionStore";

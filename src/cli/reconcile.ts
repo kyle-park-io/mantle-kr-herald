@@ -1,3 +1,4 @@
+import "./registerErrorHandler";
 import { loadConfig } from "../config";
 import { TwitterClient } from "../adapters/twitterapi/TwitterClient";
 import { TwitterApiSourceGateway } from "../adapters/twitterapi/TwitterApiSourceGateway";
