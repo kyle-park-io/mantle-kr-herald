@@ -84,7 +84,7 @@ describe("CollectLarkMessages", () => {
     expect(wm.marks.get("oc_a")).toBe("2026-05-05T00:00:00.000Z");
   });
 
-  it("contains a per-chat failure so other chats still get collected", async () => {
+  it("captures the per-chat failure reason so other chats still get collected", async () => {
     const gw = new ThrowingGateway("oc_bad", { oc_a: [msg("om_1", "oc_a", "2026-01-01T00:01:00.000Z")] });
     const repo = new InMemoryRepo();
     const wm = new InMemoryWatermark();
@@ -92,7 +92,7 @@ describe("CollectLarkMessages", () => {
 
     const result = await usecase.run(["oc_bad", "oc_a"]);
 
-    expect(result.failed).toEqual(["oc_bad"]);
+    expect(result.failed).toEqual([{ chatId: "oc_bad", error: "boom" }]);
     expect(result.collected).toBe(1);
     expect(repo.saved.map((m) => m.messageId)).toEqual(["om_1"]);
   });

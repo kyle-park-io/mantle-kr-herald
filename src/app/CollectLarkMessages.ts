@@ -3,9 +3,14 @@ import type { LarkSourceGateway } from "../ports/LarkSourceGateway";
 import type { LarkRepository } from "../ports/LarkRepository";
 import type { WatermarkStore } from "../shared/store/WatermarkStore";
 
+export interface CollectLarkFailure {
+  chatId: string;
+  error: string;
+}
+
 export interface CollectLarkResult {
   collected: number;
-  failed: string[];
+  failed: CollectLarkFailure[];
 }
 
 export class CollectLarkMessages {
@@ -17,7 +22,7 @@ export class CollectLarkMessages {
 
   async run(chatIds: string[]): Promise<CollectLarkResult> {
     let collected = 0;
-    const failed: string[] = [];
+    const failed: CollectLarkFailure[] = [];
 
     for (const chatId of chatIds) {
       try {
@@ -35,8 +40,8 @@ export class CollectLarkMessages {
         if (maxCreatedAt && (!since || maxCreatedAt > since)) {
           await this.watermark.set(chatId, maxCreatedAt);
         }
-      } catch {
-        failed.push(chatId);
+      } catch (err) {
+        failed.push({ chatId, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
