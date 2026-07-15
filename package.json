@@ -10,6 +10,8 @@
     "reconcile": "tsx --env-file-if-exists=.env src/cli/reconcile.ts",
     "translate:prepare": "tsx src/cli/translate-prepare.ts",
     "translate:save": "tsx src/cli/translate-save.ts",
+    "convert:prepare": "tsx src/cli/convert-prepare.ts",
+    "convert:save": "tsx src/cli/convert-save.ts",
     "glossary": "tsx src/cli/glossary.ts",
     "drive:publish": "tsx --env-file-if-exists=.env src/cli/publish.ts",
     "drive:init": "tsx --env-file-if-exists=.env src/cli/drive-init.ts",
