@@ -17,7 +17,7 @@ export class SaveRendering {
 
   async run(input: SaveRenderingInput): Promise<{ itemId: string; type: ConversionType; channel: Channel }> {
     const rendering: ChannelRendering = {
-      itemId: input.itemId, type: input.type, channel: input.channel, text: input.text, refined: true, createdAt: this.now(),
+      itemId: input.itemId, type: input.type, channel: input.channel, text: input.text, refined: true, createdAt: this.now(), status: "rendered",
     };
     await this.formattingStore.upsert(rendering);
     return { itemId: input.itemId, type: input.type, channel: input.channel };

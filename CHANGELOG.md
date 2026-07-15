@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a per-type few-shot flywheel; §6 channel formatting (`format` / `format:save`) renders a
   variant for X / Telegram / KakaoTalk / PR-mail with deterministic formatters and an optional
   agent refinement pass.
+- **Second review (§7)** — the local dashboard gains a **2차 검수** mode to list/filter, edit, and
+  approve Module F channel renderings before posting. `ChannelRendering` gains a `rendered`/`approved`
+  status; new `ApproveRendering` use-case and `/api/renderings` routes; approved text is copy-ready.
 
 ## [0.1.0] - 2026-07-15
 

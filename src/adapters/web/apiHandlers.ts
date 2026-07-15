@@ -3,6 +3,12 @@ import type { Translation } from "../../domain/translation/models";
 import type { TranslationStore } from "../../ports/TranslationStore";
 import type { SaveTranslation } from "../../app/SaveTranslation";
 import type { PublishTranslations } from "../../app/PublishTranslations";
+import type { ChannelRendering, Channel } from "../../domain/formatting/models";
+import type { ConversionType } from "../../domain/conversion/models";
+import type { FormattingStore } from "../../ports/FormattingStore";
+import type { ConversionStore } from "../../ports/ConversionStore";
+import type { SaveRendering } from "../../app/SaveRendering";
+import type { ApproveRendering } from "../../app/ApproveRendering";
 
 export interface ApiResult {
   status: number;
@@ -13,6 +19,10 @@ export interface ApiDeps {
   translationStore: TranslationStore;
   saveTranslation: SaveTranslation;
   buildPublisher: (target: string) => Promise<PublishTranslations>;
+  formattingStore: FormattingStore;
+  conversionStore: ConversionStore;
+  saveRendering: SaveRendering;
+  approveRendering: ApproveRendering;
 }
 
 async function findById(store: TranslationStore, id: string): Promise<Translation | undefined> {
@@ -52,6 +62,41 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     const target = (body as { target?: string })?.target || "google";
     const pub = await deps.buildPublisher(target);
     return { status: 200, json: await pub.run() };
+  }
+
+  if (segments[1] === "renderings") {
+    if (method === "GET" && segments.length === 2) {
+      const [renderings, variants] = await Promise.all([deps.formattingStore.loadAll(), deps.conversionStore.loadAll()]);
+      const convertedByKey = new Map(variants.map((v) => [`${v.itemId}:${v.type}`, v.convertedText]));
+      const enriched = renderings.map((r) => ({ ...r, convertedText: convertedByKey.get(`${r.itemId}:${r.type}`) ?? "" }));
+      return { status: 200, json: enriched };
+    }
+
+    if (segments.length >= 5) {
+      const itemId = decodeURIComponent(segments[2]);
+      const type = segments[3] as ConversionType;
+      const channel = segments[4] as Channel;
+      const existing = (await deps.formattingStore.loadAll()).find(
+        (r) => r.itemId === itemId && r.type === type && r.channel === channel,
+      );
+
+      if (method === "PUT" && segments.length === 5) {
+        const text = (body as { text?: unknown })?.text;
+        if (typeof text !== "string" || text.trim() === "") return { status: 400, json: { error: "text required" } };
+        if (!existing) return { status: 404, json: { error: "not found" } };
+        await deps.saveRendering.run({ itemId, type, channel, text });
+        const updated = (await deps.formattingStore.loadAll()).find(
+          (r) => r.itemId === itemId && r.type === type && r.channel === channel,
+        );
+        return { status: 200, json: updated };
+      }
+
+      if (method === "POST" && segments.length === 6 && segments[5] === "approve") {
+        const updated = await deps.approveRendering.run({ itemId, type, channel });
+        if (!updated) return { status: 404, json: { error: "not found" } };
+        return { status: 200, json: updated };
+      }
+    }
   }
 
   return { status: 404, json: { error: "not found" } };

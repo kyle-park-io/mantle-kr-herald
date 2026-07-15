@@ -2,12 +2,21 @@
 import { describe, it, expect } from "vitest";
 import { handleApi, type ApiDeps } from "../../../src/adapters/web/apiHandlers";
 import type { Translation } from "../../../src/domain/translation/models";
+import type { ChannelRendering } from "../../../src/domain/formatting/models";
+import type { ContentVariant } from "../../../src/domain/conversion/models";
 
 function tr(over: Partial<Translation> = {}): Translation {
   return { itemId: "x:1", source: "x", sourceText: "src", koreanText: "ko", status: "translated", translatedAt: "t", ...over };
 }
 
-function makeDeps(list: Translation[]): ApiDeps {
+function rnd(over: Partial<ChannelRendering> = {}): ChannelRendering {
+  return { itemId: "x:1", type: "x", channel: "x", text: "t", refined: false, createdAt: "c", status: "rendered", ...over };
+}
+function cv(over: Partial<ContentVariant> = {}): ContentVariant {
+  return { itemId: "x:1", type: "x", sourceKorean: "s", convertedText: "변환본", status: "approved", createdAt: "c", ...over };
+}
+
+function makeDeps(list: Translation[], renderings: ChannelRendering[] = [], variants: ContentVariant[] = []): ApiDeps {
   const state = { list: [...list] };
   const translationStore = {
     loadAll: async () => state.list,
@@ -24,7 +33,37 @@ function makeDeps(list: Translation[]): ApiDeps {
   } as unknown as ApiDeps["saveTranslation"];
   const buildPublisher = async () =>
     ({ run: async () => ({ uploaded: 2, failed: 0, byDrive: { google: 2 } }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>;
-  return { translationStore, saveTranslation, buildPublisher };
+
+  const rstate = { list: renderings.map((r) => ({ ...r })) };
+  const formattingStore = {
+    loadAll: async () => rstate.list,
+    listRenderedKeys: async () => new Set(rstate.list.map((r) => `${r.itemId}:${r.type}:${r.channel}`)),
+    upsert: async (r: ChannelRendering) => {
+      rstate.list = [...rstate.list.filter((x) => !(x.itemId === r.itemId && x.type === r.type && x.channel === r.channel)), r];
+    },
+  };
+  const conversionStore = {
+    loadAll: async () => variants,
+    upsert: async () => {},
+    listConvertedKeys: async () => new Set<string>(),
+  };
+  const saveRendering = {
+    run: async (input: { itemId: string; type: ChannelRendering["type"]; channel: ChannelRendering["channel"]; text: string }) => {
+      await formattingStore.upsert(rnd({ itemId: input.itemId, type: input.type, channel: input.channel, text: input.text, refined: true, status: "rendered" }));
+      return { itemId: input.itemId, type: input.type, channel: input.channel };
+    },
+  } as unknown as ApiDeps["saveRendering"];
+  const approveRendering = {
+    run: async (input: { itemId: string; type: ChannelRendering["type"]; channel: ChannelRendering["channel"] }) => {
+      const ex = rstate.list.find((r) => r.itemId === input.itemId && r.type === input.type && r.channel === input.channel);
+      if (!ex) return undefined;
+      const up: ChannelRendering = { ...ex, status: "approved", approvedAt: "a" };
+      await formattingStore.upsert(up);
+      return up;
+    },
+  } as unknown as ApiDeps["approveRendering"];
+
+  return { translationStore, saveTranslation, buildPublisher, formattingStore, conversionStore, saveRendering, approveRendering };
 }
 
 describe("handleApi", () => {
@@ -70,5 +109,35 @@ describe("handleApi", () => {
   it("unknown route is 404", async () => {
     const d = makeDeps([]);
     expect((await handleApi(d, "GET", "/api/nope", undefined)).status).toBe(404);
+  });
+
+  it("GET /api/renderings enriches each rendering with the variant convertedText", async () => {
+    const d = makeDeps([], [rnd({ itemId: "x:1", type: "x", channel: "x" })], [cv({ itemId: "x:1", type: "x", convertedText: "변환본" })]);
+    const res = await handleApi(d, "GET", "/api/renderings", undefined);
+    expect(res.status).toBe(200);
+    const list = res.json as (ChannelRendering & { convertedText: string })[];
+    expect(list[0].convertedText).toBe("변환본");
+  });
+
+  it("PUT edits a rendering's text and reverts it to rendered", async () => {
+    const d = makeDeps([], [rnd({ itemId: "x:1", type: "x", channel: "telegram", status: "approved" })]);
+    const res = await handleApi(d, "PUT", "/api/renderings/x%3A1/x/telegram", { text: "수정된 텍스트" });
+    expect(res.status).toBe(200);
+    expect((res.json as ChannelRendering).text).toBe("수정된 텍스트");
+    expect((res.json as ChannelRendering).status).toBe("rendered");
+  });
+
+  it("PUT empty text is 400; unknown rendering is 404", async () => {
+    const d = makeDeps([], [rnd({ itemId: "x:1", type: "x", channel: "x" })]);
+    expect((await handleApi(d, "PUT", "/api/renderings/x%3A1/x/x", { text: "" })).status).toBe(400);
+    expect((await handleApi(d, "PUT", "/api/renderings/x%3A9/x/x", { text: "y" })).status).toBe(404);
+  });
+
+  it("POST approve sets status approved; unknown is 404", async () => {
+    const d = makeDeps([], [rnd({ itemId: "x:1", type: "x", channel: "x" })]);
+    const res = await handleApi(d, "POST", "/api/renderings/x%3A1/x/x/approve", undefined);
+    expect(res.status).toBe(200);
+    expect((res.json as ChannelRendering).status).toBe("approved");
+    expect((await handleApi(d, "POST", "/api/renderings/x%3A9/x/x/approve", undefined)).status).toBe(404);
   });
 });

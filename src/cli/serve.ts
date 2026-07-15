@@ -7,6 +7,10 @@ import { JsonPublishStore } from "../adapters/store/JsonPublishStore";
 import { JsonFewShotStore } from "../adapters/store/JsonFewShotStore";
 import { SaveTranslation } from "../app/SaveTranslation";
 import { PublishTranslations } from "../app/PublishTranslations";
+import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
+import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
+import { SaveRendering } from "../app/SaveRendering";
+import { ApproveRendering } from "../app/ApproveRendering";
 import { GoogleDriveUploader } from "../adapters/drive/GoogleDriveUploader";
 import { LarkDriveUploader } from "../adapters/drive/LarkDriveUploader";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
@@ -19,6 +23,8 @@ const port = Number(process.env.PORT) || 5757;
 const translationStore = new JsonTranslationStore("output/translations");
 const publishStore = new JsonPublishStore("output/publish");
 const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotStore("translation"));
+const formattingStore = new JsonFormattingStore("output/formatted");
+const conversionStore = new JsonConversionStore("output/variants");
 
 async function uploadersFor(target: string): Promise<DriveUploader[]> {
   const uploaders: DriveUploader[] = [];
@@ -40,6 +46,10 @@ const deps: ApiDeps = {
   translationStore,
   saveTranslation,
   buildPublisher: async (target) => new PublishTranslations(translationStore, await uploadersFor(target), publishStore),
+  formattingStore,
+  conversionStore,
+  saveRendering: new SaveRendering(formattingStore),
+  approveRendering: new ApproveRendering(formattingStore),
 };
 
 startServer(deps, { port, staticDir: join("web", "dist") });
