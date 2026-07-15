@@ -1,4 +1,5 @@
 import "./registerErrorHandler";
+import { argValue } from "./args";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { XContentSource } from "../adapters/content/XContentSource";
@@ -10,11 +11,6 @@ import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { PrepareTranslations, type Selector } from "../app/PrepareTranslations";
 import type { ContentSource } from "../ports/ContentSource";
-
-function argValue(flag: string): string | undefined {
-  const i = process.argv.indexOf(flag);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
 
 const sourceArg = argValue("--source"); // "x" | "lark" | undefined (both)
 const xSource = new XContentSource("output/x/items.json");

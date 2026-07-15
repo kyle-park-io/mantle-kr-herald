@@ -1,11 +1,7 @@
 import "./registerErrorHandler";
+import { argValue } from "./args";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import type { GlossaryRule } from "../domain/translation/models";
-
-function argValue(flag: string): string | undefined {
-  const i = process.argv.indexOf(flag);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
 
 const store = new JsonGlossaryStore("translation");
 const command = process.argv[2];
