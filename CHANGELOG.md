@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Content shaping (F)** — §5 item conversion (`convert:prepare` / `convert:save`) rewrites an
+  approved translation into X / KOL / PR variants with per-type steering config in `conversion/`
+  and a per-type few-shot flywheel; §6 channel formatting (`format` / `format:save`) renders a
+  variant for X / Telegram / KakaoTalk / PR-mail with deterministic formatters and an optional
+  agent refinement pass.
+
 ## [0.1.0] - 2026-07-15
 
 Initial release: the end-to-end Mantle KR content pipeline
