@@ -72,4 +72,23 @@ describe("LarkSourceGateway", () => {
     const expected = String(Math.floor(Date.parse("2026-06-01T00:00:00.000Z") / 1000));
     expect(client.calls[0].params?.start_time).toBe(expected);
   });
+
+  it("excludes messages at or before sinceTime (start_time is second-granular & inclusive)", async () => {
+    // The watermark instant "…40.268Z" was already collected. Lark's start_time floors to
+    // the second (…40) and is inclusive, so the API re-returns the boundary message every run;
+    // the gateway must drop it client-side and yield only strictly-newer messages.
+    const boundary = rawMsg("om_boundary"); // create_time 1750000000000 → 2025-06-15T15:06:40.000Z
+    const atWatermark = { ...rawMsg("om_at"), create_time: "1750000000268" }; // …40.268Z (== watermark)
+    const newer = { ...rawMsg("om_newer"), create_time: "1750000005000" }; // …45.000Z
+    const client = new FakeClient(() => ({
+      code: 0,
+      data: { items: [boundary, atWatermark, newer], has_more: false },
+    }));
+    const gw = new LarkSourceGateway(client);
+
+    const ids: string[] = [];
+    for await (const m of gw.fetchMessages("oc_x", "2025-06-15T15:06:40.268Z")) ids.push(m.messageId);
+
+    expect(ids).toEqual(["om_newer"]);
+  });
 });
