@@ -95,3 +95,18 @@ export function parseChatsData(response: unknown): {
     hasMore: env.data?.has_more ?? false,
   };
 }
+
+const SendEnvelope = z.object({
+  code: z.number(),
+  msg: z.string().optional(),
+  data: z.object({ message_id: z.string() }).nullish(),
+});
+
+/** Validate a message-send envelope; throw on code !== 0; return the created message_id. */
+export function parseSendResult(response: unknown): string {
+  const env = SendEnvelope.parse(response);
+  if (env.code !== 0 || !env.data?.message_id) {
+    throw new Error(`Lark API error: code=${env.code} ${env.msg ?? ""}`.trim());
+  }
+  return env.data.message_id;
+}

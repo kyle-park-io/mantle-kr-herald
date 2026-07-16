@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeMessage, parseMessagesData, parseChatsData } from "../../../src/adapters/lark/schemas";
+import { normalizeMessage, parseMessagesData, parseChatsData, parseSendResult } from "../../../src/adapters/lark/schemas";
 
 const rawMessage = {
   message_id: "om_123",
@@ -78,5 +78,15 @@ describe("parseChatsData", () => {
 
   it("throws on a non-zero code", () => {
     expect(() => parseChatsData({ code: 230002, msg: "no permission" })).toThrow(/230002/);
+  });
+});
+
+describe("parseSendResult", () => {
+  it("returns the created message_id", () => {
+    expect(parseSendResult({ code: 0, data: { message_id: "om_9" } })).toBe("om_9");
+  });
+
+  it("throws on a non-zero code", () => {
+    expect(() => parseSendResult({ code: 230002, msg: "no permission" })).toThrow(/230002/);
   });
 });
