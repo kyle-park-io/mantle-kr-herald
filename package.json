@@ -8,6 +8,7 @@
     "collect": "tsx --env-file-if-exists=.env src/cli/collect.ts",
     "collect-lark": "tsx --env-file-if-exists=.env src/cli/collect-lark.ts",
     "lark:chats": "tsx --env-file-if-exists=.env src/cli/lark-chats.ts",
+    "lark:send": "tsx --env-file-if-exists=.env src/cli/lark-send.ts",
     "reconcile": "tsx --env-file-if-exists=.env src/cli/reconcile.ts",
     "translate:prepare": "tsx src/cli/translate-prepare.ts",
     "translate:save": "tsx src/cli/translate-save.ts",
