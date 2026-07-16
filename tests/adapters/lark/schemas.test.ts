@@ -89,4 +89,8 @@ describe("parseSendResult", () => {
   it("throws on a non-zero code", () => {
     expect(() => parseSendResult({ code: 230002, msg: "no permission" })).toThrow(/230002/);
   });
+
+  it("throws a formatted error (not a ZodError) when data lacks message_id", () => {
+    expect(() => parseSendResult({ code: 0, data: {} })).toThrow(/Lark API error: code=0/);
+  });
 });

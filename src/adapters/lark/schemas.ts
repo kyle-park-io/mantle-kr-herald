@@ -99,7 +99,7 @@ export function parseChatsData(response: unknown): {
 const SendEnvelope = z.object({
   code: z.number(),
   msg: z.string().optional(),
-  data: z.object({ message_id: z.string() }).nullish(),
+  data: z.object({ message_id: z.string().optional() }).nullish(),
 });
 
 /** Validate a message-send envelope; throw on code !== 0; return the created message_id. */
