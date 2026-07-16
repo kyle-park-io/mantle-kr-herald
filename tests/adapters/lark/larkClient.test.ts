@@ -3,10 +3,11 @@ import { LarkClient } from "../../../src/adapters/lark/LarkClient";
 import { LarkAuth } from "../../../src/adapters/lark/LarkAuth";
 import type { IHttpClient } from "../../../src/shared/http/IHttpClient";
 
-function authReturning(token: string): LarkAuth {
+function authReturning(...tokens: string[]): LarkAuth {
+  let i = 0;
   const http: IHttpClient = {
     get: async () => { throw new Error("no"); },
-    post: async () => ({ code: 0, tenant_access_token: token, expire: 7200 }) as unknown,
+    post: async () => ({ code: 0, tenant_access_token: tokens[Math.min(i++, tokens.length - 1)], expire: 7200 }) as unknown,
     patch: async () => { throw new Error("no"); },
     delete: async () => { throw new Error("no"); },
   } as IHttpClient;
@@ -46,14 +47,19 @@ describe("LarkClient", () => {
 
   it("refreshes the token once and retries on an auth-error envelope", async () => {
     let call = 0;
-    const client = new LarkClient("https://open.larksuite.com", authReturning("t-abc"), (_base, headers) => {
-      return new SpyHttp(headers, () => (++call === 1 ? { code: 99991663, msg: "expired" } : { code: 0, data: {} }));
+    const spies: SpyHttp[] = [];
+    const client = new LarkClient("https://open.larksuite.com", authReturning("t-1", "t-2"), (_base, headers) => {
+      const s = new SpyHttp(headers, () => (++call === 1 ? { code: 99991663, msg: "expired" } : { code: 0, data: {} }));
+      spies.push(s);
+      return s;
     });
 
     const res = await client.get<{ code: number }>("/open-apis/im/v1/messages", {});
 
     expect(res.code).toBe(0);
     expect(call).toBe(2);
+    expect(spies[0].authHeaders[0]).toBe("Bearer t-1");
+    expect(spies[1].authHeaders[0]).toBe("Bearer t-2");
   });
 
   it("injects the bearer token and passes the body on POST", async () => {
@@ -72,13 +78,18 @@ describe("LarkClient", () => {
 
   it("refreshes the token once and retries on an auth-error envelope (POST)", async () => {
     let call = 0;
-    const client = new LarkClient("https://open.larksuite.com", authReturning("t-abc"), (_base, headers) => {
-      return new SpyHttp(headers, () => (++call === 1 ? { code: 99991663, msg: "expired" } : { code: 0, data: {} }));
+    const spies: SpyHttp[] = [];
+    const client = new LarkClient("https://open.larksuite.com", authReturning("t-1", "t-2"), (_base, headers) => {
+      const s = new SpyHttp(headers, () => (++call === 1 ? { code: 99991663, msg: "expired" } : { code: 0, data: {} }));
+      spies.push(s);
+      return s;
     });
 
     const res = await client.post<{ code: number }>("/open-apis/im/v1/messages", {});
 
     expect(res.code).toBe(0);
     expect(call).toBe(2);
+    expect(spies[0].authHeaders[0]).toBe("Bearer t-1");
+    expect(spies[1].authHeaders[0]).toBe("Bearer t-2");
   });
 });
