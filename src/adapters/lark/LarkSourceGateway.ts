@@ -30,7 +30,11 @@ export class LarkSourceGateway implements LarkSourceGatewayPort {
       for (const raw of items) {
         const msgType = (raw as { msg_type?: unknown }).msg_type;
         if (typeof msgType !== "string" || !COLLECTED_TYPES.has(msgType)) continue;
-        yield normalizeMessage(raw);
+        const message = normalizeMessage(raw);
+        // start_time floors to the second and is inclusive, so the API re-returns messages at
+        // the exact watermark instant on every run — exclude anything <= the ms-precise watermark.
+        if (sinceTime && message.createdAt <= sinceTime) continue;
+        yield message;
       }
       if (!hasMore || !next) break;
       pageToken = next;

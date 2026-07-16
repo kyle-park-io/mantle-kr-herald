@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tabs, `targets:list` reads the distribution targets (①), and `history:record` upserts publish rows (②).
   ③ impressions and §8 wiring are follow-ups.
 
+### Fixed
+
+- **Lark collection (B)** — incremental re-runs no longer re-collect the boundary message. Lark's
+  `start_time` filter floors to the second and is inclusive, so the API re-returned the message at
+  the exact watermark instant on every run (reported as `collected 1` with no new data). The gateway
+  now drops anything at or before the ms-precise watermark client-side, mirroring the X collector.
+  Verified live: the Lark bot's `im:message.group_msg` scope is approved, `collect-lark` reads group
+  messages, and a no-new-data re-run now reports `collected 0`.
+
 ## [0.1.0] - 2026-07-15
 
 Initial release: the end-to-end Mantle KR content pipeline
