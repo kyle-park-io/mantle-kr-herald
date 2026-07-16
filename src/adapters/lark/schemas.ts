@@ -14,7 +14,7 @@ const MessageRaw = z
   })
   .passthrough();
 
-const MessagesEnvelope = z.object({
+export const MessagesEnvelope = z.object({
   code: z.number(),
   msg: z.string().optional(),
   data: z
@@ -66,4 +66,47 @@ export function parseMessagesData(response: unknown): {
     pageToken: env.data?.page_token ?? "",
     hasMore: env.data?.has_more ?? false,
   };
+}
+
+const ChatRaw = z
+  .object({
+    chat_id: z.string(),
+    name: z.string().nullish(),
+  })
+  .passthrough();
+
+/** Validate a chats-list envelope; throw on code !== 0. */
+export function parseChatsData(response: unknown): {
+  items: { chatId: string; name: string }[];
+  pageToken: string;
+  hasMore: boolean;
+} {
+  const env = MessagesEnvelope.parse(response);
+  if (env.code !== 0) {
+    throw new Error(`Lark API error: code=${env.code} ${env.msg ?? ""}`.trim());
+  }
+  const items = (env.data?.items ?? []).map((raw) => {
+    const c = ChatRaw.parse(raw);
+    return { chatId: c.chat_id, name: c.name ?? "" };
+  });
+  return {
+    items,
+    pageToken: env.data?.page_token ?? "",
+    hasMore: env.data?.has_more ?? false,
+  };
+}
+
+const SendEnvelope = z.object({
+  code: z.number(),
+  msg: z.string().optional(),
+  data: z.object({ message_id: z.string().optional() }).nullish(),
+});
+
+/** Validate a message-send envelope; throw on code !== 0; return the created message_id. */
+export function parseSendResult(response: unknown): string {
+  const env = SendEnvelope.parse(response);
+  if (env.code !== 0 || !env.data?.message_id) {
+    throw new Error(`Lark API error: code=${env.code} ${env.msg ?? ""}`.trim());
+  }
+  return env.data.message_id;
 }

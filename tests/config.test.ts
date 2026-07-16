@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import {
   loadConfig,
+  loadLarkAppConfig,
   loadLarkConfig,
   loadGoogleDriveConfig,
   loadGoogleDriveInitConfig,
@@ -24,6 +25,37 @@ describe("loadConfig", () => {
   it("throws a clear error when the key is missing", () => {
     delete process.env.TWITTERAPI_IO_KEY;
     expect(() => loadConfig()).toThrow(/TWITTERAPI_IO_KEY/);
+  });
+});
+
+describe("loadLarkAppConfig", () => {
+  const keys = ["LARK_APP_ID", "LARK_APP_SECRET", "LARK_BASE_URL"];
+  const original: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of keys) original[k] = process.env[k];
+  });
+  afterEach(() => {
+    for (const k of keys) {
+      if (original[k] === undefined) delete process.env[k];
+      else process.env[k] = original[k];
+    }
+  });
+
+  it("returns app credentials and defaults base url when LARK_CHAT_IDS is unset", () => {
+    process.env.LARK_APP_ID = "cli_x";
+    process.env.LARK_APP_SECRET = "sec";
+    delete process.env.LARK_BASE_URL;
+    expect(loadLarkAppConfig()).toEqual({
+      appId: "cli_x",
+      appSecret: "sec",
+      baseUrl: "https://open.larksuite.com",
+    });
+  });
+
+  it("throws when app id or secret is missing", () => {
+    delete process.env.LARK_APP_ID;
+    process.env.LARK_APP_SECRET = "sec";
+    expect(() => loadLarkAppConfig()).toThrow(/LARK_APP_ID/);
   });
 });
 

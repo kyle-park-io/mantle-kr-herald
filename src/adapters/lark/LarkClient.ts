@@ -31,6 +31,21 @@ export class LarkClient {
     return http.get<T>(path, params);
   }
 
+  async post<T>(path: string, body?: unknown): Promise<T> {
+    let token = await this.auth.getToken();
+    let res = await this.callPost<T>(path, body, token);
+    if (this.isAuthError(res)) {
+      token = await this.auth.getToken(true);
+      res = await this.callPost<T>(path, body, token);
+    }
+    return res;
+  }
+
+  private callPost<T>(path: string, body: unknown, token: string): Promise<T> {
+    const http = this.makeHttp(this.baseUrl, { Authorization: `Bearer ${token}` });
+    return http.post<T>(path, body);
+  }
+
   private isAuthError(res: unknown): boolean {
     const code = (res as { code?: number })?.code;
     return typeof code === "number" && AUTH_ERROR_CODES.has(code);

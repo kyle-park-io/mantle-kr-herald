@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Sheets v4 REST API (reusing the Google `TokenSource`): `sheet:init` provisions the `targets`/`history`
   tabs, `targets:list` reads the distribution targets (①), and `history:record` upserts publish rows (②).
   ③ impressions and §8 wiring are follow-ups.
+- **`pnpm lark:chats`** — lists the chats the Lark bot is a member of (id + name), so you can find a
+  chat id for `LARK_CHAT_IDS` without a raw API call.
+- **`pnpm lark:send --chat <id> --text <…>`** — sends a text message to a Lark chat (defaults the
+  chat to the first `LARK_CHAT_IDS` entry). The foundation for §10 (Lark bot); pipeline-content
+  wiring is a follow-up.
 
 ### Fixed
 

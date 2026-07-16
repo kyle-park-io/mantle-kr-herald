@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeMessage, parseMessagesData } from "../../../src/adapters/lark/schemas";
+import { normalizeMessage, parseMessagesData, parseChatsData, parseSendResult } from "../../../src/adapters/lark/schemas";
 
 const rawMessage = {
   message_id: "om_123",
@@ -57,5 +57,40 @@ describe("parseMessagesData", () => {
     expect(() => parseMessagesData({ code: 99991663, msg: "invalid token", data: {} })).toThrow(
       /99991663|invalid token/,
     );
+  });
+});
+
+describe("parseChatsData", () => {
+  it("maps chat items and pagination fields", () => {
+    const r = parseChatsData({
+      code: 0,
+      data: { items: [{ chat_id: "oc_1", name: "Group A" }], page_token: "pt", has_more: true },
+    });
+    expect(r.items).toEqual([{ chatId: "oc_1", name: "Group A" }]);
+    expect(r.pageToken).toBe("pt");
+    expect(r.hasMore).toBe(true);
+  });
+
+  it("defaults a missing name to an empty string", () => {
+    const r = parseChatsData({ code: 0, data: { items: [{ chat_id: "oc_1" }], has_more: false } });
+    expect(r.items).toEqual([{ chatId: "oc_1", name: "" }]);
+  });
+
+  it("throws on a non-zero code", () => {
+    expect(() => parseChatsData({ code: 230002, msg: "no permission" })).toThrow(/230002/);
+  });
+});
+
+describe("parseSendResult", () => {
+  it("returns the created message_id", () => {
+    expect(parseSendResult({ code: 0, data: { message_id: "om_9" } })).toBe("om_9");
+  });
+
+  it("throws on a non-zero code", () => {
+    expect(() => parseSendResult({ code: 230002, msg: "no permission" })).toThrow(/230002/);
+  });
+
+  it("throws a formatted error (not a ZodError) when data lacks message_id", () => {
+    expect(() => parseSendResult({ code: 0, data: {} })).toThrow(/Lark API error: code=0/);
   });
 });
