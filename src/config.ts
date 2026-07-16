@@ -10,19 +10,28 @@ export function loadConfig(): Config {
   return { apiKey };
 }
 
-export interface LarkConfig {
+export interface LarkAppConfig {
   appId: string;
   appSecret: string;
   baseUrl: string;
+}
+
+export interface LarkConfig extends LarkAppConfig {
   chatIds: string[];
 }
 
-export function loadLarkConfig(): LarkConfig {
+/** App credentials + base URL only (no chat ids) — for commands that discover or take an explicit chat. */
+export function loadLarkAppConfig(): LarkAppConfig {
   const appId = process.env.LARK_APP_ID;
   const appSecret = process.env.LARK_APP_SECRET;
   if (!appId) throw new Error("Missing required environment variable: LARK_APP_ID");
   if (!appSecret) throw new Error("Missing required environment variable: LARK_APP_SECRET");
+  const baseUrl = process.env.LARK_BASE_URL?.trim() || "https://open.larksuite.com";
+  return { appId, appSecret, baseUrl };
+}
 
+export function loadLarkConfig(): LarkConfig {
+  const app = loadLarkAppConfig();
   const chatIds = (process.env.LARK_CHAT_IDS ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -30,9 +39,7 @@ export function loadLarkConfig(): LarkConfig {
   if (chatIds.length === 0) {
     throw new Error("Missing required environment variable: LARK_CHAT_IDS (comma-separated chat_id list)");
   }
-
-  const baseUrl = process.env.LARK_BASE_URL?.trim() || "https://open.larksuite.com";
-  return { appId, appSecret, baseUrl, chatIds };
+  return { ...app, chatIds };
 }
 
 export interface GoogleDriveConfig {

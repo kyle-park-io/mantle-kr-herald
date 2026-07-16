@@ -1,11 +1,11 @@
 import "./registerErrorHandler";
-import { loadLarkConfig } from "../config";
+import { loadLarkAppConfig } from "../config";
 import { HttpClient } from "../shared/http/HttpClient";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { LarkClient } from "../adapters/lark/LarkClient";
 import { LarkChatGateway } from "../adapters/lark/LarkChatGateway";
 
-const config = loadLarkConfig();
+const config = loadLarkAppConfig();
 const auth = new LarkAuth(new HttpClient(config.baseUrl), config.appId, config.appSecret);
 const client = new LarkClient(config.baseUrl, auth);
 const gateway = new LarkChatGateway(client);
