@@ -12,6 +12,8 @@ import { JsonTypedFewShotStore } from "../adapters/store/JsonTypedFewShotStore";
 import { PrepareConversions, type ConversionSelector } from "../app/PrepareConversions";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import type { FewShotStore } from "../ports/FewShotStore";
+import { archiveFile } from "../shared/store/archive";
+import { writeJsonFileAtomic } from "../shared/store/jsonFile";
 import { paths } from "../paths";
 
 const selector: ConversionSelector = {};
@@ -52,7 +54,10 @@ await mkdir(paths.variantsWorksheets, { recursive: true });
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const worksheetPath = join(paths.variantsWorksheets, `batch-${stamp}.md`);
 await writeFile(worksheetPath, worksheet, "utf8");
-await writeFile(paths.variantsPending, `${JSON.stringify(pending, null, 2)}\n`, "utf8");
+
+const archived = await archiveFile(paths.variantsPending, paths.archiveDir, "pending-variants");
+if (archived) console.log(`  archived the previous unsaved batch → ${archived}`);
+await writeJsonFileAtomic(paths.variantsDir, paths.variantsPending, pending);
 
 console.log(`prepared ${pending.length} variant(s) → ${worksheetPath}`);
 console.log("Fill each 변환 section, then run: pnpm convert:save --id <id> --type <x|kol|pr> --file <ko.txt> [--approve]");
