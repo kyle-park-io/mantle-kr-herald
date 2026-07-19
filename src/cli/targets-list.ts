@@ -1,10 +1,13 @@
 import "./registerErrorHandler";
+import { skipIfLocal } from "./skipIfLocal";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { GoogleSheetClient } from "../adapters/sheets/GoogleSheetClient";
 import { LoadTargets } from "../app/LoadTargets";
 import { loadGoogleAuthConfig, loadGoogleSheetConfig } from "../config";
 
 const activeOnly = process.argv.includes("--active-only");
+skipIfLocal("targets:list");
+
 const auth = await createGoogleAuth(loadGoogleAuthConfig());
 const { spreadsheetId } = loadGoogleSheetConfig();
 

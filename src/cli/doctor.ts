@@ -6,6 +6,7 @@ import {
   loadGoogleAuthConfig,
   loadGoogleDriveConfig,
   loadGoogleSheetConfig,
+  loadStorageMode,
 } from "../config";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
@@ -28,6 +29,7 @@ function authMode(): string {
 }
 
 // --- config checks (offline) ---
+results.push(configCheck("Storage mode", () => loadStorageMode(), `mode: ${process.env.HERALD_STORAGE_MODE?.trim() ?? "(unset)"}`));
 results.push(configCheck("twitterapi.io (A)", () => loadConfig(), "TWITTERAPI_IO_KEY set"));
 results.push(configCheck("Lark app (B)", () => loadLarkConfig()));
 results.push(configCheck("Lark Drive (D)", () => loadLarkDriveConfig()));

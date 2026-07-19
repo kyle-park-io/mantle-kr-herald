@@ -1,5 +1,6 @@
 import "./registerErrorHandler";
 import { argValue } from "./args";
+import { skipIfLocal } from "./skipIfLocal";
 import { HttpClient } from "../shared/http/HttpClient";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
@@ -13,6 +14,8 @@ import type { DriveUploader } from "../ports/DriveUploader";
 import { paths } from "../paths";
 
 const target = argValue("--target") ?? "google"; // google | lark | both (Lark is opt-in)
+skipIfLocal("drive:publish");
+
 const uploaders: DriveUploader[] = [];
 
 if (target === "google" || target === "both") {
