@@ -121,7 +121,7 @@ and `doctor` keep working without it.
 |---|---|---|
 | collect → translate → convert → format | identical | identical |
 | `drive:publish`, `history:record`, `sheet:init`, `targets:list` | print *"local mode — skipped"* and exit 0 | run |
-| archive | **automatic** — the only safety net | on request |
+| archive | the only safety net — see §1.5 | secondary to Drive |
 | `pnpm status` | archive state | **warns: N unsynced** |
 | `pnpm doctor` | reports the active mode | reports the active mode |
 
@@ -178,10 +178,13 @@ No env override. If relocation is ever wanted, it becomes a one-line change in t
 ### 1.5 Retention and durability
 
 Concretely, "archive" means `output/archive/<YYYY-MM-DD>/`, holding superseded worksheets and
-replaced `pending.json` batches. In `local` mode archiving happens automatically whenever something
-would otherwise be overwritten or discarded, because there is no Drive copy to fall back on. In
-`cloud` mode the same move happens only when `pnpm archive` is run, since approved content is
-already preserved remotely.
+replaced `pending.json` batches.
+
+A replaced `pending.json` is archived **unconditionally, in both modes**. Making this conditional on
+`local` was considered and rejected: the move is cheap, the batch it rescues is unsaved work that no
+Drive copy covers in either mode, and a mode branch here would mean the destructive path is the one
+that gets less testing. Worksheets are swept on demand by `pnpm archive`, since they are reproducible
+from a `prepare` re-run.
 
 - `pnpm archive` — move completed worksheets and superseded batches into today's archive folder.
 - `pnpm clean` — delete what is safe to delete: archive folders older than **30 days** (override
