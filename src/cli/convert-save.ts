@@ -28,7 +28,7 @@ if (sourceKorean === undefined) {
   // can re-approve a "converted" variant after pending.json was overwritten by a later prepare.
   const existing = (await conversionStore.loadAll()).find((v) => v.itemId === id && v.type === type);
   if (!existing) {
-    throw new Error(`Variant ${id}/${type} not found in output/variants/{pending,variants}.json (run convert:prepare first)`);
+    throw new Error(`Variant ${id}/${type} not found in ${paths.variantsDir} (run convert:prepare first)`);
   }
   sourceKorean = existing.sourceKorean;
 }

@@ -18,7 +18,7 @@ if (!id || !file) {
 const pending = await readJsonFile<ContentItem[]>(paths.translationsPending, []);
 const item = pending.find((p) => p.id === id);
 if (!item) {
-  throw new Error(`Item ${id} not found in output/translations/pending.json (run translate:prepare first)`);
+  throw new Error(`Item ${id} not found in ${paths.translationsPending} (run translate:prepare first)`);
 }
 
 const koreanText = (await readFile(file, "utf8")).trim();

@@ -21,7 +21,7 @@ if (!id || !type || !channel || !file || !ALL_TYPES.includes(type) || !ALL_CHANN
 const pending = await readJsonFile<PendingRendering[]>(paths.formattedPending, []);
 const match = pending.find((p) => p.itemId === id && p.type === type && p.channel === channel);
 if (!match) {
-  throw new Error(`Rendering ${id}/${type}/${channel} not found in output/formatted/pending.json (run format --refine first)`);
+  throw new Error(`Rendering ${id}/${type}/${channel} not found in ${paths.formattedPending} (run format --refine first)`);
 }
 
 const text = (await readFile(file, "utf8")).trim();

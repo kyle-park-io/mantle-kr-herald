@@ -42,6 +42,6 @@ if (refine) {
   console.log("Fill each 보정 section, then run: pnpm format:save --id <id> --type <t> --channel <c> --file <txt>");
 } else {
   const { renderings, warnings } = await new FormatVariants(conversionStore, new JsonFormattingStore(paths.formattedDir), opts).run(selector);
-  console.log(`formatted ${renderings.length} rendering(s) → output/formatted/renderings.json`);
+  console.log(`formatted ${renderings.length} rendering(s) → ${join(paths.formattedDir, 'renderings.json')}`);
   for (const w of warnings) console.log(`  ⚠ ${w.itemId}/${w.type}/${w.channel}: ${w.messages.join("; ")}`);
 }
