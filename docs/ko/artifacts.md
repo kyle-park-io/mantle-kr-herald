@@ -47,10 +47,12 @@ HERALD_STORAGE_MODE=local|cloud
 `targets-list.ts`, `history-record.ts`, `sheet-init.ts`)가 공통으로 호출하는
 `skipIfLocal()`(`src/cli/skipIfLocal.ts`)로 구현되어 있습니다.
 
-**예외:** 웹 대시보드(`pnpm serve`)의 `POST /api/publish` 엔드포인트는 `skipIfLocal`을 거치지
-않습니다(`src/adapters/web/apiHandlers.ts`). CLI로 실행하는 `pnpm drive:publish`는 `local` 모드에서
-항상 스킵되지만, 대시보드에서 게시 버튼을 누르면 `HERALD_STORAGE_MODE` 값과 무관하게 실제 업로드가
-시도됩니다.
+웹 대시보드(`pnpm serve`)의 `POST /api/publish`도 같은 모드를 따릅니다. 다만 구현이 다릅니다 —
+`skipIfLocal()`의 `process.exit(0)`은 실행 중인 서버를 죽이기 때문에, 대시보드는 `src/cli/serve.ts`의
+`uploadersFor()`에서 예외를 던지고 HTTP 500과 함께
+`local mode — publishing is disabled (set HERALD_STORAGE_MODE=cloud to enable)` 메시지를 반환합니다.
+**대시보드 자체는 `local` 모드에서도 그대로 쓸 수 있습니다** — 목록·편집·승인은 모두 동작하고,
+거부되는 것은 게시뿐입니다.
 
 승인(approve)은 자동 업로드를 유발하지 않습니다. 게시는 항상 의도적인 사람의 행동입니다.
 
@@ -90,7 +92,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm status` | `output/x/items.json`, `output/lark/items.json`, `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 없음 | 없음 |
 | `pnpm archive` | `output/translations/worksheets/`, `output/variants/worksheets/`, `output/formatted/worksheets/`의 `.md` 목록 | 대상 파일들을 `output/archive/<YYYY-MM-DD>/`로 이동 | 없음 |
 | `pnpm clean [--older-than <days>] [--yes]` | `output/archive/`의 날짜 폴더 목록; 좌초된 임시 파일 탐지를 위해 `output/` 전체를 재귀 탐색 | 기본은 드라이런(삭제 대상만 출력). `--yes`일 때: 30일(기본값) 초과 경과한 `output/archive/<YYYY-MM-DD>/` 폴더 + 어디에 있든 `*.tmp-<pid>-<ms>-<uuid>` 형식의 좌초 파일을 삭제 | 없음 |
-| `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들 | 게시 API 호출 시 Google Drive API, Lark Drive API — **`skipIfLocal` 게이트 없음**(§2 예외 참고) |
+| `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들 | 게시 API 호출 시 Google Drive API, Lark Drive API — `local` 모드에서는 HTTP 500으로 거부(§2 참고) |
 | `pnpm google:auth` | `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`/`GOOGLE_OAUTH_SCOPE`(env) | 로컬 파일 없음 — refresh token을 콘솔에 출력 | Google OAuth 2.0(로컬 루프백 서버로 인가 코드 교환) |
 
 ## 4. 동기화 원장
