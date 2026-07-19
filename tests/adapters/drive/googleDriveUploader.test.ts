@@ -23,7 +23,7 @@ describe("GoogleDriveUploader", () => {
     const result = await uploader.upload({ name: "x-1.md", content: "# hi", folder: "review" });
 
     expect(uploader.name).toBe("google");
-    expect(cap.url).toBe("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart");
+    expect(cap.url).toBe("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink");
     expect(cap.headers?.["Authorization"]).toBe("Bearer ya29.tok");
     expect(cap.headers?.["Content-Type"]).toContain("multipart/related; boundary=");
     expect(cap.body).toContain('"name":"x-1.md"');

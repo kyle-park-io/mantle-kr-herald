@@ -9,4 +9,6 @@ export interface UploadRequest {
 export interface UploadResult {
   id: string;
   name: string;
+  /** Viewer link, when the drive returns one (Google does; Lark's upload response does not). */
+  url?: string;
 }

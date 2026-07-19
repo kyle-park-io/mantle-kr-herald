@@ -3,6 +3,7 @@ import type { FolderKind } from "../domain/publish/publishModels";
 import type { TranslationStore } from "../ports/TranslationStore";
 import type { DriveUploader } from "../ports/DriveUploader";
 import type { PublishStore } from "../ports/PublishStore";
+import { contentHash, entryKey, type SyncEntry } from "../domain/publish/syncLedger";
 
 export interface PublishFailure {
   key: string; // `${itemId}:${status}:${drive}`
@@ -21,6 +22,7 @@ export class PublishTranslations {
     private readonly translationStore: TranslationStore,
     private readonly uploaders: DriveUploader[],
     private readonly publishStore: PublishStore,
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   async run(): Promise<PublishResult> {
@@ -36,11 +38,22 @@ export class PublishTranslations {
       const name = publishFileName(t);
 
       for (const uploader of this.uploaders) {
-        const key = `${t.itemId}:${t.status}:${uploader.name}`;
+        const key = entryKey({ itemId: t.itemId, status: t.status, target: uploader.name });
         if (published.has(key)) continue;
         try {
-          await uploader.upload({ name, content, folder });
-          await this.publishStore.record(key);
+          const result = await uploader.upload({ name, content, folder });
+          const entry: SyncEntry = {
+            itemId: t.itemId,
+            stage: "translation",
+            status: t.status,
+            target: uploader.name,
+            fileName: result.name,
+            remoteId: result.id,
+            url: result.url,
+            contentHash: contentHash(content),
+            uploadedAt: this.now().toISOString(),
+          };
+          await this.publishStore.record(entry);
           uploaded += 1;
           byDrive[uploader.name] = (byDrive[uploader.name] ?? 0) + 1;
         } catch (err) {
