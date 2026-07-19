@@ -54,4 +54,17 @@ describe("isStrandedTempFile", () => {
     expect(isStrandedTempFile("variants.json")).toBe(false);
     expect(isStrandedTempFile("renderings.json")).toBe(false);
   });
+
+  // SAFETY: the cases above all lack "tmp" entirely, so they stay green even if the pattern is
+  // loosened to something as dangerous as /\.tmp/. These near-misses pin down its specificity:
+  // each contains "tmp" but is NOT the `.tmp-<pid>-<ms>-<uuid>` suffix writeJsonFileAtomic appends.
+  it("rejects near-misses that a loosened pattern would wrongly delete", () => {
+    expect(isStrandedTempFile("notes.tmp")).toBe(false);
+    expect(isStrandedTempFile("items.json.tmpbackup")).toBe(false);
+    expect(isStrandedTempFile("tmp-notes.md")).toBe(false);
+    expect(isStrandedTempFile("items.json.tmp-4821")).toBe(false);
+    expect(isStrandedTempFile("items.json.tmp-4821-1750000000000")).toBe(false);
+    // Trailing content after the uuid means it is not the suffix we wrote.
+    expect(isStrandedTempFile("items.json.tmp-1-2-abc.bak")).toBe(false);
+  });
 });
