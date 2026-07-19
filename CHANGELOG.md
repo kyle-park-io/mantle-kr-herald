@@ -33,6 +33,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`pnpm lark:send --chat <id> --text <…>`** — sends a text message to a Lark chat (defaults the
   chat to the first `LARK_CHAT_IDS` entry). The foundation for §10 (Lark bot); pipeline-content
   wiring is a follow-up.
+- **Explicit storage mode** — `HERALD_STORAGE_MODE=local|cloud` decides whether Drive is the record
+  of truth or everything stays local. `local` runs the whole pipeline with no credentials at all and
+  skips the cloud commands with a clear message; `cloud` behaves as before. Never inferred.
+- **Sync ledger** — `output/publish/state.json` now records which drive, remote id, URL, filename,
+  content hash and timestamp for every upload (legacy key sets migrate on read). `pnpm status`
+  reports published / unsynced / stale counts, so an item edited after publishing is visible.
+- **`pnpm archive` / `pnpm clean`** — retention for worksheets and superseded batches under
+  `output/archive/<date>/`; `clean` removes archives older than 30 days (`--older-than`) and temp
+  files stranded by interrupted writes, listing them unless `--yes` is passed.
+- **`pnpm config:init`** — creates the steering config from the tracked `*.example.*` skeletons.
+- **Documentation set** — `docs/ko/{capabilities,quickstart,team-runbook,artifacts}.md` covering what
+  the project does, how external and internal users run it, and where every artifact is stored;
+  `docs/README.md` records the documentation rules.
+
+### Changed
+
+- **The real steering config left git.** `translation/` and `conversion/` now track only
+  `*.example.*` skeletons; the actual glossary, style guide and few-shot corpus are local. Routine
+  approvals no longer dirty the working tree.
 
 ### Fixed
 
@@ -42,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now drops anything at or before the ms-precise watermark client-side, mirroring the X collector.
   Verified live: the Lark bot's `im:message.group_msg` scope is approved, `collect-lark` reads group
   messages, and a no-new-data re-run now reports `collected 0`.
+- **Artifact paths are anchored to the repo root**, not the process CWD. Running a command from a
+  subdirectory silently created a second `output/` tree; all 36 path literals now come from
+  `src/paths.ts`.
+- **`prepare` no longer strands an unsaved batch.** `translate:prepare`, `convert:prepare` and
+  `format --refine` archive the previous `pending.json` before replacing it and write it atomically
+  like every other store; `translate:save` and `format:save` fall back to an already-saved item
+  instead of throwing.
 
 ## [0.1.0] - 2026-07-15
 
