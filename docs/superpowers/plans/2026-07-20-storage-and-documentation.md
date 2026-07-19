@@ -1344,6 +1344,18 @@ describe("expiredArchiveDays", () => {
     expect(expiredArchiveDays(["2026-06-20"], 30, now)).toEqual([]);
   });
 
+  it("is independent of the time of day the command runs", () => {
+    const early = new Date("2026-07-20T00:30:00.000Z");
+    const late = new Date("2026-07-20T23:30:00.000Z");
+    expect(expiredArchiveDays(["2026-06-20"], 30, early)).toEqual([]);
+    expect(expiredArchiveDays(["2026-06-20"], 30, late)).toEqual([]);
+  });
+
+  it("keeps today's folder even at --older-than 0, and expires yesterday's", () => {
+    expect(expiredArchiveDays(["2026-07-20"], 0, now)).toEqual([]);
+    expect(expiredArchiveDays(["2026-07-19"], 0, now)).toEqual(["2026-07-19"]);
+  });
+
   it("ignores anything that is not a date folder", () => {
     expect(expiredArchiveDays(["notes", "2026-13-45", ".DS_Store"], 30, now)).toEqual([]);
   });
@@ -1376,14 +1388,23 @@ const TEMP_FILE = /\.tmp-\d+-\d+-[0-9a-f-]+$/i;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/** Archive day-folders strictly older than the retention window. Unparseable names are left alone. */
+/**
+ * Archive day-folders strictly older than the retention window.
+ *
+ * Counts whole calendar days between the folder's date and today, and expires only when that
+ * count is strictly greater than the window — a folder created exactly `olderThanDays` ago is
+ * NOT "older than" that many days, and this command deletes irreplaceable data, so the boundary
+ * resolves in favour of keeping. Comparing raw millisecond timestamps instead would expire the
+ * boundary folder, because a folder's date anchors to midnight while `now` is part-way through
+ * the day. Unparseable names are left alone rather than guessed at.
+ */
 export function expiredArchiveDays(names: string[], olderThanDays: number, now: Date): string[] {
-  const cutoff = now.getTime() - olderThanDays * MS_PER_DAY;
+  const today = Date.parse(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
   return names.filter((name) => {
     if (!DAY_FOLDER.test(name)) return false;
     const at = Date.parse(`${name}T00:00:00.000Z`);
     if (Number.isNaN(at)) return false;
-    return at < cutoff;
+    return Math.round((today - at) / MS_PER_DAY) > olderThanDays;
   });
 }
 
@@ -1506,10 +1527,17 @@ Add to `package.json` scripts, after `"status"`:
 ```bash
 pnpm archive
 pnpm clean
-pnpm clean --older-than 0
+mkdir -p output/archive/2020-01-01 && touch output/archive/2020-01-01/placeholder.md
+pnpm clean
+ls output/archive/2020-01-01
+rm -r output/archive/2020-01-01
 ```
 
-Expected: `pnpm archive` moves any worksheets into `output/archive/<today>/`; `pnpm clean` prints `nothing to clean` (today's archive is inside the 30-day window); `pnpm clean --older-than 0` **lists** today's archive folder and prints `re-run with --yes to remove them` without deleting anything. Confirm the folder still exists afterwards.
+Expected: `pnpm archive` moves any worksheets into `output/archive/<today>/`; the first `pnpm clean` prints `nothing to clean`, because today's archive is inside the 30-day window. After planting a clearly-expired folder, `pnpm clean` **lists** `output/archive/2020-01-01` and prints `re-run with --yes to remove them` — and the `ls` afterwards must still show `placeholder.md`, proving the dry-run deleted nothing. Then remove the planted folder by hand.
+
+Do **not** run `pnpm clean --yes` against the real `output/` — destructive behaviour belongs in the unit tests and a temporary directory.
+
+Note that `--older-than 0` keeps today's folder and expires yesterday's; it is not a way to select today.
 
 Run: `pnpm typecheck && pnpm test`
 Expected: typecheck clean, all tests pass.
