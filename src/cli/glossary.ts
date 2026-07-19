@@ -2,8 +2,9 @@ import "./registerErrorHandler";
 import { argValue } from "./args";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import type { GlossaryRule } from "../domain/translation/models";
+import { paths } from "../paths";
 
-const store = new JsonGlossaryStore("translation");
+const store = new JsonGlossaryStore(paths.translationConfigDir);
 const command = process.argv[2];
 
 if (command === "add") {

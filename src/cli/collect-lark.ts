@@ -6,13 +6,14 @@ import { LarkClient } from "../adapters/lark/LarkClient";
 import { LarkSourceGateway } from "../adapters/lark/LarkSourceGateway";
 import { LarkLocalStore } from "../adapters/lark/LarkLocalStore";
 import { CollectLarkMessages } from "../app/CollectLarkMessages";
+import { paths } from "../paths";
 
 const config = loadLarkConfig();
 const authHttp = new HttpClient(config.baseUrl);
 const auth = new LarkAuth(authHttp, config.appId, config.appSecret);
 const client = new LarkClient(config.baseUrl, auth);
 const source = new LarkSourceGateway(client);
-const store = new LarkLocalStore("output/lark");
+const store = new LarkLocalStore(paths.larkDir);
 const usecase = new CollectLarkMessages(source, store, store);
 
 const result = await usecase.run(config.chatIds);

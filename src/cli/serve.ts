@@ -19,13 +19,14 @@ import { HttpClient } from "../shared/http/HttpClient";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { loadGoogleAuthConfig, loadGoogleDriveConfig, loadLarkDriveConfig } from "../config";
 import type { DriveUploader } from "../ports/DriveUploader";
+import { paths } from "../paths";
 
 const port = Number(process.env.PORT) || 5757;
-const translationStore = new JsonTranslationStore("output/translations");
-const publishStore = new JsonPublishStore("output/publish");
-const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotStore("translation"));
-const formattingStore = new JsonFormattingStore("output/formatted");
-const conversionStore = new JsonConversionStore("output/variants");
+const translationStore = new JsonTranslationStore(paths.translationsDir);
+const publishStore = new JsonPublishStore(paths.publishDir);
+const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotStore(paths.translationConfigDir));
+const formattingStore = new JsonFormattingStore(paths.formattedDir);
+const conversionStore = new JsonConversionStore(paths.variantsDir);
 
 async function uploadersFor(target: string): Promise<DriveUploader[]> {
   const uploaders: DriveUploader[] = [];

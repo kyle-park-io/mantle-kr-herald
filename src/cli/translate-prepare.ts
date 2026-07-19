@@ -11,10 +11,11 @@ import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { PrepareTranslations, type Selector } from "../app/PrepareTranslations";
 import type { ContentSource } from "../ports/ContentSource";
+import { paths } from "../paths";
 
 const sourceArg = argValue("--source"); // "x" | "lark" | undefined (both)
-const xSource = new XContentSource("output/x/items.json");
-const larkSource = new LarkContentSource("output/lark/items.json");
+const xSource = new XContentSource(paths.xItems);
+const larkSource = new LarkContentSource(paths.larkItems);
 const source: ContentSource =
   sourceArg === "x" ? xSource : sourceArg === "lark" ? larkSource : new CompositeContentSource([xSource, larkSource]);
 
@@ -31,20 +32,20 @@ if (limit) {
 
 const usecase = new PrepareTranslations(
   source,
-  new JsonGlossaryStore("translation"),
-  new JsonFewShotStore("translation"),
-  new FileTranslationConfig("translation"),
-  new JsonTranslationStore("output/translations"),
+  new JsonGlossaryStore(paths.translationConfigDir),
+  new JsonFewShotStore(paths.translationConfigDir),
+  new FileTranslationConfig(paths.translationConfigDir),
+  new JsonTranslationStore(paths.translationsDir),
 );
 
 const { worksheet, pending } = await usecase.run(selector);
 
-await mkdir("output/translations/worksheets", { recursive: true });
+await mkdir(paths.translationsWorksheets, { recursive: true });
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const worksheetPath = join("output/translations/worksheets", `batch-${stamp}.md`);
+const worksheetPath = join(paths.translationsWorksheets, `batch-${stamp}.md`);
 await writeFile(worksheetPath, worksheet, "utf8");
 await writeFile(
-  join("output/translations", "pending.json"),
+  paths.translationsPending,
   `${JSON.stringify(pending, null, 2)}\n`,
   "utf8",
 );

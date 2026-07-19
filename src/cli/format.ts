@@ -9,6 +9,7 @@ import { FormatVariants, type FormatSelector } from "../app/FormatVariants";
 import { PrepareRefinements } from "../app/PrepareRefinements";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import { ALL_CHANNELS, type Channel, type FormatOptions } from "../domain/formatting/models";
+import { paths } from "../paths";
 
 const selector: FormatSelector = {};
 const ids = parseList(argValue("--ids"));
@@ -28,19 +29,19 @@ if (channelsArg) {
 const opts: FormatOptions = argValue("--x-bold") === "unicode" ? { xBold: "unicode" } : {};
 const refine = process.argv.includes("--refine");
 
-const conversionStore = new JsonConversionStore("output/variants");
+const conversionStore = new JsonConversionStore(paths.variantsDir);
 
 if (refine) {
   const { worksheet, pending } = await new PrepareRefinements(conversionStore, opts).run(selector);
-  await mkdir("output/formatted/worksheets", { recursive: true });
+  await mkdir(paths.formattedWorksheets, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const worksheetPath = join("output/formatted/worksheets", `batch-${stamp}.md`);
+  const worksheetPath = join(paths.formattedWorksheets, `batch-${stamp}.md`);
   await writeFile(worksheetPath, worksheet, "utf8");
-  await writeFile(join("output/formatted", "pending.json"), `${JSON.stringify(pending, null, 2)}\n`, "utf8");
+  await writeFile(paths.formattedPending, `${JSON.stringify(pending, null, 2)}\n`, "utf8");
   console.log(`prepared ${pending.length} refinement draft(s) → ${worksheetPath}`);
   console.log("Fill each 보정 section, then run: pnpm format:save --id <id> --type <t> --channel <c> --file <txt>");
 } else {
-  const { renderings, warnings } = await new FormatVariants(conversionStore, new JsonFormattingStore("output/formatted"), opts).run(selector);
+  const { renderings, warnings } = await new FormatVariants(conversionStore, new JsonFormattingStore(paths.formattedDir), opts).run(selector);
   console.log(`formatted ${renderings.length} rendering(s) → output/formatted/renderings.json`);
   for (const w of warnings) console.log(`  ⚠ ${w.itemId}/${w.type}/${w.channel}: ${w.messages.join("; ")}`);
 }

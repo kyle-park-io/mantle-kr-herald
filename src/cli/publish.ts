@@ -10,6 +10,7 @@ import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { PublishTranslations } from "../app/PublishTranslations";
 import { loadGoogleDriveConfig, loadGoogleAuthConfig, loadLarkDriveConfig } from "../config";
 import type { DriveUploader } from "../ports/DriveUploader";
+import { paths } from "../paths";
 
 const target = argValue("--target") ?? "google"; // google | lark | both (Lark is opt-in)
 const uploaders: DriveUploader[] = [];
@@ -28,7 +29,7 @@ if (uploaders.length === 0) {
   throw new Error('No target selected. Use --target google|lark|both');
 }
 
-const usecase = new PublishTranslations(new JsonTranslationStore("output/translations"), uploaders, new JsonPublishStore("output/publish"));
+const usecase = new PublishTranslations(new JsonTranslationStore(paths.translationsDir), uploaders, new JsonPublishStore(paths.publishDir));
 const result = await usecase.run();
 console.log(`published ${result.uploaded} file(s) across ${uploaders.length} drive(s); ${result.failed} failure(s)`);
 console.log(`  by drive: ${JSON.stringify(result.byDrive)}`);
