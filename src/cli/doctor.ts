@@ -1,4 +1,6 @@
 import "./registerErrorHandler";
+import { access } from "node:fs/promises";
+import { join } from "node:path";
 import {
   loadConfig,
   loadLarkConfig,
@@ -11,6 +13,7 @@ import {
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { HttpClient } from "../shared/http/HttpClient";
+import { paths } from "../paths";
 import { configCheck, parseScopes, scopeCheck, accessResult } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 
@@ -36,6 +39,26 @@ results.push(configCheck("Lark Drive (D)", () => loadLarkDriveConfig()));
 results.push(configCheck("Google auth", () => loadGoogleAuthConfig(), authMode()));
 results.push(configCheck("Google Drive (D)", () => loadGoogleDriveConfig()));
 results.push(configCheck("Google Sheet (§9a)", () => loadGoogleSheetConfig()));
+
+const steeringFiles = [
+  join(paths.translationConfigDir, "glossary.json"),
+  join(paths.translationConfigDir, "style-guide.md"),
+  join(paths.translationConfigDir, "locale.json"),
+  join(paths.conversionConfigDir, "x.md"),
+];
+const missingSteeringFiles: string[] = [];
+for (const f of steeringFiles) {
+  try {
+    await access(f);
+  } catch {
+    missingSteeringFiles.push(f);
+  }
+}
+results.push(
+  missingSteeringFiles.length === 0
+    ? { name: "Steering config", status: "ok", detail: "translation/ + conversion/ present" }
+    : { name: "Steering config", status: "fail", detail: `missing ${missingSteeringFiles.length} file(s) — run pnpm config:init` },
+);
 
 // --- live checks (network, read-only) ---
 if (live) {

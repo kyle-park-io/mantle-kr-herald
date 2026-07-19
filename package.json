@@ -17,6 +17,7 @@
     "format": "tsx src/cli/format.ts",
     "format:save": "tsx src/cli/format-save.ts",
     "glossary": "tsx src/cli/glossary.ts",
+    "config:init": "tsx src/cli/config-init.ts",
     "drive:publish": "tsx --env-file-if-exists=.env src/cli/publish.ts",
     "drive:init": "tsx --env-file-if-exists=.env src/cli/drive-init.ts",
     "targets:list": "tsx --env-file-if-exists=.env src/cli/targets-list.ts",

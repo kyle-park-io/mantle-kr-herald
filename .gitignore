@@ -6,6 +6,15 @@ design/
 .env.*
 !.env.example
 
+# Steering config — the example skeletons are tracked, the real team content is not.
+# (Untracking does not erase history; see the storage design spec.)
+translation/*
+!translation/*.example.json
+!translation/*.example.md
+conversion/*
+!conversion/*.example.json
+!conversion/*.example.md
+
 # Local keys (Google service account JSON, etc.) — never commit the actual keys
 keys/*
 !keys/.gitkeep
