@@ -34,6 +34,11 @@ HERALD_STORAGE_MODE=local|cloud
 언급하는 에러와 함께 `pnpm doctor` 실행을 안내하며 즉시 실패합니다
 (`src/storage/mode.ts`의 `parseStorageMode`).
 
+**예외는 `pnpm status`뿐입니다.** 클라우드 명령이 아니라 읽기 전용 진단이므로, 모드가 없거나 잘못돼도
+멈추지 않고 `tryParseStorageMode`로 관대하게 읽습니다(아래 표 참고). 모드를 알 수 없을 때는 `cloud`와
+동일하게 경고를 표시합니다 — 모드를 설정하지 않았거나 오타를 낸 사용자에게 실제 미동기화 항목을
+숨기는 쪽이 더 위험하기 때문입니다.
+
 | | `local` | `cloud` |
 |---|---|---|
 | `collect` → `translate` → `convert` → `format` | 동일하게 동작 | 동일하게 동작 |
