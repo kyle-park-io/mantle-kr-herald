@@ -17,7 +17,7 @@ import { LarkDriveUploader } from "../adapters/drive/LarkDriveUploader";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { HttpClient } from "../shared/http/HttpClient";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
-import { loadGoogleAuthConfig, loadGoogleDriveConfig, loadLarkDriveConfig } from "../config";
+import { loadGoogleAuthConfig, loadGoogleDriveConfig, loadLarkDriveConfig, loadStorageMode } from "../config";
 import type { DriveUploader } from "../ports/DriveUploader";
 import { paths } from "../paths";
 
@@ -29,6 +29,14 @@ const formattingStore = new JsonFormattingStore(paths.formattedDir);
 const conversionStore = new JsonConversionStore(paths.variantsDir);
 
 async function uploadersFor(target: string): Promise<DriveUploader[]> {
+  // The dashboard's publish button is the same cloud write as `pnpm drive:publish`, so it obeys the
+  // same storage mode. Throws rather than using skipIfLocal, whose process.exit(0) would kill the
+  // running server; HttpServer turns this into a 500 carrying the message. The dashboard itself
+  // stays available in local mode — only publishing is refused.
+  if (loadStorageMode() === "local") {
+    throw new Error("local mode — publishing is disabled (set HERALD_STORAGE_MODE=cloud to enable)");
+  }
+
   const uploaders: DriveUploader[] = [];
   if (target === "google" || target === "both") {
     const g = loadGoogleDriveConfig();
