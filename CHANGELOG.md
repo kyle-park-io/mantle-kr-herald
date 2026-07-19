@@ -34,8 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chat to the first `LARK_CHAT_IDS` entry). The foundation for §10 (Lark bot); pipeline-content
   wiring is a follow-up.
 - **Explicit storage mode** — `HERALD_STORAGE_MODE=local|cloud` decides whether Drive is the record
-  of truth or everything stays local. `local` runs the whole pipeline with no credentials at all and
-  skips the cloud commands with a clear message; `cloud` behaves as before. Never inferred.
+  of truth or everything stays local. `local` needs no cloud credentials — the post-collection
+  stages (translate / convert / format) never call an external API either way, and `local` also
+  skips the Drive/Sheet commands with a clear message; collection still needs a key for whichever
+  source you use (`TWITTERAPI_IO_KEY` for X, the Lark app credentials for Lark), independent of
+  storage mode. `cloud` behaves as before. Storage mode is never inferred.
 - **Sync ledger** — `output/publish/state.json` now records which drive, remote id, URL, filename,
   content hash and timestamp for every upload (legacy key sets migrate on read). `pnpm status`
   reports published / unsynced / stale counts, so an item edited after publishing is visible.

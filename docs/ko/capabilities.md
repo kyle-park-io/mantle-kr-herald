@@ -48,6 +48,11 @@ Drive/Lark Drive에 올리고 Google Sheet에 게시 이력을 남깁니다. 모
 
 ## 3. 지원 범위
 
+*(참고 — 이 문서 여러 곳에서 괄호 안에 단독으로 나오는 `§N`(예: §6, §9b)은 이 문서 자신의 절
+번호가 아니라 원래 프로젝트 제안서의 모듈 번호입니다. `CHANGELOG.md`와 코드 주석이 같은 번호를
+그대로 쓰고 있어 여기서도 표기를 남겨 둡니다. 이 문서의 절을 가리킬 때는 언제나
+`[capabilities.md] §N`처럼 문서 이름과 함께 씁니다.)*
+
 **소스**
 - X — twitterapi.io를 통해 지정한 계정(기본 `Mantle_Official`)이 작성한 트윗을 스레드 단위로
   재구성해 수집 (`pnpm collect`)
@@ -55,8 +60,8 @@ Drive/Lark Drive에 올리고 Google Sheet에 게시 이력을 남깁니다. 모
 
 **채널** (§6 채널 포맷 대상): `x` · `telegram` · `kakao` · `pr_mail`
 
-**저장소**: Google Drive, Lark Drive (§4 업로드 대상 — [`artifacts.md`](artifacts.md) 참고),
-Google Sheet (§9a 데이터 허브 — `targets`/`history` 탭)
+**저장소**: Google Drive, Lark Drive (업로드 대상 — [`artifacts.md`](artifacts.md) 참고),
+Google Sheet (데이터 허브 — `targets`/`history` 탭)
 
 ## 4. 할 수 없는 것
 
