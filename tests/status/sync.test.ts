@@ -87,4 +87,33 @@ describe("formatSyncSummary", () => {
     expect(out).toContain("2 unsynced");
     expect(out).toContain("1 stale");
   });
+
+  it("omits the warning marker and labels the line in local mode, even with unsynced work", () => {
+    const out = formatSyncSummary({ published: 1, unsynced: 2, stale: 0 }, "local");
+    expect(out).not.toContain("⚠");
+    expect(out).toContain("local mode");
+    expect(out).toContain("2 unsynced");
+  });
+
+  it("keeps the warning marker in cloud mode when work is unsynced", () => {
+    const out = formatSyncSummary({ published: 1, unsynced: 2, stale: 0 }, "cloud");
+    expect(out).toContain("⚠");
+    expect(out).toContain("2 unsynced");
+  });
+
+  it("keeps the warning marker when mode is undefined and work is unsynced", () => {
+    const out = formatSyncSummary({ published: 1, unsynced: 2, stale: 0 }, undefined);
+    expect(out).toContain("⚠");
+    expect(out).toContain("2 unsynced");
+  });
+
+  it("reports identical counts across local, cloud, and undefined modes", () => {
+    const counts = { published: 1, unsynced: 2, stale: 1 };
+    for (const mode of ["local", "cloud", undefined] as const) {
+      const out = formatSyncSummary(counts, mode);
+      expect(out).toContain("1 published");
+      expect(out).toContain("2 unsynced");
+      expect(out).toContain("1 stale");
+    }
+  });
 });

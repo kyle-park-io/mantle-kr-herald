@@ -20,6 +20,18 @@ export function parseStorageMode(raw: string | undefined): StorageMode {
   return value as StorageMode;
 }
 
+/**
+ * Best-effort mode read for commands that must keep working when the mode is unset or invalid
+ * (e.g. `pnpm status`, which is not a cloud command and takes no guard).
+ */
+export function tryParseStorageMode(raw: string | undefined): StorageMode | undefined {
+  try {
+    return parseStorageMode(raw);
+  } catch {
+    return undefined;
+  }
+}
+
 export function localSkipMessage(command: string): string {
   return `${command}: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)`;
 }

@@ -1,4 +1,5 @@
 import { contentHash, isStale, type SyncEntry } from "../domain/publish/syncLedger";
+import type { StorageMode } from "../storage/mode";
 
 export interface SyncCounts {
   published: number;
@@ -38,10 +39,13 @@ export function syncSummary<T extends Publishable>(input: {
   return { published, unsynced, stale };
 }
 
-export function formatSyncSummary(s: SyncCounts): string {
+export function formatSyncSummary(s: SyncCounts, mode?: StorageMode): string {
   const parts = [`${s.published} published`];
   if (s.unsynced > 0) parts.push(`${s.unsynced} unsynced`);
   if (s.stale > 0) parts.push(`${s.stale} stale`);
+  if (mode === "local") {
+    return `sync: ${parts.join(" · ")} (local mode — publishing disabled)`;
+  }
   const warn = s.unsynced > 0 || s.stale > 0 ? "⚠ " : "";
   return `${warn}sync: ${parts.join(" · ")}`;
 }

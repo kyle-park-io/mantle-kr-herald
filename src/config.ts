@@ -1,4 +1,4 @@
-import { parseStorageMode, type StorageMode } from "./storage/mode";
+import { parseStorageMode, tryParseStorageMode, type StorageMode } from "./storage/mode";
 
 export interface Config {
   apiKey: string;
@@ -134,4 +134,8 @@ export type { StorageMode };
 
 export function loadStorageMode(): StorageMode {
   return parseStorageMode(process.env.HERALD_STORAGE_MODE);
+}
+
+export function tryLoadStorageMode(): StorageMode | undefined {
+  return tryParseStorageMode(process.env.HERALD_STORAGE_MODE);
 }

@@ -39,7 +39,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `collect` → `translate` → `convert` → `format` | 동일하게 동작 | 동일하게 동작 |
 | `drive:publish`, `drive:init`, `sheet:init`, `targets:list`, `history:record` | `"<command>: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)"`을 출력하고 종료 코드 `0` | 정상 실행 |
 | `pnpm archive` | 유일한 안전망(§5) | Drive가 원본이므로 보조 수단 |
-| `pnpm status` | 동기화 관련 경고 없이 파이프라인 단계별 개수만 표시 | 동기화되지 않은/오래된(stale) 항목 개수를 함께 경고 |
+| `pnpm status` | 개수(`unsynced`/`stale` 포함)는 동일하게 표시하되 `⚠` 없이 `(local mode — publishing disabled)`만 덧붙임 — `local`에서는 게시가 아예 일어나지 않으므로 unsynced가 정상 상태 | 동기화되지 않은/오래된(stale) 항목이 있으면 `⚠`로 경고 |
 | `pnpm doctor` | 현재 모드(`mode: local`)를 보고 | 현재 모드(`mode: cloud`)를 보고 |
 
 스킵은 실패가 아니라 정상 동작이므로 종료 코드는 `0`입니다 — 비영(非零) 종료 코드는 래퍼 스크립트를
