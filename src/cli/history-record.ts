@@ -10,10 +10,10 @@ const itemId = argValue("--item");
 const type = argValue("--type");
 const channel = argValue("--channel");
 const status = argValue("--status");
+skipIfLocal("history:record");
 if (!itemId || !type || !channel || !status) {
   throw new Error("Usage: pnpm history:record --item <id> --type <t> --channel <c> --status <s> [--post-id <p>] [--url <u>]");
 }
-skipIfLocal("history:record");
 
 const auth = await createGoogleAuth(loadGoogleAuthConfig());
 const { spreadsheetId } = loadGoogleSheetConfig();
