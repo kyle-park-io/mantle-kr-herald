@@ -21,9 +21,12 @@ const translations = await new JsonTranslationStore(paths.translationsDir).loadA
 const variants = await new JsonConversionStore(paths.variantsDir).loadAll();
 const renderings = await new JsonFormattingStore(paths.formattedDir).loadAll();
 const entries = await new JsonPublishStore(paths.publishDir).listEntries();
+// The funnel's "Published (drive)" counts ledger rows (one per upload target).
 const published = entries.length;
 
 console.log(formatStatus(pipelineStages({ collected, translations, variants, renderings, published })));
+// The sync line's "N published" counts unique translations with at least one ledger row.
+// These two numbers will diverge once multiple upload targets are enabled (e.g. Google and Lark).
 console.log(
   formatSyncSummary(
     syncSummary({

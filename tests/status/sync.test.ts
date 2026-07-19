@@ -33,6 +33,46 @@ describe("syncSummary", () => {
     const entries: SyncEntry[] = [{ itemId: "x:1", stage: "translation", status: "approved", target: "google" }];
     expect(syncSummary({ translations: [t("x:1", "approved", "anything")], entries, render }).stale).toBe(0);
   });
+
+  it("counts a translation with matching rows on multiple targets as one published", () => {
+    const current = contentHash("hello");
+    const entries: SyncEntry[] = [
+      { itemId: "x:1", stage: "translation", status: "approved", target: "google", contentHash: current },
+      { itemId: "x:1", stage: "translation", status: "approved", target: "lark", contentHash: current },
+    ];
+    expect(syncSummary({ translations: [t("x:1", "approved", "hello")], entries, render })).toEqual({
+      published: 1,
+      unsynced: 0,
+      stale: 0,
+    });
+  });
+
+  it("counts a translation as stale if any row is outdated, not once per outdated row", () => {
+    const old = contentHash("old");
+    const entries: SyncEntry[] = [
+      { itemId: "x:2", stage: "translation", status: "approved", target: "google", contentHash: old },
+      { itemId: "x:2", stage: "translation", status: "approved", target: "lark", contentHash: old },
+    ];
+    expect(syncSummary({ translations: [t("x:2", "approved", "new")], entries, render })).toEqual({
+      published: 1,
+      unsynced: 0,
+      stale: 1,
+    });
+  });
+
+  it("counts a translation as stale if at least one row is outdated", () => {
+    const current = contentHash("current");
+    const old = contentHash("old");
+    const entries: SyncEntry[] = [
+      { itemId: "x:3", stage: "translation", status: "approved", target: "google", contentHash: current },
+      { itemId: "x:3", stage: "translation", status: "approved", target: "lark", contentHash: old },
+    ];
+    expect(syncSummary({ translations: [t("x:3", "approved", "current")], entries, render })).toEqual({
+      published: 1,
+      unsynced: 0,
+      stale: 1,
+    });
+  });
 });
 
 describe("formatSyncSummary", () => {
