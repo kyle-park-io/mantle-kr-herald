@@ -29,16 +29,16 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
       if (url.pathname.startsWith("/api/publish/local/")) {
-        const rel = normalize(decodeURIComponent(url.pathname.slice("/api/publish/local/".length)))
-          .replace(/^(\.\.[/\\])+/, "")
-          .replace(/^[/\\]+/, "");
-        const filePath = join(opts.localPublishDir, rel);
-        // Defense in depth: the resolved path must stay under the publish-local root.
-        if (resolve(filePath) !== resolve(opts.localPublishDir) && !resolve(filePath).startsWith(resolve(opts.localPublishDir) + sep)) {
-          res.writeHead(404).end();
-          return;
-        }
         try {
+          const rel = normalize(decodeURIComponent(url.pathname.slice("/api/publish/local/".length)))
+            .replace(/^(\.\.[/\\])+/, "")
+            .replace(/^[/\\]+/, "");
+          const filePath = join(opts.localPublishDir, rel);
+          // Defense in depth: the resolved path must stay under the publish-local root.
+          if (resolve(filePath) !== resolve(opts.localPublishDir) && !resolve(filePath).startsWith(resolve(opts.localPublishDir) + sep)) {
+            res.writeHead(404).end();
+            return;
+          }
           const data = await readFile(filePath);
           res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8" }).end(data);
         } catch {

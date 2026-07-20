@@ -69,7 +69,7 @@ export function TranslationDetail(props: {
               <li key={`${r.status}:${r.target}`} className="flex items-center gap-2 text-xs">
                 <span className="text-neutral-500">{r.status} · {r.target}</span>
                 {r.target === "local" && r.remoteId ? (
-                  <a className="text-indigo-600 hover:underline" href={`/api/publish/local/${r.remoteId}`} target="_blank" rel="noreferrer">열기</a>
+                  <a className="text-indigo-600 hover:underline" href={`/api/publish/local/${r.remoteId.split("/").map(encodeURIComponent).join("/")}`} target="_blank" rel="noreferrer">열기</a>
                 ) : r.url ? (
                   <a className="text-indigo-600 hover:underline" href={r.url} target="_blank" rel="noreferrer">Drive에서 열기</a>
                 ) : (

@@ -179,4 +179,15 @@ describe("startServer", () => {
     expect(res.status).toBe(404);
     expect(await res.text()).not.toContain("dash");
   });
+
+  it("returns 404 (not 500) for a malformed percent-encoded local path", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "web-"));
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>x</title>");
+    const pubDir = await mkdtemp(join(tmpdir(), "pub-"));
+    const base = await start(staticDir, pubDir);
+
+    const res = await fetch(`${base}/api/publish/local/%zz`);
+
+    expect(res.status).toBe(404);
+  });
 });
