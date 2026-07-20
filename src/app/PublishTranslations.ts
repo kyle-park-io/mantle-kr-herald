@@ -51,18 +51,18 @@ export class PublishTranslations {
 
         try {
           let result;
+          const isUpdate = existing !== undefined;
           if (existing) {
             if (!uploader.update || !existing.remoteId) {
               throw new Error(
                 `${uploader.name} cannot update a published file in place — edit it in the drive by hand, ` +
-                  `or delete this row from the sync ledger to re-publish as a new file`,
+                  `or delete this row from the sync ledger to re-publish as a new file (this leaves the old ` +
+                  `file in the drive — find and delete it by hand afterward, or you will end up with a duplicate)`,
               );
             }
             result = await uploader.update(existing.remoteId, { name, content, folder });
-            updated += 1;
           } else {
             result = await uploader.upload({ name, content, folder });
-            uploaded += 1;
           }
 
           const entry: SyncEntry = {
@@ -72,11 +72,13 @@ export class PublishTranslations {
             target: uploader.name,
             fileName: result.name,
             remoteId: result.id,
-            url: result.url,
+            url: result.url ?? existing?.url,
             contentHash: hash,
             uploadedAt: this.now().toISOString(),
           };
           await this.publishStore.record(entry);
+          if (isUpdate) updated += 1;
+          else uploaded += 1;
           byDrive[uploader.name] = (byDrive[uploader.name] ?? 0) + 1;
         } catch (err) {
           failed += 1;

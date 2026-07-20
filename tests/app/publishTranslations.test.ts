@@ -193,6 +193,68 @@ describe("PublishTranslations", () => {
     expect(res.failures[0].error).toMatch(/lark/i);
   });
 
+  it("does not count a create as uploaded when the ledger write fails", async () => {
+    const t = tr("x:1", "approved");
+    const uploader = new FakeUploader("google");
+    const store: PublishStore = {
+      listEntries: async () => [],
+      record: async () => {
+        throw new Error("disk full");
+      },
+    };
+
+    const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();
+
+    expect(res.uploaded).toBe(0);
+    expect(res.updated).toBe(0);
+    expect(res.failed).toBe(1);
+    expect(res.failures[0].error).toBe("disk full");
+  });
+
+  it("does not count an update as updated when the ledger write fails", async () => {
+    const t = tr("x:1", "approved");
+    const uploader = new UpdatableUploader("google");
+    const existing: SyncEntry = {
+      itemId: "x:1", stage: "translation", status: "approved", target: "google",
+      remoteId: "file-1", contentHash: "sha256:stale", uploadedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const store: PublishStore = {
+      listEntries: async () => [existing],
+      record: async () => {
+        throw new Error("disk full");
+      },
+    };
+
+    const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();
+
+    expect(res.uploaded).toBe(0);
+    expect(res.updated).toBe(0);
+    expect(res.failed).toBe(1);
+    expect(uploader.updates).toHaveLength(1); // the update itself did happen — only recording failed
+    expect(res.failures[0].error).toBe("disk full");
+  });
+
+  it("falls back to the existing url when an update response omits webViewLink", async () => {
+    const t = tr("x:1", "approved");
+    const store = new InMemoryPublishStore();
+    await store.record({
+      itemId: "x:1", stage: "translation", status: "approved", target: "google",
+      remoteId: "file-1", url: "https://drive.example/old-link", contentHash: "sha256:stale",
+      uploadedAt: "2026-01-01T00:00:00.000Z",
+    });
+    class NoUrlUploader extends FakeUploader {
+      async update(remoteId: string, req: UploadRequest): Promise<UploadResult> {
+        return { id: remoteId, name: req.name }; // no url — as a PATCH response without webViewLink would be
+      }
+    }
+    const uploader = new NoUrlUploader("google");
+
+    await new PublishTranslations(translationStore([t]), [uploader], store).run();
+
+    const entry = (await store.listEntries()).find((e) => e.target === "google");
+    expect(entry?.url).toBe("https://drive.example/old-link");
+  });
+
   it("reports a failure when a stale entry has no remoteId, even though the uploader supports update", async () => {
     const t = tr("x:1", "approved");
     const store = new InMemoryPublishStore();
