@@ -164,8 +164,12 @@ interface SyncEntry {
 없어지는 것을 피하기 위함입니다. 변환은 읽을 때마다 메모리에서 일어나며, `output/publish/state.json`
 자체가 새 형식으로 다시 쓰이는 것은 다음 번 `record()` 호출(예: 다음 `pnpm drive:publish` 실행)
 때입니다. `contentHash`가 없는 이 행들은 `isStale`이 "모름"을 "변경 없음"으로 취급하므로
-`stale`로 보고되지도, 재업로드되지도 않습니다 — 다음에 그 항목이 실제로 다시 게시될 때
-비로소 `contentHash`를 얻습니다.
+`stale`로 보고되지도, 재업로드되지도 않습니다. **이 상태는 영구적입니다** — 원장에 행이 있으면
+`PublishTranslations`는 `contentHash` 비교 없이 그 자리에서 건너뛰고 `record()`를 다시 호출하지
+않으므로, 이런 행은 그 항목이 나중에 다시 게시되더라도 `contentHash`를 얻지 못합니다. 유일한
+탈출 경로(레거시 행 전용, 원장 행 수동 삭제 + 재게시)와 자동 갱신 경로(해시가 있는 `stale` 행
+전용, Google만)를 서로 다른 상황에만 써야 하며, 두 절차를 구분해 정리한 문서는
+[`team-runbook.md`](team-runbook.md) §4를 참고하세요.
 
 ## 5. 보존 정책
 
