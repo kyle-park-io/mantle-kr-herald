@@ -28,6 +28,14 @@ class FakeUploader implements DriveUploader {
   }
 }
 
+class UpdatableUploader extends FakeUploader {
+  public updates: Array<{ remoteId: string; req: UploadRequest }> = [];
+  async update(remoteId: string, req: UploadRequest): Promise<UploadResult> {
+    this.updates.push({ remoteId, req });
+    return { id: remoteId, name: req.name, url: `https://drive.example/${remoteId}` };
+  }
+}
+
 class InMemoryPublishStore implements PublishStore {
   public entries: SyncEntry[] = [];
   get keys(): Set<string> {
@@ -35,9 +43,6 @@ class InMemoryPublishStore implements PublishStore {
   }
   async listEntries() {
     return this.entries;
-  }
-  async listPublished() {
-    return this.keys;
   }
   async record(entry: SyncEntry) {
     this.entries = this.entries.filter((e) => entryKey(e) !== entryKey(entry));
@@ -98,7 +103,6 @@ describe("PublishTranslations", () => {
     const recorded: SyncEntry[] = [];
     const store: PublishStore = {
       listEntries: async () => recorded,
-      listPublished: async () => new Set(recorded.map(entryKey)),
       record: async (e) => {
         recorded.push(e);
       },
@@ -121,5 +125,71 @@ describe("PublishTranslations", () => {
     expect(recorded[0].url).toBe("https://drive.example/file-1");
     expect(recorded[0].uploadedAt).toBe("2026-07-20T09:00:00.000Z");
     expect(recorded[0].contentHash).toMatch(/^sha256:/);
+  });
+
+  it("updates in place when the content changed since it was published", async () => {
+    const t = tr("x:1", "approved");
+    const store = new InMemoryPublishStore();
+    await store.record({
+      itemId: "x:1", stage: "translation", status: "approved", target: "google",
+      remoteId: "file-1", contentHash: "sha256:stale", uploadedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const uploader = new UpdatableUploader("google");
+
+    const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();
+
+    expect(res.updated).toBe(1);
+    expect(res.uploaded).toBe(0);
+    expect(uploader.reqs).toHaveLength(0); // never created a duplicate
+    expect(uploader.updates).toHaveLength(1);
+    expect(uploader.updates[0].remoteId).toBe("file-1");
+
+    const entry = (await store.listEntries()).find((e) => e.target === "google");
+    expect(entry?.contentHash).not.toBe("sha256:stale");
+    expect(entry?.remoteId).toBe("file-1");
+  });
+
+  it("skips when the content is unchanged", async () => {
+    const t = tr("x:1", "approved");
+    const store = new InMemoryPublishStore();
+    const uploader = new UpdatableUploader("google");
+    // publish once, then run again with nothing edited
+    await new PublishTranslations(translationStore([t]), [uploader], store).run();
+    const second = await new PublishTranslations(translationStore([t]), [uploader], store).run();
+
+    expect(second).toMatchObject({ uploaded: 0, updated: 0, failed: 0 });
+    expect(uploader.updates).toHaveLength(0);
+  });
+
+  // The migration trap: a legacy row has no hash. Unknown is not changed.
+  it("never re-uploads a row migrated from the legacy format", async () => {
+    const t = tr("x:1", "approved");
+    const store = new InMemoryPublishStore();
+    await store.record({ itemId: "x:1", stage: "translation", status: "approved", target: "google" });
+    const uploader = new UpdatableUploader("google");
+
+    const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();
+
+    expect(res).toMatchObject({ uploaded: 0, updated: 0, failed: 0 });
+    expect(uploader.reqs).toHaveLength(0);
+    expect(uploader.updates).toHaveLength(0);
+  });
+
+  it("reports a failure when a stale item's drive cannot update in place", async () => {
+    const t = tr("x:1", "approved");
+    const store = new InMemoryPublishStore();
+    await store.record({
+      itemId: "x:1", stage: "translation", status: "approved", target: "lark",
+      remoteId: "tok-1", contentHash: "sha256:stale", uploadedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const uploader = new FakeUploader("lark"); // no update method
+
+    const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();
+
+    expect(res.failed).toBe(1);
+    expect(res.updated).toBe(0);
+    expect(uploader.reqs).toHaveLength(0); // must NOT fall back to creating a duplicate
+    expect(res.failures[0].error).toMatch(/cannot update/i);
+    expect(res.failures[0].error).toMatch(/lark/i);
   });
 });

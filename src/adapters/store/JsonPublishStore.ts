@@ -21,10 +21,6 @@ export class JsonPublishStore implements PublishStore {
     return migrateLegacyKeys(state.published ?? []);
   }
 
-  async listPublished(): Promise<Set<string>> {
-    return new Set((await this.listEntries()).map(entryKey));
-  }
-
   async record(entry: SyncEntry): Promise<void> {
     const entries = await this.listEntries();
     const key = entryKey(entry);

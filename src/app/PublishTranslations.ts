@@ -12,6 +12,7 @@ export interface PublishFailure {
 
 export interface PublishResult {
   uploaded: number;
+  updated: number;
   failed: number; // count (kept for the dashboard)
   failures: PublishFailure[]; // per-failure reason
   byDrive: Record<string, number>;
@@ -26,8 +27,10 @@ export class PublishTranslations {
   ) {}
 
   async run(): Promise<PublishResult> {
-    const published = await this.publishStore.listPublished();
+    const entries = await this.publishStore.listEntries();
+    const byKey = new Map(entries.map((e) => [entryKey(e), e]));
     let uploaded = 0;
+    let updated = 0;
     let failed = 0;
     const failures: PublishFailure[] = [];
     const byDrive: Record<string, number> = {};
@@ -36,12 +39,32 @@ export class PublishTranslations {
       const content = t.status === "approved" ? renderApproved(t) : renderReview(t);
       const folder: FolderKind = t.status === "approved" ? "approved" : "review";
       const name = publishFileName(t);
+      const hash = contentHash(content);
 
       for (const uploader of this.uploaders) {
         const key = entryKey({ itemId: t.itemId, status: t.status, target: uploader.name });
-        if (published.has(key)) continue;
+        const existing = byKey.get(key);
+
+        // A migrated legacy row has no hash: unknown is not changed. Re-uploading it would
+        // create a duplicate in Drive for every item published before the ledger existed.
+        if (existing && (existing.contentHash === undefined || existing.contentHash === hash)) continue;
+
         try {
-          const result = await uploader.upload({ name, content, folder });
+          let result;
+          if (existing) {
+            if (!uploader.update || !existing.remoteId) {
+              throw new Error(
+                `${uploader.name} cannot update a published file in place — edit it in the drive by hand, ` +
+                  `or delete this row from the sync ledger to re-publish as a new file`,
+              );
+            }
+            result = await uploader.update(existing.remoteId, { name, content, folder });
+            updated += 1;
+          } else {
+            result = await uploader.upload({ name, content, folder });
+            uploaded += 1;
+          }
+
           const entry: SyncEntry = {
             itemId: t.itemId,
             stage: "translation",
@@ -50,11 +73,10 @@ export class PublishTranslations {
             fileName: result.name,
             remoteId: result.id,
             url: result.url,
-            contentHash: contentHash(content),
+            contentHash: hash,
             uploadedAt: this.now().toISOString(),
           };
           await this.publishStore.record(entry);
-          uploaded += 1;
           byDrive[uploader.name] = (byDrive[uploader.name] ?? 0) + 1;
         } catch (err) {
           failed += 1;
@@ -63,6 +85,6 @@ export class PublishTranslations {
       }
     }
 
-    return { uploaded, failed, failures, byDrive };
+    return { uploaded, updated, failed, failures, byDrive };
   }
 }
