@@ -53,4 +53,12 @@ describe("isStale", () => {
   it("is false for a migrated entry — an unknown hash is not evidence of staleness", () => {
     expect(isStale(base, contentHash("anything"))).toBe(false);
   });
+
+  it("is false when contentHash is null (hand-edited ledger), not evidence of staleness either", () => {
+    expect(isStale({ ...base, contentHash: null as unknown as string }, contentHash("anything"))).toBe(false);
+  });
+
+  it("is false when contentHash is an empty string", () => {
+    expect(isStale({ ...base, contentHash: "" }, contentHash("anything"))).toBe(false);
+  });
 });
