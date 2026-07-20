@@ -48,10 +48,10 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
     <>
       {error && <div className="bg-red-100 text-red-800 px-4 py-2 text-sm">{error}</div>}
       <div className="flex flex-1 min-h-0">
-        <aside className="w-72 border-r border-neutral-200 overflow-y-auto">
+        <aside className="w-72 border-r border-neutral-200 overflow-y-auto [scrollbar-gutter:stable]">
           <RenderingList items={items} selectedKey={selectedKey} onSelect={handleSelect} />
         </aside>
-        <section className="flex-1 p-6 overflow-y-auto">
+        <section className="flex-1 p-6 overflow-y-auto [scrollbar-gutter:stable]">
           {selected ? (
             <RenderingDetail item={selected} onSave={onSave} onApprove={onApprove} onDirtyChange={setDirty} />
           ) : (
