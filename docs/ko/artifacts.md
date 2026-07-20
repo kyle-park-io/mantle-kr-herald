@@ -15,9 +15,14 @@
 | 코드 + 문서 | `src/`, `docs/` | 공개 | 추적됨 |
 | 스티어링 **예시** | `translation/*.example.json`, `conversion/*.example.md` | 공개 스켈레톤 | 추적됨 |
 | 스티어링 **실제 값** | `translation/`, `conversion/` 안의 실제 파일 | 팀 자산 | **무시됨(ignored)** |
-| 작업 공간 | `output/` | 폐기 가능한 중간 산출물 | 무시됨 |
-| **기록의 원본(record of truth)** | Google Drive / Lark Drive | 승인된 결과물, 영구 보존 | — |
+| 작업 공간 | `output/` (`publish/local/` 제외) | 폐기 가능한 중간 산출물 | 무시됨 |
+| **기록의 원본** — `cloud` 모드 | Google Drive / Lark Drive | 승인된 결과물, 영구 보존 | — |
+| **기록의 원본** — `local` 모드 | `output/publish/local/{review,approved}/` | 승인된 결과물. 무시되는 트리에 있으므로 **백업은 사용자 책임** | 무시됨 |
 | 게시 이력 | Google Sheet `history` 탭 | 게시 + 도달 기록 | — |
+
+`local` 모드에서는 `output/`이 통째로 "폐기 가능"하지 않습니다 — `output/publish/local/` 아래의
+마크다운은 파이프라인이 만들어내는 **최종 산출물**이며, `pnpm clean`은 이 파일들을 지우지
+않습니다(임시 파일 패턴만 청소).
 
 `translation/`, `conversion/` 디렉터리는 `*.example.*` 스켈레톤만 git에 추적되고, 실제 팀 콘텐츠
 (`glossary.json`, `style-guide.md`, `locale.json`, `few-shot*.json`, `x.md`/`announcement.md`/`kol.md`/`pr.md`)는
@@ -42,22 +47,23 @@ HERALD_STORAGE_MODE=local|cloud
 | | `local` | `cloud` |
 |---|---|---|
 | `collect` → `translate` → `convert` → `format` | 동일하게 동작 | 동일하게 동작 |
-| `drive:publish`, `drive:init`, `sheet:init`, `targets:list`, `history:record` | `"<command>: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)"`을 출력하고 종료 코드 `0` | 정상 실행 |
+| `drive:init`, `sheet:init`, `targets:list`, `history:record` (네 개) | `"<command>: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)"`을 출력하고 종료 코드 `0` | 정상 실행 |
+| `drive:publish` | `output/publish/local/{review,approved}/`에 마크다운 저장 | Google/Lark Drive에 업로드 |
 | `pnpm archive` | 유일한 안전망(§5) | Drive가 원본이므로 보조 수단 |
-| `pnpm status` | 개수(`unsynced`/`stale` 포함)는 동일하게 표시하되 `⚠` 없이 `(local mode — publishing disabled)`만 덧붙임 — `local`에서는 게시가 아예 일어나지 않으므로 unsynced가 정상 상태 | 동기화되지 않은/오래된(stale) 항목이 있으면 `⚠`로 경고 |
+| `pnpm status` | 동기화되지 않은/오래된(stale) 항목이 있으면 `cloud`와 동일하게 `⚠`로 경고 | 동기화되지 않은/오래된(stale) 항목이 있으면 `⚠`로 경고 |
 | `pnpm doctor` | 클라우드 자격 증명 검사 실패를 `warn`으로 낮추고 종료 코드 `0` — `local`에서는 없어도 정상이기 때문 | 실패는 그대로 `fail`이고 종료 코드 `1` |
 
 스킵은 실패가 아니라 정상 동작이므로 종료 코드는 `0`입니다 — 비영(非零) 종료 코드는 래퍼 스크립트를
-깨뜨릴 수 있기 때문입니다. 이 게이트는 다섯 개 CLI(`src/cli/publish.ts`, `drive-init.ts`,
-`targets-list.ts`, `history-record.ts`, `sheet-init.ts`)가 공통으로 호출하는
-`skipIfLocal()`(`src/cli/skipIfLocal.ts`)로 구현되어 있습니다.
+깨뜨릴 수 있기 때문입니다. 이 게이트는 네 개 CLI(`drive-init.ts`, `targets-list.ts`,
+`history-record.ts`, `sheet-init.ts`)가 공통으로 호출하는
+`skipIfLocal()`(`src/cli/skipIfLocal.ts`)로 구현되어 있습니다. `publish.ts`는 이 목록에 없습니다 —
+`local` 모드에서도 스킵하지 않고 파일시스템을 대상으로 정상 실행됩니다.
 
-웹 대시보드(`pnpm serve`)의 `POST /api/publish`도 같은 모드를 따릅니다. 다만 구현이 다릅니다 —
-`skipIfLocal()`의 `process.exit(0)`은 실행 중인 서버를 죽이기 때문에, 대시보드는 `src/cli/serve.ts`의
-`uploadersFor()`에서 예외를 던지고 HTTP 500과 함께
-`local mode — publishing is disabled (set HERALD_STORAGE_MODE=cloud to enable)` 메시지를 반환합니다.
-**대시보드 자체는 `local` 모드에서도 그대로 쓸 수 있습니다** — 목록·편집·승인은 모두 동작하고,
-거부되는 것은 게시뿐입니다.
+웹 대시보드(`pnpm serve`)의 `POST /api/publish`도 같은 모드를 따르지만, `local` 모드에서도
+그대로 게시합니다 — CLI와 동일하게 `resolveTargets()`/`createUploaders()`를 거쳐 로컬 모드에서는
+`LocalFileUploader`가 쓰입니다. `GET /api/config`가 프런트엔드에 저장 모드를 알려주므로, 대시보드의
+대상 선택지는 그 모드에서 실제로 동작하는 것만 보여주도록 좁혀집니다.
+**대시보드 자체는 `local` 모드에서도 그대로 쓸 수 있습니다** — 목록·편집·승인·게시 모두 동작합니다.
 
 승인(approve)은 자동 업로드를 유발하지 않습니다. 게시는 항상 의도적인 사람의 행동입니다.
 
@@ -69,7 +75,9 @@ HERALD_STORAGE_MODE=local|cloud
    없다면).
 4. `pnpm drive:publish`를 실행합니다. `output/publish/state.json`(동기화 원장, §4)에 아직 기록되지
    않은 `output/translations/translations.json`의 모든 항목이 이 한 번의 실행으로 업로드됩니다 —
-   즉 `local` 모드에서 쌓인 번역 백로그 전체가 한 번에 동기화됩니다.
+   즉 `local` 모드에서 쌓인 번역 백로그 전체가 한 번에 동기화됩니다. 원장에 이미 `target: "local"`
+   행이 있어도 상관없습니다 — `entryKey()`가 `target`까지 포함해 키를 만들므로 `google`/`lark` 행은
+   완전히 별개의 키이고, 승격 시 정상적으로 새로 업로드됩니다.
 
 ## 3. 명령어별 입출력
 
@@ -88,7 +96,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm format:save --id --type --channel --file` | `output/formatted/pending.json`(없으면 `output/formatted/renderings.json`에서 폴백); `--file` | `output/formatted/renderings.json`(upsert, `refined: true`) | 없음 |
 | `pnpm glossary [add --term --rule ...]` | `translation/glossary.json` | `add` 서브커맨드일 때만 `translation/glossary.json`(upsert) | 없음 |
 | `pnpm config:init` | `translation/*.example.*`, `conversion/*.example.*` | 실제 파일이 아직 없는 것만 생성(`translation/{glossary,locale,style-guide,few-shot}.*`, `conversion/{x,announcement,kol,pr}.md`, `conversion/few-shot.{x,announcement,kol,pr}.json`) — 이미 있으면 절대 덮어쓰지 않음 | 없음 |
-| `pnpm drive:publish [--target google\|lark\|both]` | `local` 모드면 스킵(§2). `output/translations/translations.json`; 중복 게시 방지 및 `stale` 판정을 위한 `output/publish/state.json` | `output/publish/state.json`(신규 업로드는 SyncEntry 추가, `stale` 항목은 기존 행을 갱신 — 둘 다 §4) | Google Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 파일 갱신 엔드포인트도) 그리고/또는 Lark Drive API(파일 생성 엔드포인트만 — 갱신 엔드포인트 없음, §4) |
+| `pnpm drive:publish [--target google\|lark\|local\|both\|<쉼표로 나열>]` | `output/translations/translations.json`; 중복 게시 방지 및 `stale` 판정을 위한 `output/publish/state.json` | `output/publish/state.json`(신규 업로드는 SyncEntry 추가, `stale` 항목은 기존 행을 갱신 — 둘 다 §4); `output/publish/local/{review,approved}/*.md`(`local` 모드, 또는 `--target`에 `local`이 포함된 경우) | 모드/`--target`에 따라 다름 — 없음(`local`만인 경우), 또는 Google Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 파일 갱신 엔드포인트도) 그리고/또는 Lark Drive API(파일 생성 엔드포인트만 — 갱신 엔드포인트 없음, §4) |
 | `pnpm drive:init [--force]` | `local` 모드면 스킵. 로컬 파일 없음(env만) | 로컬 파일 없음 — 생성된 폴더 id를 `.env`에 붙여넣도록 콘솔에 출력 | Google Drive API(폴더 생성/공유) |
 | `pnpm targets:list [--active-only]` | `local` 모드면 스킵. 로컬 파일 없음 | 없음 | Google Sheets API(`targets` 탭 조회) |
 | `pnpm history:record --item --type --channel --status [...]` | `local` 모드면 스킵. 로컬 파일 없음 | 로컬 파일 없음 | Google Sheets API(`history` 탭에 행 추가) |
@@ -97,7 +105,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm status` | `output/x/items.json`, `output/lark/items.json`, `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 없음 | 없음 |
 | `pnpm archive` | `output/translations/worksheets/`, `output/variants/worksheets/`, `output/formatted/worksheets/`의 `.md` 목록 | 대상 파일들을 `output/archive/<YYYY-MM-DD>/`로 이동 | 없음 |
 | `pnpm clean [--older-than <days>] [--yes]` | `output/archive/`의 날짜 폴더 목록; 좌초된 임시 파일 탐지를 위해 `output/` 전체(`output/archive/` 내부는 제외)를 재귀 탐색 | 기본은 드라이런(삭제 대상만 출력). `--yes`일 때: 30일(기본값) 초과 경과한 `output/archive/<YYYY-MM-DD>/` 폴더 + `output/archive/`를 제외한 `output/` 안 어디에 있든 `*.tmp-<pid>-<ms>-<uuid>` 형식의 좌초 파일을 삭제 | 없음 |
-| `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들 | 게시 API 호출 시 Google Drive API, Lark Drive API — `local` 모드에서는 HTTP 500으로 거부(§2 참고) |
+| `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들; `local` 모드에서 게시하면 `output/publish/local/{review,approved}/*.md`도 포함(§2 참고) | 게시 API 호출 시 모드에 따라 Google Drive API, Lark Drive API(`cloud`), 또는 없음(`local`) |
 | `pnpm google:auth` | `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`/`GOOGLE_OAUTH_SCOPE`(env) | 로컬 파일 없음 — refresh token을 콘솔에 출력 | Google OAuth 2.0(로컬 루프백 서버로 인가 코드 교환) |
 
 ## 4. 동기화 원장

@@ -130,6 +130,11 @@ is the cheaper outcome.
 - **Documentation set** — `docs/ko/{capabilities,quickstart,team-runbook,artifacts}.md` covering what
   the project does, how external and internal users run it, and where every artifact is stored;
   `docs/README.md` records the documentation rules.
+- **`local` publish target** — `pnpm drive:publish` now writes the review/approved markdown documents to
+  `output/publish/local/{review,approved}/` instead of skipping publication in
+  `HERALD_STORAGE_MODE=local`. `--target` accepts a comma-separated list (`google,local`); `both`
+  remains an alias for `google,lark`. The dashboard publishes in local mode too, and picks its
+  target options from the new `GET /api/config`.
 
 ### Changed
 
@@ -162,6 +167,11 @@ is the cheaper outcome.
 - **The real steering config left git.** `translation/` and `conversion/` now track only
   `*.example.*` skeletons; the actual glossary, style guide and few-shot corpus are local. Routine
   approvals no longer dirty the working tree.
+- **`pnpm status` warns about unsynced/stale work in `local` mode exactly as in `cloud` mode.** The
+  previous `(local mode — publishing disabled)` line hid a real backlog now that local publishing
+  exists.
+- **`skipIfLocal()` now gates four commands, not five.** `drive:publish` left the list — in local
+  mode it targets the filesystem instead of skipping.
 
 ### Fixed
 
@@ -184,6 +194,10 @@ is the cheaper outcome.
   `format --refine` archive the previous `pending.json` before replacing it and write it atomically
   like every other store; `translate:save` and `format:save` fall back to an already-saved item
   instead of throwing.
+- **Re-publishing after a re-approval no longer risks a duplicate document.** `publishFileName`
+  embeds `approvedAt`'s date, so re-approving on a later day changes the filename;
+  `LocalFileUploader.update` moves the file rather than writing a second copy, mirroring the Drive
+  PATCH that preserves a file id.
 
 ## [0.1.0] - 2026-07-15
 
