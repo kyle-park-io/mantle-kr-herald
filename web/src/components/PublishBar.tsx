@@ -8,7 +8,7 @@ const targetsFor = (mode: StorageMode): string[] =>
 
 export function PublishBar() {
   const [mode, setMode] = useState<StorageMode | null>(null);
-  const [target, setTarget] = useState("");
+  const [target, setTarget] = useState<string | null>(null); // null until GET /api/config resolves
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
@@ -23,6 +23,7 @@ export function PublishBar() {
   }, []);
 
   const publish = async () => {
+    if (target === null) return; // button is disabled in this state; guard keeps the type honest
     setBusy(true);
     setResult(null);
     try {
@@ -39,7 +40,7 @@ export function PublishBar() {
     <div className="flex items-center gap-2">
       <select
         className="text-neutral-900 text-sm rounded px-1.5 py-1"
-        value={target}
+        value={target ?? ""}
         disabled={mode === null}
         onChange={(e) => setTarget(e.target.value)}
       >
@@ -52,7 +53,7 @@ export function PublishBar() {
       </select>
       <button
         className="px-3 py-1 rounded-md border border-white/30 text-sm disabled:opacity-50"
-        disabled={busy || mode === null}
+        disabled={busy || mode === null || target === null}
         onClick={publish}
       >
         발행 ⬆
