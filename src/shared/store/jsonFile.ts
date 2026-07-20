@@ -17,9 +17,14 @@ export async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
 }
 
 /** Atomic write: temp file in the same dir + rename over the target. */
-export async function writeJsonFileAtomic(dir: string, path: string, data: unknown): Promise<void> {
+export async function writeTextFileAtomic(dir: string, path: string, text: string): Promise<void> {
   await mkdir(dir, { recursive: true });
   const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
-  await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  await writeFile(tmpPath, text, "utf8");
   await rename(tmpPath, path);
+}
+
+/** Atomic write of 2-space JSON with a trailing newline. */
+export async function writeJsonFileAtomic(dir: string, path: string, data: unknown): Promise<void> {
+  await writeTextFileAtomic(dir, path, `${JSON.stringify(data, null, 2)}\n`);
 }
