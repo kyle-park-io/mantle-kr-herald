@@ -72,7 +72,25 @@ function makeDeps(
     },
   } as unknown as ApiDeps["approveRendering"];
 
-  return { translationStore, saveTranslation, buildPublisher, storageMode: "cloud", formattingStore, conversionStore, saveRendering, approveRendering };
+  return {
+    translationStore,
+    saveTranslation,
+    buildPublisher,
+    storageMode: "cloud",
+    formattingStore,
+    conversionStore,
+    saveRendering,
+    approveRendering,
+    loadStatus: async () => ({
+      storageMode: "cloud" as const,
+      funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
+      sync: { published: 1, unsynced: 2, stale: 0 },
+    }),
+    loadPublishState: async () => [
+      { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
+      { itemId: "x:2", status: "approved", target: "local", remoteId: "approved/2026-x2.md", fileName: "2026-x2.md" },
+    ],
+  };
 }
 
 describe("handleApi", () => {
@@ -157,6 +175,25 @@ describe("handleApi", () => {
     expect(res.status).toBe(200);
     expect((res.json as ChannelRendering).status).toBe("approved");
     expect((await handleApi(d, "POST", "/api/renderings/x%3A9/x/x/approve", undefined)).status).toBe(404);
+  });
+
+  it("GET /api/status returns the storage mode, funnel and sync counts", async () => {
+    const res = await handleApi(makeDeps([]), "GET", "/api/status", undefined);
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({
+      storageMode: "cloud",
+      funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
+      sync: { published: 1, unsynced: 2, stale: 0 },
+    });
+  });
+
+  it("GET /api/publish/state returns the trimmed ledger rows", async () => {
+    const res = await handleApi(makeDeps([]), "GET", "/api/publish/state", undefined);
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual([
+      { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
+      { itemId: "x:2", status: "approved", target: "local", remoteId: "approved/2026-x2.md", fileName: "2026-x2.md" },
+    ]);
   });
 });
 

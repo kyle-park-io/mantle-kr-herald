@@ -1,7 +1,7 @@
 // src/adapters/web/HttpServer.ts
 import { createServer, type Server } from "node:http";
 import { readFile } from "node:fs/promises";
-import { join, normalize, extname } from "node:path";
+import { join, normalize, extname, resolve, sep } from "node:path";
 import { handleApi, type ApiDeps } from "./apiHandlers";
 
 const MIME: Record<string, string> = {
@@ -10,6 +10,7 @@ const MIME: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
+  ".md": "text/markdown; charset=utf-8",
 };
 
 async function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
@@ -23,10 +24,28 @@ async function readBody(req: import("node:http").IncomingMessage): Promise<unkno
   }
 }
 
-export function startServer(deps: ApiDeps, opts: { port: number; staticDir: string }): Server {
+export function startServer(deps: ApiDeps, opts: { port: number; staticDir: string; localPublishDir: string }): Server {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
+      if (url.pathname.startsWith("/api/publish/local/")) {
+        try {
+          const rel = normalize(decodeURIComponent(url.pathname.slice("/api/publish/local/".length)))
+            .replace(/^(\.\.[/\\])+/, "")
+            .replace(/^[/\\]+/, "");
+          const filePath = join(opts.localPublishDir, rel);
+          // Defense in depth: the resolved path must stay under the publish-local root.
+          if (resolve(filePath) !== resolve(opts.localPublishDir) && !resolve(filePath).startsWith(resolve(opts.localPublishDir) + sep)) {
+            res.writeHead(404).end();
+            return;
+          }
+          const data = await readFile(filePath);
+          res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8" }).end(data);
+        } catch {
+          res.writeHead(404).end();
+        }
+        return;
+      }
       if (url.pathname.startsWith("/api/")) {
         const body = req.method === "POST" || req.method === "PUT" ? await readBody(req) : undefined;
         const result = await handleApi(deps, req.method ?? "GET", url.pathname, body);
