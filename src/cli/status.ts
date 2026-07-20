@@ -10,7 +10,6 @@ import { pipelineStages, formatStatus } from "../status/pipeline";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { syncSummary, formatSyncSummary } from "../status/sync";
 import { paths } from "../paths";
-import { tryLoadStorageMode } from "../config";
 
 const source = new CompositeContentSource([
   new XContentSource(paths.xItems),
@@ -35,6 +34,5 @@ console.log(
       entries,
       render: (t) => (t.status === "approved" ? renderApproved(t) : renderReview(t)),
     }),
-    tryLoadStorageMode(),
   ),
 );
