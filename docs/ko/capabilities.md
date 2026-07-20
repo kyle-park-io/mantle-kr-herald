@@ -88,9 +88,11 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
   `pr_mail` 네 개만 지원합니다(`Channel` 타입). `pnpm lark:send`가 존재하지만, 이는 `--text`
   인자를 그대로 전송하는 독립적인 메시지 전송 명령일 뿐 파이프라인 콘텐츠(번역/변환/포맷 결과)와
   연결되어 있지 않습니다.
-- **임프레션(§9b)은 구현되어 있지 않습니다.** `history` 탭 헤더에는 `impressions`/`impressionsAt`
-  컬럼이 정의되어 있지만, `pnpm history:record`가 실제로 쓰는 것은 A~G 7개 컬럼뿐입니다 — 두
-  컬럼은 항상 빈 채로 남습니다.
+- **임프레션(§9b ③)은 X만 지원합니다.** `pnpm impressions:record`가 `history` 탭의 `channel=x`
+  행을 트윗 조회해 `impressions`(viewCount)/`impressionsAt` 두 컬럼(H·I)을 채웁니다 —
+  `pnpm history:record`는 A~G만 쓰고 이 두 컬럼은 §9b 몫으로 비워두기 때문입니다. 텔레그램/카카오
+  등 다른 채널은 임프레션 소스가 없어 빈 채로 남고, 아직 라이브 미검증입니다(`spreadsheets` 스코프
+  필요 — §9a와 동일).
 
 ## 5. 모듈 지도
 
