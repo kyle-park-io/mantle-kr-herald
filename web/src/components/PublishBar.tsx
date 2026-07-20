@@ -11,7 +11,7 @@ export function PublishBar() {
     setResult(null);
     try {
       const r = await api.publish(target);
-      setResult(`업로드 ${r.uploaded} · 실패 ${r.failed}`);
+      setResult(`업로드 ${r.uploaded} · 갱신 ${r.updated} · 실패 ${r.failed}`);
     } catch (e) {
       setResult(`오류: ${(e as Error).message ?? e}`);
     } finally {

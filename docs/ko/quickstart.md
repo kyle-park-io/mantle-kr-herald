@@ -95,11 +95,12 @@ pnpm translate:save --id <itemId> --file <korean.txt> --approve
    ([`artifacts.md`](artifacts.md) 참고).
 5. `pnpm drive:publish`를 실행합니다.
 
-`drive:publish`는 동기화 원장(`output/publish/state.json`)을 확인해 **아직 올라가지 않은
-항목만** 업로드합니다. 지금까지는 원장이 비어 있으니(§2에서 `local` 모드로 지내는 동안 아무
-것도 업로드된 적이 없으므로) `local` 모드에서 쌓인 번역 백로그 전체가 이 한 번의 실행으로
-업로드됩니다. 이후에 다시 `drive:publish`를 돌리면 이미 올라간 항목은 자동으로 스킵됩니다
-([`artifacts.md`](artifacts.md) §4 동기화 원장 참고).
+`drive:publish`는 동기화 원장(`output/publish/state.json`)을 확인해 아직 올라가지 않은 항목은
+새로 올리고, 내용이 그대로인 항목은 건너뜁니다. 지금까지는 원장이 비어 있으니(§2에서 `local`
+모드로 지내는 동안 아무 것도 업로드된 적이 없으므로) `local` 모드에서 쌓인 번역 백로그 전체가
+이 한 번의 실행으로 업로드됩니다. 승인 이후 내용이 바뀐 항목(`stale`)은 Google Drive에서는 기존
+파일을 그 자리에서 갱신합니다 — 자세한 동작(Lark의 제약, 레거시 행의 예외)은
+[`team-runbook.md`](team-runbook.md) §4를 참고하세요.
 
 ## 6. 다음으로
 

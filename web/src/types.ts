@@ -9,6 +9,7 @@ export interface Translation {
 }
 export interface PublishResult {
   uploaded: number;
+  updated: number;
   failed: number;
   byDrive: Record<string, number>;
 }

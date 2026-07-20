@@ -43,7 +43,11 @@ export function migrateLegacyKeys(keys: string[]): SyncEntry[] {
   return entries;
 }
 
-/** A migrated entry has no hash — unknown is not the same as changed, so it is not stale. */
+/**
+ * A migrated entry has no hash — unknown is not the same as changed, so it is not stale.
+ * A hand-edited ledger could also set `contentHash` to `null` or `""`; treat those the same as
+ * "unknown" rather than as evidence the content differs from every real hash.
+ */
 export function isStale(entry: SyncEntry, currentHash: string): boolean {
-  return entry.contentHash !== undefined && entry.contentHash !== currentHash;
+  return entry.contentHash != null && entry.contentHash !== "" && entry.contentHash !== currentHash;
 }

@@ -88,7 +88,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm format:save --id --type --channel --file` | `output/formatted/pending.json`(없으면 `output/formatted/renderings.json`에서 폴백); `--file` | `output/formatted/renderings.json`(upsert, `refined: true`) | 없음 |
 | `pnpm glossary [add --term --rule ...]` | `translation/glossary.json` | `add` 서브커맨드일 때만 `translation/glossary.json`(upsert) | 없음 |
 | `pnpm config:init` | `translation/*.example.*`, `conversion/*.example.*` | 실제 파일이 아직 없는 것만 생성(`translation/{glossary,locale,style-guide,few-shot}.*`, `conversion/{x,kol,pr}.md`, `conversion/few-shot.{x,kol,pr}.json`) — 이미 있으면 절대 덮어쓰지 않음 | 없음 |
-| `pnpm drive:publish [--target google\|lark\|both]` | `local` 모드면 스킵(§2). `output/translations/translations.json`; 중복 게시 방지를 위한 `output/publish/state.json` | `output/publish/state.json`(SyncEntry 추가, §4) | Google Drive API 그리고/또는 Lark Drive API |
+| `pnpm drive:publish [--target google\|lark\|both]` | `local` 모드면 스킵(§2). `output/translations/translations.json`; 중복 게시 방지 및 `stale` 판정을 위한 `output/publish/state.json` | `output/publish/state.json`(신규 업로드는 SyncEntry 추가, `stale` 항목은 기존 행을 갱신 — 둘 다 §4) | Google Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 파일 갱신 엔드포인트도) 그리고/또는 Lark Drive API(파일 생성 엔드포인트만 — 갱신 엔드포인트 없음, §4) |
 | `pnpm drive:init [--force]` | `local` 모드면 스킵. 로컬 파일 없음(env만) | 로컬 파일 없음 — 생성된 폴더 id를 `.env`에 붙여넣도록 콘솔에 출력 | Google Drive API(폴더 생성/공유) |
 | `pnpm targets:list [--active-only]` | `local` 모드면 스킵. 로컬 파일 없음 | 없음 | Google Sheets API(`targets` 탭 조회) |
 | `pnpm history:record --item --type --channel --status [...]` | `local` 모드면 스킵. 로컬 파일 없음 | 로컬 파일 없음 | Google Sheets API(`history` 탭에 행 추가) |
@@ -146,9 +146,16 @@ interface SyncEntry {
 
 **`contentHash`가 감지하는 것:** `pnpm drive:publish`는 업로드 직전 렌더링한 바이트에 대해
 `contentHash()`(sha256)를 계산해 저장합니다. `pnpm status`는 현재 번역 내용을 같은 방식으로
-다시 렌더링·해시해 원장의 값과 비교합니다 — 값이 다르면 **"승인 후 수정했지만 Drive에는 옛 버전이
-남아 있는"** 상태(stale)로 표시됩니다(`src/status/sync.ts`의 `syncSummary`,
-`src/domain/publish/syncLedger.ts`의 `isStale`).
+다시 렌더링·해시해 원장의 값과 비교해 보여 주기만 하지만, `pnpm drive:publish` 자신도 실행할
+때마다 같은 비교를 해서 값이 다르면(`isStale`) **재업로드 여부를 스스로 결정**합니다 — 즉
+`contentHash`는 `pnpm status`용 보고 값일 뿐 아니라 재게시를 트리거하는 값이기도 합니다
+(`src/status/sync.ts`의 `syncSummary`, `src/domain/publish/syncLedger.ts`의 `isStale`,
+`src/app/PublishTranslations.ts`).
+
+`stale`로 판정된 행은 대상이 Google이면 기존 파일을 갱신(id·공유 링크 유지, 중복 없음)하고,
+대상이 Lark면 갱신 엔드포인트가 없어 실패로 보고됩니다 — Lark Drive `drive/v1`에는 콘텐츠를
+그 자리에서 바꾸는 API가 없기 때문입니다. 이 항목은 Drive에서 직접 찾아 수동으로 처리해야
+합니다.
 
 **레거시 마이그레이션:** 예전 형식 `{"published": ["<itemId>:<status>:<target>", ...]}`은 읽는
 시점에 자동 변환됩니다(`migrateLegacyKeys`). 이 경로로 만들어진 행은 `stage: "translation"`과
@@ -156,7 +163,13 @@ interface SyncEntry {
 비워 둡니다 — 실제로 알 수 없는 값이기 때문에, 자리채움 값을 넣으면 진짜 업로드 기록과 구별할 수
 없어지는 것을 피하기 위함입니다. 변환은 읽을 때마다 메모리에서 일어나며, `output/publish/state.json`
 자체가 새 형식으로 다시 쓰이는 것은 다음 번 `record()` 호출(예: 다음 `pnpm drive:publish` 실행)
-때입니다.
+때입니다. `contentHash`가 없는 이 행들은 `isStale`이 "모름"을 "변경 없음"으로 취급하므로
+`stale`로 보고되지도, 재업로드되지도 않습니다. **이 상태는 영구적입니다** — 원장에 행이 있으면
+`PublishTranslations`는 `contentHash` 비교 없이 그 자리에서 건너뛰고 `record()`를 다시 호출하지
+않으므로, 이런 행은 그 항목이 나중에 다시 게시되더라도 `contentHash`를 얻지 못합니다. 유일한
+탈출 경로(레거시 행 전용, 원장 행 수동 삭제 + 재게시)와 자동 갱신 경로(해시가 있는 `stale` 행
+전용, Google만)를 서로 다른 상황에만 써야 하며, 두 절차를 구분해 정리한 문서는
+[`team-runbook.md`](team-runbook.md) §4를 참고하세요.
 
 ## 5. 보존 정책
 
