@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`pnpm impressions:record` (§9b ③).** Reads the Sheet `history` tab, fetches each published X
+  post's current view count via the existing `SourceGateway.fetchByIds`
+  (`GET /twitter/tweets?tweet_ids=`), and writes it to the reserved `impressions` / `impressionsAt`
+  columns (H/I) — the columns `RecordPublish` deliberately leaves empty. `--since <YYYY-MM-DD>`
+  narrows to rows published on or after a cutoff; deleted or metric-less tweets are skipped per row.
+  X only for v1; not yet live-verified (needs the `spreadsheets` scope, like §9a).
+
 ## [0.2.0] - 2026-07-21
 
 ### Upgrading — action required for existing installs
