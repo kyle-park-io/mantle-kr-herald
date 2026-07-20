@@ -14,14 +14,20 @@ import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { HttpClient } from "../shared/http/HttpClient";
 import { paths } from "../paths";
-import { configCheck, parseScopes, scopeCheck, accessResult } from "../doctor/checks";
+import { configCheck, cloudCheck, parseScopes, scopeCheck, accessResult } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
+import { tryLoadStorageMode } from "../config";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
 const live = process.argv.includes("--live");
 const results: CheckResult[] = [];
+
+// Best-effort: an unset/invalid mode is already reported by the "Storage mode" check below: this
+// only decides whether the cloud-only checks may downgrade fail → warn, so treat "can't tell" the
+// same as cloud (the current, unchanged, strict behaviour).
+const local = tryLoadStorageMode() === "local";
 
 function authMode(): string {
   try {
@@ -33,12 +39,19 @@ function authMode(): string {
 
 // --- config checks (offline) ---
 results.push(configCheck("Storage mode", () => loadStorageMode(), `mode: ${process.env.HERALD_STORAGE_MODE?.trim() ?? "(unset)"}`));
-results.push(configCheck("twitterapi.io (A)", () => loadConfig(), "TWITTERAPI_IO_KEY set"));
-results.push(configCheck("Lark app (B)", () => loadLarkConfig()));
-results.push(configCheck("Lark Drive (D)", () => loadLarkDriveConfig()));
-results.push(configCheck("Google auth", () => loadGoogleAuthConfig(), authMode()));
-results.push(configCheck("Google Drive (D)", () => loadGoogleDriveConfig()));
-results.push(configCheck("Google Sheet (§9a)", () => loadGoogleSheetConfig()));
+// twitterapi.io / Lark app double as source credentials for `collect` / `collect-lark`, which run
+// in both modes — so local mode doesn't mean "never needed", just "not needed unless you collect
+// from this source".
+results.push(
+  cloudCheck("twitterapi.io (A)", () => loadConfig(), local, "not needed unless you collect from this source", "TWITTERAPI_IO_KEY set"),
+);
+results.push(cloudCheck("Lark app (B)", () => loadLarkConfig(), local, "not needed unless you collect from this source"));
+// Lark Drive / Google auth / Google Drive / Google Sheet are purely cloud-publish credentials —
+// genuinely not needed until you promote to cloud mode.
+results.push(cloudCheck("Lark Drive (D)", () => loadLarkDriveConfig(), local, "not needed in local mode"));
+results.push(cloudCheck("Google auth", () => loadGoogleAuthConfig(), local, "not needed in local mode", authMode()));
+results.push(cloudCheck("Google Drive (D)", () => loadGoogleDriveConfig(), local, "not needed in local mode"));
+results.push(cloudCheck("Google Sheet (§9a)", () => loadGoogleSheetConfig(), local, "not needed in local mode"));
 
 const steeringFiles = [
   join(paths.translationConfigDir, "glossary.json"),
