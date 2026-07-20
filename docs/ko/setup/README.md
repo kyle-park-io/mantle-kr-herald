@@ -3,6 +3,8 @@
 `pnpm drive:publish`가 번역 결과를 두 드라이브에 올리려면 `.env`에 자격증명·폴더 값을 채워야 합니다.
 플랫폼별 상세 가이드를 참고하세요:
 
+- **[스티어링 설정 받기](./steering.md)** — `translation/`·`conversion/`의 실제 파일. git에 없으므로 팀에서 받아야 합니다. **먼저 읽으세요.**
+
 - **[Google Drive 셋업 가이드](./google-drive.md)** — 서비스 계정·JSON 키·폴더 ID
   (`GOOGLE_SA_KEY_FILE`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`)
 - **[Lark 셋업 가이드 §10 (Lark Drive)](./lark.md#10-lark-drive-업로드-서브시스템-d)** —

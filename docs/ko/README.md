@@ -10,6 +10,7 @@
 | **번역·문구를 검수하고 승인만 하면 된다** | [`review.md`](review.md) | **필요 없음** |
 | 내 컴퓨터에 설치해서 돌려보고 싶다 | [`quickstart.md`](quickstart.md) | 필요 |
 | 팀 계정으로 매주 운영한다 | [`team-runbook.md`](team-runbook.md) | 필요 |
+| **팀 용어집·문체 규칙을 받아야 한다** | [`setup/steering.md`](setup/steering.md) | 필요 |
 | 자격 증명(Lark·Google)을 발급해야 한다 | [`setup/`](setup/) | 필요 |
 | 어떤 명령이 어떤 파일을 건드리는지 확인해야 한다 | [`artifacts.md`](artifacts.md) | 필요 |
 
@@ -26,6 +27,7 @@ ko/
   artifacts.md       산출물 지도 — 명령별 입출력 계약, 보존 정책
   setup/             자격 증명 발급 절차 (SSOT — 다른 문서는 여기로 링크만)
     README.md          어떤 가이드를 볼지
+    steering.md        스티어링 설정(용어집·문체·변환 규칙) 받기 — git에 없음
     google-drive.md    Google OAuth·서비스 계정·폴더 ID
     lark.md            Lark 앱·스코프·Drive 폴더 token
 ```

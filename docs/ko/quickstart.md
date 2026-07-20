@@ -71,8 +71,13 @@ pnpm translate:save --id <itemId> --file <korean.txt> --approve
 
 ## 4. 우리 팀에 맞추기
 
-`pnpm config:init`이 만든 실제 스티어링 파일들은 전부 git에 추적되지 않습니다
+`pnpm config:init`이 만든 스티어링 파일들은 전부 git에 추적되지 않습니다
 ([`artifacts.md`](artifacts.md) §1) — 자유롭게 고쳐서 우리 팀만의 것으로 만들면 됩니다.
+**내용은 비어 있는 뼈대입니다** (용어집은 `[]`). 여기에 여러분 팀의 규칙을 채워 넣는 것이
+정상 경로입니다.
+
+> Mantle KR 팀원이라면 `config:init` 대신 담당자에게 실제 파일을 받으세요 —
+> [`setup/steering.md`](setup/steering.md).
 
 - `translation/glossary.json` — 고유명사·용어 번역 규칙
 - `translation/style-guide.md` — 번역 톤·문체 가이드

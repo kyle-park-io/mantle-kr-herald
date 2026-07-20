@@ -1,5 +1,4 @@
 import "./registerErrorHandler";
-import { access } from "node:fs/promises";
 import { join } from "node:path";
 import {
   loadConfig,
@@ -14,7 +13,7 @@ import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { HttpClient } from "../shared/http/HttpClient";
 import { paths } from "../paths";
-import { ALL_TYPES } from "../domain/conversion/models";
+import { steeringFiles, missingSteeringFiles, skeletonSteeringFiles } from "../doctor/steering";
 import { configCheck, cloudCheck, parseScopes, scopeCheck, accessResult } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
@@ -54,26 +53,25 @@ results.push(cloudCheck("Google auth", () => loadGoogleAuthConfig(), local, "not
 results.push(cloudCheck("Google Drive (D)", () => loadGoogleDriveConfig(), local, "not needed in local mode"));
 results.push(cloudCheck("Google Sheet (§9a)", () => loadGoogleSheetConfig(), local, "not needed in local mode"));
 
-// Every conversion type needs its guide: loadTypeGuide() falls back to "" on ENOENT, so a
-// missing file converts with no steering at all rather than failing loudly.
-const steeringFiles = [
-  join(paths.translationConfigDir, "glossary.json"),
-  join(paths.translationConfigDir, "style-guide.md"),
-  join(paths.translationConfigDir, "locale.json"),
-  ...ALL_TYPES.map((type) => join(paths.conversionConfigDir, `${type}.md`)),
-];
-const missingSteeringFiles: string[] = [];
-for (const f of steeringFiles) {
-  try {
-    await access(f);
-  } catch {
-    missingSteeringFiles.push(f);
-  }
-}
+// Presence is not enough: `config:init` writes empty skeletons, so a file can exist and steer
+// nothing. Reporting ok there would hide exactly the failure that matters — translating with an
+// empty glossary, silently. Look at the content too.
+const missing = await missingSteeringFiles(steeringFiles(paths.translationConfigDir, paths.conversionConfigDir));
+const skeletons = missing.length === 0 ? await skeletonSteeringFiles(paths.translationConfigDir, paths.conversionConfigDir) : [];
 results.push(
-  missingSteeringFiles.length === 0
-    ? { name: "Steering config", status: "ok", detail: "translation/ + conversion/ present" }
-    : { name: "Steering config", status: "fail", detail: `missing ${missingSteeringFiles.length} file(s) — run pnpm config:init` },
+  missing.length > 0
+    ? {
+        name: "Steering config",
+        status: "fail",
+        detail: `missing ${missing.length} file(s) — fresh install: pnpm config:init · had them before: docs/ko/setup/steering.md`,
+      }
+    : skeletons.length > 0
+      ? {
+          name: "Steering config",
+          status: "warn",
+          detail: `present but empty: ${skeletons.join(", ")} — skeletons steer nothing (docs/ko/setup/steering.md)`,
+        }
+      : { name: "Steering config", status: "ok", detail: "translation/ + conversion/ present" },
 );
 
 // --- live checks (network, read-only) ---
