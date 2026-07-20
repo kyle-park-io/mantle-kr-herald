@@ -93,9 +93,9 @@ Google Sheet (데이터 허브 — `targets`/`history` 탭)
 | 모듈 | 무엇을 하는가 | 주요 명령 | 관련 문서 |
 |---|---|---|---|
 | **A. X 데이터 수집** | twitterapi.io로 지정한 계정의 트윗을 스레드 단위로 재구성해 증분 수집하고, 삭제된 트윗을 소프트 마크로 반영 | `pnpm collect [handle]`, `pnpm reconcile` | — |
-| **B. Lark 데이터 수집** | 지정한 Lark 그룹 채팅들의 텍스트/포스트 메시지를 채팅방별로 증분 수집 | `pnpm collect-lark` | [`lark-setup-guide.md`](../guides/lark-setup-guide.md) |
+| **B. Lark 데이터 수집** | 지정한 Lark 그룹 채팅들의 텍스트/포스트 메시지를 채팅방별로 증분 수집 | `pnpm collect-lark` | [`setup/lark.md`](setup/lark.md) |
 | **C. 한국어 번역** | 수집된 X/Lark 콘텐츠로 번역 워크시트를 만들고, 로컬 에이전트가 채운 한국어 번역을 저장. 승인 시 few-shot 예시로 승격 | `pnpm translate:prepare`, `pnpm translate:save`, `pnpm glossary` | — |
-| **D. Drive 업로드** | 승인/번역 완료된 결과를 Google Drive와 Lark Drive에 마크다운으로 업로드 | `pnpm drive:publish`, `pnpm drive:init`, `pnpm google:auth` | [`drive-setup-guide.md`](../guides/drive-setup-guide.md), [`google-drive-setup-guide.md`](../guides/google-drive-setup-guide.md), [`lark-setup-guide.md`](../guides/lark-setup-guide.md) |
+| **D. Drive 업로드** | 승인/번역 완료된 결과를 Google Drive와 Lark Drive에 마크다운으로 업로드 | `pnpm drive:publish`, `pnpm drive:init`, `pnpm google:auth` | [`setup/README.md`](setup/README.md), [`setup/google-drive.md`](setup/google-drive.md), [`setup/lark.md`](setup/lark.md) |
 | **E. 검수 대시보드** | 번역(1차)·채널 포맷(2차)을 검수·수정·승인·발행하는 로컬 웹 대시보드 | `pnpm serve`, `pnpm build:web`, `pnpm dev:web` | — |
 | **F. 콘텐츠 가공** | 승인된 번역을 §5 항목 변환(타입별 X/공지/KOL/PR)과 §6 채널 포맷(코드 변환 + 선택적 에이전트 다듬기) 두 단계로 채널용 게시물로 가공 | `pnpm convert:prepare`, `pnpm convert:save`, `pnpm format`, `pnpm format:save` | — |
 | **G. Google Sheet 데이터 허브** | 팀이 함께 편집하는 배포 대상 목록(`targets` 탭)과 게시 이력(`history` 탭) 관리 | `pnpm sheet:init`, `pnpm targets:list`, `pnpm history:record` | [`external-integrations.md`](../architecture/external-integrations.md) |
@@ -105,3 +105,4 @@ Google Sheet (데이터 허브 — `targets`/`history` 탭)
 - 처음 설치해서 로컬 모드로 써 보려면 → [`quickstart.md`](quickstart.md)
 - 팀 내부 운영자로서 주간 루틴·클라우드 전환·장애 대응이 궁금하면 → [`team-runbook.md`](team-runbook.md)
 - 어떤 명령이 정확히 무엇을 읽고 쓰는지 궁금하면 → [`artifacts.md`](artifacts.md)
+- 번역·문구를 검수하고 승인만 하면 되면 (터미널 불필요) → [`review.md`](review.md)

@@ -11,7 +11,7 @@ Place the downloaded service-account JSON here, e.g. `keys/mantle-sa.json`, and 
 GOOGLE_SA_KEY_FILE=keys/mantle-sa.json
 ```
 
-See `docs/guides/google-drive-setup-guide.md` for how to create the service account and key.
+See `docs/ko/setup/google-drive.md` for how to create the service account and key.
 
 > Security: never commit real key files. `chmod 600 keys/*.json` recommended. Rotate periodically.
 > Each teammate keeps their own key locally (automation runs on each person's machine).

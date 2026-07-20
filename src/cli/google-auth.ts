@@ -9,7 +9,7 @@ const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
 if (!clientId || !clientSecret) {
   console.error(
     "Missing GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET.\n" +
-      "Create an OAuth client (type: Desktop app) and set both in .env — see docs/guides/google-drive-setup-guide.md.",
+      "Create an OAuth client (type: Desktop app) and set both in .env — see docs/ko/setup/google-drive.md.",
   );
   process.exit(1);
 }
