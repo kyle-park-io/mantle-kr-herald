@@ -86,5 +86,5 @@ const deps: ApiDeps = {
   loadPublishState,
 };
 
-startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist") });
+startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist"), localPublishDir: paths.publishLocalDir });
 console.log(`Review dashboard on http://localhost:${port}  (build the UI first: pnpm build:web)`);

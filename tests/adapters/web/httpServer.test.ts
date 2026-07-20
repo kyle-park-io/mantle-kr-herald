@@ -1,7 +1,7 @@
 // tests/adapters/web/httpServer.test.ts
 import { describe, it, expect, afterEach } from "vitest";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer } from "../../../src/adapters/web/HttpServer";
@@ -33,8 +33,8 @@ function fakeDeps(): ApiDeps {
   };
 }
 
-async function start(staticDir: string) {
-  const server = startServer(fakeDeps(), { port: 0, staticDir });
+async function start(staticDir: string, localPublishDir = staticDir) {
+  const server = startServer(fakeDeps(), { port: 0, staticDir, localPublishDir });
   servers.push(server);
   await new Promise((r) => server.once("listening", r));
   const { port } = server.address() as AddressInfo;
@@ -81,7 +81,7 @@ describe("startServer", () => {
       loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 } }),
       loadPublishState: async () => [],
     };
-    const server = startServer(deps, { port: 0, staticDir: dir });
+    const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
     servers.push(server);
     await new Promise((r) => server.once("listening", r));
     const { port } = server.address() as AddressInfo;
@@ -115,7 +115,7 @@ describe("startServer", () => {
       loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 } }),
       loadPublishState: async () => [],
     };
-    const server = startServer(deps, { port: 0, staticDir: dir });
+    const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
     servers.push(server);
     await new Promise((r) => server.once("listening", r));
     const { port } = server.address() as AddressInfo;
@@ -125,5 +125,43 @@ describe("startServer", () => {
 
     expect(res.status).toBe(500);
     expect(((await res.json()) as { error: string }).error).toContain("boom");
+  });
+
+  it("serves a local publish file as text/markdown", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "web-"));
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>x</title>");
+    const pubDir = await mkdtemp(join(tmpdir(), "pub-"));
+    await mkdir(join(pubDir, "approved"), { recursive: true });
+    await writeFile(join(pubDir, "approved", "doc.md"), "# 발행본\n본문");
+    const base = await start(staticDir, pubDir);
+
+    const res = await fetch(`${base}/api/publish/local/approved/doc.md`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/markdown");
+    expect(await res.text()).toBe("# 발행본\n본문");
+  });
+
+  it("returns 404 for a traversal attempt, reading nothing outside the root", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "web-"));
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>x</title>");
+    const pubDir = await mkdtemp(join(tmpdir(), "pub-"));
+    const base = await start(staticDir, pubDir);
+
+    const res = await fetch(`${base}/api/publish/local/../../etc/passwd`);
+
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 for a missing local publish file (not the SPA fallback)", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "web-"));
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>dash</title>");
+    const pubDir = await mkdtemp(join(tmpdir(), "pub-"));
+    const base = await start(staticDir, pubDir);
+
+    const res = await fetch(`${base}/api/publish/local/nope.md`);
+
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain("dash");
   });
 });
