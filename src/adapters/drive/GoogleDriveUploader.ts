@@ -38,17 +38,60 @@ export class GoogleDriveUploader implements DriveUploader {
       body,
     });
     if (!res.ok) {
-      let detail = "";
-      try {
-        const b = (await res.json()) as { error?: { message?: string } };
-        detail = b.error?.message ?? "";
-      } catch {
-        // non-JSON body — status alone is the detail
-      }
+      const detail = await extractErrorDetail(res);
       throw new Error(`Google Drive upload failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
     }
     const data = (await res.json()) as { id?: string; name?: string; webViewLink?: string };
     if (!data.id) throw new Error("Google Drive upload response missing id");
     return { id: data.id, name: data.name ?? req.name, url: data.webViewLink };
+  }
+
+  /**
+   * Multipart PATCH against the existing file id. Addressing the file by id is what preserves
+   * webViewLink — and therefore any link already written into the Sheet history tab.
+   * Metadata carries `name` only: `publishFileName` can change when approvedAt changes, but
+   * parents must move via addParents/removeParents query params, never a metadata field.
+   */
+  async update(remoteId: string, req: UploadRequest): Promise<UploadResult> {
+    const token = await this.auth.getToken();
+    const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const metadata = JSON.stringify({ name: req.name });
+    const body =
+      `--${boundary}\r\n` +
+      "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+      `${metadata}\r\n` +
+      `--${boundary}\r\n` +
+      "Content-Type: text/markdown; charset=UTF-8\r\n\r\n" +
+      `${req.content}\r\n` +
+      `--${boundary}--`;
+
+    const url =
+      `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(remoteId)}` +
+      "?uploadType=multipart&fields=id,name,webViewLink";
+
+    const res = await this.fetchFn(url, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": `multipart/related; boundary=${boundary}`,
+      },
+      body,
+    });
+    if (!res.ok) {
+      const detail = await extractErrorDetail(res);
+      throw new Error(`Google Drive update failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
+    }
+    const data = (await res.json()) as { id?: string; name?: string; webViewLink?: string };
+    return { id: data.id ?? remoteId, name: data.name ?? req.name, url: data.webViewLink };
+  }
+}
+
+async function extractErrorDetail(res: Response): Promise<string> {
+  try {
+    const b = (await res.json()) as { error?: { message?: string } };
+    return b.error?.message ?? "";
+  } catch {
+    // non-JSON body — status alone is the detail
+    return "";
   }
 }
