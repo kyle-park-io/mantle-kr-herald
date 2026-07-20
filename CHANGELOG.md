@@ -74,6 +74,12 @@ is the cheaper outcome.
 
 ### Fixed
 
+- **A stale publish can now be repaired.** `pnpm drive:publish` re-uploads an item whose content
+  changed after it was published, updating the Drive file in place so its id and share link — and
+  any link already recorded in the Sheet `history` tab — are preserved. Previously `pnpm status`
+  could report an item as `stale` with no way to resolve it. Google Drive only; Lark Drive has no
+  content-replace endpoint, so a stale item there is reported as a failure. Items published before
+  the sync ledger existed carry no content hash and are never re-uploaded.
 - **Lark collection (B)** — incremental re-runs no longer re-collect the boundary message. Lark's
   `start_time` filter floors to the second and is inclusive, so the API re-returned the message at
   the exact watermark instant on every run (reported as `collected 1` with no new data). The gateway
