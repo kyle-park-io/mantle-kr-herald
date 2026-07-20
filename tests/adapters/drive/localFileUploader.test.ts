@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalFileUploader } from "../../../src/adapters/drive/LocalFileUploader";
@@ -62,5 +62,29 @@ describe("LocalFileUploader", () => {
     const second = await uploader.update(first.id, { name: "2026-07-21-x-1.md", content: "new", folder: "approved" });
 
     expect(await readFile(join(root, second.id), "utf8")).toBe("new");
+  });
+
+  it("rethrows a non-ENOENT failure from the old-path unlink instead of swallowing it", async () => {
+    const uploader = new LocalFileUploader(root);
+    // Make the "old" path a non-empty directory rather than a file: unlink() on it fails with
+    // EISDIR (this platform) / EPERM / ENOTEMPTY rather than ENOENT, exercising the rethrow branch
+    // that only the "deleted by hand" (ENOENT) case is meant to swallow.
+    await mkdir(join(root, "approved", "old-dir"), { recursive: true });
+    await writeFile(join(root, "approved", "old-dir", "keep.txt"), "x");
+
+    await expect(
+      uploader.update(join("approved", "old-dir"), { name: "new.md", content: "new", folder: "approved" }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects a file name that tries to escape rootDir via a path separator or ..", async () => {
+    const uploader = new LocalFileUploader(root);
+
+    await expect(uploader.upload({ name: "../escape.md", content: "x", folder: "approved" })).rejects.toThrow(
+      /unsafe file name/,
+    );
+
+    // The guard fires before any write, so nothing should have landed in rootDir or beside it.
+    expect(await readdir(root)).toEqual([]);
   });
 });

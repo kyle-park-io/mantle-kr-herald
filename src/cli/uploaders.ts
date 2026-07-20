@@ -35,18 +35,26 @@ export function defaultTarget(mode: StorageMode): PublishTarget {
  */
 export function resolveTargets(raw: string | undefined, mode: StorageMode): PublishTarget[] {
   const requested = parseList(raw) ?? [defaultTarget(mode)];
-  const expanded = requested.flatMap((t) => (t === "both" ? ["google", "lark"] : [t]));
+
+  // Check each requested token — before "both" is expanded — against the mode, so a rejection
+  // names what the operator actually typed ("both") rather than the first cloud target it expands
+  // to ("google").
+  if (mode === "local") {
+    const rejected = requested.find((t) => t === "both" || (CLOUD_TARGETS as readonly string[]).includes(t));
+    if (rejected) {
+      throw new Error(
+        `--target ${rejected} needs HERALD_STORAGE_MODE=cloud (currently local). ` +
+          `Use --target local to publish to ${paths.publishLocalDir}.`,
+      );
+    }
+  }
+
+  const expanded = requested.flatMap((t) => (t === "both" ? [...CLOUD_TARGETS] : [t]));
 
   const resolved: PublishTarget[] = [];
   for (const candidate of expanded) {
     if (!isTarget(candidate)) {
       throw new Error(`Unknown publish target: ${candidate} (expected ${TARGETS_USAGE}, or "both" for google,lark)`);
-    }
-    if (mode === "local" && CLOUD_TARGETS.includes(candidate)) {
-      throw new Error(
-        `--target ${candidate} needs HERALD_STORAGE_MODE=cloud (currently local). ` +
-          `Use --target local to publish to ${paths.publishLocalDir}.`,
-      );
     }
     if (!resolved.includes(candidate)) resolved.push(candidate);
   }

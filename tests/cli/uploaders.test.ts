@@ -36,7 +36,17 @@ describe("resolveTargets", () => {
   it("rejects a cloud target in local mode instead of silently skipping", () => {
     expect(() => resolveTargets("google", "local")).toThrow(/HERALD_STORAGE_MODE=cloud/);
     expect(() => resolveTargets("lark", "local")).toThrow(/HERALD_STORAGE_MODE=cloud/);
+    // "both" expands to ["google", "lark"] — the rejection must name "both" itself, the token the
+    // operator typed, not "google", the first target it expands to.
     expect(() => resolveTargets("both", "local")).toThrow(/HERALD_STORAGE_MODE=cloud/);
+    expect(() => resolveTargets("both", "local")).toThrow(/both/);
+  });
+
+  it("names the token the operator typed, not the first target it expands to", () => {
+    expect(() => resolveTargets("google", "local")).toThrow(/--target google/);
+    expect(() => resolveTargets("lark", "local")).toThrow(/--target lark/);
+    expect(() => resolveTargets("both", "local")).toThrow(/--target both/);
+    expect(() => resolveTargets("both", "local")).not.toThrow(/--target google/);
   });
 
   it("rejects an unknown target and names the valid ones", () => {

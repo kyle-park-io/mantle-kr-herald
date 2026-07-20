@@ -43,6 +43,11 @@ export class LocalFileUploader implements DriveUploader {
 
   /** `url` is omitted: the dashboard is served over http, where browsers block file:// links. */
   private async write(req: UploadRequest): Promise<UploadResult> {
+    // req.name comes from publishFileName, whose date prefix is not slugified. A hand-corrupted
+    // translations.json could smuggle a path separator or ".." into it and escape rootDir.
+    if (req.name.includes("/") || req.name.includes("\\") || req.name.includes("..")) {
+      throw new Error(`LocalFileUploader: refusing unsafe file name "${req.name}"`);
+    }
     const relative = join(req.folder, req.name);
     const full = join(this.rootDir, relative);
     await writeTextFileAtomic(dirname(full), full, req.content);

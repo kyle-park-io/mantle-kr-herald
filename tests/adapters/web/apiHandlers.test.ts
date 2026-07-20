@@ -16,7 +16,12 @@ function cv(over: Partial<ContentVariant> = {}): ContentVariant {
   return { itemId: "x:1", type: "x", sourceKorean: "s", convertedText: "변환본", status: "approved", createdAt: "c", ...over };
 }
 
-function makeDeps(list: Translation[], renderings: ChannelRendering[] = [], variants: ContentVariant[] = []): ApiDeps {
+function makeDeps(
+  list: Translation[],
+  renderings: ChannelRendering[] = [],
+  variants: ContentVariant[] = [],
+  onBuildPublisher?: (target: string | undefined) => void,
+): ApiDeps {
   const state = { list: [...list] };
   const translationStore = {
     loadAll: async () => state.list,
@@ -31,8 +36,12 @@ function makeDeps(list: Translation[], renderings: ChannelRendering[] = [], vari
       return { itemId: input.itemId, promoted: input.approve };
     },
   } as unknown as ApiDeps["saveTranslation"];
-  const buildPublisher = async () =>
-    ({ run: async () => ({ uploaded: 2, failed: 0, byDrive: { google: 2 } }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>;
+  const buildPublisher = async (target: string | undefined) => {
+    onBuildPublisher?.(target);
+    return { run: async () => ({ uploaded: 2, failed: 0, byDrive: { google: 2 } }) } as unknown as Awaited<
+      ReturnType<ApiDeps["buildPublisher"]>
+    >;
+  };
 
   const rstate = { list: renderings.map((r) => ({ ...r })) };
   const formattingStore = {
@@ -104,6 +113,15 @@ describe("handleApi", () => {
     const res = await handleApi(d, "POST", "/api/publish", { target: "google" });
     expect(res.status).toBe(200);
     expect(res.json).toEqual({ uploaded: 2, failed: 0, byDrive: { google: 2 } });
+  });
+
+  it("POST /api/publish with no target still calls buildPublisher with undefined and returns its result", async () => {
+    const seen: (string | undefined)[] = [];
+    const d = makeDeps([tr()], [], [], (target) => seen.push(target));
+    const res = await handleApi(d, "POST", "/api/publish", {});
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ uploaded: 2, failed: 0, byDrive: { google: 2 } });
+    expect(seen).toEqual([undefined]);
   });
 
   it("unknown route is 404", async () => {
