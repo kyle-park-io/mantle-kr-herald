@@ -52,6 +52,19 @@ is the cheaper outcome.
 
 ### Added
 
+- **`.env.example` reorganised, and every variable tagged.** It is now ordered by when you
+  actually need a value — always required, then per collection source, then cloud-mode only, then
+  local tools — and each entry is marked `[REQUIRED]` (with the command that needs it),
+  `[OPTIONAL]` (with its default) or `[PICK ONE]`. `HERALD_STORAGE_MODE` documents the intended
+  path explicitly: **start on `local`, promote to `cloud` when setup is finished** — local mode is
+  not a fallback, it runs the whole pipeline, and it makes you the owner of the git-ignored
+  `output/` tree. Two variables the code reads were missing entirely: `GOOGLE_OAUTH_SCOPE`
+  (`google:auth` reads it; it appeared only inside a comment, so copying the file gave you no slot
+  for it) and `PORT` (`serve`). A stale `docs/guides/…` path was corrected — that sweep had covered
+  `*.md` and `*.ts` but not `.env.example`.
+  `tests/config/envExample.test.ts` now keeps this from drifting again: it fails when `src/` reads
+  an undocumented variable, when the file lists one nothing reads, or when a variable is untagged.
+
 - **`docs/ko/setup/steering.md`** — how to actually obtain the real `translation/`+`conversion/`
   config. It is not in git, and a new team member had no documented way to get it: `team-runbook.md`
   claimed these files were "what `pnpm config:init` creates", which is false — `config:init` writes
