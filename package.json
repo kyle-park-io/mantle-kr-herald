@@ -22,6 +22,7 @@
     "drive:init": "tsx --env-file-if-exists=.env src/cli/drive-init.ts",
     "targets:list": "tsx --env-file-if-exists=.env src/cli/targets-list.ts",
     "history:record": "tsx --env-file-if-exists=.env src/cli/history-record.ts",
+    "impressions:record": "tsx --env-file-if-exists=.env src/cli/impressions-record.ts",
     "sheet:init": "tsx --env-file-if-exists=.env src/cli/sheet-init.ts",
     "doctor": "tsx --env-file-if-exists=.env src/cli/doctor.ts",
     "status": "tsx --env-file-if-exists=.env src/cli/status.ts",

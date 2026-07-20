@@ -105,6 +105,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm drive:init [--force]` | `local` 모드면 스킵. 로컬 파일 없음(env만) | 로컬 파일 없음 — 생성된 폴더 id를 `.env`에 붙여넣도록 콘솔에 출력 | Google Drive API(폴더 생성/공유) |
 | `pnpm targets:list [--active-only]` | `local` 모드면 스킵. 로컬 파일 없음 | 없음 | Google Sheets API(`targets` 탭 조회) |
 | `pnpm history:record --item --type --channel --status [...]` | `local` 모드면 스킵. 로컬 파일 없음 | 로컬 파일 없음 | Google Sheets API(`history` 탭에 행 추가) |
+| `pnpm impressions:record [--since <YYYY-MM-DD>]` | `local` 모드면 스킵. `history` 탭 전체(`history!A2:I`); `channel=x`이고 `postId` 있는 행의 트윗을 `GET /twitter/tweets`로 조회(`--since`면 `publishedAt` ≥ 커트오프만). `TWITTERAPI_IO_KEY`(env) | 각 행의 **H(impressions=viewCount)·I(impressionsAt)** 만 갱신 — A–G는 안 건드림 | twitterapi.io(트윗 조회), Google Sheets(history 갱신) |
 | `pnpm sheet:init` | `local` 모드면 스킵. 로컬 파일 없음 | 로컬 파일 없음 — 생성된 스프레드시트 id를 콘솔에 출력 | Google Sheets API(스프레드시트 + `targets`/`history` 탭 생성) |
 | `pnpm doctor [--live]` | 모든 env 설정 로더; `translation/glossary.json`, `translation/style-guide.md`, `translation/locale.json`, `conversion/x.md`의 존재 여부(4개 파일만 확인) | 없음 | `--live`일 때만: Google OAuth tokeninfo, Google Drive/Sheets 파일 메타데이터 조회, Lark 인증 + 채팅 목록 조회 |
 | `pnpm status` | `output/x/items.json`, `output/lark/items.json`, `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 없음 | 없음 |

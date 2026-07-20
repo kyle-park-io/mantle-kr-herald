@@ -18,7 +18,7 @@ JWT** — `createGoogleAuth` selects one from `GOOGLE_AUTH_MODE`. Setup:
 | **Drive v3 — files/permissions** | `https://www.googleapis.com/drive/v3/files` (create folder, list, `…/permissions`) | `GoogleDriveProvisioner` (`pnpm drive:init`) — create + share folders | `drive.file` |
 | **OAuth2 — token** | `POST https://oauth2.googleapis.com/token` | `GoogleOAuthAuth` (refresh→access), `GoogleServiceAccountAuth` (JWT→access), `googleOAuthFlow` (code→tokens) | — |
 | **OAuth2 — consent** | `https://accounts.google.com/o/oauth2/v2/auth` | `pnpm google:auth` (one-time consent) | — |
-| **Sheets v4 — data hub (§9a)** | `https://sheets.googleapis.com/v4/spreadsheets/…` (values get/append/update, create) | `GoogleSheetClient` — `pnpm sheet:init` / `targets:list` / `history:record` (수신처 / 이력; 임프레션 = §9b) | `spreadsheets` |
+| **Sheets v4 — data hub (§9a)** | `https://sheets.googleapis.com/v4/spreadsheets/…` (values get/append/update, create) | `GoogleSheetClient` — `pnpm sheet:init` / `targets:list` / `history:record` (수신처 / 이력; 임프레션 ③ = `pnpm impressions:record`, X의 viewCount를 H/I에 기록 — 라이브 검증은 spreadsheets 스코프 필요) | `spreadsheets` |
 
 **Auth notes**
 - Default scope is least-privilege `drive.file` (`DRIVE_FILE_SCOPE`), overridable via `GOOGLE_OAUTH_SCOPE`.
