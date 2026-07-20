@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { OUTPUT_DIR, REPO_ROOT, paths } from "../src/paths";
@@ -7,11 +7,17 @@ const original = process.cwd();
 afterEach(() => process.chdir(original));
 
 describe("paths", () => {
-  it("anchors to the repo root, not the process cwd", () => {
-    const before = OUTPUT_DIR;
+  it("anchors to the repo root, not the process cwd", async () => {
+    // A plain re-check of the already-imported constants can't catch a regression to
+    // process.cwd()-based resolution: they're module-level consts bound once at import time,
+    // long before this test's process.chdir() call, so chdir cannot affect them either way.
+    // Force a fresh module evaluation *after* chdir so REPO_ROOT/OUTPUT_DIR are recomputed
+    // with the changed cwd in effect — only then does this test actually exercise the claim.
+    vi.resetModules();
     process.chdir(tmpdir());
-    expect(OUTPUT_DIR).toBe(before);
-    expect(OUTPUT_DIR).toBe(join(REPO_ROOT, "output"));
+    const fresh = await import("../src/paths");
+    expect(fresh.REPO_ROOT).toBe(REPO_ROOT);
+    expect(fresh.OUTPUT_DIR).toBe(join(REPO_ROOT, "output"));
   });
 
   it("exposes absolute paths for every store", () => {
