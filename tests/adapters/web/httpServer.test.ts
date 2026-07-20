@@ -26,6 +26,7 @@ function fakeDeps(): ApiDeps {
     translationStore: { loadAll: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }], upsert: async () => {}, listTranslatedIds: async () => new Set() },
     saveTranslation: { run: async () => ({ itemId: "x:1", promoted: false }) } as unknown as ApiDeps["saveTranslation"],
     buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
+    storageMode: "cloud",
     ...fakeRenderingDeps(),
   };
 }
@@ -73,6 +74,7 @@ describe("startServer", () => {
         },
       } as unknown as ApiDeps["saveTranslation"],
       buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
+      storageMode: "cloud",
       ...fakeRenderingDeps(),
     };
     const server = startServer(deps, { port: 0, staticDir: dir });
@@ -104,6 +106,7 @@ describe("startServer", () => {
       },
       saveTranslation: { run: async () => ({ itemId: "x:1", promoted: false }) } as unknown as ApiDeps["saveTranslation"],
       buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
+      storageMode: "cloud",
       ...fakeRenderingDeps(),
     };
     const server = startServer(deps, { port: 0, staticDir: dir });

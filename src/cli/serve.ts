@@ -12,15 +12,9 @@ import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
 import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
 import { SaveRendering } from "../app/SaveRendering";
 import { ApproveRendering } from "../app/ApproveRendering";
-import { GoogleDriveUploader } from "../adapters/drive/GoogleDriveUploader";
-import { LarkDriveUploader } from "../adapters/drive/LarkDriveUploader";
-import { LarkAuth } from "../adapters/lark/LarkAuth";
-import { HttpClient } from "../shared/http/HttpClient";
-import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
-import { loadGoogleAuthConfig, loadGoogleDriveConfig, loadLarkDriveConfig, loadStorageMode } from "../config";
-import type { DriveUploader } from "../ports/DriveUploader";
+import { loadStorageMode } from "../config";
+import { createUploaders, resolveTargets } from "./uploaders";
 import { REPO_ROOT, paths } from "../paths";
-import { assertCloudMode } from "../storage/mode";
 
 const port = Number(process.env.PORT) || 5757;
 const translationStore = new JsonTranslationStore(paths.translationsDir);
@@ -29,32 +23,14 @@ const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotSto
 const formattingStore = new JsonFormattingStore(paths.formattedDir);
 const conversionStore = new JsonConversionStore(paths.variantsDir);
 
-async function uploadersFor(target: string): Promise<DriveUploader[]> {
-  // The dashboard's publish button is the same cloud write as `pnpm drive:publish`, so it obeys the
-  // same storage mode. Throws rather than using skipIfLocal, whose process.exit(0) would kill the
-  // running server; HttpServer turns this into a 500 carrying the message. The dashboard itself
-  // stays available in local mode — only publishing is refused.
-  assertCloudMode(loadStorageMode(), "publishing");
-
-  const uploaders: DriveUploader[] = [];
-  if (target === "google" || target === "both") {
-    const g = loadGoogleDriveConfig();
-    const auth = await createGoogleAuth(loadGoogleAuthConfig());
-    uploaders.push(new GoogleDriveUploader(auth, { review: g.reviewFolderId, approved: g.approvedFolderId }));
-  }
-  if (target === "lark" || target === "both") {
-    const l = loadLarkDriveConfig();
-    const auth = new LarkAuth(new HttpClient(l.baseUrl), l.appId, l.appSecret);
-    uploaders.push(new LarkDriveUploader(auth, l.baseUrl, { review: l.reviewFolderToken, approved: l.approvedFolderToken }));
-  }
-  if (uploaders.length === 0) throw new Error(`Unknown publish target: ${target}`);
-  return uploaders;
-}
+const storageMode = loadStorageMode();
 
 const deps: ApiDeps = {
   translationStore,
   saveTranslation,
-  buildPublisher: async (target) => new PublishTranslations(translationStore, await uploadersFor(target), publishStore),
+  buildPublisher: async (target) =>
+    new PublishTranslations(translationStore, await createUploaders(resolveTargets(target, storageMode)), publishStore),
+  storageMode,
   formattingStore,
   conversionStore,
   saveRendering: new SaveRendering(formattingStore),

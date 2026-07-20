@@ -6,6 +6,7 @@ import type { PublishStore } from "../../src/ports/PublishStore";
 import type { Translation } from "../../src/domain/translation/models";
 import type { UploadRequest, UploadResult } from "../../src/domain/publish/publishModels";
 import { entryKey, type SyncEntry } from "../../src/domain/publish/syncLedger";
+import { InMemoryPublishStore } from "../support/publishStore";
 
 function tr(itemId: string, status: Translation["status"]): Translation {
   return {
@@ -33,20 +34,6 @@ class UpdatableUploader extends FakeUploader {
   async update(remoteId: string, req: UploadRequest): Promise<UploadResult> {
     this.updates.push({ remoteId, req });
     return { id: remoteId, name: req.name, url: `https://drive.example/${remoteId}` };
-  }
-}
-
-class InMemoryPublishStore implements PublishStore {
-  public entries: SyncEntry[] = [];
-  get keys(): Set<string> {
-    return new Set(this.entries.map(entryKey));
-  }
-  async listEntries() {
-    return this.entries;
-  }
-  async record(entry: SyncEntry) {
-    this.entries = this.entries.filter((e) => entryKey(e) !== entryKey(entry));
-    this.entries.push(entry);
   }
 }
 

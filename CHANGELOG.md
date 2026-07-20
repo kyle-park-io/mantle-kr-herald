@@ -45,10 +45,10 @@ outside the repo; nothing in this project protects them any more, by design.
 HERALD_STORAGE_MODE=cloud
 ```
 
-Defaulting it was considered and rejected. Defaulting to `local` would let a cloud operator run
-`drive:publish`, see `local mode — skipped` and **exit 0**, and believe work reached Drive when
-nothing was uploaded — the exact failure the explicit mode exists to prevent. Failing loudly once
-is the cheaper outcome.
+Defaulting it was considered and rejected. Defaulting to `local` would silently misroute a cloud
+operator's work: `drive:publish` still runs and still reports success, but the documents land in
+`output/publish/local/` instead of Drive — guessing wrong sends published work to the wrong place
+either way, which is worse than failing loudly once.
 
 ### Added
 
@@ -117,9 +117,11 @@ is the cheaper outcome.
 - **Explicit storage mode** — `HERALD_STORAGE_MODE=local|cloud` decides whether Drive is the record
   of truth or everything stays local. `local` needs no cloud credentials — the post-collection
   stages (translate / convert / format) never call an external API either way, and `local` also
-  skips the Drive/Sheet commands with a clear message; collection still needs a key for whichever
-  source you use (`TWITTERAPI_IO_KEY` for X, the Lark app credentials for Lark), independent of
-  storage mode. `cloud` behaves as before. Storage mode is never inferred.
+  skips `drive:init`, `sheet:init`, `targets:list` and `history:record` with a clear message
+  (`drive:publish` is not one of them — in `local` mode it targets the filesystem instead of
+  skipping); collection still needs a key for whichever source you use (`TWITTERAPI_IO_KEY` for X,
+  the Lark app credentials for Lark), independent of storage mode. `cloud` behaves as before.
+  Storage mode is never inferred.
 - **Sync ledger** — `output/publish/state.json` now records which drive, remote id, URL, filename,
   content hash and timestamp for every upload (legacy key sets migrate on read). `pnpm status`
   reports published / unsynced / stale counts, so an item edited after publishing is visible.
@@ -130,6 +132,15 @@ is the cheaper outcome.
 - **Documentation set** — `docs/ko/{capabilities,quickstart,team-runbook,artifacts}.md` covering what
   the project does, how external and internal users run it, and where every artifact is stored;
   `docs/README.md` records the documentation rules.
+- **`local` publish target** — `pnpm drive:publish` now writes the review/approved markdown documents to
+  `output/publish/local/{review,approved}/` instead of skipping publication in
+  `HERALD_STORAGE_MODE=local`. `--target` accepts a comma-separated list (`google,local`); `both`
+  remains an alias for `google,lark`. The dashboard publishes in local mode too, and picks its
+  target options from the new `GET /api/config`.
+- **`LocalFileUploader.update`** — when a re-approval changes `publishFileName` (it embeds
+  `approvedAt`'s date), the local uploader writes the new file and then deletes the old one, so a
+  re-approved item ends up as exactly one document on disk — mirroring the Drive PATCH that
+  updates content in place while preserving a file id.
 
 ### Changed
 
@@ -162,13 +173,23 @@ is the cheaper outcome.
 - **The real steering config left git.** `translation/` and `conversion/` now track only
   `*.example.*` skeletons; the actual glossary, style guide and few-shot corpus are local. Routine
   approvals no longer dirty the working tree.
+- **`pnpm status` warns about unsynced/stale work in `local` mode exactly as in `cloud` mode.** The
+  previous `(local mode — publishing disabled)` line hid a real backlog now that local publishing
+  exists.
+- **`skipIfLocal()` now gates four commands, not five.** `drive:publish` left the list — in local
+  mode it targets the filesystem instead of skipping.
+- **Requesting a cloud target in `local` mode now fails instead of skipping.**
+  `pnpm drive:publish --target google` (or `lark`, or `both`) under `HERALD_STORAGE_MODE=local`
+  throws and exits `1`; previously it matched the blanket local-mode skip and exited `0`, so a
+  wrapper script that checked the exit code alone could not tell "skipped" from "uploaded".
 
 ### Fixed
 
 - **A stale publish can now be repaired.** `pnpm drive:publish` re-uploads an item whose content
-  changed after it was published, updating the Drive file in place so its id and share link — and
-  any link already recorded in the Sheet `history` tab — are preserved. Previously `pnpm status`
-  could report an item as `stale` with no way to resolve it. Google Drive only; Lark Drive has no
+  changed after it was published, updating the file in place — for Google Drive its id and share
+  link (and any link already recorded in the Sheet `history` tab) are preserved; for the `local`
+  target `LocalFileUploader.update` does the equivalent. Previously `pnpm status` could report an
+  item as `stale` with no way to resolve it. Google Drive and `local` only; Lark Drive has no
   content-replace endpoint, so a stale item there is reported as a failure. Items published before
   the sync ledger existed carry no content hash and are never re-uploaded.
 - **Lark collection (B)** — incremental re-runs no longer re-collect the boundary message. Lark's
