@@ -9,7 +9,7 @@ What this project talks to over the network, and how. The runtime is **headless*
 Every Google call carries a Bearer access token from a shared `TokenSource`
 (`src/adapters/drive/`), which is either **OAuth user-delegation** or a **service-account
 JWT** — `createGoogleAuth` selects one from `GOOGLE_AUTH_MODE`. Setup:
-`docs/guides/google-drive-setup-guide.md`.
+`docs/ko/setup/google-drive.md`.
 
 | API | Endpoint(s) | Used by | Scope |
 | --- | --- | --- | --- |
@@ -48,7 +48,7 @@ Claude) to eyeball or hand-edit a sheet — that is independent of, and not requ
 | Service | Base URL | Used by |
 | --- | --- | --- |
 | **twitterapi.io** (X collection, §1 / Module A) | `https://api.twitterapi.io` | `TwitterClient` / `TwitterApiSourceGateway` (`pnpm collect`), key `TWITTERAPI_IO_KEY` |
-| **Lark IM API** (§1 / Module B collect, §2 / Module D drive) | `https://open.larksuite.com` (Feishu: `https://open.feishu.cn`) | `LarkAuth` / `LarkClient` (`pnpm collect-lark`), `LarkDriveUploader`. See `docs/guides/lark-setup-guide.md` |
+| **Lark IM API** (§1 / Module B collect, §2 / Module D drive) | `https://open.larksuite.com` (Feishu: `https://open.feishu.cn`) | `LarkAuth` / `LarkClient` (`pnpm collect-lark`), `LarkDriveUploader`. See `docs/ko/setup/lark.md` |
 
 > **No LLM/AI API is called at runtime.** Translation (§3) and content shaping (§5/§6) are
 > performed by the operator's **local Claude agent** via worksheets, not a hosted model —

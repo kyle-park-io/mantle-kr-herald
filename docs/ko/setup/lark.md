@@ -4,7 +4,7 @@
 > - **§0–§9 — 서브시스템 B(Lark 데이터 수집)**: `LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_CHAT_IDS`, (선택) `LARK_BASE_URL`
 > - **§10 — 서브시스템 D(Lark Drive 업로드)**: 같은 앱에 Drive 스코프 추가 + `LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN`
 >
-> (Google Drive는 별도 플랫폼 — `google-drive-setup-guide.md` 참고.)
+> (Google Drive는 별도 플랫폼 — `google-drive.md` 참고.)
 > 콘솔의 메뉴 명칭은 언어(한/영/중) 설정과 버전에 따라 조금씩 다를 수 있습니다.
 
 ---

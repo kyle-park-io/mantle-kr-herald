@@ -52,6 +52,14 @@ is the cheaper outcome.
 
 ### Added
 
+- **`docs/ko/review.md`** — a guide for the people who read, edit and approve the Korean copy but
+  never open a terminal. Every existing Korean document assumed a shell in its opening paragraph,
+  yet second-round review (§7) is dashboard-only, so that reader had no page at all. It covers the
+  two review modes, the fact that `승인 ✓` stays disabled until you press `저장`, and where the
+  per-channel review checklists live — `conversion/checklist.*.md`, which sit in the gitignored
+  steering folder and were effectively undiscoverable.
+- **`docs/ko/README.md`** — a role-based entry point ("what should I read?") for the Korean docs.
+
 - **`announcement` conversion type** — community announcements (Telegram 공지방 + KakaoTalk) are now
   their own conversion type, steered by `conversion/announcement.md`. They were previously produced
   by the `kol` type, which is a different kind of writing: an announcement and a request sent to a
@@ -104,6 +112,13 @@ is the cheaper outcome.
   `docs/README.md` records the documentation rules.
 
 ### Changed
+
+- **`docs/guides/` moved to `docs/ko/setup/`.** `docs/` was splitting by two axes at the same
+  level — language (`en/`, `ko/`) beside audience (`architecture/`, `guides/`, `superpowers/`) —
+  so Korean setup procedures sat outside `ko/` and English design docs sat outside `en/`. The rule
+  is now: only user-facing docs carry a language, so only they nest under a language folder;
+  `architecture/` (English by rule) and `superpowers/` (an archive) stay at the top level. Files
+  were renamed to drop the redundant suffix (`google-drive-setup-guide.md` → `setup/google-drive.md`).
 
 - **The steering config now carries the KR team's real guidelines.** `translation/style-guide.md`
   (46 → 200 lines), `glossary.json` (36 → 78 terms), `locale.json`, `few-shot.json` and
