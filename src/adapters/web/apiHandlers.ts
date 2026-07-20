@@ -11,6 +11,21 @@ import type { SaveRendering } from "../../app/SaveRendering";
 import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
 
+export interface StatusView {
+  storageMode: StorageMode;
+  funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
+  sync: { published: number; unsynced: number; stale: number };
+}
+
+export interface PublishStateRow {
+  itemId: string;
+  status: string;
+  target: string;
+  url?: string;
+  remoteId?: string;
+  fileName?: string;
+}
+
 export interface ApiResult {
   status: number;
   json: unknown;
@@ -25,6 +40,8 @@ export interface ApiDeps {
   conversionStore: ConversionStore;
   saveRendering: SaveRendering;
   approveRendering: ApproveRendering;
+  loadStatus: () => Promise<StatusView>;
+  loadPublishState: () => Promise<PublishStateRow[]>;
 }
 
 async function findById(store: TranslationStore, id: string): Promise<Translation | undefined> {
@@ -39,6 +56,14 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
   // offer — a local-mode dashboard defaulting to "google" would fail on every first click.
   if (method === "GET" && segments.length === 2 && segments[1] === "config") {
     return { status: 200, json: { storageMode: deps.storageMode } };
+  }
+
+  if (method === "GET" && segments.length === 2 && segments[1] === "status") {
+    return { status: 200, json: await deps.loadStatus() };
+  }
+
+  if (method === "GET" && segments.length === 3 && segments[1] === "publish" && segments[2] === "state") {
+    return { status: 200, json: await deps.loadPublishState() };
   }
 
   if (method === "GET" && segments.length === 2 && segments[1] === "translations") {

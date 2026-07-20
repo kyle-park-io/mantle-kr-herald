@@ -28,6 +28,8 @@ function fakeDeps(): ApiDeps {
     buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
     storageMode: "cloud",
     ...fakeRenderingDeps(),
+    loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 } }),
+    loadPublishState: async () => [],
   };
 }
 
@@ -76,6 +78,8 @@ describe("startServer", () => {
       buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
       storageMode: "cloud",
       ...fakeRenderingDeps(),
+      loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 } }),
+      loadPublishState: async () => [],
     };
     const server = startServer(deps, { port: 0, staticDir: dir });
     servers.push(server);
@@ -108,6 +112,8 @@ describe("startServer", () => {
       buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
       storageMode: "cloud",
       ...fakeRenderingDeps(),
+      loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 } }),
+      loadPublishState: async () => [],
     };
     const server = startServer(deps, { port: 0, staticDir: dir });
     servers.push(server);
