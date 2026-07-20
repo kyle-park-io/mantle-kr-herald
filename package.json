@@ -24,7 +24,7 @@
     "history:record": "tsx --env-file-if-exists=.env src/cli/history-record.ts",
     "sheet:init": "tsx --env-file-if-exists=.env src/cli/sheet-init.ts",
     "doctor": "tsx --env-file-if-exists=.env src/cli/doctor.ts",
-    "status": "tsx src/cli/status.ts",
+    "status": "tsx --env-file-if-exists=.env src/cli/status.ts",
     "archive": "tsx src/cli/archive.ts",
     "clean": "tsx src/cli/clean.ts",
     "serve": "tsx --env-file-if-exists=.env src/cli/serve.ts",
