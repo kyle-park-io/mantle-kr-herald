@@ -19,7 +19,8 @@ import { HttpClient } from "../shared/http/HttpClient";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { loadGoogleAuthConfig, loadGoogleDriveConfig, loadLarkDriveConfig, loadStorageMode } from "../config";
 import type { DriveUploader } from "../ports/DriveUploader";
-import { paths } from "../paths";
+import { REPO_ROOT, paths } from "../paths";
+import { assertCloudMode } from "../storage/mode";
 
 const port = Number(process.env.PORT) || 5757;
 const translationStore = new JsonTranslationStore(paths.translationsDir);
@@ -33,9 +34,7 @@ async function uploadersFor(target: string): Promise<DriveUploader[]> {
   // same storage mode. Throws rather than using skipIfLocal, whose process.exit(0) would kill the
   // running server; HttpServer turns this into a 500 carrying the message. The dashboard itself
   // stays available in local mode — only publishing is refused.
-  if (loadStorageMode() === "local") {
-    throw new Error("local mode — publishing is disabled (set HERALD_STORAGE_MODE=cloud to enable)");
-  }
+  assertCloudMode(loadStorageMode(), "publishing");
 
   const uploaders: DriveUploader[] = [];
   if (target === "google" || target === "both") {

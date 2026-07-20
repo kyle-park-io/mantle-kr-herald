@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseStorageMode, tryParseStorageMode, localSkipMessage } from "../../src/storage/mode";
+import { parseStorageMode, tryParseStorageMode, localSkipMessage, isLocalMode, assertCloudMode } from "../../src/storage/mode";
 
 describe("parseStorageMode", () => {
   it("accepts the two valid modes", () => {
@@ -45,5 +45,24 @@ describe("localSkipMessage", () => {
     expect(msg).toContain("drive:publish");
     expect(msg).toContain("local mode");
     expect(msg).toContain("HERALD_STORAGE_MODE=cloud");
+  });
+});
+
+describe("isLocalMode", () => {
+  it("is true only for local", () => {
+    expect(isLocalMode("local")).toBe(true);
+    expect(isLocalMode("cloud")).toBe(false);
+  });
+});
+
+describe("assertCloudMode", () => {
+  it("does not throw in cloud mode", () => {
+    expect(() => assertCloudMode("cloud", "publishing")).not.toThrow();
+  });
+
+  it("throws in local mode, naming the action and how to enable it", () => {
+    expect(() => assertCloudMode("local", "publishing")).toThrow(
+      "local mode — publishing is disabled (set HERALD_STORAGE_MODE=cloud to enable)",
+    );
   });
 });

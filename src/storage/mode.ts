@@ -35,3 +35,18 @@ export function tryParseStorageMode(raw: string | undefined): StorageMode | unde
 export function localSkipMessage(command: string): string {
   return `${command}: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)`;
 }
+
+/** True when `mode` disables cloud writes. The one place that definition lives. */
+export function isLocalMode(mode: StorageMode): boolean {
+  return mode === "local";
+}
+
+/**
+ * Throws when `mode` is local, naming `action` in the message. For call sites that cannot use
+ * skipIfLocal()'s process.exit(0) — e.g. a live server, where exiting would kill it.
+ */
+export function assertCloudMode(mode: StorageMode, action: string): void {
+  if (isLocalMode(mode)) {
+    throw new Error(`local mode — ${action} is disabled (set HERALD_STORAGE_MODE=cloud to enable)`);
+  }
+}
