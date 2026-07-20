@@ -55,4 +55,6 @@ if (archived) console.log(`  archived the previous unsaved batch → ${archived}
 await writeJsonFileAtomic(paths.variantsDir, paths.variantsPending, pending);
 
 console.log(`prepared ${pending.length} variant(s) → ${worksheetPath}`);
-console.log("Fill each 변환 section, then run: pnpm convert:save --id <id> --type <x|kol|pr> --file <ko.txt> [--approve]");
+console.log(
+  `Fill each 변환 section, then run: pnpm convert:save --id <id> --type <${ALL_TYPES.join("|")}> --file <ko.txt> [--approve]`,
+);

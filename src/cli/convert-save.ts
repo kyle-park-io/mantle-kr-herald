@@ -15,7 +15,7 @@ const type = argValue("--type") as ConversionType | undefined;
 const file = argValue("--file");
 const approve = process.argv.includes("--approve");
 if (!id || !type || !file || !ALL_TYPES.includes(type)) {
-  throw new Error("Usage: pnpm convert:save --id <itemId> --type <x|kol|pr> --file <ko.txt> [--approve]");
+  throw new Error(`Usage: pnpm convert:save --id <itemId> --type <${ALL_TYPES.join("|")}> --file <ko.txt> [--approve]`);
 }
 
 const conversionStore = new JsonConversionStore(paths.variantsDir);

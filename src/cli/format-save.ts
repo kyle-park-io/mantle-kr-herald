@@ -15,7 +15,9 @@ const type = argValue("--type") as ConversionType | undefined;
 const channel = argValue("--channel") as Channel | undefined;
 const file = argValue("--file");
 if (!id || !type || !channel || !file || !ALL_TYPES.includes(type) || !ALL_CHANNELS.includes(channel)) {
-  throw new Error("Usage: pnpm format:save --id <itemId> --type <x|kol|pr> --channel <x|telegram|kakao|pr_mail> --file <txt>");
+  throw new Error(
+    `Usage: pnpm format:save --id <itemId> --type <${ALL_TYPES.join("|")}> --channel <${ALL_CHANNELS.join("|")}> --file <txt>`,
+  );
 }
 
 const formattingStore = new JsonFormattingStore(paths.formattedDir);
