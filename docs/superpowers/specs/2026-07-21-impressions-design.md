@@ -140,9 +140,6 @@ Unit tests with injected fakes for `SheetClient` and `SourceGateway` (no network
 
 ## Notes / deferred
 
-- **Batch size.** `fetchByIds` joins all ids into one `tweet_ids=` call and does not chunk;
-  `reconcile` uses it the same way. The `history` X-row count is small, so v1 reuses it unchanged.
-  If the row count ever approaches the twitterapi.io per-call id cap, chunking belongs in
-  `fetchByIds` (shared with `reconcile`), not here.
+- **Batch size.** `fetchByIds` joins all ids into one `tweet_ids=` call and does not chunk itself. `reconcile` never hits that limit because its use-case (`ReconcileDeletions`) already batches at `batchSize = 100` before calling `fetchByIds` — so `RecordImpressions` is the **first** caller that could exceed the twitterapi.io per-call id cap. The `history` X-row count is small today (and §8, which would populate it, is unbuilt), so v1 sends them in one call. When the X-row count could approach the cap, add chunking inside `fetchByIds` so both callers benefit — not here.
 - **Engagement metrics (like/retweet/…)** — additive extension described under Decisions; not v1.
 - **`RecordPublish` is untouched.** §9b only reads what it wrote and fills the reserved columns.

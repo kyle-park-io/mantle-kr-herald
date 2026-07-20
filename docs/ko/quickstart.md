@@ -40,7 +40,7 @@ pnpm status
 
 - `pnpm install` — 의존성 설치.
 - `cp .env.example .env` — 환경변수 스켈레톤 복사. 기본값 `HERALD_STORAGE_MODE=local`이라
-  그대로 두면 `drive:init`/`sheet:init`/`targets:list`/`history:record`는 스킵되지만 나머지는
+  그대로 두면 `drive:init`/`sheet:init`/`targets:list`/`history:record`/`impressions:record`는 스킵되지만 나머지는
   전부 동작합니다 — `pnpm drive:publish`도 포함해서, 결과물은 `output/publish/local/`에 쌓입니다.
 - `pnpm config:init` — `translation/*.example.*`, `conversion/*.example.*`를 실제 파일
   (`translation/glossary.json` 등)로 복사합니다. 이미 있는 파일은 절대 덮어쓰지 않습니다.

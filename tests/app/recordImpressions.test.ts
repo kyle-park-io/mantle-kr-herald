@@ -59,6 +59,16 @@ describe("RecordImpressions", () => {
     expect(res).toEqual({ updated: 1, skipped: 0, failed: 0, failures: [] });
   });
 
+  it("writes a viewCount of 0 as \"0\" rather than skipping it", async () => {
+    const h = sheetHarness([["x:1", "x", "x", "tw1", "u", "posted", "2026-07-20T00:00:00.000Z", "", ""]]);
+    const s = source([tweet("tw1", 0)]);
+
+    const res = await new RecordImpressions(h.sheet, s.gw, NOW).run();
+
+    expect(h.updated).toEqual([{ range: "history!H2:I2", rows: [["0", STAMP]] }]);
+    expect(res).toEqual({ updated: 1, skipped: 0, failed: 0, failures: [] });
+  });
+
   it("ignores non-X rows entirely (never fetches or writes them)", async () => {
     const h = sheetHarness([
       ["x:1", "announcement", "telegram", "tg1", "u", "posted", "2026-07-20T00:00:00.000Z", "", ""],
