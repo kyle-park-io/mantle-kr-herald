@@ -30,11 +30,29 @@ export class LarkDriveUploader implements DriveUploader {
       headers: { Authorization: `Bearer ${token}` },
       body: form,
     });
-    if (!res.ok) throw new Error(`Lark Drive upload failed: HTTP ${res.status}`);
+    if (!res.ok) {
+      const detail = await extractLarkErrorDetail(res);
+      throw new Error(`Lark Drive upload failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
+    }
     const data = (await res.json()) as { code?: number; msg?: string; data?: { file_token?: string } };
     if (data.code !== 0 || !data.data?.file_token) {
       throw new Error(`Lark Drive upload failed: code=${data.code} ${data.msg ?? ""}`.trim());
     }
     return { id: data.data.file_token, name: req.name };
+  }
+}
+
+/**
+ * Pull Lark's `{ code, msg }` out of an HTTP-error body so a 403 reports (e.g.) "code=1061004
+ * forbidden" rather than a bare status. Mirrors GoogleDriveUploader's extractErrorDetail; a
+ * non-JSON body (a gateway HTML page) leaves the status as the only detail.
+ */
+async function extractLarkErrorDetail(res: Response): Promise<string> {
+  try {
+    const b = (await res.json()) as { code?: number; msg?: string };
+    if (b.code == null && !b.msg) return "";
+    return `code=${b.code} ${b.msg ?? ""}`.trim();
+  } catch {
+    return "";
   }
 }
