@@ -63,7 +63,7 @@ function makeDeps(list: Translation[], renderings: ChannelRendering[] = [], vari
     },
   } as unknown as ApiDeps["approveRendering"];
 
-  return { translationStore, saveTranslation, buildPublisher, formattingStore, conversionStore, saveRendering, approveRendering };
+  return { translationStore, saveTranslation, buildPublisher, storageMode: "cloud", formattingStore, conversionStore, saveRendering, approveRendering };
 }
 
 describe("handleApi", () => {
@@ -139,5 +139,19 @@ describe("handleApi", () => {
     expect(res.status).toBe(200);
     expect((res.json as ChannelRendering).status).toBe("approved");
     expect((await handleApi(d, "POST", "/api/renderings/x%3A9/x/x/approve", undefined)).status).toBe(404);
+  });
+});
+
+describe("GET /api/config", () => {
+  it("reports the server's storage mode so the dashboard can pick a publish target", async () => {
+    const res = await handleApi(makeDeps([]), "GET", "/api/config", undefined);
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ storageMode: "cloud" });
+  });
+
+  it("reports local mode when the server is in local mode", async () => {
+    const deps = { ...makeDeps([]), storageMode: "local" as const };
+    const res = await handleApi(deps, "GET", "/api/config", undefined);
+    expect(res.json).toEqual({ storageMode: "local" });
   });
 });
