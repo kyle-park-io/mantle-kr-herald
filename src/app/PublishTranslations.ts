@@ -3,7 +3,7 @@ import type { FolderKind } from "../domain/publish/publishModels";
 import type { TranslationStore } from "../ports/TranslationStore";
 import type { DriveUploader } from "../ports/DriveUploader";
 import type { PublishStore } from "../ports/PublishStore";
-import { contentHash, entryKey, type SyncEntry } from "../domain/publish/syncLedger";
+import { contentHash, entryKey, isStale, type SyncEntry } from "../domain/publish/syncLedger";
 
 export interface PublishFailure {
   key: string; // `${itemId}:${status}:${drive}`
@@ -47,7 +47,7 @@ export class PublishTranslations {
 
         // A migrated legacy row has no hash: unknown is not changed. Re-uploading it would
         // create a duplicate in Drive for every item published before the ledger existed.
-        if (existing && (existing.contentHash === undefined || existing.contentHash === hash)) continue;
+        if (existing && !isStale(existing, hash)) continue;
 
         try {
           let result;

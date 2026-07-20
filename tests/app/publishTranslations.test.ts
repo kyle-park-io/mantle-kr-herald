@@ -192,4 +192,23 @@ describe("PublishTranslations", () => {
     expect(res.failures[0].error).toMatch(/cannot update/i);
     expect(res.failures[0].error).toMatch(/lark/i);
   });
+
+  it("reports a failure when a stale entry has no remoteId, even though the uploader supports update", async () => {
+    const t = tr("x:1", "approved");
+    const store = new InMemoryPublishStore();
+    await store.record({
+      itemId: "x:1", stage: "translation", status: "approved", target: "google",
+      contentHash: "sha256:stale", uploadedAt: "2026-01-01T00:00:00.000Z", // no remoteId
+    });
+    const uploader = new UpdatableUploader("google"); // has update()
+
+    const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();
+
+    expect(res.failed).toBe(1);
+    expect(res.updated).toBe(0);
+    expect(uploader.reqs).toHaveLength(0); // upload not called
+    expect(uploader.updates).toHaveLength(0); // update not called
+    expect(res.failures[0].error).toMatch(/cannot update/i);
+    expect(res.failures[0].error).toMatch(/google/i);
+  });
 });
