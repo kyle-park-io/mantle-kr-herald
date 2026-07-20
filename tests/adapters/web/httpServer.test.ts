@@ -153,6 +153,21 @@ describe("startServer", () => {
     expect(res.status).toBe(404);
   });
 
+  // A literal "../../" is already collapsed by the URL parser before it reaches the route
+  // (the request falls through to the generic /api/ 404 instead). An encoded slash (%2f)
+  // survives URL parsing untouched, so this is what actually exercises the route's own
+  // decode + strip + resolve guard.
+  it("returns 404 for an encoded-slash traversal attempt, reading nothing outside the root", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "web-"));
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>x</title>");
+    const pubDir = await mkdtemp(join(tmpdir(), "pub-"));
+    const base = await start(staticDir, pubDir);
+
+    const res = await fetch(`${base}/api/publish/local/..%2f..%2fetc%2fpasswd`);
+
+    expect(res.status).toBe(404);
+  });
+
   it("returns 404 for a missing local publish file (not the SPA fallback)", async () => {
     const staticDir = await mkdtemp(join(tmpdir(), "web-"));
     await writeFile(join(staticDir, "index.html"), "<!doctype html><title>dash</title>");
