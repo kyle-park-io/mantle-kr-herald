@@ -3,12 +3,11 @@ import { argValue } from "./args";
 // src/cli/convert-save.ts
 import { readFile } from "node:fs/promises";
 import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
-import { JsonTypedFewShotStore } from "../adapters/store/JsonTypedFewShotStore";
+import { fewShotStoresByType } from "../adapters/store/JsonTypedFewShotStore";
 import { SaveConversion } from "../app/SaveConversion";
 import { readJsonFile } from "../shared/store/jsonFile";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import type { PendingVariant } from "../app/PrepareConversions";
-import type { FewShotStore } from "../ports/FewShotStore";
 import { paths } from "../paths";
 
 const id = argValue("--id");
@@ -35,11 +34,7 @@ if (sourceKorean === undefined) {
 
 const convertedText = (await readFile(file, "utf8")).trim();
 
-const fewShotByType: Record<ConversionType, FewShotStore> = {
-  x: new JsonTypedFewShotStore(paths.conversionConfigDir, "x"),
-  kol: new JsonTypedFewShotStore(paths.conversionConfigDir, "kol"),
-  pr: new JsonTypedFewShotStore(paths.conversionConfigDir, "pr"),
-};
+const fewShotByType = fewShotStoresByType(paths.conversionConfigDir);
 
 const usecase = new SaveConversion(conversionStore, fewShotByType);
 const res = await usecase.run({ itemId: id, type, sourceKorean, convertedText, approve });

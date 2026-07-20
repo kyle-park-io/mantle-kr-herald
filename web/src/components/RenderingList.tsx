@@ -42,6 +42,7 @@ export function RenderingList(props: {
         <select className="text-xs border border-neutral-300 rounded px-1 py-0.5" value={type} onChange={(e) => setType(e.target.value as typeof type)}>
           <option value="all">all types</option>
           <option value="x">x</option>
+          <option value="announcement">announcement</option>
           <option value="kol">kol</option>
           <option value="pr">pr</option>
         </select>

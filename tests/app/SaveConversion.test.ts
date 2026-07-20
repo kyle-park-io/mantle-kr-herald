@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { SaveConversion } from "../../src/app/SaveConversion";
 import type { ConversionStore } from "../../src/ports/ConversionStore";
 import type { FewShotStore } from "../../src/ports/FewShotStore";
-import type { ContentVariant, ConversionType } from "../../src/domain/conversion/models";
+import { ALL_TYPES, type ContentVariant, type ConversionType } from "../../src/domain/conversion/models";
 import type { FewShotExample } from "../../src/domain/translation/models";
 
 function harness() {
@@ -11,9 +11,11 @@ function harness() {
     loadAll: async () => saved, listConvertedKeys: async () => new Set(),
     upsert: async (v) => { saved.push(v); },
   };
-  const fewShots: Record<ConversionType, FewShotExample[]> = { x: [], kol: [], pr: [] };
+  const fewShots = {} as Record<ConversionType, FewShotExample[]>;
+  for (const t of ALL_TYPES) fewShots[t] = [];
   const mk = (t: ConversionType): FewShotStore => ({ load: async () => fewShots[t], add: async (e) => { fewShots[t].push(e); } });
-  const fewShotByType = { x: mk("x"), kol: mk("kol"), pr: mk("pr") };
+  const fewShotByType = {} as Record<ConversionType, FewShotStore>;
+  for (const t of ALL_TYPES) fewShotByType[t] = mk(t);
   return { saved, fewShots, store, fewShotByType };
 }
 

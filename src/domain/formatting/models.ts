@@ -4,8 +4,14 @@ export type Channel = "x" | "telegram" | "kakao" | "pr_mail";
 
 export const ALL_CHANNELS: Channel[] = ["x", "telegram", "kakao", "pr_mail"];
 
+/**
+ * Which transports each conversion type goes out over. Not a 1:1 mapping by design —
+ * an `announcement` is written once and carried by both Telegram and KakaoTalk, while
+ * Telegram also carries `kol` requests, which are different copy entirely.
+ */
 export const DEFAULT_CHANNELS_BY_TYPE: Record<ConversionType, Channel[]> = {
-  x: ["x", "kakao"],
+  x: ["x"],
+  announcement: ["telegram", "kakao"],
   kol: ["telegram"],
   pr: ["pr_mail"],
 };

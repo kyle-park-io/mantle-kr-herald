@@ -18,10 +18,11 @@ function stores(variants: ContentVariant[]) {
 
 describe("FormatVariants", () => {
   it("formats approved variants to their default channels and persists refined:false renderings", async () => {
-    const s = stores([variant()]); // x → default channels [x, kakao]
+    // announcement is the multi-channel type: one variant fans out to telegram + kakao
+    const s = stores([variant({ type: "announcement" })]);
     const uc = new FormatVariants(s.conversionStore, s.formattingStore, {}, () => "2026-03-03T00:00:00.000Z");
     const { renderings } = await uc.run({});
-    expect(renderings.map((r) => r.channel)).toEqual(["x", "kakao"]);
+    expect(renderings.map((r) => r.channel)).toEqual(["telegram", "kakao"]);
     expect(renderings.every((r) => r.refined === false)).toBe(true);
     expect(s.saved).toHaveLength(2);
   });

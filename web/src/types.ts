@@ -14,7 +14,8 @@ export interface PublishResult {
   byDrive: Record<string, number>;
 }
 
-export type ConversionType = "x" | "kol" | "pr";
+// Mirrors src/domain/conversion/models.ts — keep in sync.
+export type ConversionType = "x" | "announcement" | "kol" | "pr";
 export type Channel = "x" | "telegram" | "kakao" | "pr_mail";
 
 export interface Rendering {

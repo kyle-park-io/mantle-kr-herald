@@ -1,6 +1,12 @@
-export type ConversionType = "x" | "kol" | "pr";
+/**
+ * What the approved translation is rewritten *into* — an audience/purpose, not a transport.
+ * The transport is `Channel` (see domain/formatting). One type can go out over several
+ * channels, and one channel can carry several types: an `announcement` and a `kol` request
+ * both travel over Telegram but are different writing, with different CTA rules.
+ */
+export type ConversionType = "x" | "announcement" | "kol" | "pr";
 
-export const ALL_TYPES: ConversionType[] = ["x", "kol", "pr"];
+export const ALL_TYPES: ConversionType[] = ["x", "announcement", "kol", "pr"];
 
 /** One approved translation rewritten for a target item type. Identity is (itemId, type). */
 export interface ContentVariant {
@@ -13,7 +19,7 @@ export interface ContentVariant {
   approvedAt?: string;
 }
 
-const LABELS: Record<ConversionType, string> = { x: "X", kol: "KOL", pr: "PR" };
+const LABELS: Record<ConversionType, string> = { x: "X", announcement: "공지", kol: "KOL", pr: "PR" };
 export function typeLabel(type: ConversionType): string {
   return LABELS[type];
 }

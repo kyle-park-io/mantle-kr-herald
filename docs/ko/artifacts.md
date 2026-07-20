@@ -20,7 +20,7 @@
 | 게시 이력 | Google Sheet `history` 탭 | 게시 + 도달 기록 | — |
 
 `translation/`, `conversion/` 디렉터리는 `*.example.*` 스켈레톤만 git에 추적되고, 실제 팀 콘텐츠
-(`glossary.json`, `style-guide.md`, `locale.json`, `few-shot*.json`, `x.md`/`kol.md`/`pr.md`)는
+(`glossary.json`, `style-guide.md`, `locale.json`, `few-shot*.json`, `x.md`/`announcement.md`/`kol.md`/`pr.md`)는
 `.gitignore`로 제외됩니다. `pnpm config:init`이 예시 파일을 복사해 실제 파일을 만들어 줍니다
 (§3 참고).
 
@@ -82,12 +82,12 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm reconcile` | `output/x/items.json`(활성 상태 트윗 id 목록) | `output/x/items.json`(삭제가 감지된 스레드만 `status: "deleted"`로 갱신) | twitterapi.io API(id로 트윗 재조회) |
 | `pnpm translate:prepare [--source x\|lark] [--ids] [--since] [--limit]` | `output/x/items.json`, `output/lark/items.json`(`--source`로 한쪽만 선택 가능); 이미 번역된 id 제외를 위한 `output/translations/translations.json`; `translation/glossary.json`, `translation/few-shot.json`, `translation/style-guide.md`, `translation/locale.json` | `output/translations/worksheets/`에 `batch-<타임스탬프>.md` 워크시트 생성; `output/translations/pending.json` 갱신(덮어쓰기 전 이전 배치를 `output/archive/<YYYY-MM-DD>/`로 자동 이동) | 없음 |
 | `pnpm translate:save --id --file [--approve]` | `output/translations/pending.json`(없으면 `output/translations/translations.json`에서 이미 저장된 항목으로 폴백); `--file`로 지정한 로컬 한글 텍스트 | `output/translations/translations.json`(upsert); `--approve` 시 `translation/few-shot.json`에 예시 추가 | 없음 |
-| `pnpm convert:prepare [--ids] [--since] [--limit] [--types]` | 승인된 항목을 위한 `output/translations/translations.json`; 이미 변환된 키 제외를 위한 `output/variants/variants.json`; `translation/glossary.json`, `translation/locale.json`; `conversion/{x,kol,pr}.md`, `conversion/few-shot.{x,kol,pr}.json` | `output/variants/worksheets/`에 `batch-<타임스탬프>.md` 워크시트; `output/variants/pending.json` 갱신(이전 배치는 `output/archive/<YYYY-MM-DD>/`로 이동) | 없음 |
+| `pnpm convert:prepare [--ids] [--since] [--limit] [--types]` | 승인된 항목을 위한 `output/translations/translations.json`; 이미 변환된 키 제외를 위한 `output/variants/variants.json`; `translation/glossary.json`, `translation/locale.json`; `conversion/{x,announcement,kol,pr}.md`, `conversion/few-shot.{x,announcement,kol,pr}.json` | `output/variants/worksheets/`에 `batch-<타임스탬프>.md` 워크시트; `output/variants/pending.json` 갱신(이전 배치는 `output/archive/<YYYY-MM-DD>/`로 이동) | 없음 |
 | `pnpm convert:save --id --type --file [--approve]` | `output/variants/pending.json`(없으면 `output/variants/variants.json`에서 폴백); `--file` | `output/variants/variants.json`(upsert); `--approve` 시 `conversion/few-shot.<type>.json` | 없음 |
 | `pnpm format [--ids] [--types] [--channels] [--refine] [--x-bold unicode]` | 승인된 항목을 위한 `output/variants/variants.json` | 기본 모드: `output/formatted/renderings.json`에 직접 upsert. `--refine` 모드: `output/formatted/worksheets/`에 `batch-<타임스탬프>.md`, `output/formatted/pending.json` 갱신(이전 배치는 `output/archive/<YYYY-MM-DD>/`로 이동) | 없음 |
 | `pnpm format:save --id --type --channel --file` | `output/formatted/pending.json`(없으면 `output/formatted/renderings.json`에서 폴백); `--file` | `output/formatted/renderings.json`(upsert, `refined: true`) | 없음 |
 | `pnpm glossary [add --term --rule ...]` | `translation/glossary.json` | `add` 서브커맨드일 때만 `translation/glossary.json`(upsert) | 없음 |
-| `pnpm config:init` | `translation/*.example.*`, `conversion/*.example.*` | 실제 파일이 아직 없는 것만 생성(`translation/{glossary,locale,style-guide,few-shot}.*`, `conversion/{x,kol,pr}.md`, `conversion/few-shot.{x,kol,pr}.json`) — 이미 있으면 절대 덮어쓰지 않음 | 없음 |
+| `pnpm config:init` | `translation/*.example.*`, `conversion/*.example.*` | 실제 파일이 아직 없는 것만 생성(`translation/{glossary,locale,style-guide,few-shot}.*`, `conversion/{x,announcement,kol,pr}.md`, `conversion/few-shot.{x,announcement,kol,pr}.json`) — 이미 있으면 절대 덮어쓰지 않음 | 없음 |
 | `pnpm drive:publish [--target google\|lark\|both]` | `local` 모드면 스킵(§2). `output/translations/translations.json`; 중복 게시 방지 및 `stale` 판정을 위한 `output/publish/state.json` | `output/publish/state.json`(신규 업로드는 SyncEntry 추가, `stale` 항목은 기존 행을 갱신 — 둘 다 §4) | Google Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 파일 갱신 엔드포인트도) 그리고/또는 Lark Drive API(파일 생성 엔드포인트만 — 갱신 엔드포인트 없음, §4) |
 | `pnpm drive:init [--force]` | `local` 모드면 스킵. 로컬 파일 없음(env만) | 로컬 파일 없음 — 생성된 폴더 id를 `.env`에 붙여넣도록 콘솔에 출력 | Google Drive API(폴더 생성/공유) |
 | `pnpm targets:list [--active-only]` | `local` 모드면 스킵. 로컬 파일 없음 | 없음 | Google Sheets API(`targets` 탭 조회) |
@@ -203,8 +203,8 @@ interface SyncEntry {
 - `output/variants/variants.json` — 채널별 변환 결과
 - `output/formatted/renderings.json` — 채널별 최종 포맷 렌더링
 - 실제 스티어링 파일: `translation/glossary.json`, `translation/style-guide.md`,
-  `translation/locale.json`, `translation/few-shot.json`, `conversion/{x,kol,pr}.md`,
-  `conversion/few-shot.{x,kol,pr}.json`
+  `translation/locale.json`, `translation/few-shot.json`, `conversion/{x,announcement,kol,pr}.md`,
+  `conversion/few-shot.{x,announcement,kol,pr}.json`
 - `output/x/state.json`, `output/lark/state.json` — 수집 워터마크. 잃으면 에러 없이 조용히 재수집
   구간이 비게 됩니다.
 

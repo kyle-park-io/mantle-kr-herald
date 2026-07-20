@@ -14,6 +14,7 @@ import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { HttpClient } from "../shared/http/HttpClient";
 import { paths } from "../paths";
+import { ALL_TYPES } from "../domain/conversion/models";
 import { configCheck, cloudCheck, parseScopes, scopeCheck, accessResult } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
@@ -53,11 +54,13 @@ results.push(cloudCheck("Google auth", () => loadGoogleAuthConfig(), local, "not
 results.push(cloudCheck("Google Drive (D)", () => loadGoogleDriveConfig(), local, "not needed in local mode"));
 results.push(cloudCheck("Google Sheet (§9a)", () => loadGoogleSheetConfig(), local, "not needed in local mode"));
 
+// Every conversion type needs its guide: loadTypeGuide() falls back to "" on ENOENT, so a
+// missing file converts with no steering at all rather than failing loudly.
 const steeringFiles = [
   join(paths.translationConfigDir, "glossary.json"),
   join(paths.translationConfigDir, "style-guide.md"),
   join(paths.translationConfigDir, "locale.json"),
-  join(paths.conversionConfigDir, "x.md"),
+  ...ALL_TYPES.map((type) => join(paths.conversionConfigDir, `${type}.md`)),
 ];
 const missingSteeringFiles: string[] = [];
 for (const f of steeringFiles) {
