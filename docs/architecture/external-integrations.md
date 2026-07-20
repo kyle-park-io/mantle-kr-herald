@@ -4,7 +4,7 @@ What this project talks to over the network, and how. The runtime is **headless*
 (coded REST, `zod`-only, native `fetch`) and runs on each operator's **local machine**.
 **No MCP server is part of the pipeline.**
 
-## Google APIs (Drive today, Sheets planned)
+## Google APIs (Drive live; Sheets §9a built, not yet live-verified)
 
 Every Google call carries a Bearer access token from a shared `TokenSource`
 (`src/adapters/drive/`), which is either **OAuth user-delegation** or a **service-account
