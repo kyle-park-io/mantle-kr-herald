@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrading — action required for existing installs
 
+#### `git pull` deletes your steering config — restore it before running anything
+
+Untracking `translation/` and `conversion/` means the merge commit **deletes those ten files from
+the index**. They were tracked before, so `git pull` removes them from your working tree too. Your
+real glossary, style guide, locale and few-shot corpora disappear. This bites once, on the pull that
+brings this release in.
+
+**Do not run `pnpm config:init` to recover** — that writes generic skeletons from `*.example.*` and
+would leave you with an empty glossary and no few-shot examples. Restore the real content from the
+commit before this release instead:
+
+```bash
+# <pre-release> = the last commit before this release landed on main
+for f in $(git ls-tree -r --name-only <pre-release> translation conversion | grep -v '\.example\.'); do
+  git show "<pre-release>:$f" > "$f"
+done
+pnpm doctor   # "Steering config … ok" once they are back
+```
+
+Verify before continuing: `translation/glossary.json` should hold your real terms, and
+`translation/few-shot.json` / `conversion/few-shot.x.json` your approved examples — not `[]`.
+
+From then on these files are yours alone and git will not touch them again. Back them up somewhere
+outside the repo; nothing in this project protects them any more, by design.
+
+#### Set the storage mode
+
 `HERALD_STORAGE_MODE` is now **required** and is never inferred. A fresh clone gets it from
 `.env.example`, but an existing `.env` predates it, so the cloud commands (`drive:publish`,
 `drive:init`, `sheet:init`, `targets:list`, `history:record`) will fail until you add one line:
