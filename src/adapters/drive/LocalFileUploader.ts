@@ -1,6 +1,6 @@
 import { unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { writeTextFileAtomic } from "../../shared/store/jsonFile";
+import { writeTextFileAtomic, isErrnoException } from "../../shared/store/jsonFile";
 import type { UploadRequest, UploadResult } from "../../domain/publish/publishModels";
 import type { DriveUploader } from "../../ports/DriveUploader";
 
@@ -19,11 +19,12 @@ export class LocalFileUploader implements DriveUploader {
   }
 
   /**
-   * Deletes the old file rather than overwriting it in place or leaving it as a duplicate.
-   * `publishFileName` embeds approvedAt's date, so re-approving on a later day changes the
-   * filename — a plain overwrite would leave the old file behind as a duplicate that nothing on
-   * disk distinguishes from the current one. Google avoids this by PATCHing a file id; addressing
-   * by path means the local equivalent is deleting the old path.
+   * Writes the new file and, only when the filename changed, deletes the old one. Same name (the
+   * common case) is a plain in-place overwrite. `publishFileName` embeds approvedAt's date, so
+   * re-approving on a later day changes the filename — writing the new path without removing the old
+   * would leave a duplicate that nothing on disk distinguishes from the current one. Google avoids
+   * this by PATCHing a file id; addressing by path means the local equivalent is deleting the old
+   * path.
    *
    * `remoteId` is a path relative to rootDir, as returned by upload().
    */
@@ -32,10 +33,10 @@ export class LocalFileUploader implements DriveUploader {
     const oldPath = resolve(this.rootDir, remoteId);
     const newPath = resolve(this.rootDir, result.id);
     if (oldPath !== newPath) {
-      await unlink(oldPath).catch((err: NodeJS.ErrnoException) => {
+      await unlink(oldPath).catch((err: unknown) => {
         // Moved or deleted by hand is not a failure — the write above already restored the current
         // content. Anything else (a permissions problem) is real and must surface.
-        if (err.code !== "ENOENT") throw err;
+        if (!isErrnoException(err) || err.code !== "ENOENT") throw err;
       });
     }
     return result;

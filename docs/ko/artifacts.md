@@ -226,6 +226,7 @@ Drive에서 직접 찾아 수동으로 처리해야 합니다.
 **지워도 되는 것 (재생성 가능하거나 이미 다른 곳에 보존됨):**
 
 - 이미 `pnpm archive`로 옮긴 뒤의 워크시트 원본(`output/{translations,variants,formatted}/worksheets/*.md`) — `prepare`를 다시 실행하면 재생성됩니다
+- `output/publish/local/{review,approved}/*.md` — `translations.json`에서 파생된 발행본이라 원리상 재생성 가능하지만, 동기화 원장(`output/publish/state.json`)에 기록이 남아 있으면 `drive:publish`가 스킵하므로 **다시 만들려면 해당 원장 행을 지우고 재발행**해야 합니다. `local` 모드에선 이게 공유용 최종본(§1의 기록의 원본)이므로 백업을 권장합니다
 - 보존 기간이 지난 `output/archive/<YYYY-MM-DD>/` 폴더
 - `*.tmp-*` 임시 파일 — 중단된 원자적 쓰기의 잔재
 - `output/x/items.json`, `output/lark/items.json` — twitterapi.io / Lark에서 다시 수집할 수
