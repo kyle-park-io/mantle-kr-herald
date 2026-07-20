@@ -90,7 +90,10 @@ pnpm translate:save --id <itemId> --file <korean.txt> --approve
    채웁니다.
 2. `.env`에서 `HERALD_STORAGE_MODE=cloud`로 바꿉니다.
 3. `pnpm doctor --live`로 실제 토큰 발급과 권한(스코프)까지 확인합니다.
-4. `pnpm drive:publish`를 실행합니다.
+4. Drive 폴더나 Google Sheet가 아직 없다면 `pnpm drive:init`(Drive 폴더 생성)과
+   `pnpm sheet:init`(Google Sheet 생성)을 실행하고, 콘솔에 출력된 id를 `.env`에 붙여넣습니다
+   ([`artifacts.md`](artifacts.md) 참고).
+5. `pnpm drive:publish`를 실행합니다.
 
 `drive:publish`는 동기화 원장(`output/publish/state.json`)을 확인해 **아직 올라가지 않은
 항목만** 업로드합니다. 지금까지는 원장이 비어 있으니(§2에서 `local` 모드로 지내는 동안 아무

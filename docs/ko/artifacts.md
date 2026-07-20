@@ -96,7 +96,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm doctor [--live]` | 모든 env 설정 로더; `translation/glossary.json`, `translation/style-guide.md`, `translation/locale.json`, `conversion/x.md`의 존재 여부(4개 파일만 확인) | 없음 | `--live`일 때만: Google OAuth tokeninfo, Google Drive/Sheets 파일 메타데이터 조회, Lark 인증 + 채팅 목록 조회 |
 | `pnpm status` | `output/x/items.json`, `output/lark/items.json`, `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 없음 | 없음 |
 | `pnpm archive` | `output/translations/worksheets/`, `output/variants/worksheets/`, `output/formatted/worksheets/`의 `.md` 목록 | 대상 파일들을 `output/archive/<YYYY-MM-DD>/`로 이동 | 없음 |
-| `pnpm clean [--older-than <days>] [--yes]` | `output/archive/`의 날짜 폴더 목록; 좌초된 임시 파일 탐지를 위해 `output/` 전체를 재귀 탐색 | 기본은 드라이런(삭제 대상만 출력). `--yes`일 때: 30일(기본값) 초과 경과한 `output/archive/<YYYY-MM-DD>/` 폴더 + 어디에 있든 `*.tmp-<pid>-<ms>-<uuid>` 형식의 좌초 파일을 삭제 | 없음 |
+| `pnpm clean [--older-than <days>] [--yes]` | `output/archive/`의 날짜 폴더 목록; 좌초된 임시 파일 탐지를 위해 `output/` 전체(`output/archive/` 내부는 제외)를 재귀 탐색 | 기본은 드라이런(삭제 대상만 출력). `--yes`일 때: 30일(기본값) 초과 경과한 `output/archive/<YYYY-MM-DD>/` 폴더 + `output/archive/`를 제외한 `output/` 안 어디에 있든 `*.tmp-<pid>-<ms>-<uuid>` 형식의 좌초 파일을 삭제 | 없음 |
 | `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들 | 게시 API 호출 시 Google Drive API, Lark Drive API — `local` 모드에서는 HTTP 500으로 거부(§2 참고) |
 | `pnpm google:auth` | `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`/`GOOGLE_OAUTH_SCOPE`(env) | 로컬 파일 없음 — refresh token을 콘솔에 출력 | Google OAuth 2.0(로컬 루프백 서버로 인가 코드 교환) |
 
@@ -139,8 +139,10 @@ interface SyncEntry {
 }
 ```
 
-`itemId`는 `x:`나 `lark:` 접두어 자체에 콜론을 포함하므로, 행을 식별하는 키는
-`entryKey()`(`${itemId}:${status}:${target}`)를 오른쪽부터 파싱해 만듭니다.
+행을 식별하는 키는 `entryKey()`가 `${itemId}:${status}:${target}`를 그대로 이어붙여 만듭니다.
+`itemId`는 `x:`나 `lark:` 접두어 자체에 콜론을 포함하므로, 반대로 레거시 키 문자열을 다시 세 값으로
+되돌려야 하는 `migrateLegacyKeys()`(아래 '레거시 마이그레이션' 참고)는 이 콜론 때문에 오른쪽부터
+파싱합니다.
 
 **`contentHash`가 감지하는 것:** `pnpm drive:publish`는 업로드 직전 렌더링한 바이트에 대해
 `contentHash()`(sha256)를 계산해 저장합니다. `pnpm status`는 현재 번역 내용을 같은 방식으로
@@ -172,7 +174,9 @@ interface SyncEntry {
 - 기본 보존 기간은 **30일**이며 `--older-than`으로 바꿀 수 있습니다. 경계는 **엄격히 초과(strictly
   greater)** — 정확히 N일 된 폴더는 아직 삭제 대상이 아닙니다(`expiredArchiveDays`).
 - 만료된 `output/archive/<YYYY-MM-DD>/` 폴더와, 중단된 원자적 쓰기가 남긴 좌초 임시 파일
-  (`*.tmp-<pid>-<ms>-<uuid>`, `output/` 전체를 재귀 탐색해 탐지)을 삭제 대상으로 삼습니다.
+  (`*.tmp-<pid>-<ms>-<uuid>`, `output/archive/` 내부를 제외한 `output/` 전체를 재귀 탐색해 탐지)을
+  삭제 대상으로 삼습니다. (`output/archive/`는 위 항목에서 폴더 단위로 이미 다뤄지므로 내부까지
+  다시 훑지 않습니다.)
 - 기본은 **드라이런**입니다 — 무엇을 지울지 목록만 출력합니다. 실제 삭제는 `--yes`를 붙여야
   일어납니다.
 - 살아 있는 저장소(store) 파일은 절대 건드리지 않습니다. 대상은 만료된 아카이브 폴더와 임시 파일
