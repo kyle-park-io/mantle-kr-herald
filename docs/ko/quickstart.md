@@ -10,8 +10,10 @@
 **모든 자격 증명은 선택입니다.** `HERALD_STORAGE_MODE=local`이면 클라우드(Google/Lark
 Drive·Sheet) 자격 증명 없이 파이프라인을 그대로 실행할 수 있습니다 — 번역(C)·변환(F)·채널
 포맷(F)은 애초에 외부 API를 호출하지 않고, 로컬 Claude Code 에이전트가 워크시트를 채우는
-방식으로 동작합니다([`capabilities.md`](capabilities.md) §4). 수집(A/B)만 사용하려는 소스의
-키가 있어야 실제 새 콘텐츠를 가져옵니다 — X와 Lark를 둘 다 쓸 필요는 없습니다.
+방식으로 동작합니다([`capabilities.md`](capabilities.md) §4). 발행(`pnpm drive:publish`)도
+`local`에서 그대로 동작합니다 — Drive에 올리는 대신 `output/publish/local/`에 결과물을
+저장합니다. 수집(A/B)만 사용하려는 소스의 키가 있어야 실제 새 콘텐츠를 가져옵니다 — X와 Lark를
+둘 다 쓸 필요는 없습니다.
 
 **필수**
 
@@ -38,7 +40,8 @@ pnpm status
 
 - `pnpm install` — 의존성 설치.
 - `cp .env.example .env` — 환경변수 스켈레톤 복사. 기본값 `HERALD_STORAGE_MODE=local`이라
-  그대로 두면 클라우드 명령은 스킵되고 나머지는 전부 동작합니다.
+  그대로 두면 `drive:init`/`sheet:init`/`targets:list`/`history:record`는 스킵되지만 나머지는
+  전부 동작합니다 — `pnpm drive:publish`도 포함해서, 결과물은 `output/publish/local/`에 쌓입니다.
 - `pnpm config:init` — `translation/*.example.*`, `conversion/*.example.*`를 실제 파일
   (`translation/glossary.json` 등)로 복사합니다. 이미 있는 파일은 절대 덮어쓰지 않습니다.
 - `pnpm doctor` — 저장 모드와 스티어링 설정 상태를 오프라인으로 점검합니다.
@@ -101,11 +104,11 @@ pnpm translate:save --id <itemId> --file <korean.txt> --approve
 5. `pnpm drive:publish`를 실행합니다.
 
 `drive:publish`는 동기화 원장(`output/publish/state.json`)을 확인해 아직 올라가지 않은 항목은
-새로 올리고, 내용이 그대로인 항목은 건너뜁니다. 지금까지는 원장이 비어 있으니(§2에서 `local`
-모드로 지내는 동안 아무 것도 업로드된 적이 없으므로) `local` 모드에서 쌓인 번역 백로그 전체가
-이 한 번의 실행으로 업로드됩니다. 승인 이후 내용이 바뀐 항목(`stale`)은 Google Drive에서는 기존
-파일을 그 자리에서 갱신합니다 — 자세한 동작(Lark의 제약, 레거시 행의 예외)은
-[`team-runbook.md`](team-runbook.md) §4를 참고하세요.
+새로 올리고, 내용이 그대로인 항목은 건너뜁니다. `local` 모드로 지내는 동안 이미 `target: "local"`
+행이 원장에 쌓여 있겠지만, `google`(그리고/또는 `lark`)은 완전히 별개의 키이므로 상관없습니다 —
+`local` 모드에서 쌓인 번역 백로그 전체가 이 한 번의 실행으로 새로 업로드됩니다. 승인 이후 내용이
+바뀐 항목(`stale`)은 Google Drive에서는 기존 파일을 그 자리에서 갱신합니다 — 자세한 동작(Lark의
+제약, 레거시 행의 예외)은 [`team-runbook.md`](team-runbook.md) §4를 참고하세요.
 
 ## 6. 다음으로
 

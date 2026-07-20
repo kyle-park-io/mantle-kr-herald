@@ -1,10 +1,26 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
+import type { StorageMode } from "../types";
+
+/** local mode publishes to disk, so offering a cloud target there would fail on every click. */
+const targetsFor = (mode: StorageMode): string[] =>
+  mode === "local" ? ["local"] : ["google", "lark", "both", "local"];
 
 export function PublishBar() {
-  const [target, setTarget] = useState("google");
+  const [mode, setMode] = useState<StorageMode | null>(null);
+  const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .config()
+      .then((c) => {
+        setMode(c.storageMode);
+        setTarget(targetsFor(c.storageMode)[0]);
+      })
+      .catch((e) => setResult(`오류: ${(e as Error).message ?? e}`));
+  }, []);
 
   const publish = async () => {
     setBusy(true);
@@ -24,15 +40,19 @@ export function PublishBar() {
       <select
         className="text-neutral-900 text-sm rounded px-1.5 py-1"
         value={target}
+        disabled={mode === null}
         onChange={(e) => setTarget(e.target.value)}
       >
-        <option value="google">google</option>
-        <option value="lark">lark</option>
-        <option value="both">both</option>
+        {mode !== null &&
+          targetsFor(mode).map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
       </select>
       <button
         className="px-3 py-1 rounded-md border border-white/30 text-sm disabled:opacity-50"
-        disabled={busy}
+        disabled={busy || mode === null}
         onClick={publish}
       >
         발행 ⬆

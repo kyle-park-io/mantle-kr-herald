@@ -26,6 +26,7 @@ export const paths = {
   formattedPending: join(OUTPUT_DIR, "formatted", "pending.json"),
   formattedWorksheets: join(OUTPUT_DIR, "formatted", "worksheets"),
   publishDir: join(OUTPUT_DIR, "publish"),
+  publishLocalDir: join(OUTPUT_DIR, "publish", "local"),
   archiveDir: join(OUTPUT_DIR, "archive"),
   translationConfigDir: join(REPO_ROOT, "translation"),
   conversionConfigDir: join(REPO_ROOT, "conversion"),
