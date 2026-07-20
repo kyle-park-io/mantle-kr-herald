@@ -58,7 +58,9 @@ same change, and the `en/` translation follows.
 change:
 - Adding or renaming a CLI command requires updating `docs/ko/capabilities.md` (what it does),
   `docs/ko/artifacts.md` (what it reads/writes), and `.env.example` (any new environment
-  variables) together.
+  variables) together. The `.env.example` half is enforced — `tests/config/envExample.test.ts`
+  fails when `src/` reads a variable the file does not document, when the file lists one nothing
+  reads, or when a variable has no `[REQUIRED]`/`[OPTIONAL]`/`[PICK ONE]` tag above it.
 - Changing where an artifact is stored requires updating `src/paths.ts` and
   `docs/ko/artifacts.md` together — `artifacts.md` is a verified reference, not a description
   written from memory; letting it drift from `src/paths.ts` defeats its purpose.
