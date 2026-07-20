@@ -39,17 +39,18 @@ HERALD_STORAGE_MODE=local|cloud
 언급하는 에러와 함께 `pnpm doctor` 실행을 안내하며 즉시 실패합니다
 (`src/storage/mode.ts`의 `parseStorageMode`).
 
-**예외는 `pnpm status`뿐입니다.** 클라우드 명령이 아니라 읽기 전용 진단이므로, 모드가 없거나 잘못돼도
-멈추지 않고 `tryParseStorageMode`로 관대하게 읽습니다(아래 표 참고). 모드를 알 수 없을 때는 `cloud`와
-동일하게 경고를 표시합니다 — 모드를 설정하지 않았거나 오타를 낸 사용자에게 실제 미동기화 항목을
-숨기는 쪽이 더 위험하기 때문입니다.
+**예외는 `pnpm status`뿐입니다.** 클라우드 명령이 아니라 읽기 전용 진단이므로 모드 자체를 신경 쓰지
+않습니다 — `src/cli/status.ts`는 `parseStorageMode`도 `tryParseStorageMode`도 import하지 않고,
+저장 모드를 전혀 읽지 않은 채 `output/` 아래 로컬 저장소 파일들만 읽어 계산합니다. 그래서 모드가
+없거나 잘못 설정돼 있어도 멈추지 않으며, 아래 표처럼 `local`과 `cloud`에서 정확히 동일하게 경고를
+표시합니다.
 
 | | `local` | `cloud` |
 |---|---|---|
 | `collect` → `translate` → `convert` → `format` | 동일하게 동작 | 동일하게 동작 |
 | `drive:init`, `sheet:init`, `targets:list`, `history:record` (네 개) | `"<command>: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)"`을 출력하고 종료 코드 `0` | 정상 실행 |
 | `drive:publish` | `output/publish/local/{review,approved}/`에 마크다운 저장 | Google/Lark Drive에 업로드 |
-| `pnpm archive` | 유일한 안전망(§5) | Drive가 원본이므로 보조 수단 |
+| `pnpm archive` | 완료된 워크시트만 옮길 뿐 `output/publish/local/`은 건드리지 않습니다 — 그 트리의 백업은 사용자 책임입니다(§1) | Drive가 원본이므로 보조 수단 |
 | `pnpm status` | 동기화되지 않은/오래된(stale) 항목이 있으면 `cloud`와 동일하게 `⚠`로 경고 | 동기화되지 않은/오래된(stale) 항목이 있으면 `⚠`로 경고 |
 | `pnpm doctor` | 클라우드 자격 증명 검사 실패를 `warn`으로 낮추고 종료 코드 `0` — `local`에서는 없어도 정상이기 때문 | 실패는 그대로 `fail`이고 종료 코드 `1` |
 
@@ -118,7 +119,7 @@ interface SyncEntry {
   itemId: string;
   stage: "translation";
   status: string;       // 게시 시점의 번역 status ("translated" | "approved")
-  target: string;        // 업로드 대상 — "google" | "lark"
+  target: string;        // 업로드 대상 — "google" | "lark" | "local"
   fileName?: string;
   remoteId?: string;
   url?: string;
@@ -160,10 +161,12 @@ interface SyncEntry {
 (`src/status/sync.ts`의 `syncSummary`, `src/domain/publish/syncLedger.ts`의 `isStale`,
 `src/app/PublishTranslations.ts`).
 
-`stale`로 판정된 행은 대상이 Google이면 기존 파일을 갱신(id·공유 링크 유지, 중복 없음)하고,
-대상이 Lark면 갱신 엔드포인트가 없어 실패로 보고됩니다 — Lark Drive `drive/v1`에는 콘텐츠를
-그 자리에서 바꾸는 API가 없기 때문입니다. 이 항목은 Drive에서 직접 찾아 수동으로 처리해야
-합니다.
+`stale`로 판정된 행은 대상이 Google 또는 `local`이면 기존 파일을 그 자리에서 갱신하고(중복 없음),
+대상이 Lark면 갱신 엔드포인트가 없어 실패로 보고됩니다. Google은 파일 id·공유 링크를 유지한 채
+PATCH하고, `local`(`LocalFileUploader.update`)은 새 내용을 다시 쓴 뒤 파일명이 바뀌었으면(예:
+재승인으로 `approvedAt` 날짜가 바뀐 경우) 이전 파일을 지워 하나만 남깁니다. Lark만 갱신 수단이
+없는 이유는 Lark Drive `drive/v1`에 콘텐츠를 그 자리에서 바꾸는 API가 없기 때문이며, 이 항목은
+Drive에서 직접 찾아 수동으로 처리해야 합니다.
 
 **레거시 마이그레이션:** 예전 형식 `{"published": ["<itemId>:<status>:<target>", ...]}`은 읽는
 시점에 자동 변환됩니다(`migrateLegacyKeys`). 이 경로로 만들어진 행은 `stage: "translation"`과
@@ -176,7 +179,7 @@ interface SyncEntry {
 `PublishTranslations`는 `contentHash` 비교 없이 그 자리에서 건너뛰고 `record()`를 다시 호출하지
 않으므로, 이런 행은 그 항목이 나중에 다시 게시되더라도 `contentHash`를 얻지 못합니다. 유일한
 탈출 경로(레거시 행 전용, 원장 행 수동 삭제 + 재게시)와 자동 갱신 경로(해시가 있는 `stale` 행
-전용, Google만)를 서로 다른 상황에만 써야 하며, 두 절차를 구분해 정리한 문서는
+전용, Google과 `local`만)를 서로 다른 상황에만 써야 하며, 두 절차를 구분해 정리한 문서는
 [`team-runbook.md`](team-runbook.md) §4를 참고하세요.
 
 ## 5. 보존 정책

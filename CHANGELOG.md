@@ -135,6 +135,10 @@ is the cheaper outcome.
   `HERALD_STORAGE_MODE=local`. `--target` accepts a comma-separated list (`google,local`); `both`
   remains an alias for `google,lark`. The dashboard publishes in local mode too, and picks its
   target options from the new `GET /api/config`.
+- **`LocalFileUploader.update`** — when a re-approval changes `publishFileName` (it embeds
+  `approvedAt`'s date), the local uploader writes the new file and then moves the old one out of
+  the way, so a re-approved item ends up as exactly one document on disk — mirroring the Drive
+  PATCH that updates content in place while preserving a file id.
 
 ### Changed
 
@@ -172,13 +176,18 @@ is the cheaper outcome.
   exists.
 - **`skipIfLocal()` now gates four commands, not five.** `drive:publish` left the list — in local
   mode it targets the filesystem instead of skipping.
+- **Requesting a cloud target in `local` mode now fails instead of skipping.**
+  `pnpm drive:publish --target google` (or `lark`, or `both`) under `HERALD_STORAGE_MODE=local`
+  throws and exits `1`; previously it matched the blanket local-mode skip and exited `0`, so a
+  wrapper script that checked the exit code alone could not tell "skipped" from "uploaded".
 
 ### Fixed
 
 - **A stale publish can now be repaired.** `pnpm drive:publish` re-uploads an item whose content
-  changed after it was published, updating the Drive file in place so its id and share link — and
-  any link already recorded in the Sheet `history` tab — are preserved. Previously `pnpm status`
-  could report an item as `stale` with no way to resolve it. Google Drive only; Lark Drive has no
+  changed after it was published, updating the file in place — for Google Drive its id and share
+  link (and any link already recorded in the Sheet `history` tab) are preserved; for the `local`
+  target `LocalFileUploader.update` does the equivalent. Previously `pnpm status` could report an
+  item as `stale` with no way to resolve it. Google Drive and `local` only; Lark Drive has no
   content-replace endpoint, so a stale item there is reported as a failure. Items published before
   the sync ledger existed carry no content hash and are never re-uploaded.
 - **Lark collection (B)** — incremental re-runs no longer re-collect the boundary message. Lark's
@@ -194,10 +203,6 @@ is the cheaper outcome.
   `format --refine` archive the previous `pending.json` before replacing it and write it atomically
   like every other store; `translate:save` and `format:save` fall back to an already-saved item
   instead of throwing.
-- **Re-publishing after a re-approval no longer risks a duplicate document.** `publishFileName`
-  embeds `approvedAt`'s date, so re-approving on a later day changes the filename;
-  `LocalFileUploader.update` moves the file rather than writing a second copy, mirroring the Drive
-  PATCH that preserves a file id.
 
 ## [0.1.0] - 2026-07-15
 

@@ -10,8 +10,9 @@
 `mantle-kr-herald`는 Mantle KR 팀의 소셜 미디어 콘텐츠 파이프라인입니다. X(트위터, 기본
 `Mantle_Official`)와 사내 Lark 그룹 채팅에서 원문을 수집하고, 로컬 Claude Code 에이전트가
 워크시트를 채우는 방식으로 한국어로 번역한 뒤, 승인된 번역을 채널(`x`/`telegram`/`kakao`/`pr_mail`)에
-맞게 변환·포맷하고, 사람이 두 차례(1차: 번역, 2차: 채널 포맷) 검수·승인한 결과만 Google
-Drive/Lark Drive에 올리고 Google Sheet에 게시 이력을 남깁니다. 모든 단계는 개별 CLI 명령
+맞게 변환·포맷하고, 사람이 두 차례(1차: 번역, 2차: 채널 포맷) 검수·승인한 결과만 저장 모드에 따라
+Google Drive/Lark Drive 또는 로컬 폴더(`output/publish/local/`)에 올리고 Google Sheet에 게시
+이력을 남깁니다. 모든 단계는 개별 CLI 명령
 (`pnpm <script>`)으로 실행되며, 자동으로 다음 단계가 실행되지 않습니다 — 사람이 각 단계 사이를
 직접 잇습니다.
 
@@ -60,8 +61,8 @@ Drive/Lark Drive에 올리고 Google Sheet에 게시 이력을 남깁니다. 모
 
 **채널** (§6 채널 포맷 대상): `x` · `telegram` · `kakao` · `pr_mail`
 
-**저장소**: Google Drive, Lark Drive (업로드 대상 — [`artifacts.md`](artifacts.md) 참고),
-Google Sheet (데이터 허브 — `targets`/`history` 탭)
+**저장소**: Google Drive, Lark Drive, 로컬 폴더 `output/publish/local/`(`local` 모드) (업로드
+대상 — [`artifacts.md`](artifacts.md) 참고), Google Sheet (데이터 허브 — `targets`/`history` 탭)
 
 ## 4. 할 수 없는 것
 
