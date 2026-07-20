@@ -52,6 +52,13 @@ is the cheaper outcome.
 
 ### Added
 
+- **`docs/ko/setup/steering.md`** — how to actually obtain the real `translation/`+`conversion/`
+  config. It is not in git, and a new team member had no documented way to get it: `team-runbook.md`
+  claimed these files were "what `pnpm config:init` creates", which is false — `config:init` writes
+  empty skeletons. Following that sentence produced translations with none of the team's
+  terminology, and `pnpm doctor` reported the setup as fine. Corrected, with a verification step
+  (`pnpm glossary` must not print `0 entries`) and the recovery procedure for losing them.
+
 - **`docs/ko/review.md`** — a guide for the people who read, edit and approve the Korean copy but
   never open a terminal. Every existing Korean document assumed a shell in its opening paragraph,
   yet second-round review (§7) is dashboard-only, so that reader had no page at all. It covers the
@@ -131,6 +138,13 @@ is the cheaper outcome.
 - **`pnpm doctor` checks a guide for every conversion type**, not just `conversion/x.md`.
   `loadTypeGuide()` falls back to an empty string when the file is missing, so a type without its
   `.md` used to convert with no steering at all and no warning.
+
+- **`pnpm doctor` now looks at steering *content*, not just presence.** A `pnpm config:init` tree
+  passed the check while steering nothing — an empty glossary and guides identical to their
+  `*.example.*` skeletons still counted as ✓. It now reports `⚠ present but empty` and names the
+  files. The missing-file hint also stopped pointing everyone at `config:init`, which is the wrong
+  recovery for someone whose real files disappeared; it now distinguishes a fresh install from a
+  loss and links `docs/ko/setup/steering.md`.
 
 - **The real steering config left git.** `translation/` and `conversion/` now track only
   `*.example.*` skeletons; the actual glossary, style guide and few-shot corpus are local. Routine
