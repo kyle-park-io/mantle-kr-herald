@@ -190,4 +190,17 @@ describe("startServer", () => {
 
     expect(res.status).toBe(404);
   });
+
+  it("serves a .woff2 font with the font/woff2 content-type", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "web-"));
+    await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+    await mkdir(join(dir, "assets"), { recursive: true });
+    await writeFile(join(dir, "assets", "font.woff2"), Buffer.from([0x77, 0x4f, 0x46, 0x32]));
+    const base = await start(dir);
+
+    const res = await fetch(`${base}/assets/font.woff2`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("font/woff2");
+  });
 });

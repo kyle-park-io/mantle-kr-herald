@@ -11,6 +11,9 @@ const MIME: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".md": "text/markdown; charset=utf-8",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
 };
 
 async function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
