@@ -38,4 +38,28 @@ describe("LarkDriveUploader", () => {
     const uploader = new LarkDriveUploader(auth, "https://open.larksuite.com", folders, badFetch);
     await expect(uploader.upload({ name: "n", content: "c", folder: "review" })).rejects.toThrow(/1061045|no permission/);
   });
+
+  it("surfaces the Lark error code and message on an HTTP error status", async () => {
+    // A 403 carries the real reason (e.g. code 1061004 forbidden) in its JSON body; discarding it
+    // and throwing only "HTTP 403" hides whether the cause is a missing scope or an unshared folder.
+    const badFetch = (async () =>
+      new Response(JSON.stringify({ code: 1061004, msg: "forbidden." }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      })) as unknown as typeof fetch;
+    const uploader = new LarkDriveUploader(auth, "https://open.larksuite.com", folders, badFetch);
+
+    const err = (await uploader.upload({ name: "n", content: "c", folder: "review" }).catch((e) => e)) as Error;
+
+    expect(err.message).toContain("403");
+    expect(err.message).toContain("1061004");
+    expect(err.message).toContain("forbidden.");
+  });
+
+  it("still reports the HTTP status when the error body is not JSON", async () => {
+    const badFetch = (async () =>
+      new Response("<html>gateway</html>", { status: 502 })) as unknown as typeof fetch;
+    const uploader = new LarkDriveUploader(auth, "https://open.larksuite.com", folders, badFetch);
+    await expect(uploader.upload({ name: "n", content: "c", folder: "review" })).rejects.toThrow(/502/);
+  });
 });
