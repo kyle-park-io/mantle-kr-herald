@@ -144,6 +144,14 @@ either way, which is worse than failing loudly once.
 
 ### Changed
 
+- **`pnpm doctor` no longer hard-fails in cloud mode over optional credentials.** Only the core
+  cloud publish path — Google auth + Google Drive — is required in cloud mode (plus the storage mode
+  and steering config, required in every mode). twitterapi.io and the Lark app are source
+  credentials (needed only if you collect from that source), Lark Drive is an opt-in publish target,
+  and the Google Sheet (§9a) is an optional data hub, so their absence is now a `warn` in both modes,
+  never a `fail`. Previously a valid Google-Drive-plus-X setup exited 1 in cloud mode over the Lark
+  and Sheet credentials it does not use. New `optionalCheck` helper in `src/doctor/checks.ts`.
+
 - **`docs/guides/` moved to `docs/ko/setup/`.** `docs/` was splitting by two axes at the same
   level — language (`en/`, `ko/`) beside audience (`architecture/`, `guides/`, `superpowers/`) —
   so Korean setup procedures sat outside `ko/` and English design docs sat outside `en/`. The rule

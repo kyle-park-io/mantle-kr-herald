@@ -30,6 +30,21 @@ export function cloudCheck(
   return result;
 }
 
+/**
+ * A credential whose absence is never a failure, in either storage mode — an opt-in publish target
+ * (Lark Drive), an optional data hub (Google Sheet §9a), or a source credential only needed if you
+ * actually collect from that source (twitterapi, Lark app). Present → ok; absent → warn with
+ * `absentDetail` (why it's optional / when you'd need it). Unlike cloudCheck, it takes no `local`
+ * flag, because its optionality does not depend on the mode.
+ */
+export function optionalCheck(name: string, run: () => void, absentDetail: string, okDetail?: string): CheckResult {
+  const result = configCheck(name, run, okDetail);
+  if (result.status === "fail") {
+    return { name, status: "warn", detail: `${absentDetail} (${result.detail})` };
+  }
+  return result;
+}
+
 /** A space-separated OAuth scope string → array (empties dropped). */
 export function parseScopes(scope: string | undefined): string[] {
   return (scope ?? "").split(/\s+/).filter((s) => s.length > 0);

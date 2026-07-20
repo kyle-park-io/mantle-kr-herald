@@ -56,7 +56,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `drive:publish` | `output/publish/local/{review,approved}/`에 마크다운 저장 | Google/Lark Drive에 업로드 |
 | `pnpm archive` | 완료된 워크시트만 옮길 뿐 `output/publish/local/`은 건드리지 않습니다 — 그 트리의 백업은 사용자 책임입니다(§1) | Drive가 원본이므로 보조 수단 |
 | `pnpm status` | 동기화되지 않은/오래된(stale) 항목이 있으면 `cloud`와 동일하게 `⚠`로 경고 | 동기화되지 않은/오래된(stale) 항목이 있으면 `⚠`로 경고 |
-| `pnpm doctor` | 클라우드 자격 증명 검사 실패를 `warn`으로 낮추고 종료 코드 `0` — `local`에서는 없어도 정상이기 때문 | 실패는 그대로 `fail`이고 종료 코드 `1` |
+| `pnpm doctor` | 클라우드 자격증명이 없어도 전부 `warn`, 종료 코드 `0` (Storage mode·steering 누락만 `fail`) | **Google auth·Google Drive**(코어 발행 경로)가 없으면 `fail`·종료 코드 `1`. **twitterapi·Lark app·Lark Drive·Google Sheet는 소스/opt-in이라 없어도 `warn`뿐** — Google+X만 쓰는 셋업도 종료 코드 `0` |
 
 스킵은 실패가 아니라 정상 동작이므로 종료 코드는 `0`입니다 — 비영(非零) 종료 코드는 래퍼 스크립트를
 깨뜨릴 수 있기 때문입니다. 이 게이트는 네 개 CLI(`drive-init.ts`, `targets-list.ts`,
