@@ -104,7 +104,13 @@ export function App() {
             </aside>
             <section className="flex-1 p-6 overflow-y-auto">
               {selected ? (
-                <TranslationDetail item={selected} onSave={onSave} onApprove={onApprove} onDirtyChange={setDirty} />
+                <TranslationDetail
+                  item={selected}
+                  publishRows={publishRows.filter((r) => r.itemId === selected.itemId)}
+                  onSave={onSave}
+                  onApprove={onApprove}
+                  onDirtyChange={setDirty}
+                />
               ) : (
                 <p className="text-neutral-400">항목을 선택하세요.</p>
               )}

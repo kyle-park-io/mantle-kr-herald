@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import type { Translation } from "../types";
+import type { Translation, PublishStateRow } from "../types";
 
 const badgeClass = (status: Translation["status"]) =>
   status === "approved" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800";
 
 export function TranslationDetail(props: {
   item: Translation;
+  publishRows: PublishStateRow[];
   onSave: (id: string, koreanText: string) => Promise<void>;
   onApprove: (id: string) => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
@@ -57,6 +58,27 @@ export function TranslationDetail(props: {
         >
           승인 ✓
         </button>
+      </div>
+      <div className="mt-6 border-t border-neutral-200 pt-3">
+        <h3 className="text-xs font-semibold text-neutral-500 mb-1.5">발행 상태</h3>
+        {props.publishRows.length === 0 ? (
+          <p className="text-xs text-neutral-400">아직 발행되지 않음</p>
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {props.publishRows.map((r) => (
+              <li key={`${r.status}:${r.target}`} className="flex items-center gap-2 text-xs">
+                <span className="text-neutral-500">{r.status} · {r.target}</span>
+                {r.target === "local" && r.remoteId ? (
+                  <a className="text-indigo-600 hover:underline" href={`/api/publish/local/${r.remoteId}`} target="_blank" rel="noreferrer">열기</a>
+                ) : r.url ? (
+                  <a className="text-indigo-600 hover:underline" href={r.url} target="_blank" rel="noreferrer">Drive에서 열기</a>
+                ) : (
+                  <span className="text-neutral-400">링크 없음</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );
