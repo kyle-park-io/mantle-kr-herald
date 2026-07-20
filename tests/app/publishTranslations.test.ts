@@ -5,6 +5,7 @@ import type { DriveUploader } from "../../src/ports/DriveUploader";
 import type { PublishStore } from "../../src/ports/PublishStore";
 import type { Translation } from "../../src/domain/translation/models";
 import type { UploadRequest, UploadResult } from "../../src/domain/publish/publishModels";
+import { entryKey, type SyncEntry } from "../../src/domain/publish/syncLedger";
 
 function tr(itemId: string, status: Translation["status"]): Translation {
   return {
@@ -28,9 +29,20 @@ class FakeUploader implements DriveUploader {
 }
 
 class InMemoryPublishStore implements PublishStore {
-  public keys = new Set<string>();
-  async listPublished() { return this.keys; }
-  async record(key: string) { this.keys.add(key); }
+  public entries: SyncEntry[] = [];
+  get keys(): Set<string> {
+    return new Set(this.entries.map(entryKey));
+  }
+  async listEntries() {
+    return this.entries;
+  }
+  async listPublished() {
+    return this.keys;
+  }
+  async record(entry: SyncEntry) {
+    this.entries = this.entries.filter((e) => entryKey(e) !== entryKey(entry));
+    this.entries.push(entry);
+  }
 }
 
 describe("PublishTranslations", () => {
@@ -62,7 +74,7 @@ describe("PublishTranslations", () => {
   it("skips keys already published (per drive)", async () => {
     const g = new FakeUploader("google");
     const store = new InMemoryPublishStore();
-    store.keys.add("x:1:translated:google");
+    store.entries.push({ itemId: "x:1", stage: "translation", status: "translated", target: "google" });
     const uc = new PublishTranslations(translationStore([tr("x:1", "translated")]), [g], store);
     const res = await uc.run();
     expect(res.uploaded).toBe(0);
@@ -80,5 +92,34 @@ describe("PublishTranslations", () => {
     expect(res.failures).toEqual([{ key: "x:1:translated:lark", error: "boom" }]);
     expect(store.keys.has("x:1:translated:google")).toBe(true);
     expect(store.keys.has("x:1:translated:lark")).toBe(false);
+  });
+
+  it("records what was uploaded, where, and with which content", async () => {
+    const recorded: SyncEntry[] = [];
+    const store: PublishStore = {
+      listEntries: async () => recorded,
+      listPublished: async () => new Set(recorded.map(entryKey)),
+      record: async (e) => {
+        recorded.push(e);
+      },
+    };
+    const uploader: DriveUploader = {
+      name: "google",
+      upload: async () => ({ id: "file-1", name: "doc.md", url: "https://drive.example/file-1" }),
+    };
+
+    await new PublishTranslations(
+      translationStore([tr("x:1", "approved")]),
+      [uploader],
+      store,
+      () => new Date("2026-07-20T09:00:00.000Z"),
+    ).run();
+
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].target).toBe("google");
+    expect(recorded[0].remoteId).toBe("file-1");
+    expect(recorded[0].url).toBe("https://drive.example/file-1");
+    expect(recorded[0].uploadedAt).toBe("2026-07-20T09:00:00.000Z");
+    expect(recorded[0].contentHash).toMatch(/^sha256:/);
   });
 });

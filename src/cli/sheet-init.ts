@@ -1,8 +1,11 @@
 import "./registerErrorHandler";
+import { skipIfLocal } from "./skipIfLocal";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { GoogleSheetClient } from "../adapters/sheets/GoogleSheetClient";
 import { TARGETS_HEADER, HISTORY_HEADER } from "../domain/sheet/models";
 import { loadGoogleAuthConfig } from "../config";
+
+skipIfLocal("sheet:init");
 
 const auth = await createGoogleAuth(loadGoogleAuthConfig());
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { configCheck, parseScopes, scopeCheck, accessResult } from "../../src/doctor/checks";
+import { configCheck, cloudCheck, parseScopes, scopeCheck, accessResult } from "../../src/doctor/checks";
 
 const DRIVE = "https://www.googleapis.com/auth/drive.file";
 const SHEETS = "https://www.googleapis.com/auth/spreadsheets";
@@ -14,6 +14,38 @@ describe("configCheck", () => {
       throw new Error("Missing required environment variable: FOO");
     });
     expect(r.status).toBe("fail");
+    expect(r.detail).toContain("FOO");
+  });
+});
+
+describe("cloudCheck", () => {
+  const throwMissing = () => {
+    throw new Error("Missing required environment variable: FOO");
+  };
+
+  it("ok when the loader does not throw, in either mode", () => {
+    expect(cloudCheck("X", () => {}, false, "not needed in local mode", "set")).toEqual({
+      name: "X",
+      status: "ok",
+      detail: "set",
+    });
+    expect(cloudCheck("X", () => {}, true, "not needed in local mode", "set")).toEqual({
+      name: "X",
+      status: "ok",
+      detail: "set",
+    });
+  });
+
+  it("fail (unchanged) when the loader throws and local is false", () => {
+    const r = cloudCheck("X", throwMissing, false, "not needed in local mode");
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("FOO");
+  });
+
+  it("downgrades to warn with the local-mode explanation when the loader throws and local is true", () => {
+    const r = cloudCheck("X", throwMissing, true, "not needed in local mode");
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("not needed in local mode");
     expect(r.detail).toContain("FOO");
   });
 });

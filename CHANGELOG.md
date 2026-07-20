@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading — action required for existing installs
+
+`HERALD_STORAGE_MODE` is now **required** and is never inferred. A fresh clone gets it from
+`.env.example`, but an existing `.env` predates it, so the cloud commands (`drive:publish`,
+`drive:init`, `sheet:init`, `targets:list`, `history:record`) will fail until you add one line:
+
+```bash
+# append to your existing .env — "cloud" if Google/Lark Drive is your record of truth
+HERALD_STORAGE_MODE=cloud
+```
+
+Defaulting it was considered and rejected. Defaulting to `local` would let a cloud operator run
+`drive:publish`, see `local mode — skipped` and **exit 0**, and believe work reached Drive when
+nothing was uploaded — the exact failure the explicit mode exists to prevent. Failing loudly once
+is the cheaper outcome.
+
 ### Added
 
 - **`pnpm status`** — a pipeline-visibility command: reads the local `output/` stores and prints a
@@ -33,6 +49,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`pnpm lark:send --chat <id> --text <…>`** — sends a text message to a Lark chat (defaults the
   chat to the first `LARK_CHAT_IDS` entry). The foundation for §10 (Lark bot); pipeline-content
   wiring is a follow-up.
+- **Explicit storage mode** — `HERALD_STORAGE_MODE=local|cloud` decides whether Drive is the record
+  of truth or everything stays local. `local` needs no cloud credentials — the post-collection
+  stages (translate / convert / format) never call an external API either way, and `local` also
+  skips the Drive/Sheet commands with a clear message; collection still needs a key for whichever
+  source you use (`TWITTERAPI_IO_KEY` for X, the Lark app credentials for Lark), independent of
+  storage mode. `cloud` behaves as before. Storage mode is never inferred.
+- **Sync ledger** — `output/publish/state.json` now records which drive, remote id, URL, filename,
+  content hash and timestamp for every upload (legacy key sets migrate on read). `pnpm status`
+  reports published / unsynced / stale counts, so an item edited after publishing is visible.
+- **`pnpm archive` / `pnpm clean`** — retention for worksheets and superseded batches under
+  `output/archive/<date>/`; `clean` removes archives older than 30 days (`--older-than`) and temp
+  files stranded by interrupted writes, listing them unless `--yes` is passed.
+- **`pnpm config:init`** — creates the steering config from the tracked `*.example.*` skeletons.
+- **Documentation set** — `docs/ko/{capabilities,quickstart,team-runbook,artifacts}.md` covering what
+  the project does, how external and internal users run it, and where every artifact is stored;
+  `docs/README.md` records the documentation rules.
+
+### Changed
+
+- **The real steering config left git.** `translation/` and `conversion/` now track only
+  `*.example.*` skeletons; the actual glossary, style guide and few-shot corpus are local. Routine
+  approvals no longer dirty the working tree.
 
 ### Fixed
 
@@ -42,6 +80,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now drops anything at or before the ms-precise watermark client-side, mirroring the X collector.
   Verified live: the Lark bot's `im:message.group_msg` scope is approved, `collect-lark` reads group
   messages, and a no-new-data re-run now reports `collected 0`.
+- **Artifact paths are anchored to the repo root**, not the process CWD. Running a command from a
+  subdirectory silently created a second `output/` tree; all 36 path literals now come from
+  `src/paths.ts`.
+- **`prepare` no longer strands an unsaved batch.** `translate:prepare`, `convert:prepare` and
+  `format --refine` archive the previous `pending.json` before replacing it and write it atomically
+  like every other store; `translate:save` and `format:save` fall back to an already-saved item
+  instead of throwing.
 
 ## [0.1.0] - 2026-07-15
 

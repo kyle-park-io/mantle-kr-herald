@@ -17,17 +17,25 @@ import { LarkDriveUploader } from "../adapters/drive/LarkDriveUploader";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { HttpClient } from "../shared/http/HttpClient";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
-import { loadGoogleAuthConfig, loadGoogleDriveConfig, loadLarkDriveConfig } from "../config";
+import { loadGoogleAuthConfig, loadGoogleDriveConfig, loadLarkDriveConfig, loadStorageMode } from "../config";
 import type { DriveUploader } from "../ports/DriveUploader";
+import { REPO_ROOT, paths } from "../paths";
+import { assertCloudMode } from "../storage/mode";
 
 const port = Number(process.env.PORT) || 5757;
-const translationStore = new JsonTranslationStore("output/translations");
-const publishStore = new JsonPublishStore("output/publish");
-const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotStore("translation"));
-const formattingStore = new JsonFormattingStore("output/formatted");
-const conversionStore = new JsonConversionStore("output/variants");
+const translationStore = new JsonTranslationStore(paths.translationsDir);
+const publishStore = new JsonPublishStore(paths.publishDir);
+const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotStore(paths.translationConfigDir));
+const formattingStore = new JsonFormattingStore(paths.formattedDir);
+const conversionStore = new JsonConversionStore(paths.variantsDir);
 
 async function uploadersFor(target: string): Promise<DriveUploader[]> {
+  // The dashboard's publish button is the same cloud write as `pnpm drive:publish`, so it obeys the
+  // same storage mode. Throws rather than using skipIfLocal, whose process.exit(0) would kill the
+  // running server; HttpServer turns this into a 500 carrying the message. The dashboard itself
+  // stays available in local mode — only publishing is refused.
+  assertCloudMode(loadStorageMode(), "publishing");
+
   const uploaders: DriveUploader[] = [];
   if (target === "google" || target === "both") {
     const g = loadGoogleDriveConfig();
@@ -53,5 +61,5 @@ const deps: ApiDeps = {
   approveRendering: new ApproveRendering(formattingStore),
 };
 
-startServer(deps, { port, staticDir: join("web", "dist") });
+startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist") });
 console.log(`Review dashboard on http://localhost:${port}  (build the UI first: pnpm build:web)`);

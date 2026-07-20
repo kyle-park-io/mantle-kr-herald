@@ -1,5 +1,10 @@
+import type { SyncEntry } from "../domain/publish/syncLedger";
+
 export interface PublishStore {
-  /** Set of "<itemId>:<status>:<drive>" keys already uploaded. */
+  /** Every recorded upload, one row per (itemId, status, target). */
+  listEntries(): Promise<SyncEntry[]>;
+  /** Set of "<itemId>:<status>:<target>" keys already uploaded — the idempotency check. */
   listPublished(): Promise<Set<string>>;
-  record(key: string): Promise<void>;
+  /** Upsert one entry by its key. */
+  record(entry: SyncEntry): Promise<void>;
 }

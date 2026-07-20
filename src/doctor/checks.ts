@@ -10,6 +10,26 @@ export function configCheck(name: string, run: () => void, okDetail = "configure
   }
 }
 
+/**
+ * A config check for a credential that cloud mode requires but local mode doesn't. A success is
+ * still reported ok (the check is still meaningful information either way); a failure is
+ * downgraded from fail to warn when `local` is true, so a fresh local-mode clone doesn't exit
+ * non-zero over credentials it genuinely doesn't need — `localDetail` explains why not.
+ */
+export function cloudCheck(
+  name: string,
+  run: () => void,
+  local: boolean,
+  localDetail: string,
+  okDetail?: string,
+): CheckResult {
+  const result = configCheck(name, run, okDetail);
+  if (local && result.status === "fail") {
+    return { name, status: "warn", detail: `${localDetail} (${result.detail})` };
+  }
+  return result;
+}
+
 /** A space-separated OAuth scope string → array (empties dropped). */
 export function parseScopes(scope: string | undefined): string[] {
   return (scope ?? "").split(/\s+/).filter((s) => s.length > 0);

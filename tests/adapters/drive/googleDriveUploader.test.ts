@@ -9,9 +9,10 @@ function fakeFetch(capture: { url?: string; headers?: Record<string, string>; bo
     capture.url = String(url);
     capture.headers = init?.headers as Record<string, string>;
     capture.body = String(init?.body ?? "");
-    return new Response(JSON.stringify({ id: "file123", name: "x-1.md" }), {
-      status: 200, headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ id: "file123", name: "x-1.md", webViewLink: "https://drive.google.com/file/d/file123/view" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
   }) as unknown as typeof fetch;
 }
 
@@ -23,13 +24,13 @@ describe("GoogleDriveUploader", () => {
     const result = await uploader.upload({ name: "x-1.md", content: "# hi", folder: "review" });
 
     expect(uploader.name).toBe("google");
-    expect(cap.url).toBe("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart");
+    expect(cap.url).toBe("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink");
     expect(cap.headers?.["Authorization"]).toBe("Bearer ya29.tok");
     expect(cap.headers?.["Content-Type"]).toContain("multipart/related; boundary=");
     expect(cap.body).toContain('"name":"x-1.md"');
     expect(cap.body).toContain('"parents":["REVIEW_FOLDER"]');
     expect(cap.body).toContain("# hi");
-    expect(result).toEqual({ id: "file123", name: "x-1.md" });
+    expect(result).toEqual({ id: "file123", name: "x-1.md", url: "https://drive.google.com/file/d/file123/view" });
   });
 
   it("maps the approved folder", async () => {

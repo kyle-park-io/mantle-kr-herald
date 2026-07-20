@@ -1,3 +1,5 @@
+import { parseStorageMode, tryParseStorageMode, type StorageMode } from "./storage/mode";
+
 export interface Config {
   apiKey: string;
 }
@@ -126,4 +128,14 @@ export function loadGoogleSheetConfig(): GoogleSheetConfig {
   const spreadsheetId = process.env.GSHEET_ID?.trim();
   if (!spreadsheetId) throw new Error("Missing required environment variable: GSHEET_ID");
   return { spreadsheetId };
+}
+
+export type { StorageMode };
+
+export function loadStorageMode(): StorageMode {
+  return parseStorageMode(process.env.HERALD_STORAGE_MODE);
+}
+
+export function tryLoadStorageMode(): StorageMode | undefined {
+  return tryParseStorageMode(process.env.HERALD_STORAGE_MODE);
 }

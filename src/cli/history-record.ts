@@ -1,5 +1,6 @@
 import "./registerErrorHandler";
 import { argValue } from "./args";
+import { skipIfLocal } from "./skipIfLocal";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { GoogleSheetClient } from "../adapters/sheets/GoogleSheetClient";
 import { RecordPublish } from "../app/RecordPublish";
@@ -9,6 +10,7 @@ const itemId = argValue("--item");
 const type = argValue("--type");
 const channel = argValue("--channel");
 const status = argValue("--status");
+skipIfLocal("history:record");
 if (!itemId || !type || !channel || !status) {
   throw new Error("Usage: pnpm history:record --item <id> --type <t> --channel <c> --status <s> [--post-id <p>] [--url <u>]");
 }

@@ -1,8 +1,11 @@
 import { join } from "node:path";
 import type { PublishStore } from "../../ports/PublishStore";
+import { entryKey, migrateLegacyKeys, type SyncEntry } from "../../domain/publish/syncLedger";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
 
 interface StateFile {
+  entries?: SyncEntry[];
+  /** Legacy format, still read so no manual migration is needed. */
   published?: string[];
 }
 
@@ -12,15 +15,21 @@ export class JsonPublishStore implements PublishStore {
     this.path = join(dir, "state.json");
   }
 
-  async listPublished(): Promise<Set<string>> {
+  async listEntries(): Promise<SyncEntry[]> {
     const state = await readJsonFile<StateFile>(this.path, {});
-    return new Set(state.published ?? []);
+    if (state.entries) return state.entries;
+    return migrateLegacyKeys(state.published ?? []);
   }
 
-  async record(key: string): Promise<void> {
-    const state = await readJsonFile<StateFile>(this.path, {});
-    const published = new Set(state.published ?? []);
-    published.add(key);
-    await writeJsonFileAtomic(this.dir, this.path, { published: [...published] } satisfies StateFile);
+  async listPublished(): Promise<Set<string>> {
+    return new Set((await this.listEntries()).map(entryKey));
+  }
+
+  async record(entry: SyncEntry): Promise<void> {
+    const entries = await this.listEntries();
+    const key = entryKey(entry);
+    const next = entries.filter((e) => entryKey(e) !== key);
+    next.push(entry);
+    await writeJsonFileAtomic(this.dir, this.path, { entries: next } satisfies StateFile);
   }
 }

@@ -1,7 +1,7 @@
 import type { FolderKind, UploadRequest, UploadResult } from "../../domain/publish/publishModels";
 import type { DriveUploader } from "../../ports/DriveUploader";
 
-const UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
+const UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink";
 
 interface TokenSource {
   getToken(): Promise<string>;
@@ -47,8 +47,8 @@ export class GoogleDriveUploader implements DriveUploader {
       }
       throw new Error(`Google Drive upload failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
     }
-    const data = (await res.json()) as { id?: string; name?: string };
+    const data = (await res.json()) as { id?: string; name?: string; webViewLink?: string };
     if (!data.id) throw new Error("Google Drive upload response missing id");
-    return { id: data.id, name: data.name ?? req.name };
+    return { id: data.id, name: data.name ?? req.name, url: data.webViewLink };
   }
 }

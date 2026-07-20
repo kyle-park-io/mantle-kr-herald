@@ -4,12 +4,13 @@ import { TwitterClient } from "../adapters/twitterapi/TwitterClient";
 import { TwitterApiSourceGateway } from "../adapters/twitterapi/TwitterApiSourceGateway";
 import { LocalJsonStore } from "../adapters/store/LocalJsonStore";
 import { CollectAuthoredContent } from "../app/CollectAuthoredContent";
+import { paths } from "../paths";
 
 const target = process.argv[2] ?? "Mantle_Official";
 
 const client = new TwitterClient(loadConfig().apiKey);
 const source = new TwitterApiSourceGateway(client);
-const store = new LocalJsonStore("output/x");
+const store = new LocalJsonStore(paths.xDir);
 const usecase = new CollectAuthoredContent(source, store, store);
 
 const result = await usecase.run(target);

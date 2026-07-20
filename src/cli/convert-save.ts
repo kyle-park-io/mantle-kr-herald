@@ -9,6 +9,7 @@ import { readJsonFile } from "../shared/store/jsonFile";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import type { PendingVariant } from "../app/PrepareConversions";
 import type { FewShotStore } from "../ports/FewShotStore";
+import { paths } from "../paths";
 
 const id = argValue("--id");
 const type = argValue("--type") as ConversionType | undefined;
@@ -18,16 +19,16 @@ if (!id || !type || !file || !ALL_TYPES.includes(type)) {
   throw new Error("Usage: pnpm convert:save --id <itemId> --type <x|kol|pr> --file <ko.txt> [--approve]");
 }
 
-const conversionStore = new JsonConversionStore("output/variants");
+const conversionStore = new JsonConversionStore(paths.variantsDir);
 
-const pending = await readJsonFile<PendingVariant[]>("output/variants/pending.json", []);
+const pending = await readJsonFile<PendingVariant[]>(paths.variantsPending, []);
 let sourceKorean = pending.find((p) => p.itemId === id && p.type === type)?.sourceKorean;
 if (sourceKorean === undefined) {
   // Not in the current worksheet batch — fall back to an already-saved variant, so you
   // can re-approve a "converted" variant after pending.json was overwritten by a later prepare.
   const existing = (await conversionStore.loadAll()).find((v) => v.itemId === id && v.type === type);
   if (!existing) {
-    throw new Error(`Variant ${id}/${type} not found in output/variants/{pending,variants}.json (run convert:prepare first)`);
+    throw new Error(`Variant ${id}/${type} not found in ${paths.variantsDir} (run convert:prepare first)`);
   }
   sourceKorean = existing.sourceKorean;
 }
@@ -35,9 +36,9 @@ if (sourceKorean === undefined) {
 const convertedText = (await readFile(file, "utf8")).trim();
 
 const fewShotByType: Record<ConversionType, FewShotStore> = {
-  x: new JsonTypedFewShotStore("conversion", "x"),
-  kol: new JsonTypedFewShotStore("conversion", "kol"),
-  pr: new JsonTypedFewShotStore("conversion", "pr"),
+  x: new JsonTypedFewShotStore(paths.conversionConfigDir, "x"),
+  kol: new JsonTypedFewShotStore(paths.conversionConfigDir, "kol"),
+  pr: new JsonTypedFewShotStore(paths.conversionConfigDir, "pr"),
 };
 
 const usecase = new SaveConversion(conversionStore, fewShotByType);

@@ -1,9 +1,12 @@
 import "./registerErrorHandler";
+import { skipIfLocal } from "./skipIfLocal";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { GoogleDriveProvisioner } from "../adapters/drive/GoogleDriveProvisioner";
 import { loadGoogleDriveInitConfig, loadGoogleAuthConfig } from "../config";
 
 const force = process.argv.includes("--force");
+skipIfLocal("drive:init");
+
 const config = loadGoogleDriveInitConfig();
 const auth = await createGoogleAuth(loadGoogleAuthConfig());
 const provisioner = new GoogleDriveProvisioner(auth);
