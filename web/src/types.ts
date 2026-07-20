@@ -40,3 +40,18 @@ export type StorageMode = "local" | "cloud";
 export interface AppConfig {
   storageMode: StorageMode;
 }
+
+export interface AppStatus {
+  storageMode: StorageMode;
+  funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
+  sync: { published: number; unsynced: number; stale: number };
+}
+
+export interface PublishStateRow {
+  itemId: string;
+  status: string;
+  target: string;
+  url?: string;
+  remoteId?: string;
+  fileName?: string;
+}
