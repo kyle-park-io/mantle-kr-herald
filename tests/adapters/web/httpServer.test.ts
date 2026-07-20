@@ -25,10 +25,10 @@ function fakeDeps(): ApiDeps {
   return {
     translationStore: { loadAll: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }], upsert: async () => {}, listTranslatedIds: async () => new Set() },
     saveTranslation: { run: async () => ({ itemId: "x:1", promoted: false }) } as unknown as ApiDeps["saveTranslation"],
-    buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
+    publishOne: async () => ({ uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }),
     storageMode: "cloud",
     ...fakeRenderingDeps(),
-    loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 } }),
+    loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 }, availableTargets: ["local"] }),
     loadPublishState: async () => [],
   };
 }
@@ -75,10 +75,10 @@ describe("startServer", () => {
           return { itemId: "x:1", promoted: false };
         },
       } as unknown as ApiDeps["saveTranslation"],
-      buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
+      publishOne: async () => ({ uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }),
       storageMode: "cloud",
       ...fakeRenderingDeps(),
-      loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 } }),
+      loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 }, availableTargets: ["local"] }),
       loadPublishState: async () => [],
     };
     const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
@@ -109,10 +109,10 @@ describe("startServer", () => {
         listTranslatedIds: async () => new Set(),
       },
       saveTranslation: { run: async () => ({ itemId: "x:1", promoted: false }) } as unknown as ApiDeps["saveTranslation"],
-      buildPublisher: async () => ({ run: async () => ({ uploaded: 0, failed: 0, byDrive: {} }) }) as unknown as Awaited<ReturnType<ApiDeps["buildPublisher"]>>,
+      publishOne: async () => ({ uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }),
       storageMode: "cloud",
       ...fakeRenderingDeps(),
-      loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 } }),
+      loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { published: 0, unsynced: 0, stale: 0 }, availableTargets: ["local"] }),
       loadPublishState: async () => [],
     };
     const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });

@@ -20,7 +20,6 @@ function makeDeps(
   list: Translation[],
   renderings: ChannelRendering[] = [],
   variants: ContentVariant[] = [],
-  onBuildPublisher?: (target: string | undefined) => void,
 ): ApiDeps {
   const state = { list: [...list] };
   const translationStore = {
@@ -36,12 +35,7 @@ function makeDeps(
       return { itemId: input.itemId, promoted: input.approve };
     },
   } as unknown as ApiDeps["saveTranslation"];
-  const buildPublisher = async (target: string | undefined) => {
-    onBuildPublisher?.(target);
-    return { run: async () => ({ uploaded: 2, failed: 0, byDrive: { google: 2 } }) } as unknown as Awaited<
-      ReturnType<ApiDeps["buildPublisher"]>
-    >;
-  };
+  const publishOne = async (_id: string, target: string) => ({ uploaded: 1, updated: 0, failed: 0, failures: [], byDrive: { [target]: 1 } });
 
   const rstate = { list: renderings.map((r) => ({ ...r })) };
   const formattingStore = {
@@ -75,7 +69,7 @@ function makeDeps(
   return {
     translationStore,
     saveTranslation,
-    buildPublisher,
+    publishOne,
     storageMode: "cloud",
     formattingStore,
     conversionStore,
@@ -85,6 +79,7 @@ function makeDeps(
       storageMode: "cloud" as const,
       funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
       sync: { published: 1, unsynced: 2, stale: 0 },
+      availableTargets: ["local"],
     }),
     loadPublishState: async () => [
       { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
@@ -126,20 +121,35 @@ describe("handleApi", () => {
     expect((res.json as Translation).status).toBe("approved");
   });
 
-  it("POST /api/publish runs the publisher for the target", async () => {
-    const d = makeDeps([tr()]);
-    const res = await handleApi(d, "POST", "/api/publish", { target: "google" });
+  it("POST /api/translations/:id/publish publishes just that item to the target", async () => {
+    const d = makeDeps([tr({ itemId: "x:1" })]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A1/publish", { target: "local" });
     expect(res.status).toBe(200);
-    expect(res.json).toEqual({ uploaded: 2, failed: 0, byDrive: { google: 2 } });
+    expect(res.json).toEqual({ uploaded: 1, updated: 0, failed: 0, failures: [], byDrive: { local: 1 } });
   });
 
-  it("POST /api/publish with no target still calls buildPublisher with undefined and returns its result", async () => {
-    const seen: (string | undefined)[] = [];
-    const d = makeDeps([tr()], [], [], (target) => seen.push(target));
-    const res = await handleApi(d, "POST", "/api/publish", {});
+  it("POST /api/translations/:id/publish is 400 without a target", async () => {
+    const d = makeDeps([tr({ itemId: "x:1" })]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A1/publish", {});
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /api/translations/:id/publish is 404 for an unknown id", async () => {
+    const d = makeDeps([tr({ itemId: "x:1" })]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A9/publish", { target: "local" });
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /api/translations/:id/unapprove reverts approved → translated", async () => {
+    const d = makeDeps([tr({ itemId: "x:1", status: "approved", approvedAt: "a" })]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A1/unapprove", undefined);
     expect(res.status).toBe(200);
-    expect(res.json).toEqual({ uploaded: 2, failed: 0, byDrive: { google: 2 } });
-    expect(seen).toEqual([undefined]);
+    expect((res.json as Translation).status).toBe("translated");
+  });
+
+  it("GET /api/status includes availableTargets", async () => {
+    const res = await handleApi(makeDeps([]), "GET", "/api/status", undefined);
+    expect((res.json as { availableTargets: string[] }).availableTargets).toEqual(["local"]);
   });
 
   it("unknown route is 404", async () => {
@@ -184,6 +194,7 @@ describe("handleApi", () => {
       storageMode: "cloud",
       funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
       sync: { published: 1, unsynced: 2, stale: 0 },
+      availableTargets: ["local"],
     });
   });
 
