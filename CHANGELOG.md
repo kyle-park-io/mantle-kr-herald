@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading — action required for existing installs
+
+`HERALD_STORAGE_MODE` is now **required** and is never inferred. A fresh clone gets it from
+`.env.example`, but an existing `.env` predates it, so the cloud commands (`drive:publish`,
+`drive:init`, `sheet:init`, `targets:list`, `history:record`) will fail until you add one line:
+
+```bash
+# append to your existing .env — "cloud" if Google/Lark Drive is your record of truth
+HERALD_STORAGE_MODE=cloud
+```
+
+Defaulting it was considered and rejected. Defaulting to `local` would let a cloud operator run
+`drive:publish`, see `local mode — skipped` and **exit 0**, and believe work reached Drive when
+nothing was uploaded — the exact failure the explicit mode exists to prevent. Failing loudly once
+is the cheaper outcome.
+
 ### Added
 
 - **`pnpm status`** — a pipeline-visibility command: reads the local `output/` stores and prints a

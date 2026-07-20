@@ -45,7 +45,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `drive:publish`, `drive:init`, `sheet:init`, `targets:list`, `history:record` | `"<command>: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)"`을 출력하고 종료 코드 `0` | 정상 실행 |
 | `pnpm archive` | 유일한 안전망(§5) | Drive가 원본이므로 보조 수단 |
 | `pnpm status` | 개수(`unsynced`/`stale` 포함)는 동일하게 표시하되 `⚠` 없이 `(local mode — publishing disabled)`만 덧붙임 — `local`에서는 게시가 아예 일어나지 않으므로 unsynced가 정상 상태 | 동기화되지 않은/오래된(stale) 항목이 있으면 `⚠`로 경고 |
-| `pnpm doctor` | 현재 모드(`mode: local`)를 보고 | 현재 모드(`mode: cloud`)를 보고 |
+| `pnpm doctor` | 클라우드 자격 증명 검사 실패를 `warn`으로 낮추고 종료 코드 `0` — `local`에서는 없어도 정상이기 때문 | 실패는 그대로 `fail`이고 종료 코드 `1` |
 
 스킵은 실패가 아니라 정상 동작이므로 종료 코드는 `0`입니다 — 비영(非零) 종료 코드는 래퍼 스크립트를
 깨뜨릴 수 있기 때문입니다. 이 게이트는 다섯 개 CLI(`src/cli/publish.ts`, `drive-init.ts`,

@@ -7,15 +7,21 @@ const VALID: readonly StorageMode[] = ["local", "cloud"];
  * Never inferred from which credentials happen to be present: silently choosing "local" while
  * the operator believes work is backed up to Drive is the one failure this must not allow.
  */
+/**
+ * The literal line to paste, not a pointer to another command: `pnpm doctor` is the documented
+ * first stop, so telling the reader to run it would be circular when doctor is what printed this.
+ * A hint costs nothing against the never-inferred rule — it still refuses to pick for you.
+ */
+const REMEDY =
+  'Add HERALD_STORAGE_MODE=local to .env (or "cloud" if Google/Lark Drive is your record of truth).';
+
 export function parseStorageMode(raw: string | undefined): StorageMode {
   const value = raw?.trim();
   if (!value) {
-    throw new Error(
-      'Missing required environment variable: HERALD_STORAGE_MODE (expected "local" or "cloud"). Run pnpm doctor.',
-    );
+    throw new Error(`Missing required environment variable: HERALD_STORAGE_MODE. ${REMEDY}`);
   }
   if (!VALID.includes(value as StorageMode)) {
-    throw new Error(`Invalid HERALD_STORAGE_MODE: ${value} (expected "local" or "cloud"). Run pnpm doctor.`);
+    throw new Error(`Invalid HERALD_STORAGE_MODE: ${value} (expected "local" or "cloud"). ${REMEDY}`);
   }
   return value as StorageMode;
 }
