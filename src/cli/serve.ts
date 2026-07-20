@@ -61,5 +61,5 @@ const deps: ApiDeps = {
   approveRendering: new ApproveRendering(formattingStore),
 };
 
-startServer(deps, { port, staticDir: join("web", "dist") });
+startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist") });
 console.log(`Review dashboard on http://localhost:${port}  (build the UI first: pnpm build:web)`);
