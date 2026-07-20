@@ -18,7 +18,7 @@
 - **Valid publish targets come from one exported constant.** Usage strings and error messages are interpolated from it, never hardcoded — PR #33 fixed exactly this bug for `ConversionType`.
 - **`main` is branch-protected.** Work on `feat/local-file-publishing` (already created and holding the spec commit); integration is by PR.
 - Verification commands for every task: `pnpm test`, `pnpm typecheck`, and — only for tasks touching `web/` — `pnpm typecheck:web`.
-- The existing `tests/app/publishTranslations.test.ts` must keep passing **untouched**. If a task seems to require editing it, the use-case was not actually reused — stop and reconsider.
+- **No assertion in `tests/app/publishTranslations.test.ts` may be weakened, removed, or rewritten.** That file pins the behaviour this change must preserve; if production code seems to require editing an expectation there, the use-case was not actually reused — stop and reconsider. Mechanically extracting a shared test fixture out of it *is* allowed (Task 2 does exactly that), provided every `it(...)` and every `expect(...)` survives verbatim and the file's test count is unchanged.
 
 ---
 
@@ -136,10 +136,13 @@ The adapter itself, plus the regression invariant that motivated its `update()` 
 
 **Files:**
 - Create: `src/adapters/drive/LocalFileUploader.ts`
-- Test: `tests/adapters/drive/localFileUploader.test.ts`
+- Create: `tests/support/publishStore.ts` (fixture extracted from the existing test)
+- Modify: `tests/app/publishTranslations.test.ts` — **import-only change**, see Step 5
+- Test: `tests/adapters/drive/localFileUploader.test.ts`, `tests/app/publishLocalRoundTrip.test.ts`
 
 **Interfaces:**
-- Consumes: `writeTextFileAtomic` from Task 1. `DriveUploader` (`src/ports/DriveUploader.ts`), `UploadRequest`/`UploadResult`/`FolderKind` (`src/domain/publish/publishModels.ts`).
+- Consumes: `writeTextFileAtomic` from Task 1. `DriveUploader` (`src/ports/DriveUploader.ts`), `UploadRequest`/`UploadResult` (`src/domain/publish/publishModels.ts`).
+- Produces (tests): `InMemoryPublishStore` from `tests/support/publishStore.ts`.
 - Produces: `class LocalFileUploader implements DriveUploader`, constructed as `new LocalFileUploader(rootDir: string)`, with `readonly name = "local"`. `upload(req)` and `update(remoteId, req)` both resolve to `{ id, name }` where **`id` is the path relative to `rootDir`** (e.g. `approved/2026-07-21-foo-x-1.md`) and `url` is omitted.
 
 - [ ] **Step 1: Write the failing test**
@@ -148,11 +151,10 @@ Create `tests/adapters/drive/localFileUploader.test.ts`:
 
 ```ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalFileUploader } from "../../../src/adapters/drive/LocalFileUploader";
-import { isStrandedTempFile } from "../../../src/storage/retention";
 
 let root: string;
 beforeEach(async () => {
@@ -213,19 +215,10 @@ describe("LocalFileUploader", () => {
 
     expect(await readFile(join(root, second.id), "utf8")).toBe("new");
   });
-
-  it("leaves debris that pnpm clean recognises if a write is interrupted", async () => {
-    // The uploader renames a temp sibling over the target; a crash between write and rename
-    // strands a file matching the convention clean.ts sweeps.
-    const uploader = new LocalFileUploader(root);
-    await uploader.upload({ name: "x-1.md", content: "c", folder: "approved" });
-    const stranded = `x-1.md.tmp-${process.pid}-${Date.now()}-00000000-0000-0000-0000-000000000000`;
-    await writeFile(join(root, "approved", stranded), "partial", "utf8");
-
-    expect(isStrandedTempFile(stranded)).toBe(true);
-  });
 });
 ```
+
+**Do not add a test asserting `isStrandedTempFile("…tmp-…")` is true.** Feeding a hand-built string to that predicate exercises the regex in `src/storage/retention.ts`, which `tests/storage/retention.test.ts` already covers, and never touches the uploader. The property that actually matters here — a completed write leaves no temp file — is pinned by Task 1's `leaves no temp file behind on success`, which runs against the same `writeTextFileAtomic` this adapter calls.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -292,9 +285,51 @@ export class LocalFileUploader implements DriveUploader {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `pnpm vitest run tests/adapters/drive/localFileUploader.test.ts`
-Expected: PASS — 7 tests.
+Expected: PASS — 6 tests.
 
-- [ ] **Step 5: Write the failing regression-invariant test**
+- [ ] **Step 5: Extract the shared `InMemoryPublishStore` fixture**
+
+The next step needs the same in-memory `PublishStore` that `tests/app/publishTranslations.test.ts` already defines. Move it rather than copying it, so the two files cannot drift.
+
+Create `tests/support/publishStore.ts`:
+
+```ts
+import type { PublishStore } from "../../src/ports/PublishStore";
+import { entryKey, type SyncEntry } from "../../src/domain/publish/syncLedger";
+
+/** In-memory PublishStore for tests: upserts by entryKey, exposes the raw rows for assertions. */
+export class InMemoryPublishStore implements PublishStore {
+  public entries: SyncEntry[] = [];
+
+  get keys(): Set<string> {
+    return new Set(this.entries.map(entryKey));
+  }
+
+  async listEntries(): Promise<SyncEntry[]> {
+    return this.entries;
+  }
+
+  async record(entry: SyncEntry): Promise<void> {
+    this.entries = this.entries.filter((e) => entryKey(e) !== entryKey(entry));
+    this.entries.push(entry);
+  }
+}
+```
+
+In `tests/app/publishTranslations.test.ts`, delete the local `class InMemoryPublishStore { … }` declaration and add:
+
+```ts
+import { InMemoryPublishStore } from "../support/publishStore";
+```
+
+Change nothing else in that file — every `it(...)` and every `expect(...)` stays verbatim. If the `PublishStore` type import becomes unused after the deletion, remove that one import; leave the rest.
+
+- [ ] **Step 6: Verify the extraction changed no behaviour**
+
+Run: `pnpm vitest run tests/app/publishTranslations.test.ts`
+Expected: PASS with the **same test count as before the edit**. Record that number. A changed count means an assertion was lost — revert and redo the extraction.
+
+- [ ] **Step 7: Write the regression-invariant test**
 
 This is the scenario that motivated the whole `update()` contract. Create `tests/app/publishLocalRoundTrip.test.ts`:
 
@@ -308,8 +343,7 @@ import { PublishTranslations } from "../../src/app/PublishTranslations";
 import { publishFileName } from "../../src/domain/publish/renderers";
 import type { Translation } from "../../src/domain/translation/models";
 import type { TranslationStore } from "../../src/ports/TranslationStore";
-import type { PublishStore } from "../../src/ports/PublishStore";
-import { entryKey, type SyncEntry } from "../../src/domain/publish/syncLedger";
+import { InMemoryPublishStore } from "../support/publishStore";
 
 let root: string;
 beforeEach(async () => {
@@ -318,17 +352,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
-
-class InMemoryPublishStore implements PublishStore {
-  public entries: SyncEntry[] = [];
-  async listEntries() {
-    return this.entries;
-  }
-  async record(entry: SyncEntry) {
-    this.entries = this.entries.filter((e) => entryKey(e) !== entryKey(entry));
-    this.entries.push(entry);
-  }
-}
 
 function store(list: Translation[]): TranslationStore {
   return { loadAll: async () => list, upsert: async () => {}, listTranslatedIds: async () => new Set() };
@@ -390,15 +413,15 @@ describe("publishing to the local filesystem across a re-approval", () => {
 });
 ```
 
-- [ ] **Step 6: Run it**
+- [ ] **Step 8: Run it**
 
-Run: `pnpm vitest run tests/app/publishLocalRoundTrip.test.ts`
-Expected: PASS with no production-code change — the use-case, ledger, and `isStale` were reused as designed. **If it fails, do not edit `PublishTranslations`**; the failure means `LocalFileUploader` does not honour the port contract. Fix the adapter.
+Run: `pnpm test`
+Expected: PASS with no production-code change — the use-case, ledger, and `isStale` were reused as designed. **If the round-trip test fails, do not edit `PublishTranslations`**; the failure means `LocalFileUploader` does not honour the port contract. Fix the adapter.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/adapters/drive/LocalFileUploader.ts tests/adapters/drive/localFileUploader.test.ts tests/app/publishLocalRoundTrip.test.ts
+git add src/adapters/drive/LocalFileUploader.ts tests/adapters/drive/localFileUploader.test.ts tests/app/publishLocalRoundTrip.test.ts tests/support/publishStore.ts tests/app/publishTranslations.test.ts
 git commit -m "feat(publish): add LocalFileUploader writing publish docs to disk
 
 update() moves rather than overwrites: publishFileName embeds approvedAt's
