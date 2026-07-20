@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { ConversionType } from "../../domain/conversion/models";
+import { ALL_TYPES, type ConversionType } from "../../domain/conversion/models";
 import type { FewShotExample } from "../../domain/translation/models";
 import type { FewShotStore } from "../../ports/FewShotStore";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
@@ -24,4 +24,11 @@ export class JsonTypedFewShotStore implements FewShotStore {
     }
     await writeJsonFileAtomic(this.dir, this.path, all);
   }
+}
+
+/** One store per conversion type, built from ALL_TYPES so a new type needs no wiring here. */
+export function fewShotStoresByType(dir: string): Record<ConversionType, FewShotStore> {
+  const byType = {} as Record<ConversionType, FewShotStore>;
+  for (const type of ALL_TYPES) byType[type] = new JsonTypedFewShotStore(dir, type);
+  return byType;
 }

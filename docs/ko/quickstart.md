@@ -77,7 +77,7 @@ pnpm translate:save --id <itemId> --file <korean.txt> --approve
 - `translation/glossary.json` — 고유명사·용어 번역 규칙
 - `translation/style-guide.md` — 번역 톤·문체 가이드
 - `translation/locale.json` — 로케일 설정
-- `conversion/{x,kol,pr}.md` — 채널별(타입별) 변환 스티어링
+- `conversion/{x,announcement,kol,pr}.md` — 타입별 변환 스티어링
 
 이 파일들은 로컬에만 존재하는 팀 자산입니다. 커밋되지 않으니 백업이 필요하면 직접 관리하세요.
 

@@ -8,10 +8,9 @@ import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
 import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
-import { JsonTypedFewShotStore } from "../adapters/store/JsonTypedFewShotStore";
+import { fewShotStoresByType } from "../adapters/store/JsonTypedFewShotStore";
 import { PrepareConversions, type ConversionSelector } from "../app/PrepareConversions";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
-import type { FewShotStore } from "../ports/FewShotStore";
 import { archiveFile } from "../shared/store/archive";
 import { writeJsonFileAtomic } from "../shared/store/jsonFile";
 import { paths } from "../paths";
@@ -33,11 +32,7 @@ if (typesArg) {
   selector.types = typesArg as ConversionType[];
 }
 
-const fewShotByType: Record<ConversionType, FewShotStore> = {
-  x: new JsonTypedFewShotStore(paths.conversionConfigDir, "x"),
-  kol: new JsonTypedFewShotStore(paths.conversionConfigDir, "kol"),
-  pr: new JsonTypedFewShotStore(paths.conversionConfigDir, "pr"),
-};
+const fewShotByType = fewShotStoresByType(paths.conversionConfigDir);
 
 const usecase = new PrepareConversions(
   new JsonTranslationStore(paths.translationsDir),

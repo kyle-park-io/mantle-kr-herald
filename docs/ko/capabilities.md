@@ -97,7 +97,7 @@ Google Sheet (데이터 허브 — `targets`/`history` 탭)
 | **C. 한국어 번역** | 수집된 X/Lark 콘텐츠로 번역 워크시트를 만들고, 로컬 에이전트가 채운 한국어 번역을 저장. 승인 시 few-shot 예시로 승격 | `pnpm translate:prepare`, `pnpm translate:save`, `pnpm glossary` | — |
 | **D. Drive 업로드** | 승인/번역 완료된 결과를 Google Drive와 Lark Drive에 마크다운으로 업로드 | `pnpm drive:publish`, `pnpm drive:init`, `pnpm google:auth` | [`drive-setup-guide.md`](../guides/drive-setup-guide.md), [`google-drive-setup-guide.md`](../guides/google-drive-setup-guide.md), [`lark-setup-guide.md`](../guides/lark-setup-guide.md) |
 | **E. 검수 대시보드** | 번역(1차)·채널 포맷(2차)을 검수·수정·승인·발행하는 로컬 웹 대시보드 | `pnpm serve`, `pnpm build:web`, `pnpm dev:web` | — |
-| **F. 콘텐츠 가공** | 승인된 번역을 §5 항목 변환(타입별 X/KOL/PR)과 §6 채널 포맷(코드 변환 + 선택적 에이전트 다듬기) 두 단계로 채널용 게시물로 가공 | `pnpm convert:prepare`, `pnpm convert:save`, `pnpm format`, `pnpm format:save` | — |
+| **F. 콘텐츠 가공** | 승인된 번역을 §5 항목 변환(타입별 X/공지/KOL/PR)과 §6 채널 포맷(코드 변환 + 선택적 에이전트 다듬기) 두 단계로 채널용 게시물로 가공 | `pnpm convert:prepare`, `pnpm convert:save`, `pnpm format`, `pnpm format:save` | — |
 | **G. Google Sheet 데이터 허브** | 팀이 함께 편집하는 배포 대상 목록(`targets` 탭)과 게시 이력(`history` 탭) 관리 | `pnpm sheet:init`, `pnpm targets:list`, `pnpm history:record` | [`external-integrations.md`](../architecture/external-integrations.md) |
 
 ## 6. 다음으로

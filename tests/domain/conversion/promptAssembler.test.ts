@@ -5,6 +5,9 @@ import {
   assembleConversionWorksheet,
   typeLabel,
 } from "../../../src/domain/conversion/promptAssembler";
+import { ALL_TYPES } from "../../../src/domain/conversion/models";
+import { DEFAULT_CHANNELS_BY_TYPE } from "../../../src/domain/formatting/models";
+import { fewShotStoresByType } from "../../../src/adapters/store/JsonTypedFewShotStore";
 import type { GlossaryEntry, Locale, FewShotExample } from "../../../src/domain/translation/models";
 
 const locale: Locale = {
@@ -17,8 +20,19 @@ const fewShots: FewShotExample[] = [{ source: "승인된 한글", target: "변�
 describe("typeLabel", () => {
   it("maps types to display labels", () => {
     expect(typeLabel("x")).toBe("X");
+    expect(typeLabel("announcement")).toBe("공지");
     expect(typeLabel("kol")).toBe("KOL");
     expect(typeLabel("pr")).toBe("PR");
+  });
+
+  // A new ConversionType must not silently skip its label, channel mapping or few-shot store.
+  it("every type in ALL_TYPES has a label, default channels and a few-shot store", () => {
+    const stores = fewShotStoresByType("/tmp/does-not-matter");
+    for (const type of ALL_TYPES) {
+      expect(typeLabel(type), `label for ${type}`).toBeTruthy();
+      expect(DEFAULT_CHANNELS_BY_TYPE[type]?.length, `channels for ${type}`).toBeGreaterThan(0);
+      expect(stores[type], `few-shot store for ${type}`).toBeDefined();
+    }
   });
 });
 

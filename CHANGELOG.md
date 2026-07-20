@@ -52,6 +52,16 @@ is the cheaper outcome.
 
 ### Added
 
+- **`announcement` conversion type** — community announcements (Telegram 공지방 + KakaoTalk) are now
+  their own conversion type, steered by `conversion/announcement.md`. They were previously produced
+  by the `kol` type, which is a different kind of writing: an announcement and a request sent to a
+  KOL room travel over the same Telegram transport but follow opposite CTA rules (X and KOL copy
+  avoid `~하세요` imperatives for regulatory reasons; an announcement uses them). Conversion type
+  answers *what is written*, `Channel` answers *where it goes* — the two axes are deliberately not
+  1:1, and `DEFAULT_CHANNELS_BY_TYPE` now reflects that: `announcement` fans out to
+  `telegram`+`kakao`, and `kakao` moved off `x` (a KakaoTalk post reads like an announcement, not
+  like a tweet). Existing `x` variants are unaffected; no stored data needed migrating.
+
 - **`pnpm status`** — a pipeline-visibility command: reads the local `output/` stores and prints a
   per-stage funnel (collected → translated → converted → rendered → published, with approved
   sub-counts) so you can see how far data has flowed. Offline.
@@ -94,6 +104,18 @@ is the cheaper outcome.
   `docs/README.md` records the documentation rules.
 
 ### Changed
+
+- **The steering config now carries the KR team's real guidelines.** `translation/style-guide.md`
+  (46 → 200 lines), `glossary.json` (36 → 78 terms), `locale.json`, `few-shot.json` and
+  `conversion/x.md` (8 → 156 lines) were migrated from the team's Lark documents, which stay the
+  canonical source — each file's `> 출처:` line links back to it. Review checklists live beside
+  them as `conversion/checklist.<type>.md` and are deliberately **not** loaded into any prompt.
+  Note `promptAssembler.renderLocale()` renders only the five fixed `Locale` fields; extra keys in
+  `locale.json` load but never reach the prompt.
+
+- **`pnpm doctor` checks a guide for every conversion type**, not just `conversion/x.md`.
+  `loadTypeGuide()` falls back to an empty string when the file is missing, so a type without its
+  `.md` used to convert with no steering at all and no warning.
 
 - **The real steering config left git.** `translation/` and `conversion/` now track only
   `*.example.*` skeletons; the actual glossary, style guide and few-shot corpus are local. Routine

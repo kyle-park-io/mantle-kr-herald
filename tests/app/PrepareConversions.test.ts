@@ -6,7 +6,7 @@ import type { TranslationConfig } from "../../src/ports/TranslationConfig";
 import type { ConversionConfig } from "../../src/ports/ConversionConfig";
 import type { ConversionStore } from "../../src/ports/ConversionStore";
 import type { FewShotStore } from "../../src/ports/FewShotStore";
-import type { ConversionType } from "../../src/domain/conversion/models";
+import { ALL_TYPES, type ConversionType } from "../../src/domain/conversion/models";
 import type { Translation, Locale } from "../../src/domain/translation/models";
 
 const locale: Locale = { dateFormat: "d", numberFormat: "n", currency: "USD", unit: "u", honorific: "합니다체" };
@@ -22,7 +22,11 @@ const glossaryStore: GlossaryStore = { load: async () => [], upsertEntry: async 
 const config: TranslationConfig = { loadStyleGuide: async () => ({ text: "" }), loadLocale: async () => locale };
 const conversionConfig: ConversionConfig = { loadTypeGuide: async (t) => ({ text: `guide-${t}` }) };
 const emptyFewShot = (): FewShotStore => ({ load: async () => [], add: async () => {} });
-const fewShotByType = (): Record<ConversionType, FewShotStore> => ({ x: emptyFewShot(), kol: emptyFewShot(), pr: emptyFewShot() });
+const fewShotByType = (): Record<ConversionType, FewShotStore> => {
+  const byType = {} as Record<ConversionType, FewShotStore>;
+  for (const t of ALL_TYPES) byType[t] = emptyFewShot();
+  return byType;
+};
 const convStore = (keys: string[] = []): ConversionStore => ({
   loadAll: async () => [], upsert: async () => {}, listConvertedKeys: async () => new Set(keys),
 });
@@ -34,11 +38,13 @@ describe("PrepareConversions", () => {
       glossaryStore, config, conversionConfig, fewShotByType(), convStore(["x:1:x"]),
     );
     const { worksheet, pending } = await uc.run({});
-    // x:2 is not approved → excluded; x:1 approved → kol + pr (x already converted)
+    // x:2 is not approved → excluded; x:1 approved → announcement + kol + pr (x already converted)
     expect(pending).toEqual([
+      { itemId: "x:1", type: "announcement", sourceKorean: "승인 카피" },
       { itemId: "x:1", type: "kol", sourceKorean: "승인 카피" },
       { itemId: "x:1", type: "pr", sourceKorean: "승인 카피" },
     ]);
+    expect(worksheet).toContain("guide-announcement");
     expect(worksheet).toContain("guide-kol");
     expect(worksheet).toContain("guide-pr");
     expect(worksheet).not.toContain("## 유형: X");
@@ -60,8 +66,8 @@ describe("PrepareConversions", () => {
       glossaryStore, config, conversionConfig, fewShotByType(), convStore(),
     );
     const { pending } = await uc.run({ limit: 2 });
-    // 2 items selected × 3 types = 6 variants; pr present for both selected items
-    expect(pending).toHaveLength(6);
+    // 2 items selected × ALL_TYPES; pr present for both selected items
+    expect(pending).toHaveLength(2 * ALL_TYPES.length);
     expect(pending.filter((p) => p.type === "pr").map((p) => p.itemId)).toEqual(["x:1", "x:2"]);
   });
 
