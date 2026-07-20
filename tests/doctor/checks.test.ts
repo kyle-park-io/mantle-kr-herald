@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { configCheck, cloudCheck, parseScopes, scopeCheck, accessResult } from "../../src/doctor/checks";
+import { configCheck, cloudCheck, optionalCheck, parseScopes, scopeCheck, accessResult } from "../../src/doctor/checks";
 
 const DRIVE = "https://www.googleapis.com/auth/drive.file";
 const SHEETS = "https://www.googleapis.com/auth/spreadsheets";
@@ -46,6 +46,27 @@ describe("cloudCheck", () => {
     const r = cloudCheck("X", throwMissing, true, "not needed in local mode");
     expect(r.status).toBe("warn");
     expect(r.detail).toContain("not needed in local mode");
+    expect(r.detail).toContain("FOO");
+  });
+});
+
+describe("optionalCheck", () => {
+  const throwMissing = () => {
+    throw new Error("Missing required environment variable: FOO");
+  };
+
+  it("ok when the loader does not throw", () => {
+    expect(optionalCheck("X", () => {}, "only if you use X", "set")).toEqual({
+      name: "X",
+      status: "ok",
+      detail: "set",
+    });
+  });
+
+  it("warns (never fails) when the loader throws, with no mode argument — optional in every mode", () => {
+    const r = optionalCheck("X", throwMissing, "only if you use X");
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("only if you use X");
     expect(r.detail).toContain("FOO");
   });
 });
