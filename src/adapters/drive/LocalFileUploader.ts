@@ -19,10 +19,11 @@ export class LocalFileUploader implements DriveUploader {
   }
 
   /**
-   * Moves rather than overwrites. `publishFileName` embeds approvedAt's date, so re-approving on a
-   * later day changes the filename — a plain overwrite would leave the old file behind as a
-   * duplicate that nothing on disk distinguishes from the current one. Google avoids this by
-   * PATCHing a file id; addressing by path means the local equivalent is deleting the old path.
+   * Deletes the old file rather than overwriting it in place or leaving it as a duplicate.
+   * `publishFileName` embeds approvedAt's date, so re-approving on a later day changes the
+   * filename — a plain overwrite would leave the old file behind as a duplicate that nothing on
+   * disk distinguishes from the current one. Google avoids this by PATCHing a file id; addressing
+   * by path means the local equivalent is deleting the old path.
    *
    * `remoteId` is a path relative to rootDir, as returned by upload().
    */

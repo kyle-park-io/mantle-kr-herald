@@ -39,8 +39,12 @@ HERALD_STORAGE_MODE=local|cloud
 언급하는 에러와 함께 `pnpm doctor` 실행을 안내하며 즉시 실패합니다
 (`src/storage/mode.ts`의 `parseStorageMode`).
 
-**예외는 `pnpm status`뿐입니다.** 클라우드 명령이 아니라 읽기 전용 진단이므로 모드 자체를 신경 쓰지
-않습니다 — `src/cli/status.ts`는 `parseStorageMode`도 `tryParseStorageMode`도 import하지 않고,
+**저장 모드를 실제로 읽어서 검사하는 명령은 소수뿐입니다** — 위 네 개 CLI(`drive-init`/
+`sheet-init`/`targets-list`/`history-record`), `pnpm doctor`, `pnpm drive:publish`, `pnpm serve`가
+전부입니다. `pnpm collect`, `translate:*`, `convert:*`, `format`, `pnpm archive`, `pnpm clean` 등
+나머지 명령은 저장 모드를 아예 참조하지 않으므로, 모드가 없거나 잘못돼도 이들에는 애초에 영향이
+없습니다. `pnpm status`도 이쪽에 가깝지만 이유가 다릅니다 — 클라우드 명령이 아니라 읽기 전용
+진단이므로, `src/cli/status.ts`는 `parseStorageMode`도 `tryParseStorageMode`도 import하지 않고
 저장 모드를 전혀 읽지 않은 채 `output/` 아래 로컬 저장소 파일들만 읽어 계산합니다. 그래서 모드가
 없거나 잘못 설정돼 있어도 멈추지 않으며, 아래 표처럼 `local`과 `cloud`에서 정확히 동일하게 경고를
 표시합니다.

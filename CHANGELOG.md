@@ -45,10 +45,10 @@ outside the repo; nothing in this project protects them any more, by design.
 HERALD_STORAGE_MODE=cloud
 ```
 
-Defaulting it was considered and rejected. Defaulting to `local` would let a cloud operator run
-`drive:publish`, see `local mode — skipped` and **exit 0**, and believe work reached Drive when
-nothing was uploaded — the exact failure the explicit mode exists to prevent. Failing loudly once
-is the cheaper outcome.
+Defaulting it was considered and rejected. Defaulting to `local` would silently misroute a cloud
+operator's work: `drive:publish` still runs and still reports success, but the documents land in
+`output/publish/local/` instead of Drive — guessing wrong sends published work to the wrong place
+either way, which is worse than failing loudly once.
 
 ### Added
 
@@ -117,9 +117,11 @@ is the cheaper outcome.
 - **Explicit storage mode** — `HERALD_STORAGE_MODE=local|cloud` decides whether Drive is the record
   of truth or everything stays local. `local` needs no cloud credentials — the post-collection
   stages (translate / convert / format) never call an external API either way, and `local` also
-  skips the Drive/Sheet commands with a clear message; collection still needs a key for whichever
-  source you use (`TWITTERAPI_IO_KEY` for X, the Lark app credentials for Lark), independent of
-  storage mode. `cloud` behaves as before. Storage mode is never inferred.
+  skips `drive:init`, `sheet:init`, `targets:list` and `history:record` with a clear message
+  (`drive:publish` is not one of them — in `local` mode it targets the filesystem instead of
+  skipping); collection still needs a key for whichever source you use (`TWITTERAPI_IO_KEY` for X,
+  the Lark app credentials for Lark), independent of storage mode. `cloud` behaves as before.
+  Storage mode is never inferred.
 - **Sync ledger** — `output/publish/state.json` now records which drive, remote id, URL, filename,
   content hash and timestamp for every upload (legacy key sets migrate on read). `pnpm status`
   reports published / unsynced / stale counts, so an item edited after publishing is visible.
@@ -136,9 +138,9 @@ is the cheaper outcome.
   remains an alias for `google,lark`. The dashboard publishes in local mode too, and picks its
   target options from the new `GET /api/config`.
 - **`LocalFileUploader.update`** — when a re-approval changes `publishFileName` (it embeds
-  `approvedAt`'s date), the local uploader writes the new file and then moves the old one out of
-  the way, so a re-approved item ends up as exactly one document on disk — mirroring the Drive
-  PATCH that updates content in place while preserving a file id.
+  `approvedAt`'s date), the local uploader writes the new file and then deletes the old one, so a
+  re-approved item ends up as exactly one document on disk — mirroring the Drive PATCH that
+  updates content in place while preserving a file id.
 
 ### Changed
 
