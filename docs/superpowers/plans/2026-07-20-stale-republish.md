@@ -45,7 +45,7 @@ Two facts that shape the design, both verified in the current code:
 | `src/ports/PublishStore.ts` | Remove `listPublished()` — no production caller after Task 2 |
 | `src/adapters/store/JsonPublishStore.ts` | Remove `listPublished()`; migration test moves to `listEntries()` |
 | `src/adapters/drive/GoogleDriveUploader.ts` | Implement `update` as multipart `PATCH` |
-| `src/app/PublishTranslations.ts` | Three-way create / update / skip; `updated` count; `PublishOutcome` |
+| `src/app/PublishTranslations.ts` | Three-way create / update / skip; `updated` count |
 | `tests/adapters/drive/googleDriveUploader.test.ts` | Cover `update` |
 | `tests/app/publishTranslations.test.ts` | Cover the three-way decision |
 | `src/cli/publish.ts` | Report updates separately from creates |
@@ -233,7 +233,7 @@ git commit -m "feat: add in-place update to the Drive uploader port and Google a
 - Test: `tests/app/publishTranslations.test.ts`
 
 **Interfaces:**
-- Consumes: `DriveUploader.update?` (Task 1); `entryKey`, `contentHash`, `SyncEntry` from `src/domain/publish/syncLedger`; `PublishStore.listEntries()`.
+- Consumes: `DriveUploader.update?` (Task 1); `entryKey`, `contentHash`, `isStale`, `SyncEntry` from `src/domain/publish/syncLedger`; `PublishStore.listEntries()`.
 - Produces: `PublishResult` gains `updated: number`. `PublishFailure` is unchanged.
 
 **The decision table.** Get this exactly right — one row is a data-loss trap:
@@ -380,7 +380,9 @@ export interface PublishResult {
 
         // A migrated legacy row has no hash: unknown is not changed. Re-uploading it would
         // create a duplicate in Drive for every item published before the ledger existed.
-        if (existing && (existing.contentHash === undefined || existing.contentHash === hash)) continue;
+        // `isStale` already encodes exactly this "absent hash is not evidence of change" rule —
+        // reuse it here instead of re-deriving the same check inline.
+        if (existing && !isStale(existing, hash)) continue;
 
         try {
           let result;
@@ -468,7 +470,14 @@ Find the "미동기화가 밀렸을 때" incident procedure. It currently states
 - `pnpm drive:publish` now resolves **both** `unsynced` and `stale`. A stale item is updated in place, so the Drive file keeps its id and share link and no duplicate appears.
 - The CLI reports them separately (`N new + M updated`).
 - **Google Drive only.** Lark Drive cannot replace content in place, so a stale item on Lark is reported as a failure naming the item, and must be handled by hand.
-- Items published before the sync ledger existed carry no `contentHash`. They are never reported stale and never re-uploaded, because the ledger cannot know what was uploaded. They gain a hash the next time they are published.
+- Items published before the sync ledger existed carry no `contentHash`. They are never reported
+  stale and never re-uploaded, because the ledger cannot know what was uploaded — and this is
+  **permanent**: the row is skipped before `record()` is ever called again, so it never acquires a
+  hash on its own. The only remedy, and it applies to this hashless case alone, is to delete that
+  row from `output/publish/state.json` and re-publish (it uploads as a new file, this time with a
+  `contentHash`), then delete the superseded copy in Drive by hand. Do not use this on a row that
+  already has a `contentHash` and is merely stale — that case is handled by the automated
+  update-in-place path above (Google only).
 
 Delete the obsolete manual workaround rather than leaving it alongside the new procedure — two procedures for one situation is how an operator ends up doing the destructive one.
 
