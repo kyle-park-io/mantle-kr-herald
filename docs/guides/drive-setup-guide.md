@@ -12,10 +12,11 @@
 ## 실행
 
 ```bash
-pnpm drive:publish                 # 둘 다
+pnpm drive:publish                 # 기본값(구글만) — src/cli/publish.ts
 pnpm drive:publish --target google # 구글만
 pnpm drive:publish --target lark   # Lark만
+pnpm drive:publish --target both   # 둘 다
 ```
 
-`output/publish-state.json`이 (아이템:상태:드라이브)별로 업로드 이력을 기록해 중복 업로드를 막습니다.
+`output/publish/state.json`이 (아이템:상태:드라이브)별로 업로드 이력을 기록해 중복 업로드를 막습니다.
 검증은 각 플랫폼 가이드의 "검증" 절 참고 (`pnpm test tests/adapters/drive/drive.probe.test.ts`로 실업로드 probe).

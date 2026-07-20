@@ -13,7 +13,8 @@ JWT** — `createGoogleAuth` selects one from `GOOGLE_AUTH_MODE`. Setup:
 
 | API | Endpoint(s) | Used by | Scope |
 | --- | --- | --- | --- |
-| **Drive v3 — upload** | `POST https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart` | `GoogleDriveUploader` (`pnpm drive:publish`) — uploads Markdown | `drive.file` |
+| **Drive v3 — upload** | `POST https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart` | `GoogleDriveUploader` (`pnpm drive:publish`) — uploads Markdown as a new file | `drive.file` |
+| **Drive v3 — update** | `PATCH https://www.googleapis.com/upload/drive/v3/files/{fileId}?uploadType=multipart` | `GoogleDriveUploader` (`pnpm drive:publish`) — replaces the content of a `stale` file in place, preserving its file id and `webViewLink` | `drive.file` |
 | **Drive v3 — files/permissions** | `https://www.googleapis.com/drive/v3/files` (create folder, list, `…/permissions`) | `GoogleDriveProvisioner` (`pnpm drive:init`) — create + share folders | `drive.file` |
 | **OAuth2 — token** | `POST https://oauth2.googleapis.com/token` | `GoogleOAuthAuth` (refresh→access), `GoogleServiceAccountAuth` (JWT→access), `googleOAuthFlow` (code→tokens) | — |
 | **OAuth2 — consent** | `https://accounts.google.com/o/oauth2/v2/auth` | `pnpm google:auth` (one-time consent) | — |
