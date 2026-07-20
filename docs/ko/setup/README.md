@@ -14,10 +14,12 @@
 ## 실행
 
 ```bash
-pnpm drive:publish                 # 기본값(구글만) — src/cli/publish.ts
-pnpm drive:publish --target google # 구글만
-pnpm drive:publish --target lark   # Lark만
-pnpm drive:publish --target both   # 둘 다
+pnpm drive:publish                       # 저장 모드의 기본 대상 (local 모드→local, cloud 모드→google)
+pnpm drive:publish --target google       # 구글만
+pnpm drive:publish --target lark         # Lark만
+pnpm drive:publish --target both         # google,lark 별칭
+pnpm drive:publish --target local        # 로컬 파일 (output/publish/local/)
+pnpm drive:publish --target google,local # 쉼표로 여러 대상
 ```
 
 `output/publish/state.json`이 (아이템:상태:드라이브)별로 업로드 이력을 기록해 중복 업로드를 막습니다.

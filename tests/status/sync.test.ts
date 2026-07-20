@@ -88,32 +88,12 @@ describe("formatSyncSummary", () => {
     expect(out).toContain("1 stale");
   });
 
-  it("omits the warning marker and labels the line in local mode, even with unsynced work", () => {
-    const out = formatSyncSummary({ published: 1, unsynced: 2, stale: 0 }, "local");
-    expect(out).not.toContain("⚠");
-    expect(out).toContain("local mode");
-    expect(out).toContain("2 unsynced");
-  });
-
-  it("keeps the warning marker in cloud mode when work is unsynced", () => {
-    const out = formatSyncSummary({ published: 1, unsynced: 2, stale: 0 }, "cloud");
+  it("no longer suppresses the warning or labels the line for local mode", () => {
+    // local mode publishes to output/publish/local/, so unsynced work is a real backlog there
+    // exactly as it is on Drive. The old special case hid it.
+    const out = formatSyncSummary({ published: 1, unsynced: 2, stale: 0 });
     expect(out).toContain("⚠");
-    expect(out).toContain("2 unsynced");
-  });
-
-  it("keeps the warning marker when mode is undefined and work is unsynced", () => {
-    const out = formatSyncSummary({ published: 1, unsynced: 2, stale: 0 }, undefined);
-    expect(out).toContain("⚠");
-    expect(out).toContain("2 unsynced");
-  });
-
-  it("reports identical counts across local, cloud, and undefined modes", () => {
-    const counts = { published: 1, unsynced: 2, stale: 1 };
-    for (const mode of ["local", "cloud", undefined] as const) {
-      const out = formatSyncSummary(counts, mode);
-      expect(out).toContain("1 published");
-      expect(out).toContain("2 unsynced");
-      expect(out).toContain("1 stale");
-    }
+    expect(out).not.toContain("local mode");
+    expect(out).not.toContain("publishing disabled");
   });
 });

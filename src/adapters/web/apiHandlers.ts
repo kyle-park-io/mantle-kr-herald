@@ -9,6 +9,7 @@ import type { FormattingStore } from "../../ports/FormattingStore";
 import type { ConversionStore } from "../../ports/ConversionStore";
 import type { SaveRendering } from "../../app/SaveRendering";
 import type { ApproveRendering } from "../../app/ApproveRendering";
+import type { StorageMode } from "../../storage/mode";
 
 export interface ApiResult {
   status: number;
@@ -18,7 +19,8 @@ export interface ApiResult {
 export interface ApiDeps {
   translationStore: TranslationStore;
   saveTranslation: SaveTranslation;
-  buildPublisher: (target: string) => Promise<PublishTranslations>;
+  buildPublisher: (target: string | undefined) => Promise<PublishTranslations>;
+  storageMode: StorageMode;
   formattingStore: FormattingStore;
   conversionStore: ConversionStore;
   saveRendering: SaveRendering;
@@ -32,6 +34,12 @@ async function findById(store: TranslationStore, id: string): Promise<Translatio
 export async function handleApi(deps: ApiDeps, method: string, path: string, body: unknown): Promise<ApiResult> {
   const segments = path.split("/").filter(Boolean); // ["api", "translations", ...]
   if (segments[0] !== "api") return { status: 404, json: { error: "not found" } };
+
+  // The frontend cannot know the server's storage mode, and it decides which publish targets to
+  // offer — a local-mode dashboard defaulting to "google" would fail on every first click.
+  if (method === "GET" && segments.length === 2 && segments[1] === "config") {
+    return { status: 200, json: { storageMode: deps.storageMode } };
+  }
 
   if (method === "GET" && segments.length === 2 && segments[1] === "translations") {
     return { status: 200, json: await deps.translationStore.loadAll() };
@@ -59,7 +67,7 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
   }
 
   if (method === "POST" && segments.length === 2 && segments[1] === "publish") {
-    const target = (body as { target?: string })?.target || "google";
+    const target = (body as { target?: string })?.target;
     const pub = await deps.buildPublisher(target);
     return { status: 200, json: await pub.run() };
   }

@@ -1,4 +1,4 @@
-import type { Translation, PublishResult, Rendering, ConversionType, Channel } from "./types";
+import type { Translation, PublishResult, Rendering, ConversionType, Channel, AppConfig } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
@@ -9,6 +9,7 @@ const rPath = (itemId: string, type: ConversionType, channel: Channel) =>
   `/api/renderings/${encodeURIComponent(itemId)}/${type}/${channel}`;
 
 export const api = {
+  config: () => fetch("/api/config").then((r) => json<AppConfig>(r)),
   list: () => fetch("/api/translations").then((r) => json<Translation[]>(r)),
   edit: (id: string, koreanText: string) =>
     fetch(`/api/translations/${encodeURIComponent(id)}`, {
