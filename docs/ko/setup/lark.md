@@ -176,16 +176,22 @@ Lark Drive에서 폴더 **2개**(예: 검수·승인) 생성 → 각 폴더를 *
 
 ### 10-3. 폴더 token 확보 → `LARK_DRIVE_*_FOLDER_TOKEN`
 
-Lark의 `parent_node`는 **폴더 token**입니다.
+Lark의 `parent_node`는 **폴더 token**입니다. **폴더 URL에서 복사하는 것이 유일하게 확실한 방법**입니다:
 
-- **폴더 URL에서**: 폴더를 열면 주소가 `https://<도메인>.larksuite.com/drive/folder/**<FOLDER_TOKEN>**`
-  형태 — `/drive/folder/` 뒤 값이 token (보통 `fldcn…` 또는 `nod…`로 시작).
-- 또는 **API Explorer**: `GET /open-apis/drive/v1/files`(내 드라이브 목록)로 `token` 확인.
+- **폴더 URL에서 (권장)**: 폴더를 열면 주소가 `https://<도메인>.larksuite.com/drive/folder/**<FOLDER_TOKEN>**`
+  형태 — `/drive/folder/` 뒤 값이 token (보통 `fldcn…` 또는 `nod…`로 시작). §10-2에서 봇과 공유한 그 폴더 2개의 URL에서 각각 복사하세요.
 
 ```bash
 LARK_DRIVE_REVIEW_FOLDER_TOKEN=<검수 폴더 token>
 LARK_DRIVE_APPROVED_FOLDER_TOKEN=<승인 폴더 token>
 ```
+
+> **API로 "내 드라이브 목록"을 뽑아 token을 찾으려 하지 마세요 — 현재 구성으로는 안 됩니다.**
+> `GET /open-apis/drive/v1/files`를 이 프로젝트의 앱 토큰(`tenant_access_token`)으로 부르면 두 가지 벽에 막힙니다:
+> 1. **스코프 미승인** — drive 스코프가 없으면 `code 99991672 "Access denied. One of the following scopes is required: [drive:drive, drive:drive:readonly, space:document:retrieve]"`로 거부됩니다(§10-1에서 추가·릴리스 필요).
+> 2. **스코프를 추가해도 개인 드라이브는 안 보임** — `tenant_access_token`은 **앱(봇) 신원**이라, 목록에 나오는 건 *앱이 만들었거나 앱에 공유된* 파일뿐입니다. 당신이 개인 "My Space"에 만든 폴더는 이 목록에 **나오지 않습니다**. (Google에서 서비스 계정으로 개인 Gmail 드라이브를 못 보는 것과 같은 구조 — `google-drive.md` 참고.)
+>
+> 그래서 위의 **폴더-URL 복사**가 정답입니다. 개인 폴더를 API로 나열하려면 `user_access_token`(OAuth 사용자 위임)이 필요한데, 이 프로젝트는 아직 Lark 쪽 OAuth를 구현하지 않았습니다 — **추후 추가되면 이 안내는 갱신될 수 있습니다.**
 
 ### 10-4. 검증 & 오류
 
