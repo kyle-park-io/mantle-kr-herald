@@ -260,4 +260,16 @@ describe("PublishTranslations", () => {
     expect(res.failures[0].error).toMatch(/cannot update/i);
     expect(res.failures[0].error).toMatch(/google/i);
   });
+
+  it("publishes only the named item when run is given an itemId", async () => {
+    const g = new FakeUploader("google");
+    const store = new InMemoryPublishStore();
+    const uc = new PublishTranslations(translationStore([tr("x:1", "approved"), tr("x:2", "approved")]), [g], store);
+
+    const res = await uc.run({ itemId: "x:2" });
+
+    expect(g.reqs.map((r) => r.name)).toHaveLength(1);
+    expect(res.uploaded).toBe(1);
+    expect(store.entries.map((e) => e.itemId)).toEqual(["x:2"]);
+  });
 });

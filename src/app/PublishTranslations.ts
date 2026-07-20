@@ -26,7 +26,7 @@ export class PublishTranslations {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  async run(): Promise<PublishResult> {
+  async run(opts: { itemId?: string } = {}): Promise<PublishResult> {
     const entries = await this.publishStore.listEntries();
     const byKey = new Map(entries.map((e) => [entryKey(e), e]));
     let uploaded = 0;
@@ -35,7 +35,9 @@ export class PublishTranslations {
     const failures: PublishFailure[] = [];
     const byDrive: Record<string, number> = {};
 
-    for (const t of await this.translationStore.loadAll()) {
+    const all = await this.translationStore.loadAll();
+    const translations = opts.itemId ? all.filter((t) => t.itemId === opts.itemId) : all;
+    for (const t of translations) {
       const content = t.status === "approved" ? renderApproved(t) : renderReview(t);
       const folder: FolderKind = t.status === "approved" ? "approved" : "review";
       const name = publishFileName(t);
