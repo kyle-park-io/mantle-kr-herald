@@ -16,6 +16,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   narrows to rows published on or after a cutoff; deleted or metric-less tweets are skipped per row.
   X only for v1; not yet live-verified (needs the `spreadsheets` scope, like §9a).
 
+- **Canonical rendering text.** `output/formatted/renderings.json` now stores destination-independent
+  canonical text instead of pre-spelled output: bold is `**text**`, links are `[text](url)`, one
+  blank line is a paragraph break, and two blank lines — or a lone `---` line, which `toCanonical`
+  now also absorbs because the pipeline has always used it as `XContentSource`'s
+  `THREAD_TWEET_SEPARATOR` — mark a post boundary (x-channel only; every other destination flattens
+  it to a paragraph break). Destination spellings are derived at read time by
+  `src/domain/formatting/emitters/`, not stored.
+- **Six destinations, one approval per channel.** A channel (`x`/`telegram`/`kakao`/`pr_mail`) is
+  still approved once, exactly as before. `x` now reaches two destinations (`x_paste`,
+  `x_typefully`), `telegram` reaches two (`telegram_paste`, `telegram_bot`), and `kakao`/`pr_mail`
+  reach one each (`kakao_paste`, `pr_mail`) — six in total, never separately approved.
+  `GET /api/renderings/:itemId/:type/:channel/emissions` computes only the destinations that
+  rendering's channel can reach, on demand.
+- **Dashboard: per-destination output with copy buttons.** The 2차 검수 view fetches `emissions` for
+  the selected rendering, lets you switch between its destinations, and copies one segment or every
+  segment at once — no more assembling the paste-ready text by hand.
+- **`--refine` worksheet gained channel constraints, a filtered glossary and a length report.** The
+  constraints block is generated from the emitters' own constants (`X_MAX_WEIGHTED`, `TELEGRAM_MAX`,
+  `KAKAO_FOLD`) so it cannot drift from the code; the glossary section lists only terms actually
+  present in the batch's drafts; and each draft is preceded by a per-segment `length/limit` report
+  computed against its channel's primary destination.
+
+### Changed
+
+- **`--x-bold` removed.** Unicode "bold" characters are skipped entirely by screen readers, are not
+  matched by X search, and cost double the weighted length of a plain character. `pnpm format
+  --x-bold unicode` and `--x-bold=unicode` now fail immediately, naming the reason. Write
+  `**bold**` in canonical text instead — each destination decides how to spell it.
+
+### Fixed
+
+- **X length is now counted by weight, matching X's real limit — a bug fix, not a feature.**
+  `weightedLength()` replaces a code-point count that compared `[...text].length` against 280. X
+  actually counts by weight (`twitter-text` v3 config): a Hangul syllable costs 2, so a pure-Korean
+  post maxes out at **140 characters**, and any URL counts as exactly 23 regardless of its real
+  length. The old check silently passed over-limit Korean posts between 141 and 280 characters with
+  no warning at all.
+
 ## [0.2.0] - 2026-07-21
 
 ### Upgrading — action required for existing installs
