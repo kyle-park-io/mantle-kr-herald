@@ -23,6 +23,13 @@ export const X_MAX_WEIGHTED = 280;
 
 const URL = /https?:\/\/\S+/g;
 
+/**
+ * Punctuation that commonly trails a URL in prose (closing parens/brackets, sentence-ending
+ * punctuation, quotes) but is not part of the URL itself. Trimmed off the greedy `URL` match so
+ * it keeps its own weight instead of being absorbed — and undercounted — as part of the link.
+ */
+const TRAILING_PUNCTUATION = /[)\].,!?;:'"]+$/;
+
 function weightOf(codePoint: number): number {
   for (const [start, end] of WEIGHT_100_RANGES) {
     if (codePoint >= start && codePoint <= end) return SCALE;
@@ -36,7 +43,9 @@ function weightOf(codePoint: number): number {
  * Known limitation: twitter-text's real extractor also treats scheme-less hosts ("example.com")
  * as URLs, which this regex misses and therefore under-counts. Canonical text writes links as
  * [text](url) with an explicit scheme, so this is acceptable — pull in the `twitter-text` package
- * if that ever stops being true.
+ * if that ever stops being true. Two URLs with no separator between them (e.g.
+ * "https://a.com" immediately followed by "https://b.com") are also counted as a single URL;
+ * this is likewise an accepted gap, since real-world URL extractors are ambiguous about it too.
  */
 export function weightedLength(text: string): number {
   const normalised = text.normalize("NFC");
@@ -45,9 +54,10 @@ export function weightedLength(text: string): number {
   let cursor = 0;
   for (const match of normalised.matchAll(URL)) {
     const start = match.index ?? 0;
+    const trimmed = match[0].replace(TRAILING_PUNCTUATION, "");
     plain += normalised.slice(cursor, start);
     total += TCO_LENGTH * SCALE;
-    cursor = start + match[0].length;
+    cursor = start + trimmed.length;
   }
   plain += normalised.slice(cursor);
   for (const ch of plain) total += weightOf(ch.codePointAt(0)!);

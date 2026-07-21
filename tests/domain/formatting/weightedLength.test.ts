@@ -28,12 +28,22 @@ describe("weightedLength", () => {
   });
 
   it("normalises to NFC before counting", () => {
-    // U+1100 U+1161 (decomposed) is NFC-composed to U+AC00 "가" — 2, not 4
-    expect(weightedLength("가")).toBe(2);
-    expect(weightedLength("가")).toBe(weightedLength("가"));
+    // Written as explicit \u escapes so no editor/tool can silently renormalise the
+    // fixture: U+1100 U+1161 (decomposed jamo) composes to U+AC00 (precomposed "\uAC00").
+    const decomposed = "\u1100\u1161";
+    const precomposed = "\uAC00";
+    expect(weightedLength(decomposed)).toBe(2);
+    expect(weightedLength(decomposed)).toBe(weightedLength(precomposed));
   });
 
   it("counts the empty string as 0", () => {
     expect(weightedLength("")).toBe(0);
+  });
+
+  it("does not absorb trailing punctuation into the URL match", () => {
+    // "(" + ")" = 2, plus the URL's 23
+    expect(weightedLength("(https://x.io)")).toBe(2 + TCO_LENGTH);
+    // "Check " = 6, "." = 1, plus the URL's 23
+    expect(weightedLength("Check https://x.io.")).toBe(6 + 1 + TCO_LENGTH);
   });
 });
