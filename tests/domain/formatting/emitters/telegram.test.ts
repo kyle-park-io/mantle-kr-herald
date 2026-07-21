@@ -19,6 +19,11 @@ describe("emitTelegramPaste", () => {
     expect(emitTelegramPaste("가".repeat(TELEGRAM_MAX)).segments[0].overLimit).toBe(false);
     expect(emitTelegramPaste("가".repeat(TELEGRAM_MAX + 1)).segments[0].overLimit).toBe(true);
   });
+
+  it("flattens a post boundary to a single blank line — post boundaries are an x-only concept", () => {
+    const r = emitTelegramPaste("a\n\n\nb");
+    expect(r.segments[0].text).toBe("a\n\nb");
+  });
 });
 
 describe("emitTelegramBot", () => {
@@ -68,5 +73,11 @@ describe("emitTelegramBot", () => {
     const inner = emitTelegramBot("[**텍스트**](https://x.io)");
     expect(inner.segments[0].text).toBe('<a href="https://x.io"><b>텍스트</b></a>');
     expect(inner.segments[0].length).toBe(3);
+  });
+
+  it("flattens a post boundary to a single blank line, and measures length against the flattened text", () => {
+    const r = emitTelegramBot("a\n\n\nb");
+    expect(r.segments[0].text).toBe("a\n\nb");
+    expect(r.segments[0].length).toBe([...("a\n\nb")].length);
   });
 });

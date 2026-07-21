@@ -1,6 +1,6 @@
 import { ALL_TYPES, type ConversionType, type ContentVariant } from "../domain/conversion/models";
 import { toCanonical } from "../domain/formatting/canonical";
-import { emitAll } from "../domain/formatting/emitters";
+import { emitAll, type Destination, type EmitResult } from "../domain/formatting/emitters";
 import { DEFAULT_CHANNELS_BY_TYPE, type Channel, type ChannelRendering } from "../domain/formatting/models";
 import type { ConversionStore } from "../ports/ConversionStore";
 import type { FormattingStore } from "../ports/FormattingStore";
@@ -50,7 +50,16 @@ export class FormatVariants {
         };
         await this.formattingStore.upsert(rendering);
         renderings.push(rendering);
-        const messages = Object.values(emitAll(text, channel)).flatMap((r) => r.warnings);
+        // Group by message text so destinations that agree (e.g. x_paste and x_typefully today)
+        // collapse to one line, while destinations that legitimately disagree (paste counts
+        // markup, bot counts visible length) stay distinguishable by name.
+        const byMessage = new Map<string, Destination[]>();
+        for (const [destination, result] of Object.entries(emitAll(text, channel)) as [Destination, EmitResult][]) {
+          for (const warning of result.warnings) {
+            byMessage.set(warning, [...(byMessage.get(warning) ?? []), destination]);
+          }
+        }
+        const messages = [...byMessage].map(([warning, destinations]) => `${destinations.join(", ")}: ${warning}`);
         if (messages.length > 0) warnings.push({ itemId: v.itemId, type: v.type, channel, messages });
       }
     }

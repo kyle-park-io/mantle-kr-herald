@@ -57,16 +57,16 @@ describe("FormatVariants", () => {
   });
 
   it("stores canonical text — bold and links survive, destination syntax does not", async () => {
-    const s = stores([variant({ convertedText: "**메인넷** [자세히](https://x.io)" })]);
+    const s = stores([variant({ convertedText: "  **메인넷**\r\n\n\n\n\n[자세히](https://x.io)  " })]);
     const uc = new FormatVariants(s.conversionStore, s.formattingStore, () => "2026-03-03T00:00:00.000Z");
     const { renderings } = await uc.run({});
-    expect(renderings[0].text).toBe("**메인넷** [자세히](https://x.io)");
+    expect(renderings[0].text).toBe("**메인넷**\n\n\n[자세히](https://x.io)");
   });
 
-  it("warns via the channel's destinations, counting Hangul as 2 for x", async () => {
+  it("warns via the channel's destinations, counting Hangul as 2 for x, and names both x destinations once", async () => {
     const s = stores([variant({ type: "x", convertedText: "가".repeat(141) })]);
     const uc = new FormatVariants(s.conversionStore, s.formattingStore, () => "2026-03-03T00:00:00.000Z");
     const { warnings } = await uc.run({});
-    expect(warnings[0].messages.some((m) => m.includes("282/280"))).toBe(true);
+    expect(warnings[0].messages).toEqual(["x_paste, x_typefully: 282/280 (2 초과)"]);
   });
 });

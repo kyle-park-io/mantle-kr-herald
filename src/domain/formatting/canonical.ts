@@ -55,3 +55,8 @@ export function linksToPlain(text: string): string {
 export function linksToLabel(text: string): string {
   return text.replace(MD_LINK, "$1");
 }
+
+/** Post boundaries are an x-channel concept; every other destination reads them as a paragraph. */
+export function flattenPostBoundaries(text: string): string {
+  return text.replace(/\n{3,}/g, "\n\n");
+}

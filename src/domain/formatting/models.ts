@@ -22,7 +22,7 @@ export interface ChannelRendering {
   type: ConversionType;
   channel: Channel;
   text: string;
-  refined: boolean; // false = code formatter only; true = agent/human edited
+  refined: boolean; // false = canonical, untouched; true = agent/human edited
   createdAt: string;
   status: "rendered" | "approved"; // §7 second-review approval gate
   approvedAt?: string;

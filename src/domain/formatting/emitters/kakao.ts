@@ -1,4 +1,4 @@
-import { linksToPlain, stripBold } from "../canonical";
+import { flattenPostBoundaries, linksToPlain, stripBold } from "../canonical";
 import type { EmitResult } from "./types";
 
 /**
@@ -10,7 +10,7 @@ export const KAKAO_FOLD = 500;
 
 /** KakaoTalk parses no markup of any kind and its composer offers no formatting. */
 export function emitKakaoPaste(canonical: string): EmitResult {
-  const text = linksToPlain(stripBold(canonical));
+  const text = linksToPlain(stripBold(flattenPostBoundaries(canonical)));
   const length = [...text].length;
   const overLimit = length > KAKAO_FOLD;
   return {

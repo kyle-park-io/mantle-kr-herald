@@ -9,6 +9,11 @@ describe("emitXPaste", () => {
     expect([...r.segments[0].text].every((c) => c.codePointAt(0)! < 0x1d400)).toBe(true);
   });
 
+  it("leaves hashtags, mentions and t.co links untouched", () => {
+    const r = emitXPaste("#Mantle @Mantle_Official https://t.co/x");
+    expect(r.segments[0].text).toBe("#Mantle @Mantle_Official https://t.co/x");
+  });
+
   it("rewrites markdown links as 'text (url)'", () => {
     expect(emitXPaste("공지 [자세히](https://x.io)").segments[0].text).toBe("공지 자세히 (https://x.io)");
   });

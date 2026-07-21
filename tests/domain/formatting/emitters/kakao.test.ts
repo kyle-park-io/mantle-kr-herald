@@ -21,4 +21,9 @@ describe("emitKakaoPaste", () => {
   it("counts an astral character as one, not as its surrogate pair", () => {
     expect(emitKakaoPaste("🎉").segments[0].length).toBe(1);
   });
+
+  it("flattens a post boundary to a single blank line — post boundaries are an x-only concept", () => {
+    const r = emitKakaoPaste("a\n\n\nb");
+    expect(r.segments[0].text).toBe("a\n\nb");
+  });
 });

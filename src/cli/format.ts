@@ -13,6 +13,14 @@ import { archiveFile } from "../shared/store/archive";
 import { writeJsonFileAtomic } from "../shared/store/jsonFile";
 import { paths } from "../paths";
 
+if (process.argv.some((a) => a === "--x-bold" || a.startsWith("--x-bold="))) {
+  throw new Error(
+    "--x-bold was removed. Unicode bold (𝗔) is skipped entirely by screen readers, is not matched " +
+      "by X search, and costs 2 weighted characters per letter. Write **bold** in the canonical " +
+      "text instead — each destination decides how to spell it.",
+  );
+}
+
 const selector: FormatSelector = {};
 const ids = parseList(argValue("--ids"));
 if (ids) selector.ids = ids;
@@ -27,13 +35,6 @@ if (channelsArg) {
   const invalid = channelsArg.filter((c) => !ALL_CHANNELS.includes(c as Channel));
   if (invalid.length > 0) throw new Error(`Invalid --channels: ${invalid.join(", ")} (allowed: ${ALL_CHANNELS.join(", ")})`);
   selector.channels = channelsArg as Channel[];
-}
-if (process.argv.includes("--x-bold")) {
-  throw new Error(
-    "--x-bold was removed. Unicode bold (𝗔) is skipped entirely by screen readers, is not matched " +
-      "by X search, and costs 2 weighted characters per letter. Write **bold** in the canonical " +
-      "text instead — each destination decides how to spell it.",
-  );
 }
 const refine = process.argv.includes("--refine");
 

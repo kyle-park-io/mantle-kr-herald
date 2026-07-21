@@ -1,4 +1,5 @@
 import type { ConversionType } from "../domain/conversion/models";
+import { toCanonical } from "../domain/formatting/canonical";
 import type { Channel, ChannelRendering } from "../domain/formatting/models";
 import type { FormattingStore } from "../ports/FormattingStore";
 
@@ -17,7 +18,7 @@ export class SaveRendering {
 
   async run(input: SaveRenderingInput): Promise<{ itemId: string; type: ConversionType; channel: Channel }> {
     const rendering: ChannelRendering = {
-      itemId: input.itemId, type: input.type, channel: input.channel, text: input.text, refined: true, createdAt: this.now(), status: "rendered",
+      itemId: input.itemId, type: input.type, channel: input.channel, text: toCanonical(input.text), refined: true, createdAt: this.now(), status: "rendered",
     };
     await this.formattingStore.upsert(rendering);
     return { itemId: input.itemId, type: input.type, channel: input.channel };

@@ -23,4 +23,9 @@ describe("emitPrMail", () => {
   it("stays quiet when every line fits", () => {
     expect(emitPrMail("제목줄\n\n짧은 본문").warnings).toEqual([]);
   });
+
+  it("flattens a post boundary inside the body to a single blank line — post boundaries are an x-only concept", () => {
+    const r = emitPrMail("제목줄\n\na\n\n\nb");
+    expect(r.segments[0].text).toBe("제목: 제목줄\n\na\n\nb");
+  });
 });

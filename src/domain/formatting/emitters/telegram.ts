@@ -1,4 +1,4 @@
-import { BOLD, MD_LINK, linksToLabel, linksToPlain, stripBold } from "../canonical";
+import { BOLD, MD_LINK, flattenPostBoundaries, linksToLabel, linksToPlain, stripBold } from "../canonical";
 import type { EmitResult } from "./types";
 
 /** sendMessage's text limit, counted after entity parsing. https://core.telegram.org/bots/api */
@@ -20,7 +20,8 @@ function single(text: string, visibleLength: number): EmitResult {
  * emit plain text — `*bold*` here would show up as literal asterisks.
  */
 export function emitTelegramPaste(canonical: string): EmitResult {
-  const text = linksToPlain(stripBold(canonical));
+  const flattened = flattenPostBoundaries(canonical);
+  const text = linksToPlain(stripBold(flattened));
   return single(text, [...text].length);
 }
 
@@ -34,12 +35,13 @@ export function emitTelegramPaste(canonical: string): EmitResult {
  * too.
  */
 export function emitTelegramBot(canonical: string): EmitResult {
-  const escaped = canonical
+  const flattened = flattenPostBoundaries(canonical);
+  const escaped = flattened
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
   const html = escaped.replace(BOLD, "<b>$1</b>").replace(MD_LINK, '<a href="$2">$1</a>');
   // "after entities parsing" means the text the reader sees: no markup, no href.
-  const visible = [...stripBold(linksToLabel(canonical))].length;
+  const visible = [...stripBold(linksToLabel(flattened))].length;
   return single(html, visible);
 }

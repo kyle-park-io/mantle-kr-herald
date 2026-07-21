@@ -1,4 +1,4 @@
-import { linksToPlain, stripBold } from "../canonical";
+import { flattenPostBoundaries, linksToPlain, stripBold } from "../canonical";
 import type { EmitResult } from "./types";
 
 /**
@@ -20,7 +20,7 @@ const octets = (line: string): number => encoder.encode(line).length;
  * `length` and `limit` here describe the longest line in octets, not the whole message.
  */
 export function emitPrMail(canonical: string): EmitResult {
-  const plain = linksToPlain(stripBold(canonical));
+  const plain = linksToPlain(stripBold(flattenPostBoundaries(canonical)));
   const lines = plain.split("\n");
   const subject = (lines.shift() ?? "").trim();
   const body = lines.join("\n").trim();
