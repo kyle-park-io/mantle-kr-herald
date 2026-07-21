@@ -107,6 +107,36 @@ describe("TwitterApiSourceGateway", () => {
     expect(ids).toEqual(["1", "2"]);
   });
 
+  it("fetchAuthoredTweets returns true when it hits the MAX_PAGES cap with more pages available", async () => {
+    // Every page reports has_next_page: true with an advancing cursor, so the loop
+    // runs all MAX_PAGES (50) iterations and falls out the bottom instead of
+    // reaching a natural stop.
+    const http = new FakeHttpClient((_path, params) => {
+      const cursor = params?.cursor ?? "";
+      const next = `${cursor}x`;
+      return { tweets: [raw(`t${next}`)], has_next_page: true, next_cursor: next };
+    });
+    const gw = new TwitterApiSourceGateway(http);
+
+    const it_ = gw.fetchAuthoredTweets("Mantle_Official");
+    let r = await it_.next();
+    while (!r.done) r = await it_.next();
+
+    expect(r.value).toBe(true);
+    expect(http.calls.length).toBe(50);
+  });
+
+  it("fetchAuthoredTweets returns false on a natural stop (has_next_page: false)", async () => {
+    const http = new FakeHttpClient(() => ({ tweets: [raw("1")], has_next_page: false, next_cursor: "" }));
+    const gw = new TwitterApiSourceGateway(http);
+
+    const it_ = gw.fetchAuthoredTweets("Mantle_Official");
+    let r = await it_.next();
+    while (!r.done) r = await it_.next();
+
+    expect(r.value).toBe(false);
+  });
+
   it("fetchByIds sends comma-separated tweet_ids and returns alive tweets", async () => {
     const http = new FakeHttpClient(() => ({ tweets: [raw("1")], status: "success" }));
     const gw = new TwitterApiSourceGateway(http);

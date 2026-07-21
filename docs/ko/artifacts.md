@@ -108,7 +108,7 @@ HERALD_STORAGE_MODE=local|cloud
 
 | 명령어 | 읽는 것 | 쓰는 것 | 외부 시스템 |
 |---|---|---|---|
-| `pnpm collect [target]` | `TWITTERAPI_IO_KEY`(env); 기존 스레드 병합을 위한 `output/x/items.json`; 워터마크 조회를 위한 `output/x/state.json` | `output/x/items.json`(upsert); `output/x/state.json`(워터마크 갱신) | twitterapi.io API |
+| `pnpm collect [target] [--since <3d\|12h\|1w\|ISO>] [--limit <n>]` | `TWITTERAPI_IO_KEY`(env); 기존 스레드 병합을 위한 `output/x/items.json`; 워터마크 조회를 위한 `output/x/state.json`(`--since`가 있으면 워터마크 대신 그 값을 floor로 사용) | `output/x/items.json`(upsert); `output/x/runs.json`(append — 실행마다 커버리지 레코드 1건 기록); `output/x/state.json`(워터마크 갱신 — `--since`/`--limit` 중 하나라도 주면 ad-hoc 실행이라 갱신하지 않고, 플래그 없는 실행만 갱신) | twitterapi.io API |
 | `pnpm collect-lark` | `LARK_APP_ID`/`LARK_APP_SECRET`/`LARK_CHAT_IDS`(env); `output/lark/items.json`; 채팅방별 워터마크를 위한 `output/lark/state.json` | `output/lark/items.json`(upsert); `output/lark/state.json` | Lark Open API(테넌트 토큰 발급 + 메시지 조회) |
 | `pnpm lark:chats` | `LARK_APP_ID`/`LARK_APP_SECRET`(env) | 없음(표준 출력만) | Lark Open API(봇이 속한 채팅방 목록 조회) |
 | `pnpm lark:send` | `LARK_APP_ID`/`LARK_APP_SECRET`(env); `--chat`/`--text` 인자 또는 `LARK_CHAT_IDS`의 첫 값 | 없음 | Lark Open API(메시지 전송) |
@@ -121,7 +121,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm format:save --id --type --channel --file` | `output/formatted/pending.json`(없으면 `output/formatted/renderings.json`에서 폴백); `--file`(canonical 텍스트) | `output/formatted/renderings.json`(upsert, `refined: true`, canonical 텍스트 그대로 저장) | 없음 |
 | `pnpm glossary [add --term --rule ...]` | `translation/glossary.json` | `add` 서브커맨드일 때만 `translation/glossary.json`(upsert) | 없음 |
 | `pnpm config:init` | `translation/*.example.*`, `conversion/*.example.*` | 실제 파일이 아직 없는 것만 생성(`translation/{glossary,locale,style-guide,few-shot}.*`, `conversion/{x,announcement,kol,pr}.md`, `conversion/few-shot.{x,announcement,kol,pr}.json`) — 이미 있으면 절대 덮어쓰지 않음 | 없음 |
-| `pnpm drive:publish [--target google\|lark\|local\|both\|<쉼표로 나열>]` | `output/translations/translations.json`; 중복 게시 방지 및 `stale` 판정을 위한 `output/publish/state.json` | `output/publish/state.json`(신규 업로드는 SyncEntry 추가, `stale` 항목은 기존 행을 갱신 — 둘 다 §4); `output/publish/local/{review,approved}/*.md`(`local` 모드, 또는 `--target`에 `local`이 포함된 경우) | 모드/`--target`에 따라 다름 — 없음(`local`만인 경우), 또는 Google Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 파일 갱신 엔드포인트도) 그리고/또는 Lark Drive API(파일 생성 엔드포인트만 — 갱신 엔드포인트 없음, §4) |
+| `pnpm drive:publish [--target google\|lark\|local\|both\|<쉼표로 나열>]` | `output/translations/translations.json`; 중복 게시 방지 및 `stale` 판정을 위한 `output/publish/state.json` | `output/publish/state.json`(신규 업로드는 SyncEntry 추가, `stale` 항목은 기존 행을 갱신 — 둘 다 §4); `output/publish/local/{review,approved}/*.md`(`local` 모드, 또는 `--target`에 `local`이 포함된 경우) | 모드/`--target`에 따라 다름 — 없음(`local`만인 경우), 또는 Google Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 파일 갱신 엔드포인트도) 그리고/또는 Lark Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 삭제 엔드포인트도 — 콘텐츠 교체 엔드포인트가 없어 새로 올린 뒤 예전 파일을 지우는 방식, §4) |
 | `pnpm drive:init [--force]` | `local` 모드면 스킵. 로컬 파일 없음(env만) | 로컬 파일 없음 — 생성된 폴더 id를 `.env`에 붙여넣도록 콘솔에 출력 | Google Drive API(폴더 생성/공유) |
 | `pnpm targets:list [--active-only]` | `local` 모드면 스킵. 로컬 파일 없음 | 없음 | Google Sheets API(`targets` 탭 조회) |
 | `pnpm history:record --item --type --channel --status [...]` | `local` 모드면 스킵. 로컬 파일 없음 | 로컬 파일 없음 | Google Sheets API(`history` 탭에 행 추가) |
@@ -147,6 +147,39 @@ HERALD_STORAGE_MODE=local|cloud
 문자를 통째로 건너뛰고, X 검색이 매칭하지 못하며, 글자당 가중치도 2로 두 배가 되기 때문입니다.
 이제 `--x-bold unicode`나 `--x-bold=unicode`를 넘기면 같은 이유를 담은 에러로 즉시 실패합니다
 (`src/cli/format.ts`).
+
+### `pnpm collect`의 두 수집 모드
+
+X 수집은 `pnpm collect` 하나가 단일 창구입니다. (다만 twitterapi를 호출하는 명령이 collect뿐인
+것은 아닙니다 — `pnpm reconcile`은 삭제 감지를 위해, `pnpm impressions:record`는 조회수 수집을
+위해 각각 트윗을 재조회합니다. "수집"만 collect가 담당합니다.)
+
+`collect`은 명령도 코드 경로도 하나이며, **플래그 유무라는 분기 하나**로 두 모드로 갈립니다.
+
+| 모드 | 트리거 | `items.json` | `runs.json` | `state.json`(워터마크) |
+|---|---|---|---|---|
+| **증분** | 플래그 없음 | upsert | append | **전진(갱신)** |
+| **ad-hoc** | `--since` 또는 `--limit` | upsert | append | **안 건드림** |
+
+즉 `items`(병합)와 `runs`(커버리지 레코드)는 **매 실행 항상** 쓰이고, `state`(워터마크)만 모드에
+따라 갈립니다. `--since`/`--limit`를 주면 워터마크를 갱신하지 않으므로(ad-hoc), 정기 자동화의
+증분 흐름을 오염시키지 않고 임시 수집을 돌릴 수 있습니다. 기본값(플래그 없음)은 이전과 100%
+동일하게 동작합니다.
+
+#### 자동화 전략: 슬라이딩 윈도우 vs 워터마크
+
+수집 자동화는 커버리지 메커니즘으로 둘 중 하나를 고릅니다.
+
+- **슬라이딩 윈도우** (권장) — 매시간 `pnpm collect <target> --since 2h`. 2시간 창 + 1시간 주기 =
+  1시간 겹침이라 실행 하나가 늦거나 실패해도 빈틈이 없고, API 인덱싱 지연(생성시각보다 늦게 검색에
+  노출)도 오버랩이 흡수합니다. 겹치는 구간은 upsert가 중복 제거합니다. **이 방식은 항상
+  `--since`(ad-hoc)라 `state.json`을 쓰지 않습니다** — 워터마크는 놀게 됩니다(정상 동작).
+- **워터마크 증분** — 플래그 없는 `pnpm collect`. 재수집이 최소지만, 워터마크가 최신으로 전진한
+  뒤 늦게 인덱싱된 트윗은 영구히 건너뛸 수 있고 오버랩 안전망이 없습니다.
+
+두 방식 모두 `runs.json`에 커버리지를 남깁니다. 요청한 floor까지 못 내려간 실행은
+`truncated: true`와 `gap`으로 표시됩니다 — `--limit`로 잘렸거나 `MAX_PAGES`(50페이지) 상한을
+소진한 경우입니다.
 
 ## 4. 동기화 원장
 
@@ -200,12 +233,13 @@ interface SyncEntry {
 (`src/status/sync.ts`의 `syncSummary`, `src/domain/publish/syncLedger.ts`의 `isStale`,
 `src/app/PublishTranslations.ts`).
 
-`stale`로 판정된 행은 대상이 Google 또는 `local`이면 기존 파일을 그 자리에서 갱신하고(중복 없음),
-대상이 Lark면 갱신 엔드포인트가 없어 실패로 보고됩니다. Google은 파일 id·공유 링크를 유지한 채
-PATCH하고, `local`(`LocalFileUploader.update`)은 새 내용을 다시 쓴 뒤 파일명이 바뀌었으면(예:
-재승인으로 `approvedAt` 날짜가 바뀐 경우) 이전 파일을 지워 하나만 남깁니다. Lark만 갱신 수단이
-없는 이유는 Lark Drive `drive/v1`에 콘텐츠를 그 자리에서 바꾸는 API가 없기 때문이며, 이 항목은
-Drive에서 직접 찾아 수동으로 처리해야 합니다.
+`stale`로 판정된 행은 대상에 따라 다른 방식으로, 그러나 모두 중복 없이 재게시됩니다. Google은
+파일 id·공유 링크를 유지한 채 PATCH하고, `local`(`LocalFileUploader.update`)은 새 내용을 다시 쓴
+뒤 파일명이 바뀌었으면(예: 재승인으로 `approvedAt` 날짜가 바뀐 경우) 이전 파일을 지워 하나만
+남깁니다. Lark(`LarkDriveUploader.update`)는 `drive/v1`에 콘텐츠 교체 API가 없어 **새 파일을 올린
+뒤 예전 파일을 삭제**하므로, 폴더에는 하나만 남지만 **`file_token`과 링크는 매번 바뀝니다**. 예전
+파일 삭제가 실패하면 게시는 성공으로 처리하고 고아 토큰을 경고로 남깁니다(원장은 새 파일을 가리키
+므로 재업로드가 반복되지는 않습니다).
 
 **레거시 마이그레이션:** 예전 형식 `{"published": ["<itemId>:<status>:<target>", ...]}`은 읽는
 시점에 자동 변환됩니다(`migrateLegacyKeys`). 이 경로로 만들어진 행은 `stage: "translation"`과
@@ -218,7 +252,7 @@ Drive에서 직접 찾아 수동으로 처리해야 합니다.
 `PublishTranslations`는 `contentHash` 비교 없이 그 자리에서 건너뛰고 `record()`를 다시 호출하지
 않으므로, 이런 행은 그 항목이 나중에 다시 게시되더라도 `contentHash`를 얻지 못합니다. 유일한
 탈출 경로(레거시 행 전용, 원장 행 수동 삭제 + 재게시)와 자동 갱신 경로(해시가 있는 `stale` 행
-전용, Google과 `local`만)를 서로 다른 상황에만 써야 하며, 두 절차를 구분해 정리한 문서는
+전용, 대상 세 가지 모두)를 서로 다른 상황에만 써야 하며, 두 절차를 구분해 정리한 문서는
 [`team-runbook.md`](team-runbook.md) §4를 참고하세요.
 
 ## 5. 보존 정책
@@ -267,6 +301,9 @@ Drive에서 직접 찾아 수동으로 처리해야 합니다.
 - `output/x/items.json`, `output/lark/items.json` — twitterapi.io / Lark에서 다시 수집할 수
   있습니다 (단, 재수집은 워터마크 이후 구간만 가져오므로 워터마크가 함께 없을 때만 완전한
   재수집이 됩니다)
+- `output/x/runs.json` — 매 `pnpm collect` 실행마다 커버리지 레코드를 append하는 로그입니다.
+  잃어도 파이프라인 동작에는 영향이 없고, 과거 커버리지 이력(언제 어느 구간을 수집했는지)만
+  사라집니다
 
 ## 7. 알려진 마찰
 

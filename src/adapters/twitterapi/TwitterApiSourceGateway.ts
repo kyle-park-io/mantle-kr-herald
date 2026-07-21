@@ -23,7 +23,7 @@ export class TwitterApiSourceGateway implements SourceGateway {
   async *fetchAuthoredTweets(
     userName: string,
     sinceTime?: string,
-  ): AsyncGenerator<SourceTweet> {
+  ): AsyncGenerator<SourceTweet, boolean> {
     let query = `from:${userName}`;
     if (sinceTime) {
       const unixSeconds = Math.floor(new Date(sinceTime).getTime() / 1000);
@@ -50,10 +50,12 @@ export class TwitterApiSourceGateway implements SourceGateway {
         }
         yield t;
       }
-      // Stop at the watermark, the last page, or a cursor that isn't advancing.
-      if (reachedWatermark || !hasNextPage || !nextCursor || nextCursor === cursor) break;
+      // Natural stop: watermark reached, last page, or a cursor that isn't advancing.
+      if (reachedWatermark || !hasNextPage || !nextCursor || nextCursor === cursor) return false;
       cursor = nextCursor;
     }
+    // Fell out of the loop → hit the MAX_PAGES cap with more pages available.
+    return true;
   }
 
   async fetchThread(tweetId: string): Promise<SourceTweet[]> {

@@ -14,6 +14,7 @@ export const OUTPUT_DIR = join(REPO_ROOT, "output");
 export const paths = {
   xDir: join(OUTPUT_DIR, "x"),
   xItems: join(OUTPUT_DIR, "x", "items.json"),
+  xRuns: join(OUTPUT_DIR, "x", "runs.json"),
   larkDir: join(OUTPUT_DIR, "lark"),
   larkItems: join(OUTPUT_DIR, "lark", "items.json"),
   translationsDir: join(OUTPUT_DIR, "translations"),

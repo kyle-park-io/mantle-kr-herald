@@ -15,7 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   columns (H/I) — the columns `RecordPublish` deliberately leaves empty. `--since <YYYY-MM-DD>`
   narrows to rows published on or after a cutoff; deleted or metric-less tweets are skipped per row.
   X only for v1; not yet live-verified (needs the `spreadsheets` scope, like §9a).
-
+- **`pnpm collect` `--since`/`--limit` flags + coverage ledger.** `--since <3d|12h|1w|ISO>` sets a
+  time floor (relative or absolute), overriding the stored watermark; `--limit <n>` caps how many
+  threads (by latest tweet) are kept. Either flag makes the run ad-hoc: the watermark
+  (`output/x/state.json`) is left untouched, so only flag-less runs advance it. Every run appends a
+  coverage record to `output/x/runs.json` — requested/covered range, thread/tweet counts, and a
+  `truncated`/`gap` marker when `--limit` or the `MAX_PAGES` (50) pagination cap stops the run short
+  of the requested floor. Recommended automation: an hourly `pnpm collect <target> --since 2h` — the
+  2h window overlapping the 1h cadence keeps coverage continuous, and upsert dedupes the overlap.
 - **Canonical rendering text.** `output/formatted/renderings.json` now stores destination-independent
   canonical text instead of pre-spelled output: bold is `**text**`, links are `[text](url)`, one
   blank line is a paragraph break, and two blank lines — or a lone `---` line, which `toCanonical`

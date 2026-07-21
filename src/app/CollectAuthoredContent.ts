@@ -1,13 +1,22 @@
 import { assembleThreads } from "../domain/threadAssembler";
 import type { CollectedThread, SourceTweet } from "../domain/models";
+import { applyThreadLimit } from "../domain/threadLimit";
+import { computeCoverage, type CollectionRun } from "../domain/coverage";
 import type { SourceGateway } from "../ports/SourceGateway";
 import type { CollectionRepository } from "../ports/CollectionRepository";
+import type { CollectionRunLedger } from "../ports/CollectionRunLedger";
 import type { WatermarkStore } from "../shared/store/WatermarkStore";
 import { systemClock, type Clock } from "../ports/Clock";
+
+export interface CollectOptions {
+  since?: string;
+  limit?: number;
+}
 
 export interface CollectResult {
   fetchedCount: number;
   threadCount: number;
+  run: CollectionRun;
 }
 
 export class CollectAuthoredContent {
@@ -15,34 +24,60 @@ export class CollectAuthoredContent {
     private readonly source: SourceGateway,
     private readonly repo: CollectionRepository,
     private readonly watermark: WatermarkStore,
+    private readonly ledger: CollectionRunLedger,
     private readonly now: Clock = systemClock,
   ) {}
 
-  async run(userName: string): Promise<CollectResult> {
-    const since = await this.watermark.get(userName);
+  async run(userName: string, opts: CollectOptions = {}): Promise<CollectResult> {
+    const adhoc = opts.since !== undefined || opts.limit !== undefined;
+    const floor = opts.since ?? (await this.watermark.get(userName));
 
     const fetched: SourceTweet[] = [];
-    for await (const t of this.source.fetchAuthoredTweets(userName, since)) fetched.push(t);
+    const pages = this.source.fetchAuthoredTweets(userName, floor);
+    let step = await pages.next();
+    while (!step.done) {
+      fetched.push(step.value);
+      step = await pages.next();
+    }
+    const paginationExhausted = step.value;
 
     await this.gapFillMissingRoots(fetched, userName);
 
     const assembled = assembleThreads(fetched);
-    const timestamp = this.now();
-    const collected: CollectedThread[] = assembled.map((thread) => ({
+    const { kept, truncated: truncatedByLimit } = applyThreadLimit(assembled, opts.limit);
+    const truncated = truncatedByLimit || paginationExhausted;
+
+    const ranAt = this.now();
+    const collected: CollectedThread[] = kept.map((thread) => ({
       rootId: thread.rootId,
       tweets: thread.tweets,
       status: "active",
-      firstSeenAt: timestamp,
+      firstSeenAt: ranAt,
     }));
-
     await this.repo.upsert(collected);
 
-    const maxCreatedAt = this.maxCreatedAt(fetched);
-    if (maxCreatedAt && (!since || maxCreatedAt > since)) {
-      await this.watermark.set(userName, maxCreatedAt);
+    const requested = { since: floor ?? null, until: ranAt };
+    const coverage = computeCoverage(kept, requested, truncated);
+    const run: CollectionRun = {
+      target: userName,
+      ranAt,
+      requested,
+      covered: coverage.covered,
+      threadCount: kept.length,
+      tweetCount: coverage.tweetCount,
+      truncated,
+      gap: coverage.gap,
+    };
+    await this.ledger.record(run);
+
+    if (!adhoc) {
+      const maxCreatedAt = this.maxCreatedAt(fetched);
+      if (maxCreatedAt && (!floor || maxCreatedAt > floor)) {
+        await this.watermark.set(userName, maxCreatedAt);
+      }
     }
 
-    return { fetchedCount: fetched.length, threadCount: collected.length };
+    return { fetchedCount: fetched.length, threadCount: kept.length, run };
   }
 
   /** Pull earlier thread parts (via thread_context) for threads whose root is absent. */
