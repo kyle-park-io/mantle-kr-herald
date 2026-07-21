@@ -101,7 +101,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm format:save --id --type --channel --file` | `output/formatted/pending.json`(없으면 `output/formatted/renderings.json`에서 폴백); `--file` | `output/formatted/renderings.json`(upsert, `refined: true`) | 없음 |
 | `pnpm glossary [add --term --rule ...]` | `translation/glossary.json` | `add` 서브커맨드일 때만 `translation/glossary.json`(upsert) | 없음 |
 | `pnpm config:init` | `translation/*.example.*`, `conversion/*.example.*` | 실제 파일이 아직 없는 것만 생성(`translation/{glossary,locale,style-guide,few-shot}.*`, `conversion/{x,announcement,kol,pr}.md`, `conversion/few-shot.{x,announcement,kol,pr}.json`) — 이미 있으면 절대 덮어쓰지 않음 | 없음 |
-| `pnpm drive:publish [--target google\|lark\|local\|both\|<쉼표로 나열>]` | `output/translations/translations.json`; 중복 게시 방지 및 `stale` 판정을 위한 `output/publish/state.json` | `output/publish/state.json`(신규 업로드는 SyncEntry 추가, `stale` 항목은 기존 행을 갱신 — 둘 다 §4); `output/publish/local/{review,approved}/*.md`(`local` 모드, 또는 `--target`에 `local`이 포함된 경우) | 모드/`--target`에 따라 다름 — 없음(`local`만인 경우), 또는 Google Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 파일 갱신 엔드포인트도) 그리고/또는 Lark Drive API(파일 생성 엔드포인트만 — 갱신 엔드포인트 없음, §4) |
+| `pnpm drive:publish [--target google\|lark\|local\|both\|<쉼표로 나열>]` | `output/translations/translations.json`; 중복 게시 방지 및 `stale` 판정을 위한 `output/publish/state.json` | `output/publish/state.json`(신규 업로드는 SyncEntry 추가, `stale` 항목은 기존 행을 갱신 — 둘 다 §4); `output/publish/local/{review,approved}/*.md`(`local` 모드, 또는 `--target`에 `local`이 포함된 경우) | 모드/`--target`에 따라 다름 — 없음(`local`만인 경우), 또는 Google Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 파일 갱신 엔드포인트도) 그리고/또는 Lark Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 삭제 엔드포인트도 — 콘텐츠 교체 엔드포인트가 없어 새로 올린 뒤 예전 파일을 지우는 방식, §4) |
 | `pnpm drive:init [--force]` | `local` 모드면 스킵. 로컬 파일 없음(env만) | 로컬 파일 없음 — 생성된 폴더 id를 `.env`에 붙여넣도록 콘솔에 출력 | Google Drive API(폴더 생성/공유) |
 | `pnpm targets:list [--active-only]` | `local` 모드면 스킵. 로컬 파일 없음 | 없음 | Google Sheets API(`targets` 탭 조회) |
 | `pnpm history:record --item --type --channel --status [...]` | `local` 모드면 스킵. 로컬 파일 없음 | 로컬 파일 없음 | Google Sheets API(`history` 탭에 행 추가) |
@@ -199,12 +199,13 @@ interface SyncEntry {
 (`src/status/sync.ts`의 `syncSummary`, `src/domain/publish/syncLedger.ts`의 `isStale`,
 `src/app/PublishTranslations.ts`).
 
-`stale`로 판정된 행은 대상이 Google 또는 `local`이면 기존 파일을 그 자리에서 갱신하고(중복 없음),
-대상이 Lark면 갱신 엔드포인트가 없어 실패로 보고됩니다. Google은 파일 id·공유 링크를 유지한 채
-PATCH하고, `local`(`LocalFileUploader.update`)은 새 내용을 다시 쓴 뒤 파일명이 바뀌었으면(예:
-재승인으로 `approvedAt` 날짜가 바뀐 경우) 이전 파일을 지워 하나만 남깁니다. Lark만 갱신 수단이
-없는 이유는 Lark Drive `drive/v1`에 콘텐츠를 그 자리에서 바꾸는 API가 없기 때문이며, 이 항목은
-Drive에서 직접 찾아 수동으로 처리해야 합니다.
+`stale`로 판정된 행은 대상에 따라 다른 방식으로, 그러나 모두 중복 없이 재게시됩니다. Google은
+파일 id·공유 링크를 유지한 채 PATCH하고, `local`(`LocalFileUploader.update`)은 새 내용을 다시 쓴
+뒤 파일명이 바뀌었으면(예: 재승인으로 `approvedAt` 날짜가 바뀐 경우) 이전 파일을 지워 하나만
+남깁니다. Lark(`LarkDriveUploader.update`)는 `drive/v1`에 콘텐츠 교체 API가 없어 **새 파일을 올린
+뒤 예전 파일을 삭제**하므로, 폴더에는 하나만 남지만 **`file_token`과 링크는 매번 바뀝니다**. 예전
+파일 삭제가 실패하면 게시는 성공으로 처리하고 고아 토큰을 경고로 남깁니다(원장은 새 파일을 가리키
+므로 재업로드가 반복되지는 않습니다).
 
 **레거시 마이그레이션:** 예전 형식 `{"published": ["<itemId>:<status>:<target>", ...]}`은 읽는
 시점에 자동 변환됩니다(`migrateLegacyKeys`). 이 경로로 만들어진 행은 `stage: "translation"`과
@@ -217,7 +218,7 @@ Drive에서 직접 찾아 수동으로 처리해야 합니다.
 `PublishTranslations`는 `contentHash` 비교 없이 그 자리에서 건너뛰고 `record()`를 다시 호출하지
 않으므로, 이런 행은 그 항목이 나중에 다시 게시되더라도 `contentHash`를 얻지 못합니다. 유일한
 탈출 경로(레거시 행 전용, 원장 행 수동 삭제 + 재게시)와 자동 갱신 경로(해시가 있는 `stale` 행
-전용, Google과 `local`만)를 서로 다른 상황에만 써야 하며, 두 절차를 구분해 정리한 문서는
+전용, 대상 세 가지 모두)를 서로 다른 상황에만 써야 하며, 두 절차를 구분해 정리한 문서는
 [`team-runbook.md`](team-runbook.md) §4를 참고하세요.
 
 ## 5. 보존 정책

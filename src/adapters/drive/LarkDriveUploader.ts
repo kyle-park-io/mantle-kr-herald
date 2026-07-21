@@ -40,6 +40,57 @@ export class LarkDriveUploader implements DriveUploader {
     }
     return { id: data.data.file_token, name: req.name };
   }
+
+  /**
+   * Replace, not edit in place. Lark's drive/v1 has no content-replace endpoint — a same-name
+   * upload_all creates a duplicate, PUT on the file 404s, and PATCH rejects every documented-looking
+   * body with 981002 — so the new content goes up as a new file and the old one is deleted. The
+   * file_token therefore changes on every republish, unlike Google's PATCH against a stable id.
+   *
+   * Upload runs first: the failure it allows is an orphan (two files, one of them stale), which is
+   * recoverable by hand, where delete-first would allow a window with no file at all in a folder
+   * reviewers read from.
+   */
+  async update(remoteId: string, req: UploadRequest): Promise<UploadResult> {
+    const result = await this.upload(req);
+    await this.deletePrevious(remoteId, result.name);
+    return result;
+  }
+
+  /**
+   * Warns rather than throwing. PublishTranslations records the ledger row only when update()
+   * returns, so throwing here would leave the file just uploaded unrecorded and the next run would
+   * upload another copy — duplicates compounding on every run, which is what the sync ledger exists
+   * to prevent. Warning keeps the ledger pointing at the live file and leaves at most one orphan.
+   *
+   * Because every failure is handled the same way, this never has to tell "already deleted by hand"
+   * apart from "permission denied".
+   */
+  private async deletePrevious(remoteId: string, newName: string): Promise<void> {
+    let detail = "";
+    try {
+      const token = await this.auth.getToken();
+      const res = await this.fetchFn(
+        `${this.baseUrl}/open-apis/drive/v1/files/${encodeURIComponent(remoteId)}?type=file`,
+        { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) {
+        const body = await extractLarkErrorDetail(res);
+        detail = `HTTP ${res.status}${body ? ` — ${body}` : ""}`;
+      } else {
+        const data = (await res.json()) as { code?: number; msg?: string };
+        if (data.code !== 0) detail = `code=${data.code} ${data.msg ?? ""}`.trim();
+      }
+    } catch (err) {
+      detail = err instanceof Error ? err.message : String(err);
+    }
+    if (detail) {
+      console.warn(
+        `[lark] published ${newName} but could not delete the previous file ${remoteId}: ${detail} — ` +
+          `delete it in Lark Drive by hand, or the folder will keep two copies of this item`,
+      );
+    }
+  }
 }
 
 /**
