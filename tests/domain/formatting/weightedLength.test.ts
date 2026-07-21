@@ -46,4 +46,19 @@ describe("weightedLength", () => {
     // "Check " = 6, "." = 1, plus the URL's 23
     expect(weightedLength("Check https://x.io.")).toBe(6 + 1 + TCO_LENGTH);
   });
+
+  it("trims other members of the trailing-punctuation class too, not just ) and .", () => {
+    // "[" + "]" = 2, plus the URL's 23
+    expect(weightedLength("[https://x.io]")).toBe(2 + TCO_LENGTH);
+    // "See " = 4, ";" = 1, plus the URL's 23
+    expect(weightedLength("See https://x.io;")).toBe(4 + 1 + TCO_LENGTH);
+  });
+
+  it("keeps a closing bracket that balances an opening bracket inside the URL", () => {
+    // The URL's own trailing ")" closes "_(blockchain" — it is part of the URL, not prose.
+    expect(weightedLength("https://en.wikipedia.org/wiki/Mantle_(blockchain)")).toBe(TCO_LENGTH);
+    // Wrapped in prose parens: only the outer ")" is prose; the inner one stays with the URL.
+    // "(" + ")" = 2, plus the URL's 23
+    expect(weightedLength("(https://en.wikipedia.org/wiki/Mantle_(blockchain))")).toBe(2 + TCO_LENGTH);
+  });
 });
