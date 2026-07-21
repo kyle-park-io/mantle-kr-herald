@@ -20,7 +20,7 @@ describe("FormatVariants", () => {
   it("formats approved variants to their default channels and persists refined:false renderings", async () => {
     // announcement is the multi-channel type: one variant fans out to telegram + kakao
     const s = stores([variant({ type: "announcement" })]);
-    const uc = new FormatVariants(s.conversionStore, s.formattingStore, {}, () => "2026-03-03T00:00:00.000Z");
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore, () => "2026-03-03T00:00:00.000Z");
     const { renderings } = await uc.run({});
     expect(renderings.map((r) => r.channel)).toEqual(["telegram", "kakao"]);
     expect(renderings.every((r) => r.refined === false)).toBe(true);
@@ -44,15 +44,29 @@ describe("FormatVariants", () => {
 
   it("filters by --ids (only the requested items are formatted)", async () => {
     const s = stores([variant({ itemId: "x:1", type: "x" }), variant({ itemId: "x:2", type: "x" })]);
-    const uc = new FormatVariants(s.conversionStore, s.formattingStore, {}, () => "t");
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore, () => "t");
     const { renderings } = await uc.run({ ids: ["x:2"], channels: ["x"] });
     expect(renderings.map((r) => r.itemId)).toEqual(["x:2"]);
   });
 
   it("filters by --types (only the requested types are formatted)", async () => {
     const s = stores([variant({ itemId: "x:1", type: "x" }), variant({ itemId: "x:1", type: "kol" })]);
-    const uc = new FormatVariants(s.conversionStore, s.formattingStore, {}, () => "t");
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore, () => "t");
     const { renderings } = await uc.run({ types: ["kol"], channels: ["telegram"] });
     expect(renderings.map((r) => r.type)).toEqual(["kol"]);
+  });
+
+  it("stores canonical text — bold and links survive, destination syntax does not", async () => {
+    const s = stores([variant({ convertedText: "**메인넷** [자세히](https://x.io)" })]);
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore, () => "2026-03-03T00:00:00.000Z");
+    const { renderings } = await uc.run({});
+    expect(renderings[0].text).toBe("**메인넷** [자세히](https://x.io)");
+  });
+
+  it("warns via the channel's destinations, counting Hangul as 2 for x", async () => {
+    const s = stores([variant({ type: "x", convertedText: "가".repeat(141) })]);
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore, () => "2026-03-03T00:00:00.000Z");
+    const { warnings } = await uc.run({});
+    expect(warnings[0].messages.some((m) => m.includes("282/280"))).toBe(true);
   });
 });

@@ -12,7 +12,7 @@ function conversionStore(list: ContentVariant[]): ConversionStore {
 }
 
 describe("PrepareRefinements", () => {
-  it("builds a worksheet + pending from approved variants' code-formatted drafts (default channels)", async () => {
+  it("builds a worksheet + pending from approved variants' canonical drafts (default channels)", async () => {
     // announcement → default channels [telegram, kakao]: proves the multi-channel fan-out
     const { worksheet, pending } = await new PrepareRefinements(
       conversionStore([variant({ type: "announcement" })]),
@@ -22,7 +22,7 @@ describe("PrepareRefinements", () => {
       { itemId: "x:1", type: "announcement", channel: "kakao" },
     ]);
     expect(worksheet).toContain("## x:1 · 공지 · telegram");
-    expect(worksheet).toContain("메인넷 출시"); // ** stripped by the code formatter
+    expect(worksheet).toContain("**메인넷** 출시"); // canonical keeps ** — the draft is not destination-formatted
     expect(worksheet).toContain("보정:");
   });
 

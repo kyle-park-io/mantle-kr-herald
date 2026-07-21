@@ -8,7 +8,7 @@ import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
 import { FormatVariants, type FormatSelector } from "../app/FormatVariants";
 import { PrepareRefinements } from "../app/PrepareRefinements";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
-import { ALL_CHANNELS, type Channel, type FormatOptions } from "../domain/formatting/models";
+import { ALL_CHANNELS, type Channel } from "../domain/formatting/models";
 import { archiveFile } from "../shared/store/archive";
 import { writeJsonFileAtomic } from "../shared/store/jsonFile";
 import { paths } from "../paths";
@@ -28,13 +28,19 @@ if (channelsArg) {
   if (invalid.length > 0) throw new Error(`Invalid --channels: ${invalid.join(", ")} (allowed: ${ALL_CHANNELS.join(", ")})`);
   selector.channels = channelsArg as Channel[];
 }
-const opts: FormatOptions = argValue("--x-bold") === "unicode" ? { xBold: "unicode" } : {};
+if (process.argv.includes("--x-bold")) {
+  throw new Error(
+    "--x-bold was removed. Unicode bold (𝗔) is skipped entirely by screen readers, is not matched " +
+      "by X search, and costs 2 weighted characters per letter. Write **bold** in the canonical " +
+      "text instead — each destination decides how to spell it.",
+  );
+}
 const refine = process.argv.includes("--refine");
 
 const conversionStore = new JsonConversionStore(paths.variantsDir);
 
 if (refine) {
-  const { worksheet, pending } = await new PrepareRefinements(conversionStore, opts).run(selector);
+  const { worksheet, pending } = await new PrepareRefinements(conversionStore).run(selector);
   await mkdir(paths.formattedWorksheets, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const worksheetPath = join(paths.formattedWorksheets, `batch-${stamp}.md`);
@@ -47,7 +53,7 @@ if (refine) {
   console.log(`prepared ${pending.length} refinement draft(s) → ${worksheetPath}`);
   console.log("Fill each 보정 section, then run: pnpm format:save --id <id> --type <t> --channel <c> --file <txt>");
 } else {
-  const { renderings, warnings } = await new FormatVariants(conversionStore, new JsonFormattingStore(paths.formattedDir), opts).run(selector);
+  const { renderings, warnings } = await new FormatVariants(conversionStore, new JsonFormattingStore(paths.formattedDir)).run(selector);
   console.log(`formatted ${renderings.length} rendering(s) → ${join(paths.formattedDir, 'renderings.json')}`);
   for (const w of warnings) console.log(`  ⚠ ${w.itemId}/${w.type}/${w.channel}: ${w.messages.join("; ")}`);
 }
