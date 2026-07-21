@@ -208,6 +208,36 @@ describe("handleApi", () => {
   });
 });
 
+describe("GET /api/renderings/:id/:type/:channel/emissions", () => {
+  it("returns only the destinations of that rendering's channel", async () => {
+    const deps = makeDeps([], [rnd({ channel: "telegram", type: "announcement", text: "**중요**" })]);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.json as object)).toEqual(["telegram_paste", "telegram_bot"]);
+  });
+
+  it("emits each destination's own spelling", async () => {
+    const deps = makeDeps([], [rnd({ channel: "telegram", type: "announcement", text: "**중요**" })]);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
+    const json = res.json as Record<string, { segments: { text: string }[] }>;
+    expect(json.telegram_paste.segments[0].text).toBe("중요");
+    expect(json.telegram_bot.segments[0].text).toBe("<b>중요</b>");
+  });
+
+  it("404s for an unknown rendering", async () => {
+    const deps = makeDeps([], []);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A9/x/x/emissions", undefined);
+    expect(res.status).toBe(404);
+  });
+
+  it("emits the stored text as-is, without canonicalising on read", async () => {
+    const deps = makeDeps([], [rnd({ channel: "telegram", type: "announcement", text: "  **중요**  " })]);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
+    const json = res.json as Record<string, { segments: { text: string }[] }>;
+    expect(json.telegram_paste.segments[0].text).toBe("  중요  ");
+  });
+});
+
 describe("GET /api/config", () => {
   it("reports the server's storage mode so the dashboard can pick a publish target", async () => {
     const res = await handleApi(makeDeps([]), "GET", "/api/config", undefined);

@@ -1,6 +1,7 @@
 import { ALL_TYPES, type ConversionType, type ContentVariant } from "../domain/conversion/models";
-import { formatForChannel } from "../domain/formatting/channelFormat";
-import { DEFAULT_CHANNELS_BY_TYPE, type Channel, type ChannelRendering, type FormatOptions } from "../domain/formatting/models";
+import { toCanonical } from "../domain/formatting/canonical";
+import { emitAll, type Destination, type EmitResult } from "../domain/formatting/emitters";
+import { DEFAULT_CHANNELS_BY_TYPE, type Channel, type ChannelRendering } from "../domain/formatting/models";
 import type { ConversionStore } from "../ports/ConversionStore";
 import type { FormattingStore } from "../ports/FormattingStore";
 
@@ -30,7 +31,6 @@ export class FormatVariants {
   constructor(
     private readonly conversionStore: ConversionStore,
     private readonly formattingStore: FormattingStore,
-    private readonly opts: FormatOptions = {},
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
@@ -41,14 +41,26 @@ export class FormatVariants {
     const warnings: FormatWarning[] = [];
     for (const v of approved) {
       const channels = selector.channels ?? DEFAULT_CHANNELS_BY_TYPE[v.type];
+      // The same canonical text is stored for every channel on purpose: it is a common starting
+      // point that the writer can then refine per channel, which is what per-channel approval is for.
+      const text = toCanonical(v.convertedText);
       for (const channel of channels) {
-        const result = formatForChannel(v.convertedText, channel, this.opts);
         const rendering: ChannelRendering = {
-          itemId: v.itemId, type: v.type, channel, text: result.text, refined: false, createdAt: this.now(), status: "rendered",
+          itemId: v.itemId, type: v.type, channel, text, refined: false, createdAt: this.now(), status: "rendered",
         };
         await this.formattingStore.upsert(rendering);
         renderings.push(rendering);
-        if (result.warnings.length > 0) warnings.push({ itemId: v.itemId, type: v.type, channel, messages: result.warnings });
+        // Group by message text so destinations that agree (e.g. x_paste and x_typefully today)
+        // collapse to one line, while destinations that legitimately disagree (paste counts
+        // markup, bot counts visible length) stay distinguishable by name.
+        const byMessage = new Map<string, Destination[]>();
+        for (const [destination, result] of Object.entries(emitAll(text, channel)) as [Destination, EmitResult][]) {
+          for (const warning of result.warnings) {
+            byMessage.set(warning, [...(byMessage.get(warning) ?? []), destination]);
+          }
+        }
+        const messages = [...byMessage].map(([warning, destinations]) => `${destinations.join(", ")}: ${warning}`);
+        if (messages.length > 0) warnings.push({ itemId: v.itemId, type: v.type, channel, messages });
       }
     }
     return { renderings, warnings };

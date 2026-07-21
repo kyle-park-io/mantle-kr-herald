@@ -10,6 +10,7 @@ import type { ConversionStore } from "../../ports/ConversionStore";
 import type { SaveRendering } from "../../app/SaveRendering";
 import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
+import { emitAll } from "../../domain/formatting/emitters";
 
 export interface StatusView {
   storageMode: StorageMode;
@@ -136,6 +137,14 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
         const updated = await deps.approveRendering.run({ itemId, type, channel });
         if (!updated) return { status: 404, json: { error: "not found" } };
         return { status: 200, json: updated };
+      }
+
+      if (method === "GET" && segments.length === 6 && segments[5] === "emissions") {
+        const existing = (await deps.formattingStore.loadAll()).find(
+          (r) => r.itemId === itemId && r.type === type && r.channel === channel,
+        );
+        if (!existing) return { status: 404, json: { error: "not found" } };
+        return { status: 200, json: emitAll(existing.text, channel) };
       }
     }
   }

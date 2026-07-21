@@ -16,22 +16,13 @@ export const DEFAULT_CHANNELS_BY_TYPE: Record<ConversionType, Channel[]> = {
   pr: ["pr_mail"],
 };
 
-export interface FormatOptions {
-  xBold?: "plain" | "unicode";
-}
-
-export interface FormatResult {
-  text: string;
-  warnings: string[];
-}
-
 /** One converted variant formatted for a specific channel. Identity is (itemId, type, channel). */
 export interface ChannelRendering {
   itemId: string;
   type: ConversionType;
   channel: Channel;
   text: string;
-  refined: boolean; // false = code formatter only; true = agent/human edited
+  refined: boolean; // false = canonical, untouched; true = agent/human edited
   createdAt: string;
   status: "rendered" | "approved"; // §7 second-review approval gate
   approvedAt?: string;

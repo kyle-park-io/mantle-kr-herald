@@ -25,13 +25,15 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
     if (dirty && !window.confirm("저장하지 않은 편집이 있습니다. 그래도 이동할까요?")) return;
     setSelectedKey(k);
   };
-  const onSave = async (item: Rendering, text: string) => {
+  const onSave = async (item: Rendering, text: string): Promise<string | undefined> => {
     setError(null);
     try {
-      await api.editRendering(item.itemId, item.type, item.channel, text);
+      const updated = await api.editRendering(item.itemId, item.type, item.channel, text);
       await refresh();
+      return updated.text;
     } catch (e) {
       setError(String((e as Error).message ?? e));
+      return undefined;
     }
   };
   const onApprove = async (item: Rendering) => {

@@ -29,6 +29,26 @@
 `.gitignore`로 제외됩니다. `pnpm config:init`이 예시 파일을 복사해 실제 파일을 만들어 줍니다
 (§3 참고).
 
+### 이름 규칙 — 루트는 프로세스, `output/`은 산출물
+
+디렉터리 이름은 두 가지 규칙을 따릅니다.
+
+- **저장소 루트의 스티어링 디렉터리 = 프로세스 이름** — `translation/`, `conversion/`
+- **`output/` 아래 디렉터리 = 그 단계가 만들어낸 산출물 이름** — `translations/`, `variants/`,
+  `formatted/`
+
+| 단계 | 도메인 코드 | 스티어링(루트) | CLI | `output/` 디렉터리 | 산출 파일 |
+|---|---|---|---|---|---|
+| 번역 | `src/domain/translation` | `translation/` | `translate:*` | `translations/` | `translations.json` |
+| 변환 | `src/domain/conversion` | `conversion/` | `convert:*` | `variants/` | `variants.json` |
+| 포맷 | `src/domain/formatting` | (없음) | `format` | `formatted/` | `renderings.json` |
+
+루트의 `conversion/`과 `output/variants/`가 짝이 안 맞는 것처럼 보이지만 규칙이 깨진 것은
+아닙니다 — 변환 단계는 **프로세스**가 conversion, **산출물**이 variant라서 두 단어가 갈릴 뿐입니다.
+번역 단계만 프로세스와 산출물이 우연히 같은 단어(translation)를 쓰기 때문에 그쪽이 "짝이 맞는
+이름"처럼 보이는 것이고, 이것이 나머지를 불일치로 오해하게 만드는 원인입니다. 포맷 단계는
+스티어링 설정이 없어 루트 디렉터리 자체가 없습니다(산출물 이름 불일치는 §7 참고).
+
 ## 2. 저장 모드
 
 ```bash
@@ -97,8 +117,8 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm translate:save --id --file [--approve]` | `output/translations/pending.json`(없으면 `output/translations/translations.json`에서 이미 저장된 항목으로 폴백); `--file`로 지정한 로컬 한글 텍스트 | `output/translations/translations.json`(upsert); `--approve` 시 `translation/few-shot.json`에 예시 추가 | 없음 |
 | `pnpm convert:prepare [--ids] [--since] [--limit] [--types]` | 승인된 항목을 위한 `output/translations/translations.json`; 이미 변환된 키 제외를 위한 `output/variants/variants.json`; `translation/glossary.json`, `translation/locale.json`; `conversion/{x,announcement,kol,pr}.md`, `conversion/few-shot.{x,announcement,kol,pr}.json` | `output/variants/worksheets/`에 `batch-<타임스탬프>.md` 워크시트; `output/variants/pending.json` 갱신(이전 배치는 `output/archive/<YYYY-MM-DD>/`로 이동) | 없음 |
 | `pnpm convert:save --id --type --file [--approve]` | `output/variants/pending.json`(없으면 `output/variants/variants.json`에서 폴백); `--file` | `output/variants/variants.json`(upsert); `--approve` 시 `conversion/few-shot.<type>.json` | 없음 |
-| `pnpm format [--ids] [--types] [--channels] [--refine] [--x-bold unicode]` | 승인된 항목을 위한 `output/variants/variants.json` | 기본 모드: `output/formatted/renderings.json`에 직접 upsert. `--refine` 모드: `output/formatted/worksheets/`에 `batch-<타임스탬프>.md`, `output/formatted/pending.json` 갱신(이전 배치는 `output/archive/<YYYY-MM-DD>/`로 이동) | 없음 |
-| `pnpm format:save --id --type --channel --file` | `output/formatted/pending.json`(없으면 `output/formatted/renderings.json`에서 폴백); `--file` | `output/formatted/renderings.json`(upsert, `refined: true`) | 없음 |
+| `pnpm format [--ids] [--types] [--channels] [--refine]` | 승인된 항목을 위한 `output/variants/variants.json` | 기본 모드: `output/formatted/renderings.json`에 canonical 텍스트(`**볼드**`, `[텍스트](URL)`, 빈 줄 하나 = 문단 구분, 빈 줄 두 개 = 트윗 경계)로 직접 upsert — 입력의 `---` 한 줄도 경계로 인식하지만 저장되는 값은 항상 빈 줄 두 개입니다. `--refine` 모드: `output/formatted/worksheets/`에 `batch-<타임스탬프>.md`(채널 제약 + 초안에 등장한 용어집 + 세그먼트별 길이 리포트 포함), `output/formatted/pending.json` 갱신(이전 배치는 `output/archive/<YYYY-MM-DD>/`로 이동) | 없음 |
+| `pnpm format:save --id --type --channel --file` | `output/formatted/pending.json`(없으면 `output/formatted/renderings.json`에서 폴백); `--file`(canonical 텍스트) | `output/formatted/renderings.json`(upsert, `refined: true`, canonical 텍스트 그대로 저장) | 없음 |
 | `pnpm glossary [add --term --rule ...]` | `translation/glossary.json` | `add` 서브커맨드일 때만 `translation/glossary.json`(upsert) | 없음 |
 | `pnpm config:init` | `translation/*.example.*`, `conversion/*.example.*` | 실제 파일이 아직 없는 것만 생성(`translation/{glossary,locale,style-guide,few-shot}.*`, `conversion/{x,announcement,kol,pr}.md`, `conversion/few-shot.{x,announcement,kol,pr}.json`) — 이미 있으면 절대 덮어쓰지 않음 | 없음 |
 | `pnpm drive:publish [--target google\|lark\|local\|both\|<쉼표로 나열>]` | `output/translations/translations.json`; 중복 게시 방지 및 `stale` 판정을 위한 `output/publish/state.json` | `output/publish/state.json`(신규 업로드는 SyncEntry 추가, `stale` 항목은 기존 행을 갱신 — 둘 다 §4); `output/publish/local/{review,approved}/*.md`(`local` 모드, 또는 `--target`에 `local`이 포함된 경우) | 모드/`--target`에 따라 다름 — 없음(`local`만인 경우), 또는 Google Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 파일 갱신 엔드포인트도) 그리고/또는 Lark Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 삭제 엔드포인트도 — 콘텐츠 교체 엔드포인트가 없어 새로 올린 뒤 예전 파일을 지우는 방식, §4) |
@@ -111,8 +131,22 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm status` | `output/x/items.json`, `output/lark/items.json`, `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 없음 | 없음 |
 | `pnpm archive` | `output/translations/worksheets/`, `output/variants/worksheets/`, `output/formatted/worksheets/`의 `.md` 목록 | 대상 파일들을 `output/archive/<YYYY-MM-DD>/`로 이동 | 없음 |
 | `pnpm clean [--older-than <days>] [--yes]` | `output/archive/`의 날짜 폴더 목록; 좌초된 임시 파일 탐지를 위해 `output/` 전체(`output/archive/` 내부는 제외)를 재귀 탐색 | 기본은 드라이런(삭제 대상만 출력). `--yes`일 때: 30일(기본값) 초과 경과한 `output/archive/<YYYY-MM-DD>/` 폴더 + `output/archive/`를 제외한 `output/` 안 어디에 있든 `*.tmp-<pid>-<ms>-<uuid>` 형식의 좌초 파일을 삭제 | 없음 |
-| `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들; `local` 모드에서 게시하면 `output/publish/local/{review,approved}/*.md`도 포함(§2 참고) | 게시 API 호출 시 모드에 따라 Google Drive API, Lark Drive API(`cloud`), 또는 없음(`local`) |
+| `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json`; `GET /api/renderings/:itemId/:type/:channel/emissions`는 저장된 canonical 텍스트를 요청 시점에 그 채널의 목적지(destination)별 텍스트로 변환해 돌려줍니다(파일로 저장되지 않고 그때그때 계산됨) | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들; `local` 모드에서 게시하면 `output/publish/local/{review,approved}/*.md`도 포함(§2 참고) | 게시 API 호출 시 모드에 따라 Google Drive API, Lark Drive API(`cloud`), 또는 없음(`local`) |
 | `pnpm google:auth` | `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`/`GOOGLE_OAUTH_SCOPE`(env) | 로컬 파일 없음 — refresh token을 콘솔에 출력 | Google OAuth 2.0(로컬 루프백 서버로 인가 코드 교환) |
+
+`output/formatted/renderings.json`의 본문은 목적지(destination)별 철자가 아니라 **canonical
+텍스트**입니다 — 어휘는 볼드 `**텍스트**`, 링크 `[텍스트](URL)`, 빈 줄 하나(문단 구분), 빈 줄 두
+개(트윗 경계, x 채널 전용)가 전부입니다. 파이프라인이 오래전부터 트윗 스레드 구분에 써 온 `---`
+한 줄짜리 구분선(`XContentSource`의 `THREAD_TWEET_SEPARATOR`)도 같은 트윗 경계로 인식됩니다
+(`toCanonical`). x가 아닌 채널에서는 트윗 경계가 문단 구분으로 접힙니다
+(`flattenPostBoundaries`). 실제 목적지별 철자는 저장 시점이 아니라 읽는 시점에
+`src/domain/formatting/emitters/`가 canonical 텍스트로부터 만들어 냅니다 — 채널과 목적지의 대응은
+[`capabilities.md`](capabilities.md) §3을 참고하세요.
+
+과거에 있던 `--x-bold unicode` 옵션(유니코드 볼드 문자로 치환)은 제거되었습니다 — 스크린리더가 그
+문자를 통째로 건너뛰고, X 검색이 매칭하지 못하며, 글자당 가중치도 2로 두 배가 되기 때문입니다.
+이제 `--x-bold unicode`나 `--x-bold=unicode`를 넘기면 같은 이유를 담은 에러로 즉시 실패합니다
+(`src/cli/format.ts`).
 
 ### `pnpm collect`의 두 수집 모드
 
@@ -284,3 +318,6 @@ interface SyncEntry {
 
 이름을 통일하는 리팩터는 기존 로컬 데이터를 함께 마이그레이션해야 하는데, 기능상 얻는 것이 없어
 범위 밖으로 남겨 두었습니다.
+
+반면 루트 `conversion/`과 `output/variants/`처럼 **디렉터리끼리** 이름이 달라 보이는 것은 마찰이
+아니라 §1의 이름 규칙(루트는 프로세스, `output/`은 산출물)이 의도대로 적용된 결과입니다.
