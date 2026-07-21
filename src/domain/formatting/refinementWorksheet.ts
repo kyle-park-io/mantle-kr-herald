@@ -4,7 +4,7 @@ import { renderGlossaryEntry } from "../translation/promptAssembler";
 import { DESTINATIONS_BY_CHANNEL, emit } from "./emitters";
 import { KAKAO_FOLD } from "./emitters/kakao";
 import { TELEGRAM_MAX } from "./emitters/telegram";
-import type { Channel } from "./models";
+import { ALL_CHANNELS, type Channel } from "./models";
 import { TCO_LENGTH, X_MAX_WEIGHTED } from "./weightedLength";
 
 export interface RefinementDraft {
@@ -42,15 +42,32 @@ function report(channel: Channel, draft: string): string {
     .join("\n");
 }
 
+/** Escapes regex metacharacters so a glossary term can be dropped verbatim into a pattern. */
+function escapeRegExp(term: string): string {
+  return term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * A term matches only when it is not flanked by an ASCII alphanumeric character on either side —
+ * plain substring search produces false positives (e.g. glossary term "UR" matching inside
+ * "Mantle Index Fo**ur**", "DEX" matching inside "Mantle In**dex** Four"). Korean characters are
+ * not ASCII alphanumerics, so a term adjacent to Hangul (e.g. "$MNT입니다") still matches, which is
+ * intended: Korean loanwords are written with no space before the following particle.
+ */
+function isTermPresent(term: string, haystack: string): boolean {
+  const pattern = new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(term)}(?![A-Za-z0-9])`, "i");
+  return pattern.test(haystack);
+}
+
 function glossarySection(glossary: GlossaryEntry[], allDrafts: string): string | undefined {
-  const haystack = allDrafts.toLowerCase();
-  const used = glossary.filter((e) => haystack.includes(e.term.toLowerCase()));
+  const used = glossary.filter((e) => isTermPresent(e.term, allDrafts));
   if (used.length === 0) return undefined;
   return ["## 용어집 (초안에 등장하는 것만)", ...used.map(renderGlossaryEntry)].join("\n");
 }
 
 export function assembleRefinementWorksheet(drafts: RefinementDraft[], glossary: GlossaryEntry[]): string {
-  const channels = [...new Set(drafts.map((d) => d.channel))];
+  const present = new Set(drafts.map((d) => d.channel));
+  const channels = ALL_CHANNELS.filter((c) => present.has(c));
   const constraints = ["## 채널 제약", ...channels.map((c) => CONSTRAINT[c])].join("\n");
   const glossaryBlock = glossarySection(glossary, drafts.map((d) => d.draft).join("\n"));
 

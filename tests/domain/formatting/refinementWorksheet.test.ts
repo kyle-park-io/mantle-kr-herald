@@ -17,4 +17,18 @@ describe("assembleRefinementWorksheet", () => {
     expect(out).toContain("초안:");
     expect(out.trimEnd().endsWith("보정:")).toBe(true);
   });
+
+  it("orders channel constraint bullets by ALL_CHANNELS, not by draft/approval order", () => {
+    const out = assembleRefinementWorksheet(
+      [
+        { itemId: "x:1", type: "pr", channel: "pr_mail", draft: "메일" },
+        { itemId: "x:1", type: "kol", channel: "telegram", draft: "텔레그램" },
+        { itemId: "x:1", type: "x", channel: "x", draft: "엑스" },
+      ],
+      [],
+    );
+    const constraints = out.split("## 채널 제약")[1].split("\n\n")[0];
+    expect(constraints.indexOf("- x:")).toBeLessThan(constraints.indexOf("- telegram:"));
+    expect(constraints.indexOf("- telegram:")).toBeLessThan(constraints.indexOf("- pr_mail:"));
+  });
 });

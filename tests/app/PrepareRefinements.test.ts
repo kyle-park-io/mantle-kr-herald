@@ -83,8 +83,34 @@ describe("PrepareRefinements — worksheet header", () => {
       glossaryStore(),
     ).run({});
     expect(worksheet).toContain("트윗 1/2");
-    expect(worksheet).toContain("⚠");
-    expect(worksheet).toContain("400/280");
-    expect(worksheet).toContain("120 초과");
+    expect(worksheet).toContain("⚠ 트윗 2/2 — **400/280** (120 초과)");
+  });
+});
+
+describe("PrepareRefinements — glossary token boundary matching", () => {
+  it("does not surface a term that only appears embedded inside a longer word", async () => {
+    const { worksheet } = await new PrepareRefinements(
+      conversionStore([variant({ convertedText: "Mantle Index Four 출시" })]),
+      glossaryStore([entry("UR", "유알"), entry("DEX", "덱스")]),
+    ).run({});
+    expect(worksheet).not.toContain("## 용어집");
+  });
+
+  it("surfaces a term that appears as a standalone token", async () => {
+    const { worksheet } = await new PrepareRefinements(
+      conversionStore([variant({ convertedText: "UR 앱 출시" })]),
+      glossaryStore([entry("UR", "유알")]),
+    ).run({});
+    expect(worksheet).toContain("## 용어집");
+    expect(worksheet).toContain("- UR → transliterate: 유알");
+  });
+
+  it("matches a $-prefixed term adjacent to Hangul without throwing", async () => {
+    const { worksheet } = await new PrepareRefinements(
+      conversionStore([variant({ convertedText: "$MNT입니다" })]),
+      glossaryStore([entry("$MNT", "민트")]),
+    ).run({});
+    expect(worksheet).toContain("## 용어집");
+    expect(worksheet).toContain("- $MNT → transliterate: 민트");
   });
 });
