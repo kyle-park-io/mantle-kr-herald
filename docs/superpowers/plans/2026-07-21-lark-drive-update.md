@@ -354,18 +354,34 @@ Expected: one line per already-published Lark item, each with a `remoteId`. If t
 
 - [ ] **Step 2: Make one published item stale**
 
-Pick the first `itemId` from Step 1 and edit its Korean text so the content hash changes — through the normal path, not by hand-editing the ledger:
+Mark **one** Lark row stale by corrupting its stored `contentHash` — never by editing a real translation. `output/publish/state.json` is derived state that this very run rewrites with the correct hash, so the check leaves no trace; `translations.json` holds Kyle's actual Korean copy and must not be edited to create a test fixture.
+
+Back up first, then flip the hash of the first Lark row:
 
 ```bash
-pnpm translate:save --id <itemId> --file <edited.txt>
+cp output/publish/state.json output/publish/state.json.bak
+node -e '
+const fs = require("fs");
+const p = "output/publish/state.json";
+const s = JSON.parse(fs.readFileSync(p, "utf8"));
+const row = s.entries.find((r) => r.target === "lark" && r.contentHash);
+if (!row) throw new Error("no lark row with a contentHash — run drive:publish --target lark first");
+console.log("making stale:", row.itemId, row.status, "old remoteId:", row.remoteId);
+row.contentHash = "0".repeat(row.contentHash.length);
+fs.writeFileSync(p, JSON.stringify(s, null, 2));
+'
 ```
 
-Expected: `pnpm status` reports the item as `unsynced`.
+Expected: it prints the `itemId`, `status`, and the **old** `remoteId` — record all three, Step 4 compares against them.
+
+If anything in Steps 3-4 goes wrong, restore with `mv output/publish/state.json.bak output/publish/state.json`. On success, delete the backup.
 
 - [ ] **Step 3: Republish and read the counters**
 
 Run: `HERALD_STORAGE_MODE=cloud pnpm drive:publish --target lark`
 Expected: `published 0 new + 1 updated across 1 drive(s); 0 failure(s)` and `by drive: {"lark":1}`. No `✗` line, and no `cannot update` message.
+
+Only the row made stale in Step 2 should move — `1 updated`, not more.
 
 - [ ] **Step 4: Confirm the folder holds one file, not two**
 
@@ -393,7 +409,7 @@ Then run it with the repo's `.env` loaded, the same way every CLI in this projec
 npx tsx --env-file-if-exists=.env <path-to>/check-dupes.mts
 ```
 
-Expected: `duplicates: none` for both folders, and the republished item's `file_token` in the ledger differs from the one recorded in Step 1.
+Expected: `duplicates: none` for both folders. Then confirm the row's `remoteId` in `output/publish/state.json` differs from the old `remoteId` printed in Step 2 — that difference is what proves the file was replaced rather than edited in place. Delete `output/publish/state.json.bak`.
 
 - [ ] **Step 5: Report the evidence**
 
