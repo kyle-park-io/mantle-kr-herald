@@ -17,4 +17,8 @@ describe("emitKakaoPaste", () => {
   it("stays quiet at exactly 500 characters", () => {
     expect(emitKakaoPaste("가".repeat(KAKAO_FOLD)).warnings).toEqual([]);
   });
+
+  it("counts an astral character as one, not as its surrogate pair", () => {
+    expect(emitKakaoPaste("🎉").segments[0].length).toBe(1);
+  });
 });

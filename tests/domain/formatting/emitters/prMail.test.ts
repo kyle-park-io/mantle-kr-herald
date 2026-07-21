@@ -17,6 +17,7 @@ describe("emitPrMail", () => {
     const r = emitPrMail(`제목줄\n\n${"가".repeat(333)}`);
     expect(r.segments[0].overLimit).toBe(true);
     expect(r.warnings[0]).toContain(String(MAIL_MAX_LINE_OCTETS));
+    expect(r.segments[0].length).toBe(999);
   });
 
   it("stays quiet when every line fits", () => {
