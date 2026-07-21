@@ -57,3 +57,31 @@ export interface PublishStateRow {
   remoteId?: string;
   fileName?: string;
 }
+
+// Mirrors src/domain/formatting/emitters/types.ts — keep in sync.
+export type Destination =
+  | "x_paste" | "x_typefully"
+  | "telegram_paste" | "telegram_bot"
+  | "kakao_paste" | "pr_mail";
+
+export interface EmitSegment {
+  text: string;
+  label?: string;
+  length: number;
+  limit: number;
+  overLimit: boolean;
+}
+export interface EmitResult {
+  segments: EmitSegment[];
+  warnings: string[];
+}
+export type Emissions = Partial<Record<Destination, EmitResult>>;
+
+export const DESTINATION_LABEL: Record<Destination, string> = {
+  x_paste: "X 붙여넣기",
+  x_typefully: "Typefully",
+  telegram_paste: "텔레그램",
+  telegram_bot: "텔레그램 봇",
+  kakao_paste: "카카오",
+  pr_mail: "메일",
+};

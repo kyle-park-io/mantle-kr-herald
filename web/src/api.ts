@@ -1,4 +1,4 @@
-import type { Translation, PublishResult, Rendering, ConversionType, Channel, AppStatus, PublishStateRow } from "./types";
+import type { Translation, PublishResult, Rendering, ConversionType, Channel, AppStatus, PublishStateRow, Emissions } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
@@ -35,6 +35,8 @@ export const api = {
     }).then((r) => json<Omit<Rendering, "convertedText">>(r)),
   approveRendering: (itemId: string, type: ConversionType, channel: Channel) =>
     fetch(`${rPath(itemId, type, channel)}/approve`, { method: "POST" }).then((r) => json<Omit<Rendering, "convertedText">>(r)),
+  emissions: (itemId: string, type: ConversionType, channel: Channel) =>
+    fetch(`${rPath(itemId, type, channel)}/emissions`).then((r) => json<Emissions>(r)),
   status: () => fetch("/api/status").then((r) => json<AppStatus>(r)),
   publishState: () => fetch("/api/publish/state").then((r) => json<PublishStateRow[]>(r)),
 };
