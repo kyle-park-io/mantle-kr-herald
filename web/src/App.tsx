@@ -62,9 +62,9 @@ export function App() {
   const onPublishOne = async (id: string, target: string) => {
     setError(null);
     try {
-      await api.publishOne(id, target);
-      await api.publishState().then(setPublishRows);
-      refreshStatus();
+      const res = await api.publishOne(id, target);
+      refreshStatus(); // refreshes both status and publish state (App.tsx's refreshStatus fetches both)
+      if (res.failed > 0) setError(`발행 실패: ${res.failures.map((f) => f.error).join("; ")}`);
     } catch (e) {
       setError(String((e as Error).message ?? e));
     }

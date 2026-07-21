@@ -45,9 +45,9 @@ export function TranslationDetail(props: {
         )}
         <span className={`text-xs px-1.5 py-0.5 rounded ${badgeClass(props.item.status)}`}>{props.item.status}</span>
       </div>
-      <h3 className="font-semibold text-neutral-700 mb-1">원문 (source)</h3>
+      <h3 className="text-lg font-semibold text-neutral-700 mb-1">원문 (source)</h3>
       <div className="whitespace-pre-wrap text-base mb-4">{props.item.sourceText}</div>
-      <h3 className="font-semibold text-neutral-700 mb-1">한글 (Korean){dirty ? " • 편집중" : ""}</h3>
+      <h3 className="text-lg font-semibold text-neutral-700 mb-1">한글 (Korean){dirty ? " • 편집중" : ""}</h3>
       <textarea
         className="w-full min-h-56 text-base p-2 border border-neutral-300 rounded"
         value={korean}
@@ -86,7 +86,7 @@ export function TranslationDetail(props: {
             <button
               key={t}
               className={`px-3 py-1.5 rounded-md border text-sm ${usable ? "border-neutral-300 bg-white text-neutral-900" : "border-neutral-200 bg-neutral-50 text-neutral-300"} disabled:opacity-50`}
-              disabled={busy || !usable}
+              disabled={busy || !usable || dirty}
               onClick={() => run(() => props.onPublish(props.item.itemId, t))}
             >
               {label}

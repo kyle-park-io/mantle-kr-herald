@@ -15,6 +15,7 @@ export interface PublishResult {
   uploaded: number;
   updated: number;
   failed: number;
+  failures: { key: string; error: string }[];
   byDrive: Record<string, number>;
 }
 

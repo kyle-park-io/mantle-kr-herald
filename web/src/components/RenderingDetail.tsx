@@ -42,9 +42,9 @@ export function RenderingDetail(props: {
         <span className={`text-xs px-1.5 py-0.5 rounded ${badgeClass(props.item.status)}`}>{props.item.status}</span>
         {props.item.refined && <span className="text-xs text-neutral-400">refined</span>}
       </div>
-      <h3 className="font-semibold text-neutral-700 mb-1">변환 원문 (converted)</h3>
+      <h3 className="text-lg font-semibold text-neutral-700 mb-1">변환 원문 (converted)</h3>
       <div className="whitespace-pre-wrap text-base mb-4 text-neutral-600">{props.item.convertedText}</div>
-      <h3 className="font-semibold text-neutral-700 mb-1">채널 텍스트 ({props.item.channel}){dirty ? " • 편집중" : ""}</h3>
+      <h3 className="text-lg font-semibold text-neutral-700 mb-1">채널 텍스트 ({props.item.channel}){dirty ? " • 편집중" : ""}</h3>
       <textarea
         className="w-full min-h-56 text-base p-2 border border-neutral-300 rounded"
         value={text}
