@@ -15,8 +15,21 @@ export const BOLD = /\*\*([\s\S]+?)\*\*/g;
  * "Mantle_(blockchain)") so a plain `[^)]+` does not stop at the first `)` inside the URL itself
  * and truncate it. See `weightedLength`'s `BALANCED_DELIMITERS`, which treats the same URL class
  * as real for the same reason.
+ *
+ * The trailing `|\(` alternative additionally accepts a `(` with no matching `)` anywhere in the
+ * URL (e.g. a link typed with a forgotten close-paren). Backtracking prefers the balanced
+ * alternative first, so a real "(b)" pair is still consumed whole; the bare `(` only gets used
+ * when no closing paren is available to pair it, which is exactly the unmatched case.
+ *
+ * Known limitation: true two-level nesting — a balanced pair inside another pair, e.g.
+ * "x_((deep)_nested)" — is not matched correctly, since a regex (no recursion) cannot verify
+ * balance more than one level deep; it reads the outer `)` of such a URL as the link's own closing
+ * paren and leaves the innermost `)` unconsumed. Two *separate* balanced pairs side by side (e.g.
+ * "a(b)/c(d)"), one level of nesting (the Wikipedia case), and a single unmatched `(` are all
+ * unaffected and verified in canonical.test.ts. True nesting has not come up in a real link this
+ * pipeline has produced; if it does, this would need a hand-rolled parser instead of one regex.
  */
-export const MD_LINK = /\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g;
+export const MD_LINK = /\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\)|\()+)\)/g;
 
 /** Two blank lines. Written out because the whole file turns on this being exactly three \n. */
 const POST_BOUNDARY = "\n\n\n";

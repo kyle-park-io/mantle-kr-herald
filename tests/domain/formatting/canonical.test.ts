@@ -116,4 +116,39 @@ describe("text helpers", () => {
     expect(linksToPlain(wiki)).toBe("맨틀 (https://en.wikipedia.org/wiki/Mantle_(blockchain))");
     expect(linksToLabel(wiki)).toBe("맨틀");
   });
+
+  describe("MD_LINK", () => {
+    it("matches a plain URL with no parens", () => {
+      expect(linksToLabel("[a](https://x.io/x)")).toBe("a");
+      expect(linksToPlain("[a](https://x.io/x)")).toBe("a (https://x.io/x)");
+    });
+
+    it("keeps one level of balanced parens in the URL, e.g. a Wikipedia slug", () => {
+      const wiki = "[맨틀](https://en.wikipedia.org/wiki/Mantle_(blockchain))";
+      expect(linksToPlain(wiki)).toBe("맨틀 (https://en.wikipedia.org/wiki/Mantle_(blockchain))");
+    });
+
+    it("keeps two separate balanced-paren groups in the same URL", () => {
+      expect(linksToPlain("[a](https://x.io/a(b)/c(d))")).toBe("a (https://x.io/a(b)/c(d))");
+    });
+
+    it("still matches a URL with an unmatched opening paren, unlike a strict balanced-only pattern", () => {
+      // The bug this guards against: a stricter balanced-parens-only URL group matches nothing
+      // here, leaving the raw "[label](...)" markdown syntax in every emitter's output.
+      expect(linksToPlain("[label](https://x.io/a(b)")).toBe("label (https://x.io/a(b)");
+    });
+
+    it("leaves trailing parenthesised text after the link untouched", () => {
+      expect(linksToPlain("[a](b) (note)")).toBe("a (b) (note)");
+    });
+
+    it("matches two separate links on the same line", () => {
+      expect(linksToPlain("[a](x) and [b](y)")).toBe("a (x) and b (y)");
+    });
+
+    it("keeps parens in the link label intact", () => {
+      expect(linksToPlain("[텍스트 (주석)](https://x.io/x)")).toBe("텍스트 (주석) (https://x.io/x)");
+      expect(linksToLabel("[텍스트 (주석)](https://x.io/x)")).toBe("텍스트 (주석)");
+    });
+  });
 });

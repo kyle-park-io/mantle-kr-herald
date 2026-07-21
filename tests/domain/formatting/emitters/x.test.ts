@@ -56,6 +56,26 @@ describe("emitXPaste", () => {
       "트윗 2/2: 볼드(**)가 트윗 경계를 넘어가 있어 짝이 맞지 않습니다",
     ]);
   });
+
+  it("warns about an unpaired marker, not a boundary, when there is no post boundary at all", () => {
+    const r = emitXPaste("2**3");
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).not.toContain("경계");
+    expect(r.warnings[0]).toContain("볼드(**)");
+  });
+
+  it("warns about an unpaired marker for a lone opening ** with no close", () => {
+    const r = emitXPaste("**중요");
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).not.toContain("경계");
+    expect(r.warnings[0]).toContain("볼드(**)");
+  });
+
+  it("produces no warning at all for ordinary balanced bold", () => {
+    const r = emitXPaste("**중요** 알림");
+    expect(r.segments[0].text).toBe("중요 알림");
+    expect(r.warnings).toEqual([]);
+  });
 });
 
 describe("emitXTypefully", () => {

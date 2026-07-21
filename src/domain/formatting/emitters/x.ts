@@ -14,6 +14,13 @@ function emitX(canonical: string): EmitResult {
   const posts = splitPosts(canonical);
   const warnings: string[] = [];
 
+  // Decide, once and on the unsplit text, whether any leftover ** a segment shows below was
+  // caused by splitPosts cutting a pair in half, or was already unpaired before the split. If
+  // stripBold(canonical) has no ** left, every ** was part of a matched pair, so a segment that
+  // still shows ** can only be a half of a pair that straddled a post boundary. If stripBold
+  // still leaves a **, the author left one unpaired to begin with, and splitting is unrelated.
+  const canonicalWasBalanced = !stripBold(canonical).includes("**");
+
   const segments: EmitSegment[] = posts.map((post, i) => {
     const text = linksToPlain(stripBold(post));
     const length = weightedLength(text);
@@ -24,12 +31,17 @@ function emitX(canonical: string): EmitResult {
       const where = posts.length > 1 ? `트윗 ${i + 1}/${posts.length}: ` : "";
       warnings.push(`${where}${length}/${X_MAX_WEIGHTED} (${length - X_MAX_WEIGHTED} 초과)`);
     }
-    // Bold that opened before a post boundary and closed after it (see splitPosts) leaves each
-    // half with an unbalanced **, which stripBold cannot repair per-post — warn instead of
-    // silently leaking literal asterisks into the tweet.
     if (text.includes("**")) {
       const where = posts.length > 1 ? `트윗 ${i + 1}/${posts.length}: ` : "";
-      warnings.push(`${where}볼드(**)가 트윗 경계를 넘어가 있어 짝이 맞지 않습니다`);
+      warnings.push(
+        canonicalWasBalanced
+          ? // Bold that opened before a post boundary and closed after it (see splitPosts)
+            // leaves each half with an unbalanced **, which stripBold cannot repair per-post.
+            `${where}볼드(**)가 트윗 경계를 넘어가 있어 짝이 맞지 않습니다`
+          : // No boundary is involved — the ** was already unpaired in the original text, and
+            // will otherwise leak into the tweet as literal asterisks.
+            `${where}볼드(**)의 짝이 맞지 않아 그대로 노출됩니다`,
+      );
     }
     return segment;
   });
