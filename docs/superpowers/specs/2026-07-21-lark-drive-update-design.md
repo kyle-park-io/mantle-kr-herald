@@ -95,6 +95,24 @@ it *does* throw; that reasoning does not carry over.)
 `console.warn` from an adapter has precedent in this codebase:
 `TwitterApiSourceGateway` warns on a malformed tweet rather than failing the run.
 
+### Accepted risk: the window between delete and ledger record
+
+`update()` deletes the old file *before* it returns; `PublishTranslations` only calls
+`publishStore.record()` *after* `update()` resolves. If `record()` fails (disk full) or the process
+is interrupted between the two, the ledger keeps naming the token this run just deleted. The next
+run sees that row as `stale`, uploads a third copy, fails to delete the now-nonexistent old token
+(a warning, per above), and records the third copy — leaving the *second* copy, the one this run
+uploaded, orphaned in the folder with no warning and no ledger trace, because no code path in that
+window is responsible for it.
+
+This is accepted, not fixed, by this change. Closing it means writing the ledger row *before* the
+delete runs rather than after, which requires restructuring `PublishTranslations` and the
+`DriveUploader` port — splitting "replace" into an upload the caller records immediately and a
+separate, independently-retriable delete step — rather than a change confined to
+`LarkDriveUploader`. Google and `local` do not have this window: their `update()` is idempotent
+against a stable id/path, so repeating it after a missed ledger write reproduces the same file, not
+a third copy.
+
 ### Error text
 
 The warning must be actionable on its own, without the reader consulting docs — it names the file

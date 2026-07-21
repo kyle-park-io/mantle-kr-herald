@@ -23,9 +23,10 @@ interface Call {
 
 /**
  * Records every call, unlike fakeFetch which keeps only the last. update() makes two requests, and
- * one test asserts a request was never made.
+ * one test asserts a request was never made. An `Error` in `responses` makes that call reject
+ * instead of resolve, so a network failure on the delete can be simulated without a fake status.
  */
-function recordingFetch(calls: Call[], responses: Response[]): typeof fetch {
+function recordingFetch(calls: Call[], responses: Array<Response | Error>): typeof fetch {
   return (async (url: string, init?: RequestInit) => {
     calls.push({
       url: String(url),
@@ -34,6 +35,7 @@ function recordingFetch(calls: Call[], responses: Response[]): typeof fetch {
     });
     const next = responses.shift();
     if (!next) throw new Error("recordingFetch: no response queued");
+    if (next instanceof Error) throw next;
     return next;
   }) as unknown as typeof fetch;
 }
@@ -115,6 +117,8 @@ describe("LarkDriveUploader.update", () => {
     expect(calls[0].url).toBe("https://open.larksuite.com/open-apis/drive/v1/files/upload_all");
     expect(calls[0].method).toBe("POST");
     expect(calls[0].form?.get("parent_node")).toBe("APPROVED_TOKEN");
+    expect(calls[0].form?.get("file_name")).toBe("x-1.md");
+    expect(calls[0].form?.get("size")).toBe(String(Buffer.byteLength("# v2", "utf8")));
   });
 
   it("deletes the previous file by token, as type=file", async () => {
@@ -179,6 +183,58 @@ describe("LarkDriveUploader.update", () => {
     const message = String(warn.mock.calls[0][0]);
     expect(message).toContain("flk_old");
     expect(message).toContain("1061045");
+    warn.mockRestore();
+  });
+
+  it("returns the new result and warns when the delete answers a non-OK HTTP status", async () => {
+    // Distinct from the code!=0 envelope case above: this is an HTTP-level failure (e.g. a 403 from
+    // an expired scope), which deletePrevious must catch the same way — no throw, one warning.
+    const calls: Call[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const uploader = new LarkDriveUploader(
+      auth,
+      "https://open.larksuite.com",
+      folders,
+      recordingFetch(calls, [
+        okUpload("flk_new"),
+        new Response(JSON.stringify({ code: 1061004, msg: "forbidden." }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ]),
+    );
+
+    const result = await uploader.update("flk_old", { name: "x-1.md", content: "# v2", folder: "review" });
+
+    expect(result).toEqual({ id: "flk_new", name: "x-1.md" });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0][0]);
+    expect(message).toContain("flk_old");
+    expect(message).toContain("403");
+    expect(message).toContain("1061004");
+    warn.mockRestore();
+  });
+
+  it("returns the new result and warns when the delete request itself rejects", async () => {
+    // A network error (fetch rejecting rather than resolving with a bad status) must be caught the
+    // same way as an HTTP or envelope failure — this is what the try/catch in deletePrevious exists
+    // for, as opposed to just checking res.ok.
+    const calls: Call[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const uploader = new LarkDriveUploader(
+      auth,
+      "https://open.larksuite.com",
+      folders,
+      recordingFetch(calls, [okUpload("flk_new"), new Error("network error")]),
+    );
+
+    const result = await uploader.update("flk_old", { name: "x-1.md", content: "# v2", folder: "review" });
+
+    expect(result).toEqual({ id: "flk_new", name: "x-1.md" });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0][0]);
+    expect(message).toContain("flk_old");
+    expect(message).toContain("network error");
     warn.mockRestore();
   });
 });

@@ -166,10 +166,10 @@ describe("PublishTranslations", () => {
     const t = tr("x:1", "approved");
     const store = new InMemoryPublishStore();
     await store.record({
-      itemId: "x:1", stage: "translation", status: "approved", target: "lark",
+      itemId: "x:1", stage: "translation", status: "approved", target: "noupdate",
       remoteId: "tok-1", contentHash: "sha256:stale", uploadedAt: "2026-01-01T00:00:00.000Z",
     });
-    const uploader = new FakeUploader("lark"); // no update method
+    const uploader = new FakeUploader("noupdate"); // no update method — every shipped adapter has one now
 
     const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();
 
@@ -177,7 +177,7 @@ describe("PublishTranslations", () => {
     expect(res.updated).toBe(0);
     expect(uploader.reqs).toHaveLength(0); // must NOT fall back to creating a duplicate
     expect(res.failures[0].error).toMatch(/cannot update/i);
-    expect(res.failures[0].error).toMatch(/lark/i);
+    expect(res.failures[0].error).toMatch(/noupdate/i);
   });
 
   it("does not count a create as uploaded when the ledger write fails", async () => {
