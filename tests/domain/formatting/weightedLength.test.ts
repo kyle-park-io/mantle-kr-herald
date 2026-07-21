@@ -61,4 +61,8 @@ describe("weightedLength", () => {
     // "(" + ")" = 2, plus the URL's 23
     expect(weightedLength("(https://en.wikipedia.org/wiki/Mantle_(blockchain))")).toBe(2 + TCO_LENGTH);
   });
+
+  it("strips a run of trailing punctuation, not just the last character", () => {
+    expect(weightedLength("https://x.io..")).toBe(2 + TCO_LENGTH);
+  });
 });

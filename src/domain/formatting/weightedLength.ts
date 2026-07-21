@@ -91,6 +91,9 @@ function weightOf(codePoint: number): number {
  * if that ever stops being true. Two URLs with no separator between them (e.g.
  * "https://a.com" immediately followed by "https://b.com") are also counted as a single URL;
  * this is likewise an accepted gap, since real-world URL extractors are ambiguous about it too.
+ * The bracket balance check counts total occurrences of opening and closing brackets rather than
+ * checking their positional pairing, so a URL with an unbalanced bracket in its own path may be
+ * misclassified when trailing punctuation is evaluated.
  */
 export function weightedLength(text: string): number {
   const normalised = text.normalize("NFC");
