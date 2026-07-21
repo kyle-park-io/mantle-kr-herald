@@ -30,3 +30,6 @@ output/
 # Frontend build output / deps
 web/dist/
 web/node_modules/
+
+# Playwright MCP session dumps (console logs + page snapshots, timestamped per run)
+.playwright-mcp/
