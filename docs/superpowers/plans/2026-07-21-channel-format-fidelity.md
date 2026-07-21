@@ -177,10 +177,10 @@ export function weightedLength(text: string): number {
 Run: `pnpm vitest run tests/domain/formatting/weightedLength.test.ts`
 Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Typecheck and commit**
+- [ ] **Step 5: Run the full suite, typecheck, and commit**
 
 ```bash
-pnpm typecheck
+pnpm test && pnpm typecheck
 git add src/domain/formatting/weightedLength.ts tests/domain/formatting/weightedLength.test.ts
 git commit -m "feat: count X post length by weight so Korean is measured correctly"
 ```
@@ -274,8 +274,13 @@ Create `src/domain/formatting/canonical.ts`:
  * break, and two blank lines for a post boundary (x channel only). Emitters turn this into
  * whatever a given destination actually accepts.
  */
-const BOLD = /\*\*([\s\S]+?)\*\*/g;
-const MD_LINK = /\[([^\]]+)\]\(([^)]+)\)/g;
+/**
+ * Exported so emitters that rewrite these constructs match canonical's definition exactly.
+ * Use them only with `String.replace`, which resets `lastIndex`; `.test()`/`.exec()` on a shared
+ * /g regex carries state between calls and will skip matches.
+ */
+export const BOLD = /\*\*([\s\S]+?)\*\*/g;
+export const MD_LINK = /\[([^\]]+)\]\(([^)]+)\)/g;
 
 /** Two blank lines. Written out because the whole file turns on this being exactly three \n. */
 const POST_BOUNDARY = "\n\n\n";
@@ -317,10 +322,10 @@ export function linksToLabel(text: string): string {
 Run: `pnpm vitest run tests/domain/formatting/canonical.test.ts`
 Expected: PASS, 11 tests.
 
-- [ ] **Step 5: Typecheck and commit**
+- [ ] **Step 5: Run the full suite, typecheck, and commit**
 
 ```bash
-pnpm typecheck
+pnpm test && pnpm typecheck
 git add src/domain/formatting/canonical.ts tests/domain/formatting/canonical.test.ts
 git commit -m "feat: add canonical rendering text with explicit post boundaries"
 ```
@@ -389,9 +394,13 @@ describe("emitXPaste", () => {
 });
 
 describe("emitXTypefully", () => {
-  it("matches emitXPaste until the editor's paste behaviour is verified", () => {
-    const input = "하나\n\n\n**둘**";
-    expect(emitXTypefully(input)).toEqual(emitXPaste(input));
+  // Asserts real output, not `toEqual(emitXPaste(...))` — the two are the same function today,
+  // so comparing them would assert nothing and would keep passing if both broke together.
+  it("emits plain-text segments split on post boundaries, measured against the 280 limit", () => {
+    const r = emitXTypefully("**하나**\n\n\n[둘](https://x.io)");
+    expect(r.segments.map((s) => s.text)).toEqual(["하나", "둘 (https://x.io)"]);
+    expect(r.segments.map((s) => s.limit)).toEqual([280, 280]);
+    expect(r.warnings).toEqual([]);
   });
 });
 ```
@@ -487,10 +496,10 @@ export const emitXTypefully = emitX;
 Run: `pnpm vitest run tests/domain/formatting/emitters/x.test.ts`
 Expected: PASS, 8 tests.
 
-- [ ] **Step 6: Typecheck and commit**
+- [ ] **Step 6: Run the full suite, typecheck, and commit**
 
 ```bash
-pnpm typecheck
+pnpm test && pnpm typecheck
 git add src/domain/formatting/emitters/ tests/domain/formatting/emitters/
 git commit -m "feat: emit X paste and Typefully text from canonical renderings"
 ```
@@ -572,14 +581,11 @@ Expected: FAIL — `Failed to resolve import ".../emitters/telegram"`.
 Create `src/domain/formatting/emitters/telegram.ts`:
 
 ```ts
-import { linksToLabel, linksToPlain, stripBold } from "../canonical";
+import { BOLD, MD_LINK, linksToLabel, linksToPlain, stripBold } from "../canonical";
 import type { EmitResult } from "./types";
 
 /** sendMessage's text limit, counted after entity parsing. https://core.telegram.org/bots/api */
 export const TELEGRAM_MAX = 4096;
-
-const BOLD = /\*\*([\s\S]+?)\*\*/g;
-const MD_LINK = /\[([^\]]+)\]\(([^)]+)\)/g;
 
 function single(text: string, visibleLength: number): EmitResult {
   const overLimit = visibleLength > TELEGRAM_MAX;
@@ -627,10 +633,10 @@ export function emitTelegramBot(canonical: string): EmitResult {
 Run: `pnpm vitest run tests/domain/formatting/emitters/telegram.test.ts`
 Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Typecheck and commit**
+- [ ] **Step 5: Run the full suite, typecheck, and commit**
 
 ```bash
-pnpm typecheck
+pnpm test && pnpm typecheck
 git add src/domain/formatting/emitters/telegram.ts tests/domain/formatting/emitters/telegram.test.ts
 git commit -m "feat: emit Telegram paste text and HTML-mode bot text separately"
 ```
@@ -866,10 +872,10 @@ export function emitAll(canonical: string, channel: Channel): Partial<Record<Des
 Run: `pnpm vitest run tests/domain/formatting/`
 Expected: PASS — all emitter suites plus `weightedLength` and `canonical`.
 
-- [ ] **Step 7: Typecheck and commit**
+- [ ] **Step 7: Run the full suite, typecheck, and commit**
 
 ```bash
-pnpm typecheck
+pnpm test && pnpm typecheck
 git add src/domain/formatting/emitters/ tests/domain/formatting/emitters/
 git commit -m "feat: emit KakaoTalk and PR mail text, add the destination dispatcher"
 ```
@@ -1417,7 +1423,7 @@ and `channel`), add after the `approve` handler:
 Run: `pnpm vitest run tests/adapters/web/apiHandlers.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Typecheck and commit**
+- [ ] **Step 5: Run the full suite, typecheck, and commit**
 
 ```bash
 pnpm test && pnpm typecheck
@@ -1570,8 +1576,8 @@ Replace the single 복사 button in the button row with nothing (the button row 
       )}
 ```
 
-Delete the now-unused `copied` state and `badgeClass`-adjacent leftovers only if TypeScript
-reports them unused.
+Delete the now-unused `copied` state declaration, which the old single 복사 button was the only
+reader of. Keep `badgeClass` — the status badge still uses it.
 
 - [ ] **Step 4: Typecheck the frontend**
 
