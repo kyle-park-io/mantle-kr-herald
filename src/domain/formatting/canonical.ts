@@ -20,12 +20,22 @@ const POST_BOUNDARY = "\n\n\n";
  *
  * Note the blank-line rule differs from the pre-canonical formatter, which collapsed 3+ newlines
  * to 2 and would therefore have destroyed every post boundary.
+ *
+ * Only runs of bare newlines count as blank lines; a line containing whitespace breaks the run.
+ * Content with trailing spaces on an intended-blank line silently loses both paragraph breaks
+ * and any post-boundary meaning.
  */
 export function toCanonical(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/\n{4,}/g, POST_BOUNDARY).trim();
 }
 
-/** Split canonical text on post boundaries. Always returns at least one entry. */
+/**
+ * Split canonical text on post boundaries. Always returns at least one entry.
+ *
+ * If **bold** opens before a post boundary and closes after it, this split cuts it into
+ * two posts each carrying an unbalanced **, which a later per-post stripBold cannot clean up,
+ * so literal asterisks leak into output. Callers that apply stripBold per-post must be aware.
+ */
 export function splitPosts(canonical: string): string[] {
   const parts = canonical.split(/\n{3,}/).map((p) => p.trim()).filter((p) => p.length > 0);
   return parts.length > 0 ? parts : [canonical.trim()];

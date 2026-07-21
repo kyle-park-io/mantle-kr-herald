@@ -14,6 +14,13 @@ describe("toCanonical", () => {
     expect(toCanonical("a\n\n\n\n\n\nb")).toBe("a\n\n\nb");
   });
 
+  it("pins the collapse threshold: 3 newlines survive, 4 or more become exactly 3", () => {
+    expect(toCanonical("a\n\n\nb")).toBe("a\n\n\nb");
+    expect(toCanonical("a\n\n\n\nb")).toBe("a\n\n\nb");
+    expect(toCanonical("a\n\n\n\n\nb")).toBe("a\n\n\nb");
+    expect(toCanonical("a\n\n\n\n\n\n\nb")).toBe("a\n\n\nb");
+  });
+
   it("normalises CRLF and trims the ends", () => {
     expect(toCanonical("  a\r\nb  ")).toBe("a\nb");
   });
