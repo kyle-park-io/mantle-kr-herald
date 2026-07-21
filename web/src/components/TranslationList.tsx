@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { itemUrl } from "../types";
 import type { Translation } from "../types";
 
 type Filter = "all" | "translated" | "approved";
@@ -34,13 +33,7 @@ export function TranslationList(props: {
             className={`flex items-center justify-between gap-2 px-3.5 py-2.5 border-b border-neutral-100 cursor-pointer hover:bg-neutral-50 ${t.itemId === props.selectedId ? "bg-indigo-50" : ""}`}
             onClick={() => props.onSelect(t.itemId)}
           >
-            {itemUrl(t.itemId) ? (
-              <a className="text-base text-neutral-600 truncate hover:underline hover:text-indigo-600" href={itemUrl(t.itemId)!} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
-                {t.itemId}
-              </a>
-            ) : (
-              <span className="text-base text-neutral-600 truncate">{t.itemId}</span>
-            )}
+            <span className="text-base text-neutral-600 truncate">{t.itemId}</span>
             <span className={`text-xs px-1.5 py-0.5 rounded ${badgeClass(t.status)}`}>{t.status}</span>
           </li>
         ))}

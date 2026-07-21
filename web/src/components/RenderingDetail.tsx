@@ -43,7 +43,7 @@ export function RenderingDetail(props: {
         {props.item.refined && <span className="text-xs text-neutral-400">refined</span>}
       </div>
       <h3 className="text-lg font-semibold text-neutral-700 mb-1">변환 원문 (converted)</h3>
-      <div className="whitespace-pre-wrap text-base mb-4 text-neutral-600">{props.item.convertedText}</div>
+      <div className="whitespace-pre-wrap text-base mb-6 text-neutral-600">{props.item.convertedText}</div>
       <h3 className="text-lg font-semibold text-neutral-700 mb-1">채널 텍스트 ({props.item.channel}){dirty ? " • 편집중" : ""}</h3>
       <textarea
         className="w-full min-h-56 text-base p-2 border border-neutral-300 rounded"

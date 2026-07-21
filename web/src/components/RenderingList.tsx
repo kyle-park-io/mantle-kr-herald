@@ -24,7 +24,7 @@ export function RenderingList(props: {
         {(["all", "rendered", "approved"] as const).map((f) => (
           <button
             key={f}
-            className={`text-sm px-2 py-1 rounded-full border ${status === f ? "bg-neutral-900 text-white border-neutral-900" : "bg-white border-neutral-300"}`}
+            className={`text-sm px-2.5 py-1 rounded-full border ${status === f ? "bg-neutral-900 text-white border-neutral-900" : "bg-white border-neutral-300"}`}
             onClick={() => setStatus(f)}
           >
             {f}
