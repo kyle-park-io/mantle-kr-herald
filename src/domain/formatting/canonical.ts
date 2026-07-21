@@ -16,6 +16,16 @@ export const MD_LINK = /\[([^\]]+)\]\(([^)]+)\)/g;
 const POST_BOUNDARY = "\n\n\n";
 
 /**
+ * A line whose entire content is three or more hyphens (spaces/tabs allowed around them) — `---`,
+ * the pipeline's long-standing thread separator. `XContentSource` has joined collected tweets with
+ * `"\n\n---\n\n"` since before canonical text existed, so it is already baked into every saved
+ * translation, and it is the team's own drafting convention for marking a tweet boundary. Matching
+ * per line (via `/m`) rather than as a run of hyphens anywhere keeps inline hyphens — "가---나", "단어
+ * - 단어", a leading "- bullet" — untouched, since those never occupy a whole line by themselves.
+ */
+const SEPARATOR_LINE = /^[ \t]*-{3,}[ \t]*$/gm;
+
+/**
  * Normalise text into canonical form. Channel-independent by definition.
  *
  * Note the blank-line rule differs from the pre-canonical formatter, which collapsed 3+ newlines
@@ -24,13 +34,26 @@ const POST_BOUNDARY = "\n\n\n";
  * Only runs of bare newlines count as blank lines; a line containing whitespace breaks the run.
  * Content with trailing spaces on an intended-blank line silently loses both paragraph breaks
  * and any post-boundary meaning.
+ *
+ * A `---` separator line is accepted as an alternate spelling of the post boundary, along with any
+ * blank lines around it (see `SEPARATOR_LINE`). Canonical text itself never contains a literal
+ * `---`: this step folds it into the same `\n\n\n` boundary as two blank lines, so every downstream
+ * consumer — the worksheet, emitters, `splitPosts` — only ever has one representation to handle.
  */
 export function toCanonical(text: string): string {
-  return text.replace(/\r\n/g, "\n").replace(/\n{4,}/g, POST_BOUNDARY).trim();
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(SEPARATOR_LINE, "\n\n")
+    .replace(/\n{4,}/g, POST_BOUNDARY)
+    .trim();
 }
 
 /**
  * Split canonical text on post boundaries. Always returns at least one entry.
+ *
+ * Splits on `\n{3,}` alone — it never looks for `---`. That spelling is accepted upstream, in
+ * `toCanonical` (see its doc comment), so by the time text reaches `splitPosts` any `---` line
+ * from the pipeline's thread separator has already become the same `\n{3,}` boundary.
  *
  * If **bold** opens before a post boundary and closes after it, this split cuts it into
  * two posts each carrying an unbalanced **, which a later per-post stripBold cannot clean up,

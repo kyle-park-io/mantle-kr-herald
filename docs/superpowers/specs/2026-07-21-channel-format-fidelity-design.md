@@ -158,6 +158,14 @@ as settled.
 | `[text](url)` | link |
 | one blank line | paragraph break |
 | **two or more blank lines** | **post boundary** (`x` channel only) |
+| `---` alone on a line | post boundary (alternate spelling, `x` channel only) |
+
+`---` reconciles the pipeline's pre-existing thread separator with canonical text: `XContentSource`
+has joined collected tweets with `"\n\n---\n\n"` since before canonical text existed, so it is
+already present in every saved translation, and it is the team's own drafting convention for
+marking a tweet boundary. `toCanonical` folds a `---` line (with any blank lines around it) into the
+same `\n\n\n` boundary as two blank lines, so canonical text itself never contains a literal `---` —
+there is still exactly one boundary representation once canonicalisation has run.
 
 Nothing else is meaningful. Writers never type destination syntax — no `*telegram bold*`, no
 `<b>`, no unicode bold.

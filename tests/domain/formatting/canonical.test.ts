@@ -24,6 +24,59 @@ describe("toCanonical", () => {
   it("normalises CRLF and trims the ends", () => {
     expect(toCanonical("  a\r\nb  ")).toBe("a\nb");
   });
+
+  it("treats a --- separator line, blank lines and all, as a post boundary", () => {
+    expect(toCanonical("가\n\n---\n\n나")).toBe("가\n\n\n나");
+  });
+
+  it("treats a --- separator with no surrounding blank lines as a post boundary", () => {
+    expect(toCanonical("가\n---\n나")).toBe("가\n\n\n나");
+  });
+
+  it("treats four or more hyphens on their own line the same as three", () => {
+    expect(toCanonical("가\n\n----\n\n나")).toBe("가\n\n\n나");
+    expect(toCanonical("가\n\n-------\n\n나")).toBe("가\n\n\n나");
+  });
+
+  it("allows spaces or tabs around the hyphens on a separator line", () => {
+    expect(toCanonical("가\n\n  ---  \n\n나")).toBe("가\n\n\n나");
+    expect(toCanonical("가\n\n\t---\t\n\n나")).toBe("가\n\n\n나");
+  });
+
+  it("does not treat two hyphens alone on a line as a separator", () => {
+    expect(toCanonical("가\n--\n나")).toBe("가\n--\n나");
+  });
+
+  it("does not touch hyphens inline in prose", () => {
+    expect(toCanonical("가---나")).toBe("가---나");
+    expect(toCanonical("단어 - 단어")).toBe("단어 - 단어");
+  });
+
+  it("does not touch a leading bullet dash", () => {
+    expect(toCanonical("- bullet\n다음 줄")).toBe("- bullet\n다음 줄");
+  });
+
+  it("is idempotent: applying it twice matches applying it once", () => {
+    const inputs = [
+      "가\n\n---\n\n나",
+      "가\n---\n나",
+      "가\n\n\n나",
+      "가---나",
+      "단어 - 단어",
+      "- bullet\n다음 줄",
+      "가\n--\n나",
+    ];
+    for (const input of inputs) {
+      const once = toCanonical(input);
+      expect(toCanonical(once)).toBe(once);
+    }
+  });
+});
+
+describe("toCanonical + splitPosts integration", () => {
+  it("splits a --- separated thread into separate posts", () => {
+    expect(splitPosts(toCanonical("가\n\n---\n\n나"))).toEqual(["가", "나"]);
+  });
 });
 
 describe("splitPosts", () => {
