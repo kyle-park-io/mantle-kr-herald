@@ -4,8 +4,11 @@ export interface DriveUploader {
   /** Upload one file to this drive's folder for req.folder. */
   upload(req: UploadRequest): Promise<UploadResult>;
   /**
-   * Replace the content of an already-uploaded file in place, preserving whatever stable identity
-   * the target uses to address it — a Google file id and its share link, or a local path.
+   * Replace an already-uploaded file's content, leaving no duplicate behind. The identity named by
+   * `remoteId` is not guaranteed to survive the call — Google and `local` keep it stable, but a
+   * target may mint a new id and retire the old one (Lark does, deleting the old `file_token`).
+   * Callers must treat the returned `UploadResult.id` as the file's current identity and never
+   * reuse the `remoteId` they passed in.
    * Optional: a drive that cannot replace content in place omits this, and the caller reports the
    * item rather than creating a duplicate.
    */
