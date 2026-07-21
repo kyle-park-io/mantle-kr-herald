@@ -1,4 +1,4 @@
-import type { Translation, PublishResult, Rendering, ConversionType, Channel, AppConfig, AppStatus, PublishStateRow } from "./types";
+import type { Translation, PublishResult, Rendering, ConversionType, Channel, AppStatus, PublishStateRow } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
@@ -9,7 +9,6 @@ const rPath = (itemId: string, type: ConversionType, channel: Channel) =>
   `/api/renderings/${encodeURIComponent(itemId)}/${type}/${channel}`;
 
 export const api = {
-  config: () => fetch("/api/config").then((r) => json<AppConfig>(r)),
   list: () => fetch("/api/translations").then((r) => json<Translation[]>(r)),
   edit: (id: string, koreanText: string) =>
     fetch(`/api/translations/${encodeURIComponent(id)}`, {
@@ -19,12 +18,14 @@ export const api = {
     }).then((r) => json<Translation>(r)),
   approve: (id: string) =>
     fetch(`/api/translations/${encodeURIComponent(id)}/approve`, { method: "POST" }).then((r) => json<Translation>(r)),
-  publish: (target: string) =>
-    fetch("/api/publish", {
+  publishOne: (id: string, target: string) =>
+    fetch(`/api/translations/${encodeURIComponent(id)}/publish`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ target }),
     }).then((r) => json<PublishResult>(r)),
+  unapprove: (id: string) =>
+    fetch(`/api/translations/${encodeURIComponent(id)}/unapprove`, { method: "POST" }).then((r) => json<Translation>(r)),
   listRenderings: () => fetch("/api/renderings").then((r) => json<Rendering[]>(r)),
   editRendering: (itemId: string, type: ConversionType, channel: Channel, text: string) =>
     fetch(rPath(itemId, type, channel), {

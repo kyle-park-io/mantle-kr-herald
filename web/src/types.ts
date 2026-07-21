@@ -1,3 +1,7 @@
+/** The original tweet URL for an `x:<id>` item, else null (lark items have no public URL). */
+export const itemUrl = (itemId: string): string | null =>
+  itemId.startsWith("x:") ? `https://x.com/i/status/${itemId.slice(2)}` : null;
+
 export interface Translation {
   itemId: string;
   source: "x" | "lark";
@@ -11,6 +15,7 @@ export interface PublishResult {
   uploaded: number;
   updated: number;
   failed: number;
+  failures: { key: string; error: string }[];
   byDrive: Record<string, number>;
 }
 
@@ -37,12 +42,9 @@ export const renderingKey = (r: Pick<Rendering, "itemId" | "type" | "channel">) 
 // Mirrors src/storage/mode.ts — keep in sync.
 export type StorageMode = "local" | "cloud";
 
-export interface AppConfig {
-  storageMode: StorageMode;
-}
-
 export interface AppStatus {
   storageMode: StorageMode;
+  availableTargets: ("local" | "google" | "lark")[];
   funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
   sync: { published: number; unsynced: number; stale: number };
 }

@@ -19,7 +19,7 @@ export function TranslationList(props: {
         {(["all", "translated", "approved"] as Filter[]).map((f) => (
           <button
             key={f}
-            className={`text-xs px-2.5 py-1 rounded-full border ${filter === f ? "bg-neutral-900 text-white border-neutral-900" : "bg-white border-neutral-300"}`}
+            className={`text-sm px-2.5 py-1 rounded-full border ${filter === f ? "bg-neutral-900 text-white border-neutral-900" : "bg-white border-neutral-300"}`}
             onClick={() => setFilter(f)}
           >
             {f}
@@ -33,8 +33,8 @@ export function TranslationList(props: {
             className={`flex items-center justify-between gap-2 px-3.5 py-2.5 border-b border-neutral-100 cursor-pointer hover:bg-neutral-50 ${t.itemId === props.selectedId ? "bg-indigo-50" : ""}`}
             onClick={() => props.onSelect(t.itemId)}
           >
-            <span className="text-xs text-neutral-600 truncate">{t.itemId}</span>
-            <span className={`text-[11px] px-1.5 py-0.5 rounded ${badgeClass(t.status)}`}>{t.status}</span>
+            <span className="text-base text-neutral-600 truncate">{t.itemId}</span>
+            <span className={`text-xs px-1.5 py-0.5 rounded ${badgeClass(t.status)}`}>{t.status}</span>
           </li>
         ))}
       </ul>

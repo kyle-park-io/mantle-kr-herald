@@ -4,3 +4,11 @@
 @theme {
   --default-font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
 }
+
+/* Tailwind v4's preflight resets buttons to cursor:default; restore the
+   pointer for enabled buttons so hover shows the finger cursor. */
+@layer base {
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+}

@@ -13,8 +13,9 @@ import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
 import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
 import { SaveRendering } from "../app/SaveRendering";
 import { ApproveRendering } from "../app/ApproveRendering";
-import { loadStorageMode } from "../config";
+import { loadStorageMode, loadGoogleAuthConfig, loadGoogleDriveConfig, loadLarkDriveConfig } from "../config";
 import { createUploaders, resolveTargets } from "./uploaders";
+import type { PublishResult } from "../app/PublishTranslations";
 import { REPO_ROOT, paths } from "../paths";
 import { XContentSource } from "../adapters/content/XContentSource";
 import { LarkContentSource } from "../adapters/content/LarkContentSource";
@@ -30,6 +31,26 @@ const formattingStore = new JsonFormattingStore(paths.formattedDir);
 const conversionStore = new JsonConversionStore(paths.variantsDir);
 
 const storageMode = loadStorageMode();
+
+const usableTargets = ((): ("local" | "google" | "lark")[] => {
+  const targets: ("local" | "google" | "lark")[] = ["local"];
+  if (storageMode === "cloud") {
+    try {
+      loadGoogleAuthConfig();
+      loadGoogleDriveConfig();
+      targets.push("google");
+    } catch {
+      /* Google not configured — omit */
+    }
+    try {
+      loadLarkDriveConfig();
+      targets.push("lark");
+    } catch {
+      /* Lark not configured — omit */
+    }
+  }
+  return targets;
+})();
 
 const contentSource = new CompositeContentSource([
   new XContentSource(paths.xItems),
@@ -59,8 +80,16 @@ const loadStatus = async (): Promise<StatusView> => {
       published: entries.length,
     },
     sync,
+    availableTargets: usableTargets,
   };
 };
+
+const publishOne = async (itemId: string, target: string): Promise<PublishResult> =>
+  new PublishTranslations(
+    translationStore,
+    await createUploaders(resolveTargets(target, storageMode)),
+    publishStore,
+  ).run({ itemId });
 
 const loadPublishState = async (): Promise<PublishStateRow[]> =>
   (await publishStore.listEntries()).map((e) => ({
@@ -75,8 +104,7 @@ const loadPublishState = async (): Promise<PublishStateRow[]> =>
 const deps: ApiDeps = {
   translationStore,
   saveTranslation,
-  buildPublisher: async (target) =>
-    new PublishTranslations(translationStore, await createUploaders(resolveTargets(target, storageMode)), publishStore),
+  publishOne,
   storageMode,
   formattingStore,
   conversionStore,

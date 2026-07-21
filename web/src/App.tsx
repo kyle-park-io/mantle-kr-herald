@@ -3,7 +3,6 @@ import { api } from "./api";
 import type { Translation, AppStatus, PublishStateRow } from "./types";
 import { TranslationList } from "./components/TranslationList";
 import { TranslationDetail } from "./components/TranslationDetail";
-import { PublishBar } from "./components/PublishBar";
 import { RenderingsView } from "./components/RenderingsView";
 
 type Mode = "translations" | "renderings";
@@ -60,6 +59,26 @@ export function App() {
       setError(String((e as Error).message ?? e));
     }
   };
+  const onPublishOne = async (id: string, target: string) => {
+    setError(null);
+    try {
+      const res = await api.publishOne(id, target);
+      refreshStatus(); // refreshes both status and publish state (App.tsx's refreshStatus fetches both)
+      if (res.failed > 0) setError(`발행 실패: ${res.failures.map((f) => f.error).join("; ")}`);
+    } catch (e) {
+      setError(String((e as Error).message ?? e));
+    }
+  };
+  const onUnapprove = async (id: string) => {
+    setError(null);
+    try {
+      await api.unapprove(id);
+      await refresh();
+      refreshStatus();
+    } catch (e) {
+      setError(String((e as Error).message ?? e));
+    }
+  };
 
   const tab = (active: boolean) =>
     `text-sm px-2.5 py-1 rounded-md ${active ? "bg-white text-neutral-900" : "bg-white/10 text-white"}`;
@@ -72,7 +91,7 @@ export function App() {
             <span>Mantle KR — Review</span>
             {status && (
               <span
-                className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${status.storageMode === "cloud" ? "bg-green-500/20 text-green-300" : "bg-amber-500/20 text-amber-300"}`}
+                className={`text-sm font-semibold px-2 py-0.5 rounded ${status.storageMode === "cloud" ? "bg-green-500 text-white" : "bg-amber-400 text-neutral-900"}`}
               >
                 {status.storageMode}
               </span>
@@ -82,10 +101,9 @@ export function App() {
               <button className={tab(mode === "renderings")} onClick={() => switchMode("renderings")}>2차 검수 (채널)</button>
             </nav>
           </div>
-          {mode === "translations" && <PublishBar />}
         </div>
         {status && (
-          <div className="px-4 pb-1.5 text-[11px] text-neutral-300 font-normal">
+          <div className="px-4 pb-1.5 text-xs text-neutral-300 font-normal">
             수집 {status.funnel.collected} → 번역 {status.funnel.translated} → 변환 {status.funnel.converted} → 렌더 {status.funnel.rendered} → 발행 {status.funnel.published}
             <span className="ml-3">
               {status.sync.unsynced > 0 || status.sync.stale > 0 ? "⚠ " : ""}
@@ -107,8 +125,11 @@ export function App() {
                 <TranslationDetail
                   item={selected}
                   publishRows={publishRows.filter((r) => r.itemId === selected.itemId)}
+                  availableTargets={status?.availableTargets ?? []}
                   onSave={onSave}
                   onApprove={onApprove}
+                  onUnapprove={onUnapprove}
+                  onPublish={onPublishOne}
                   onDirtyChange={setDirty}
                 />
               ) : (

@@ -39,14 +39,14 @@ export function RenderingDetail(props: {
     <div>
       <div className="flex items-center gap-2.5 mb-3">
         <code className="text-sm">{props.item.itemId} · {props.item.type} · {props.item.channel}</code>
-        <span className={`text-[11px] px-1.5 py-0.5 rounded ${badgeClass(props.item.status)}`}>{props.item.status}</span>
-        {props.item.refined && <span className="text-[11px] text-neutral-400">refined</span>}
+        <span className={`text-xs px-1.5 py-0.5 rounded ${badgeClass(props.item.status)}`}>{props.item.status}</span>
+        {props.item.refined && <span className="text-xs text-neutral-400">refined</span>}
       </div>
-      <h3 className="font-semibold text-neutral-700 mb-1">변환 원문 (converted)</h3>
-      <div className="whitespace-pre-wrap text-sm mb-4 text-neutral-600">{props.item.convertedText}</div>
-      <h3 className="font-semibold text-neutral-700 mb-1">채널 텍스트 ({props.item.channel}){dirty ? " • 편집중" : ""}</h3>
+      <h3 className="text-lg font-semibold text-neutral-700 mb-1">변환 원문 (converted)</h3>
+      <div className="whitespace-pre-wrap text-base mb-6 text-neutral-600">{props.item.convertedText}</div>
+      <h3 className="text-lg font-semibold text-neutral-700 mb-1">채널 텍스트 ({props.item.channel}){dirty ? " • 편집중" : ""}</h3>
       <textarea
-        className="w-full min-h-56 text-sm p-2 border border-neutral-300 rounded"
+        className="w-full min-h-56 text-base p-2 border border-neutral-300 rounded"
         value={text}
         onChange={(e) => setText(e.target.value)}
       />

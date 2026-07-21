@@ -2,7 +2,7 @@
 import type { Translation } from "../../domain/translation/models";
 import type { TranslationStore } from "../../ports/TranslationStore";
 import type { SaveTranslation } from "../../app/SaveTranslation";
-import type { PublishTranslations } from "../../app/PublishTranslations";
+import type { PublishResult } from "../../app/PublishTranslations";
 import type { ChannelRendering, Channel } from "../../domain/formatting/models";
 import type { ConversionType } from "../../domain/conversion/models";
 import type { FormattingStore } from "../../ports/FormattingStore";
@@ -15,6 +15,7 @@ export interface StatusView {
   storageMode: StorageMode;
   funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
   sync: { published: number; unsynced: number; stale: number };
+  availableTargets: ("local" | "google" | "lark")[];
 }
 
 export interface PublishStateRow {
@@ -34,7 +35,7 @@ export interface ApiResult {
 export interface ApiDeps {
   translationStore: TranslationStore;
   saveTranslation: SaveTranslation;
-  buildPublisher: (target: string | undefined) => Promise<PublishTranslations>;
+  publishOne: (id: string, target: string) => Promise<PublishResult>;
   storageMode: StorageMode;
   formattingStore: FormattingStore;
   conversionStore: ConversionStore;
@@ -89,12 +90,19 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
       await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: true });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
-  }
 
-  if (method === "POST" && segments.length === 2 && segments[1] === "publish") {
-    const target = (body as { target?: string })?.target;
-    const pub = await deps.buildPublisher(target);
-    return { status: 200, json: await pub.run() };
+    if (method === "POST" && segments.length === 4 && segments[3] === "publish") {
+      if (!existing) return { status: 404, json: { error: "not found" } };
+      const target = (body as { target?: unknown })?.target;
+      if (typeof target !== "string" || target === "") return { status: 400, json: { error: "target required" } };
+      return { status: 200, json: await deps.publishOne(existing.itemId, target) };
+    }
+
+    if (method === "POST" && segments.length === 4 && segments[3] === "unapprove") {
+      if (!existing) return { status: 404, json: { error: "not found" } };
+      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: false });
+      return { status: 200, json: await findById(deps.translationStore, id) };
+    }
   }
 
   if (segments[1] === "renderings") {
