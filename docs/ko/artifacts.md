@@ -29,6 +29,26 @@
 `.gitignore`로 제외됩니다. `pnpm config:init`이 예시 파일을 복사해 실제 파일을 만들어 줍니다
 (§3 참고).
 
+### 이름 규칙 — 루트는 프로세스, `output/`은 산출물
+
+디렉터리 이름은 두 가지 규칙을 따릅니다.
+
+- **저장소 루트의 스티어링 디렉터리 = 프로세스 이름** — `translation/`, `conversion/`
+- **`output/` 아래 디렉터리 = 그 단계가 만들어낸 산출물 이름** — `translations/`, `variants/`,
+  `formatted/`
+
+| 단계 | 도메인 코드 | 스티어링(루트) | CLI | `output/` 디렉터리 | 산출 파일 |
+|---|---|---|---|---|---|
+| 번역 | `src/domain/translation` | `translation/` | `translate:*` | `translations/` | `translations.json` |
+| 변환 | `src/domain/conversion` | `conversion/` | `convert:*` | `variants/` | `variants.json` |
+| 포맷 | `src/domain/formatting` | (없음) | `format` | `formatted/` | `renderings.json` |
+
+루트의 `conversion/`과 `output/variants/`가 짝이 안 맞는 것처럼 보이지만 규칙이 깨진 것은
+아닙니다 — 변환 단계는 **프로세스**가 conversion, **산출물**이 variant라서 두 단어가 갈릴 뿐입니다.
+번역 단계만 프로세스와 산출물이 우연히 같은 단어(translation)를 쓰기 때문에 그쪽이 "짝이 맞는
+이름"처럼 보이는 것이고, 이것이 나머지를 불일치로 오해하게 만드는 원인입니다. 포맷 단계는
+스티어링 설정이 없어 루트 디렉터리 자체가 없습니다(산출물 이름 불일치는 §7 참고).
+
 ## 2. 저장 모드
 
 ```bash
@@ -247,3 +267,6 @@ Drive에서 직접 찾아 수동으로 처리해야 합니다.
 
 이름을 통일하는 리팩터는 기존 로컬 데이터를 함께 마이그레이션해야 하는데, 기능상 얻는 것이 없어
 범위 밖으로 남겨 두었습니다.
+
+반면 루트 `conversion/`과 `output/variants/`처럼 **디렉터리끼리** 이름이 달라 보이는 것은 마찰이
+아니라 §1의 이름 규칙(루트는 프로세스, `output/`은 산출물)이 의도대로 적용된 결과입니다.
