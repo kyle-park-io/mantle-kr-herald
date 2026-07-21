@@ -33,12 +33,19 @@ export class CollectAuthoredContent {
     const floor = opts.since ?? (await this.watermark.get(userName));
 
     const fetched: SourceTweet[] = [];
-    for await (const t of this.source.fetchAuthoredTweets(userName, floor)) fetched.push(t);
+    const pages = this.source.fetchAuthoredTweets(userName, floor);
+    let step = await pages.next();
+    while (!step.done) {
+      fetched.push(step.value);
+      step = await pages.next();
+    }
+    const paginationExhausted = step.value;
 
     await this.gapFillMissingRoots(fetched, userName);
 
     const assembled = assembleThreads(fetched);
-    const { kept, truncated } = applyThreadLimit(assembled, opts.limit);
+    const { kept, truncated: truncatedByLimit } = applyThreadLimit(assembled, opts.limit);
+    const truncated = truncatedByLimit || paginationExhausted;
 
     const ranAt = this.now();
     const collected: CollectedThread[] = kept.map((thread) => ({

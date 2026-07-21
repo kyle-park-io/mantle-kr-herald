@@ -23,13 +23,15 @@ function tw(id: string, over: Partial<SourceTweet> = {}): SourceTweet {
 class FakeGateway implements SourceGateway {
   public threadCalls: string[] = [];
   public lastSince: string | undefined;
+  public exhausted = false;
   constructor(
     private readonly authored: SourceTweet[],
     private readonly threads: Record<string, SourceTweet[]> = {},
   ) {}
-  async *fetchAuthoredTweets(_userName: string, sinceTime?: string): AsyncGenerator<SourceTweet> {
+  async *fetchAuthoredTweets(_userName: string, sinceTime?: string): AsyncGenerator<SourceTweet, boolean> {
     this.lastSince = sinceTime;
     for (const t of this.authored) yield t;
+    return this.exhausted;
   }
   async fetchThread(id: string): Promise<SourceTweet[]> {
     this.threadCalls.push(id);
@@ -163,5 +165,31 @@ describe("CollectAuthoredContent", () => {
     expect(repo.saved.map((t) => t.rootId).sort()).toEqual(["b", "c"]);
     expect(ledger.runs[0].truncated).toBe(true);
     expect(ledger.runs[0].gap).toEqual({ from: "2026-01-01T00:00:00.000Z", to: "2026-01-02T00:01:00.000Z" });
+  });
+
+  it("records truncated + gap when the gateway exhausts MAX_PAGES", async () => {
+    const gw = new FakeGateway([
+      tw("a", { createdAt: "2026-01-01T00:01:00.000Z" }),
+      tw("b", { createdAt: "2026-01-02T00:01:00.000Z" }),
+    ]);
+    gw.exhausted = true;
+    const ledger = new InMemoryLedger();
+    const usecase = new CollectAuthoredContent(gw, new InMemoryRepo(), new InMemoryWatermark(), ledger, () => "2026-05-05T00:00:00.000Z");
+
+    await usecase.run("Mantle_Official", { since: "2026-01-01T00:00:00.000Z" });
+
+    expect(ledger.runs[0].truncated).toBe(true);
+    expect(ledger.runs[0].gap).toEqual({ from: "2026-01-01T00:00:00.000Z", to: "2026-01-01T00:01:00.000Z" });
+  });
+
+  it("does not advance the watermark for a limit-only run (no --since)", async () => {
+    const gw = new FakeGateway([tw("1", { createdAt: "2026-01-01T00:05:00.000Z" })]);
+    const wm = new InMemoryWatermark();
+    wm.marks.set("Mantle_Official", "2020-01-01T00:00:00.000Z");
+    const usecase = new CollectAuthoredContent(gw, new InMemoryRepo(), wm, new InMemoryLedger(), () => "2026-05-05T00:00:00.000Z");
+
+    await usecase.run("Mantle_Official", { limit: 1 });
+
+    expect(wm.marks.get("Mantle_Official")).toBe("2020-01-01T00:00:00.000Z"); // unchanged
   });
 });

@@ -20,7 +20,9 @@ function tw(id: string): SourceTweet {
 class FakeGateway implements SourceGateway {
   public batches: string[][] = [];
   constructor(private readonly alive: Set<string>) {}
-  async *fetchAuthoredTweets(): AsyncGenerator<SourceTweet> {}
+  async *fetchAuthoredTweets(): AsyncGenerator<SourceTweet, boolean> {
+    return false;
+  }
   async fetchThread(): Promise<SourceTweet[]> {
     return [];
   }
