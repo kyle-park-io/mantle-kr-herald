@@ -114,6 +114,39 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들; `local` 모드에서 게시하면 `output/publish/local/{review,approved}/*.md`도 포함(§2 참고) | 게시 API 호출 시 모드에 따라 Google Drive API, Lark Drive API(`cloud`), 또는 없음(`local`) |
 | `pnpm google:auth` | `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`/`GOOGLE_OAUTH_SCOPE`(env) | 로컬 파일 없음 — refresh token을 콘솔에 출력 | Google OAuth 2.0(로컬 루프백 서버로 인가 코드 교환) |
 
+### `pnpm collect`의 두 수집 모드
+
+X 수집은 `pnpm collect` 하나가 단일 창구입니다. (다만 twitterapi를 호출하는 명령이 collect뿐인
+것은 아닙니다 — `pnpm reconcile`은 삭제 감지를 위해, `pnpm impressions:record`는 조회수 수집을
+위해 각각 트윗을 재조회합니다. "수집"만 collect가 담당합니다.)
+
+`collect`은 명령도 코드 경로도 하나이며, **플래그 유무라는 분기 하나**로 두 모드로 갈립니다.
+
+| 모드 | 트리거 | `items.json` | `runs.json` | `state.json`(워터마크) |
+|---|---|---|---|---|
+| **증분** | 플래그 없음 | upsert | append | **전진(갱신)** |
+| **ad-hoc** | `--since` 또는 `--limit` | upsert | append | **안 건드림** |
+
+즉 `items`(병합)와 `runs`(커버리지 레코드)는 **매 실행 항상** 쓰이고, `state`(워터마크)만 모드에
+따라 갈립니다. `--since`/`--limit`를 주면 워터마크를 갱신하지 않으므로(ad-hoc), 정기 자동화의
+증분 흐름을 오염시키지 않고 임시 수집을 돌릴 수 있습니다. 기본값(플래그 없음)은 이전과 100%
+동일하게 동작합니다.
+
+#### 자동화 전략: 슬라이딩 윈도우 vs 워터마크
+
+수집 자동화는 커버리지 메커니즘으로 둘 중 하나를 고릅니다.
+
+- **슬라이딩 윈도우** (권장) — 매시간 `pnpm collect <target> --since 2h`. 2시간 창 + 1시간 주기 =
+  1시간 겹침이라 실행 하나가 늦거나 실패해도 빈틈이 없고, API 인덱싱 지연(생성시각보다 늦게 검색에
+  노출)도 오버랩이 흡수합니다. 겹치는 구간은 upsert가 중복 제거합니다. **이 방식은 항상
+  `--since`(ad-hoc)라 `state.json`을 쓰지 않습니다** — 워터마크는 놀게 됩니다(정상 동작).
+- **워터마크 증분** — 플래그 없는 `pnpm collect`. 재수집이 최소지만, 워터마크가 최신으로 전진한
+  뒤 늦게 인덱싱된 트윗은 영구히 건너뛸 수 있고 오버랩 안전망이 없습니다.
+
+두 방식 모두 `runs.json`에 커버리지를 남깁니다. 요청한 floor까지 못 내려간 실행은
+`truncated: true`와 `gap`으로 표시됩니다 — `--limit`로 잘렸거나 `MAX_PAGES`(50페이지) 상한을
+소진한 경우입니다.
+
 ## 4. 동기화 원장
 
 `output/publish/state.json`은 단순 게시 여부 집합이 아니라, **`(itemId, status, target)` 조합마다
