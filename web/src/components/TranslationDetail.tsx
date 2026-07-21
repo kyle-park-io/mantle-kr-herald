@@ -7,8 +7,11 @@ const badgeClass = (status: Translation["status"]) =>
 export function TranslationDetail(props: {
   item: Translation;
   publishRows: PublishStateRow[];
+  availableTargets: ("local" | "google" | "lark")[];
   onSave: (id: string, koreanText: string) => Promise<void>;
   onApprove: (id: string) => Promise<void>;
+  onUnapprove: (id: string) => Promise<void>;
+  onPublish: (id: string, target: string) => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const { onDirtyChange } = props;
@@ -43,7 +46,7 @@ export function TranslationDetail(props: {
         value={korean}
         onChange={(e) => setKorean(e.target.value)}
       />
-      <div className="flex gap-2.5 mt-3">
+      <div className="flex flex-wrap items-center gap-2.5 mt-3">
         <button
           className="px-3.5 py-1.5 border border-neutral-300 rounded-md bg-white disabled:opacity-50"
           disabled={busy || !dirty}
@@ -51,13 +54,38 @@ export function TranslationDetail(props: {
         >
           저장
         </button>
-        <button
-          className="px-3.5 py-1.5 rounded-md bg-indigo-600 text-white disabled:opacity-50"
-          disabled={busy || dirty}
-          onClick={() => run(() => props.onApprove(props.item.itemId))}
-        >
-          승인 ✓
-        </button>
+        {props.item.status === "approved" ? (
+          <button
+            className="px-3.5 py-1.5 rounded-md border border-neutral-300 bg-white disabled:opacity-50"
+            disabled={busy}
+            onClick={() => run(() => props.onUnapprove(props.item.itemId))}
+          >
+            승인 취소
+          </button>
+        ) : (
+          <button
+            className="px-3.5 py-1.5 rounded-md bg-indigo-600 text-white disabled:opacity-50"
+            disabled={busy || dirty}
+            onClick={() => run(() => props.onApprove(props.item.itemId))}
+          >
+            승인 ✓
+          </button>
+        )}
+        <span className="mx-1 h-5 w-px bg-neutral-200" />
+        {(["local", "google", "lark"] as const).map((t) => {
+          const label = t === "local" ? "로컬 저장" : t === "google" ? "구글 클라우드" : "라크 클라우드";
+          const usable = props.availableTargets.includes(t);
+          return (
+            <button
+              key={t}
+              className={`px-3 py-1.5 rounded-md border text-sm ${usable ? "border-neutral-300 bg-white text-neutral-900" : "border-neutral-200 bg-neutral-50 text-neutral-300"} disabled:opacity-50`}
+              disabled={busy || !usable}
+              onClick={() => run(() => props.onPublish(props.item.itemId, t))}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
       <div className="mt-6 border-t border-neutral-200 pt-3">
         <h3 className="text-xs font-semibold text-neutral-500 mb-1.5">발행 상태</h3>
