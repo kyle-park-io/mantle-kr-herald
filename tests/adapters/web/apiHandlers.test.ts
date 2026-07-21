@@ -229,6 +229,13 @@ describe("GET /api/renderings/:id/:type/:channel/emissions", () => {
     const res = await handleApi(deps, "GET", "/api/renderings/x%3A9/x/x/emissions", undefined);
     expect(res.status).toBe(404);
   });
+
+  it("emits the stored text as-is, without canonicalising on read", async () => {
+    const deps = makeDeps([], [rnd({ channel: "telegram", type: "announcement", text: "  **중요**  " })]);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
+    const json = res.json as Record<string, { segments: { text: string }[] }>;
+    expect(json.telegram_paste.segments[0].text).toBe("  중요  ");
+  });
 });
 
 describe("GET /api/config", () => {
