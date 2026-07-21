@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { itemUrl } from "../types";
 import type { Translation, PublishStateRow } from "../types";
 
 const badgeClass = (status: Translation["status"]) =>
@@ -35,14 +36,20 @@ export function TranslationDetail(props: {
   return (
     <div>
       <div className="flex items-center gap-2.5 mb-3">
-        <code className="text-sm">{props.item.itemId}</code>
-        <span className={`text-[11px] px-1.5 py-0.5 rounded ${badgeClass(props.item.status)}`}>{props.item.status}</span>
+        {itemUrl(props.item.itemId) ? (
+          <a className="text-sm text-indigo-600 hover:underline" href={itemUrl(props.item.itemId)!} target="_blank" rel="noreferrer">
+            <code>{props.item.itemId}</code>
+          </a>
+        ) : (
+          <code className="text-sm">{props.item.itemId}</code>
+        )}
+        <span className={`text-xs px-1.5 py-0.5 rounded ${badgeClass(props.item.status)}`}>{props.item.status}</span>
       </div>
       <h3 className="font-semibold text-neutral-700 mb-1">원문 (source)</h3>
-      <div className="whitespace-pre-wrap text-sm mb-4">{props.item.sourceText}</div>
+      <div className="whitespace-pre-wrap text-base mb-4">{props.item.sourceText}</div>
       <h3 className="font-semibold text-neutral-700 mb-1">한글 (Korean){dirty ? " • 편집중" : ""}</h3>
       <textarea
-        className="w-full min-h-56 text-sm p-2 border border-neutral-300 rounded"
+        className="w-full min-h-56 text-base p-2 border border-neutral-300 rounded"
         value={korean}
         onChange={(e) => setKorean(e.target.value)}
       />
@@ -88,13 +95,13 @@ export function TranslationDetail(props: {
         })}
       </div>
       <div className="mt-6 border-t border-neutral-200 pt-3">
-        <h3 className="text-xs font-semibold text-neutral-500 mb-1.5">발행 상태</h3>
+        <h3 className="text-sm font-semibold text-neutral-500 mb-1.5">발행 상태</h3>
         {props.publishRows.length === 0 ? (
-          <p className="text-xs text-neutral-400">아직 발행되지 않음</p>
+          <p className="text-sm text-neutral-400">아직 발행되지 않음</p>
         ) : (
           <ul className="flex flex-col gap-1">
             {props.publishRows.map((r) => (
-              <li key={`${r.status}:${r.target}`} className="flex items-center gap-2 text-xs">
+              <li key={`${r.status}:${r.target}`} className="flex items-center gap-2 text-sm">
                 <span className="text-neutral-500">{r.status} · {r.target}</span>
                 {r.target === "local" && r.remoteId ? (
                   <a className="text-indigo-600 hover:underline" href={`/api/publish/local/${r.remoteId.split("/").map(encodeURIComponent).join("/")}`} target="_blank" rel="noreferrer">열기</a>

@@ -1,3 +1,7 @@
+/** The original tweet URL for an `x:<id>` item, else null (lark items have no public URL). */
+export const itemUrl = (itemId: string): string | null =>
+  itemId.startsWith("x:") ? `https://x.com/i/status/${itemId.slice(2)}` : null;
+
 export interface Translation {
   itemId: string;
   source: "x" | "lark";

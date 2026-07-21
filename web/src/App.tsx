@@ -91,7 +91,7 @@ export function App() {
             <span>Mantle KR — Review</span>
             {status && (
               <span
-                className={`text-xs font-semibold px-2 py-0.5 rounded ${status.storageMode === "cloud" ? "bg-green-500 text-white" : "bg-amber-400 text-neutral-900"}`}
+                className={`text-sm font-semibold px-2 py-0.5 rounded ${status.storageMode === "cloud" ? "bg-green-500 text-white" : "bg-amber-400 text-neutral-900"}`}
               >
                 {status.storageMode}
               </span>
@@ -103,7 +103,7 @@ export function App() {
           </div>
         </div>
         {status && (
-          <div className="px-4 pb-1.5 text-[11px] text-neutral-300 font-normal">
+          <div className="px-4 pb-1.5 text-xs text-neutral-300 font-normal">
             수집 {status.funnel.collected} → 번역 {status.funnel.translated} → 변환 {status.funnel.converted} → 렌더 {status.funnel.rendered} → 발행 {status.funnel.published}
             <span className="ml-3">
               {status.sync.unsynced > 0 || status.sync.stale > 0 ? "⚠ " : ""}
