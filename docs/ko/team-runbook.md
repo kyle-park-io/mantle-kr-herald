@@ -162,6 +162,16 @@ Lark인 `stale` 행)에만 이 수동 절차를 쓰세요.
 시점 이후로만 다시 가져오고 싶으면 워터마크 타임스탬프를 그 시점으로 직접 편집하세요. 둘 다
 기존에 저장된 `items.json`을 지우지 않으므로 upsert로 안전하게 병합됩니다.
 
+**참고** — X 수집(`pnpm collect`)은 `state.json`을 직접 건드리지 않고도 같은 일을 할 수
+있습니다. `--since <3d|12h|1w|ISO>`는 워터마크 대신 그 값을 floor로 써서 특정 시점 이후만
+다시 가져오고, `--limit <n>`은 유지할 스레드 개수를 제한합니다. 둘 중 하나라도 주면 그 실행은
+ad-hoc으로 간주되어 **워터마크를 갱신하지 않으므로**, 정기 자동화의 워터마크 전진 흐름을
+건드리지 않고 안전하게 임시 수집을 돌릴 수 있습니다. 매 실행의 요청/커버 구간, 스레드·트윗
+개수, 잘림 여부는 `output/x/runs.json`에 기록됩니다([`artifacts.md`](artifacts.md) §3, §6).
+자동화를 붙일 때는 매시간 `pnpm collect <target> --since 2h`(`--limit` 없이)를 권장합니다 —
+2시간 창과 1시간 주기가 1시간 겹쳐서 커버리지가 끊기지 않고, 겹치는 구간은 upsert가 중복
+제거합니다.
+
 ## 5. 정리 주기
 
 - **배치마다** — `pnpm archive`로 완료된 워크시트(`output/{translations,variants,formatted}/worksheets/*.md`)를

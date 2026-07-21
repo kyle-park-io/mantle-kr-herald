@@ -88,7 +88,7 @@ HERALD_STORAGE_MODE=local|cloud
 
 | 명령어 | 읽는 것 | 쓰는 것 | 외부 시스템 |
 |---|---|---|---|
-| `pnpm collect [target]` | `TWITTERAPI_IO_KEY`(env); 기존 스레드 병합을 위한 `output/x/items.json`; 워터마크 조회를 위한 `output/x/state.json` | `output/x/items.json`(upsert); `output/x/state.json`(워터마크 갱신) | twitterapi.io API |
+| `pnpm collect [target] [--since <3d\|12h\|1w\|ISO>] [--limit <n>]` | `TWITTERAPI_IO_KEY`(env); 기존 스레드 병합을 위한 `output/x/items.json`; 워터마크 조회를 위한 `output/x/state.json`(`--since`가 있으면 워터마크 대신 그 값을 floor로 사용) | `output/x/items.json`(upsert); `output/x/runs.json`(append — 실행마다 커버리지 레코드 1건 기록); `output/x/state.json`(워터마크 갱신 — `--since`/`--limit` 중 하나라도 주면 ad-hoc 실행이라 갱신하지 않고, 플래그 없는 실행만 갱신) | twitterapi.io API |
 | `pnpm collect-lark` | `LARK_APP_ID`/`LARK_APP_SECRET`/`LARK_CHAT_IDS`(env); `output/lark/items.json`; 채팅방별 워터마크를 위한 `output/lark/state.json` | `output/lark/items.json`(upsert); `output/lark/state.json` | Lark Open API(테넌트 토큰 발급 + 메시지 조회) |
 | `pnpm lark:chats` | `LARK_APP_ID`/`LARK_APP_SECRET`(env) | 없음(표준 출력만) | Lark Open API(봇이 속한 채팅방 목록 조회) |
 | `pnpm lark:send` | `LARK_APP_ID`/`LARK_APP_SECRET`(env); `--chat`/`--text` 인자 또는 `LARK_CHAT_IDS`의 첫 값 | 없음 | Lark Open API(메시지 전송) |
@@ -233,6 +233,9 @@ Drive에서 직접 찾아 수동으로 처리해야 합니다.
 - `output/x/items.json`, `output/lark/items.json` — twitterapi.io / Lark에서 다시 수집할 수
   있습니다 (단, 재수집은 워터마크 이후 구간만 가져오므로 워터마크가 함께 없을 때만 완전한
   재수집이 됩니다)
+- `output/x/runs.json` — 매 `pnpm collect` 실행마다 커버리지 레코드를 append하는 로그입니다.
+  잃어도 파이프라인 동작에는 영향이 없고, 과거 커버리지 이력(언제 어느 구간을 수집했는지)만
+  사라집니다
 
 ## 7. 알려진 마찰
 
