@@ -47,6 +47,15 @@ describe("emitXPaste", () => {
   it("never splits on its own — an over-limit post stays one segment", () => {
     expect(emitXPaste("가".repeat(500)).segments).toHaveLength(1);
   });
+
+  it("warns when bold spans a post boundary, leaking an unbalanced ** into each half", () => {
+    const r = emitXPaste("**가\n\n\n나**");
+    expect(r.segments.map((s) => s.text)).toEqual(["**가", "나**"]);
+    expect(r.warnings).toEqual([
+      "트윗 1/2: 볼드(**)가 트윗 경계를 넘어가 있어 짝이 맞지 않습니다",
+      "트윗 2/2: 볼드(**)가 트윗 경계를 넘어가 있어 짝이 맞지 않습니다",
+    ]);
+  });
 });
 
 describe("emitXTypefully", () => {

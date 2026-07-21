@@ -10,7 +10,13 @@
  * /g regex carries state between calls and will skip matches.
  */
 export const BOLD = /\*\*([\s\S]+?)\*\*/g;
-export const MD_LINK = /\[([^\]]+)\]\(([^)]+)\)/g;
+/**
+ * The URL group allows one level of balanced parens (e.g. a Wikipedia slug like
+ * "Mantle_(blockchain)") so a plain `[^)]+` does not stop at the first `)` inside the URL itself
+ * and truncate it. See `weightedLength`'s `BALANCED_DELIMITERS`, which treats the same URL class
+ * as real for the same reason.
+ */
+export const MD_LINK = /\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g;
 
 /** Two blank lines. Written out because the whole file turns on this being exactly three \n. */
 const POST_BOUNDARY = "\n\n\n";

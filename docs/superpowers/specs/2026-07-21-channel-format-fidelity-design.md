@@ -158,7 +158,7 @@ as settled.
 | `[text](url)` | link |
 | one blank line | paragraph break |
 | **two or more blank lines** | **post boundary** (`x` channel only) |
-| `---` alone on a line | post boundary (alternate spelling, `x` channel only) |
+| `---` alone on a line | post boundary (alternate spelling; `toCanonical` is channel-independent and folds this on every channel, not just `x`) |
 
 `---` reconciles the pipeline's pre-existing thread separator with canonical text: `XContentSource`
 has joined collected tweets with `"\n\n---\n\n"` since before canonical text existed, so it is

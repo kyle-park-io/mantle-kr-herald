@@ -80,4 +80,22 @@ describe("emitTelegramBot", () => {
     expect(r.segments[0].text).toBe("a\n\nb");
     expect(r.segments[0].length).toBe([...("a\n\nb")].length);
   });
+
+  it("keeps a URL with a balanced paren in its path intact in the href, instead of truncating it", () => {
+    const r = emitTelegramBot("[맨틀](https://en.wikipedia.org/wiki/Mantle_(blockchain))");
+    expect(r.segments[0].text).toBe(
+      '<a href="https://en.wikipedia.org/wiki/Mantle_(blockchain)">맨틀</a>',
+    );
+    expect(r.segments[0].length).toBe(2);
+  });
+
+  it("escapes a double quote inside a URL so it cannot break out of the href attribute", () => {
+    const r = emitTelegramBot('[링크](https://x.io/?a="b")');
+    expect(r.segments[0].text).toBe('<a href="https://x.io/?a=&quot;b&quot;">링크</a>');
+  });
+
+  it("does not escape a double quote in the link label, only in the URL", () => {
+    const r = emitTelegramBot('["따옴표"](https://x.io)');
+    expect(r.segments[0].text).toBe('<a href="https://x.io">"따옴표"</a>');
+  });
 });

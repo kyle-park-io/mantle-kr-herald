@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { assembleRefinementWorksheet } from "../../../src/domain/formatting/refinementWorksheet";
+import { emitTelegramBot, emitTelegramPaste } from "../../../src/domain/formatting/emitters/telegram";
 
 describe("assembleRefinementWorksheet", () => {
   it("emits a header and one block per draft with 초안 and an empty 보정 slot", () => {
@@ -30,5 +31,19 @@ describe("assembleRefinementWorksheet", () => {
     const constraints = out.split("## 채널 제약")[1].split("\n\n")[0];
     expect(constraints.indexOf("- x:")).toBeLessThan(constraints.indexOf("- telegram:"));
     expect(constraints.indexOf("- telegram:")).toBeLessThan(constraints.indexOf("- pr_mail:"));
+  });
+
+  it("reports telegram_paste's number for a telegram draft with a link, not telegram_bot's", () => {
+    // A link makes the two telegram destinations diverge: paste spells it out as "text (url)",
+    // bot keeps only the label and drops the url from the visible count entirely.
+    const draft = "공지 [자세히](https://x.io)";
+    const paste = emitTelegramPaste(draft).segments[0];
+    const bot = emitTelegramBot(draft).segments[0];
+    // Sanity check: this test only proves anything if the two destinations actually disagree.
+    expect(paste.length).not.toBe(bot.length);
+
+    const out = assembleRefinementWorksheet([{ itemId: "x:1", type: "kol", channel: "telegram", draft }], []);
+    expect(out).toContain(`**${paste.length}/${paste.limit}**`);
+    expect(out).not.toContain(`**${bot.length}/${bot.limit}**`);
   });
 });

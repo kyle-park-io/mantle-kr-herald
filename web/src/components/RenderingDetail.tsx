@@ -7,7 +7,7 @@ const badgeClass = (status: Rendering["status"]) =>
 
 export function RenderingDetail(props: {
   item: Rendering;
-  onSave: (item: Rendering, text: string) => Promise<void>;
+  onSave: (item: Rendering, text: string) => Promise<string | undefined>;
   onApprove: (item: Rendering) => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
 }) {
@@ -16,6 +16,7 @@ export function RenderingDetail(props: {
   const [busy, setBusy] = useState(false);
   const [emissions, setEmissions] = useState<Emissions>({});
   const [tab, setTab] = useState<Destination | null>(null);
+  const [emissionsError, setEmissionsError] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const prevRenderingKeyRef = useRef<string | null>(null);
 
@@ -31,6 +32,7 @@ export function RenderingDetail(props: {
       setEmissions({});
       setTab(null);
     }
+    setEmissionsError(false);
     api
       .emissions(props.item.itemId, props.item.type, props.item.channel)
       .then((e) => {
@@ -42,6 +44,7 @@ export function RenderingDetail(props: {
         if (!live) return;
         setEmissions({});
         setTab(null);
+        setEmissionsError(true);
       });
     return () => {
       live = false;
@@ -88,7 +91,15 @@ export function RenderingDetail(props: {
         <button
           className="px-3.5 py-1.5 border border-neutral-300 rounded-md bg-white disabled:opacity-50"
           disabled={busy || !dirty}
-          onClick={() => run(() => props.onSave(props.item, text))}
+          onClick={() =>
+            run(async () => {
+              // Adopt the value the server actually stored: a save that canonicalises back to
+              // the already-stored string would otherwise never change props.item.text, so the
+              // effect below would never fire and local `text` would stay dirty forever.
+              const saved = await props.onSave(props.item, text);
+              if (saved !== undefined) setText(saved);
+            })
+          }
         >
           저장
         </button>
@@ -100,6 +111,11 @@ export function RenderingDetail(props: {
           승인 ✓
         </button>
       </div>
+      {emissionsError && (
+        <p className="mt-6 text-sm text-red-600">
+          목적지별 출력을 불러오지 못했습니다. 항목을 다시 선택하면 다시 시도합니다.
+        </p>
+      )}
       {tab && (
         <div className="mt-6">
           <h3 className="text-lg font-semibold text-neutral-700 mb-2">목적지별 출력</h3>

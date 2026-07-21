@@ -40,7 +40,11 @@ export function emitTelegramBot(canonical: string): EmitResult {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-  const html = escaped.replace(BOLD, "<b>$1</b>").replace(MD_LINK, '<a href="$2">$1</a>');
+  // The href is an attribute value, so it additionally needs `"` escaped — unlike the label,
+  // which sits in element content. A function replacer keeps that escaping off the label.
+  const html = escaped
+    .replace(BOLD, "<b>$1</b>")
+    .replace(MD_LINK, (_match, label: string, url: string) => `<a href="${url.replace(/"/g, "&quot;")}">${label}</a>`);
   // "after entities parsing" means the text the reader sees: no markup, no href.
   const visible = [...stripBold(linksToLabel(flattened))].length;
   return single(html, visible);

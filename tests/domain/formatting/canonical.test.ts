@@ -109,4 +109,11 @@ describe("text helpers", () => {
   it("keeps only the label when the destination renders links as entities", () => {
     expect(linksToLabel("공지 [자세히](https://x.io)")).toBe("공지 자세히");
   });
+
+  it("keeps a URL with a balanced paren in its path intact instead of truncating at the first )", () => {
+    // A plain [^)]+ URL group would stop at "Mantle_(blockchain" and leak a stray ")".
+    const wiki = "[맨틀](https://en.wikipedia.org/wiki/Mantle_(blockchain))";
+    expect(linksToPlain(wiki)).toBe("맨틀 (https://en.wikipedia.org/wiki/Mantle_(blockchain))");
+    expect(linksToLabel(wiki)).toBe("맨틀");
+  });
 });

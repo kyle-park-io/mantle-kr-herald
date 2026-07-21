@@ -24,6 +24,13 @@ function emitX(canonical: string): EmitResult {
       const where = posts.length > 1 ? `트윗 ${i + 1}/${posts.length}: ` : "";
       warnings.push(`${where}${length}/${X_MAX_WEIGHTED} (${length - X_MAX_WEIGHTED} 초과)`);
     }
+    // Bold that opened before a post boundary and closed after it (see splitPosts) leaves each
+    // half with an unbalanced **, which stripBold cannot repair per-post — warn instead of
+    // silently leaking literal asterisks into the tweet.
+    if (text.includes("**")) {
+      const where = posts.length > 1 ? `트윗 ${i + 1}/${posts.length}: ` : "";
+      warnings.push(`${where}볼드(**)가 트윗 경계를 넘어가 있어 짝이 맞지 않습니다`);
+    }
     return segment;
   });
 
