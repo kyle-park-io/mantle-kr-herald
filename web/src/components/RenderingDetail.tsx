@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { DESTINATION_LABEL, type Destination, type Emissions, type Rendering } from "../types";
+import { DESTINATION_LABEL, renderingKey, type Destination, type Emissions, type Rendering } from "../types";
 
 const badgeClass = (status: Rendering["status"]) =>
   status === "approved" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800";
@@ -17,18 +17,31 @@ export function RenderingDetail(props: {
   const [emissions, setEmissions] = useState<Emissions>({});
   const [tab, setTab] = useState<Destination | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const prevRenderingKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     let live = true;
+    const key = renderingKey(props.item);
+    const isDifferentRendering = prevRenderingKeyRef.current !== key;
+    prevRenderingKeyRef.current = key;
+    if (isDifferentRendering) {
+      // Switching to a different rendering: drop the previous item's tabs/segments
+      // right away so nothing stale renders under the new header while we fetch.
+      // A same-rendering refetch (a save) instead leaves the current content up.
+      setEmissions({});
+      setTab(null);
+    }
     api
       .emissions(props.item.itemId, props.item.type, props.item.channel)
       .then((e) => {
         if (!live) return;
         setEmissions(e);
-        setTab(Object.keys(e)[0] as Destination);
+        setTab((prev) => (prev && e[prev] ? prev : ((Object.keys(e)[0] as Destination) ?? null)));
       })
       .catch(() => {
-        if (live) setEmissions({});
+        if (!live) return;
+        setEmissions({});
+        setTab(null);
       });
     return () => {
       live = false;
