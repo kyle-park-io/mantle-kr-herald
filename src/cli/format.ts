@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
 import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
+import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { FormatVariants, type FormatSelector } from "../app/FormatVariants";
 import { PrepareRefinements } from "../app/PrepareRefinements";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
@@ -41,7 +42,10 @@ const refine = process.argv.includes("--refine");
 const conversionStore = new JsonConversionStore(paths.variantsDir);
 
 if (refine) {
-  const { worksheet, pending } = await new PrepareRefinements(conversionStore).run(selector);
+  const { worksheet, pending } = await new PrepareRefinements(
+    conversionStore,
+    new JsonGlossaryStore(paths.translationConfigDir),
+  ).run(selector);
   await mkdir(paths.formattedWorksheets, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const worksheetPath = join(paths.formattedWorksheets, `batch-${stamp}.md`);

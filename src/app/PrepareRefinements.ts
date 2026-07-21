@@ -3,6 +3,7 @@ import { toCanonical } from "../domain/formatting/canonical";
 import { DEFAULT_CHANNELS_BY_TYPE, type Channel } from "../domain/formatting/models";
 import { assembleRefinementWorksheet, type RefinementDraft } from "../domain/formatting/refinementWorksheet";
 import type { ConversionStore } from "../ports/ConversionStore";
+import type { GlossaryStore } from "../ports/GlossaryStore";
 import { selectApprovedVariants, type FormatSelector } from "./FormatVariants";
 
 export interface PendingRendering {
@@ -12,7 +13,10 @@ export interface PendingRendering {
 }
 
 export class PrepareRefinements {
-  constructor(private readonly conversionStore: ConversionStore) {}
+  constructor(
+    private readonly conversionStore: ConversionStore,
+    private readonly glossaryStore: GlossaryStore,
+  ) {}
 
   async run(selector: FormatSelector): Promise<{ worksheet: string; pending: PendingRendering[] }> {
     const approved = await selectApprovedVariants(this.conversionStore, selector);
@@ -26,7 +30,8 @@ export class PrepareRefinements {
       }
     }
 
-    const worksheet = assembleRefinementWorksheet(drafts);
+    const glossary = await this.glossaryStore.load();
+    const worksheet = assembleRefinementWorksheet(drafts, glossary);
     const pending = drafts.map((d) => ({ itemId: d.itemId, type: d.type, channel: d.channel }));
     return { worksheet, pending };
   }
