@@ -107,6 +107,32 @@ describe("XContentSource", () => {
     expect(pending[0].text).toBe("Plain");
   });
 
+  it("falls back to the tweet text when an article's blocks all render to nothing", async () => {
+    // No title, and the only block (a divider) renders to nothing — renderArticle returns "".
+    // Falling back keeps a non-empty 원문 in the worksheet instead of an empty one, and the
+    // item must not be mislabelled "article" when there is no article content in it.
+    const items = [
+      {
+        rootId: "600", status: "active", firstSeenAt: "2026-01-01T00:00:00.000Z",
+        tweets: [
+          {
+            id: "600", conversationId: "600", text: "https://t.co/empty",
+            createdAt: "2026-01-01T00:01:00.000Z", url: "u/600",
+            authorUserName: "Mantle_Official", isReply: false, isQuote: false,
+            article: { title: "", blocks: [{ type: "divider" }] },
+          },
+        ],
+      },
+    ];
+    const path = join(dir, "items.json");
+    await writeFile(path, JSON.stringify(items), "utf8");
+
+    const pending = await new XContentSource(path).loadPending(new Set());
+
+    expect(pending[0].kind).toBe("post");
+    expect(pending[0].text).toBe("https://t.co/empty");
+  });
+
   it("falls back to the tweet text when an article has no fetched body", async () => {
     const items = [
       {

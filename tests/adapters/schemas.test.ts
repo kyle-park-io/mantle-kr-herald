@@ -148,4 +148,19 @@ describe("parseArticleContents", () => {
     });
     expect(blocks.map((b) => b.text)).toEqual(["kept", "also kept"]);
   });
+
+  it("keeps an unrecognised key (e.g. entityRanges) on the stored block instead of discarding it", () => {
+    // The design spec's "Known limitations" names entityRanges as the one thing it cannot yet map
+    // correctly — but the mapping can only ever be corrected later if the key survives collection.
+    const blocks = parseArticleContents({
+      article: {
+        contents: [
+          { type: "unstyled", text: "hi", entityRanges: [{ offset: 0, length: 2, key: 0 }] },
+        ],
+      },
+    });
+    expect((blocks[0] as unknown as Record<string, unknown>)["entityRanges"]).toEqual([
+      { offset: 0, length: 2, key: 0 },
+    ]);
+  });
 });

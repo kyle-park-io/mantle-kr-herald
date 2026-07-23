@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { renderArticle } from "../../src/domain/articleMarkdown";
+import { toCanonical, splitPosts } from "../../src/domain/formatting/canonical";
 import type { ArticleBlock } from "../../src/domain/models";
 
 /** Abridged from a real GET /twitter/article response (Mantle_Official, 2026-04-10). */
@@ -54,6 +55,22 @@ describe("renderArticle", () => {
     });
     expect(out).not.toContain("---");
     expect(out).toBe("# T\n\na\n\nb");
+  });
+
+  it("neutralizes a lone hyphen line even when it comes from a block's own text, not a divider", () => {
+    // The divider guard above excludes the `divider` block *type*; this covers any other block
+    // (here `unstyled`) whose rendered text happens to be a bare "---" line, which would otherwise
+    // read as toCanonical's post-boundary separator.
+    const out = renderArticle({
+      title: "",
+      blocks: [{ type: "unstyled", text: "a" }, { type: "unstyled", text: "---" }, { type: "unstyled", text: "b" }],
+    });
+    expect(out).not.toMatch(/^[ \t]*-{3,}[ \t]*$/m);
+    expect(out).toContain("a");
+    expect(out).toContain("b");
+
+    // Confirm the central invariant end to end: toCanonical must not read it as a post boundary.
+    expect(splitPosts(toCanonical(out))).toHaveLength(1);
   });
 
   it("maps each block type to its markdown form", () => {
@@ -155,6 +172,26 @@ describe("renderArticle", () => {
       blocks: [{ type: "unstyled", text: "abc", inlineStyleRanges: [{ offset: 1, length: 99, style: "Bold" }] }],
     });
     expect(out).toBe("abc");
+  });
+
+  it("filters an out-of-range bold entry before merging, instead of losing an adjacent valid one", () => {
+    // A negative-offset range merging with a valid adjacent one (old behaviour: merge first, then
+    // reject) used to fold the two into one negative-offset range and drop it whole, losing the
+    // legitimate bold along with the malformed one.
+    const out = renderArticle({
+      title: "",
+      blocks: [
+        {
+          type: "unstyled",
+          text: "abcdef",
+          inlineStyleRanges: [
+            { offset: -2, length: 3, style: "Bold" },
+            { offset: 1, length: 3, style: "Bold" },
+          ],
+        },
+      ],
+    });
+    expect(out).toBe("a**bcd**ef");
   });
 
   it("drops Italic to plain text", () => {

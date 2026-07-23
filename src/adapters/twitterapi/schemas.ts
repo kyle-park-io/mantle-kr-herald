@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ArticleBlock, MediaItem, SourceTweet, TweetMetrics } from "../../domain/models";
+import type { ArticleBlock, ArticleBody, MediaItem, SourceTweet, TweetMetrics } from "../../domain/models";
 
 const MediaRaw = z
   .object({ type: z.string().optional(), media_url_https: z.string().optional() })
@@ -88,7 +88,7 @@ function toMedia(raw: z.infer<typeof TweetRaw>): MediaItem[] | undefined {
   return items.length ? items : undefined;
 }
 
-function toArticle(raw: z.infer<typeof TweetRaw>) {
+function toArticle(raw: z.infer<typeof TweetRaw>): ArticleBody | undefined {
   if (!raw.article) return undefined;
   return {
     title: raw.article.title,
@@ -156,8 +156,14 @@ export function parseArticleContents(data: unknown): ArticleBlock[] {
       console.warn(`[twitterapi] skipping malformed article block: ${result.error.message}`);
       continue;
     }
-    const { type, text, inlineStyleRanges, url, width, height } = result.data;
-    blocks.push({ type, text, inlineStyleRanges, url, width, height });
+    // Push the validated object itself, not a destructured re-literal: destructuring only the six
+    // keys named here silently discards any other key the API sends (notably `entityRanges`, the
+    // one thing the design spec's "Known limitations" says the mapping cannot yet handle — but
+    // only if it survives into storage for a later remapping to use). `.passthrough()` on
+    // ArticleBlockRaw keeps unknown keys on `result.data`; ArticleBlock has no index signature, so
+    // this relies on structural typing rather than triggering excess-property checks (which only
+    // apply to fresh object literals).
+    blocks.push(result.data);
   }
   return blocks;
 }

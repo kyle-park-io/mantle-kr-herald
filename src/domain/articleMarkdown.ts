@@ -18,12 +18,31 @@ import type { ArticleBlock, ArticleBody, InlineStyleRange } from "./models";
 type Piece = { text: string; kind: "ordered" | "unordered" | "block" };
 
 /**
+ * A rendered line consisting entirely of 3+ hyphens reads, downstream, exactly like the pipeline's
+ * `---` thread/post-boundary separator (`toCanonical` in `domain/formatting/canonical.ts`). No
+ * block in the 900-block sample this design was measured against renders this way, but the guard
+ * against emitting `---` above only excludes the `divider` block *type* — a block of any other type
+ * (e.g. `unstyled`) whose own *text* happens to be `"---"` would still produce a lone separator
+ * line. This catches that case regardless of which block produced it.
+ */
+const SEPARATOR_LINE = /^[ \t]*-{3,}[ \t]*$/gm;
+
+function neutralizeSeparatorLines(text: string): string {
+  return text.replace(SEPARATOR_LINE, (line) => line.replace(/-/g, "\\-"));
+}
+
+/**
  * Combine Bold ranges that touch or overlap. Without this, two adjacent ranges render as
  * `**a****b**`, whose middle `****` is not valid emphasis.
+ *
+ * Out-of-range entries are filtered out *before* merging, not after: merging first and rejecting
+ * malformed ranges afterward can fold a valid range into an invalid one (e.g. offset -2 merging
+ * with an adjacent, in-range offset 1), producing a single negative-offset range that then gets
+ * dropped whole — losing the legitimate bold along with the malformed one.
  */
-function mergeBoldRanges(ranges: InlineStyleRange[]): { offset: number; length: number }[] {
+function mergeBoldRanges(text: string, ranges: InlineStyleRange[]): { offset: number; length: number }[] {
   const ascending = ranges
-    .filter((r) => r.style === "Bold" && r.length > 0)
+    .filter((r) => r.style === "Bold" && r.length > 0 && r.offset >= 0 && r.offset + r.length <= text.length)
     .sort((a, b) => a.offset - b.offset);
   const merged: { offset: number; length: number }[] = [];
   for (const r of ascending) {
@@ -61,8 +80,7 @@ function trimRange(text: string, range: { offset: number; length: number }): { o
  */
 function applyBold(text: string, ranges: InlineStyleRange[]): string {
   let out = text;
-  for (const raw of mergeBoldRanges(ranges).reverse()) {
-    if (raw.offset < 0 || raw.offset + raw.length > text.length) continue; // malformed payload
+  for (const raw of mergeBoldRanges(text, ranges).reverse()) {
     const r = trimRange(text, raw);
     if (r.length === 0) continue;
     const end = r.offset + r.length;
@@ -109,7 +127,7 @@ export function renderArticle(article: ArticleBody): string {
   }
 
   // Items inside one list are one line apart; everything else is separated by a blank line.
-  return pieces
+  const rendered = pieces
     .map((piece, i) => {
       if (i === 0) return piece.text;
       const prev = pieces[i - 1];
@@ -117,4 +135,5 @@ export function renderArticle(article: ArticleBody): string {
       return (sameList ? "\n" : "\n\n") + piece.text;
     })
     .join("");
+  return neutralizeSeparatorLines(rendered);
 }
