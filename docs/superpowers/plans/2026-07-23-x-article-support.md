@@ -451,11 +451,15 @@ whitespace -- X routinely includes the trailing space in a range, and
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/adapters/schemas.test.ts` (keep the existing `rawTweet` const and `describe` blocks):
+First widen the file's existing import (line 2) — do **not** add a second import statement:
 
 ```ts
-import { parseArticleContents } from "../../src/adapters/twitterapi/schemas";
+import { normalizeTweet, parseArticleContents, parseTweetList } from "../../src/adapters/twitterapi/schemas";
+```
 
+Then append these blocks, keeping the existing `rawTweet` const and `describe` blocks as they are:
+
+```ts
 describe("normalizeTweet — articles", () => {
   it("maps the article summary that rides on a search result, without a body", () => {
     const t = normalizeTweet({
