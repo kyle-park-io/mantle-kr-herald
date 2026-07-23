@@ -5,7 +5,7 @@ import type { CollectionRepository } from "../../src/ports/CollectionRepository"
 import type { WatermarkStore } from "../../src/shared/store/WatermarkStore";
 import type { CollectionRunLedger } from "../../src/ports/CollectionRunLedger";
 import type { CollectionRun } from "../../src/domain/coverage";
-import type { CollectedThread, SourceTweet } from "../../src/domain/models";
+import type { ArticleBlock, CollectedThread, SourceTweet } from "../../src/domain/models";
 
 function tw(id: string, over: Partial<SourceTweet> = {}): SourceTweet {
   return {
@@ -24,6 +24,9 @@ class FakeGateway implements SourceGateway {
   public threadCalls: string[] = [];
   public lastSince: string | undefined;
   public exhausted = false;
+  public articleCalls: string[] = [];
+  public articles: Record<string, ArticleBlock[]> = {};
+  public articleError: Error | undefined;
   constructor(
     private readonly authored: SourceTweet[],
     private readonly threads: Record<string, SourceTweet[]> = {},
@@ -39,6 +42,11 @@ class FakeGateway implements SourceGateway {
   }
   async fetchByIds(): Promise<SourceTweet[]> {
     return [];
+  }
+  async fetchArticle(tweetId: string): Promise<ArticleBlock[]> {
+    this.articleCalls.push(tweetId);
+    if (this.articleError) throw this.articleError;
+    return this.articles[tweetId] ?? [];
   }
 }
 

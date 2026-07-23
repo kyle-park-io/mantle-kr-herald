@@ -30,6 +30,9 @@ class FakeGateway implements SourceGateway {
     this.batches.push(ids);
     return ids.filter((id) => this.alive.has(id)).map(tw);
   }
+  async fetchArticle(): Promise<[]> {
+    return [];
+  }
 }
 
 class RecordingRepo implements CollectionRepository {
