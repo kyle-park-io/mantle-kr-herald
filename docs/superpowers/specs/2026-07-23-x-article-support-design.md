@@ -91,8 +91,9 @@ In context it costs:
   different passes through produces duplication, not separation.
 
 The one thing worth keeping from that option — a 12,000-character item is indistinguishable from a
-280-character one in the review queue — is a **display** concern, handled by `ContentItem.kind`
-below, not by a second store.
+280-character one before you open it — is a **display** concern, not a storage one: `ContentItem.kind`
+below labels it in the translation worksheet. It does not (yet) reach the dashboard's
+post-translation review queue; see Decision 4 for exactly what is and isn't built.
 
 ### 2. Store the blocks; render on read
 
@@ -136,8 +137,15 @@ images removes the reviewer's evidence.
 
 ### 4. `ContentItem` gains `kind?: "post" | "article"`
 
-One optional discriminator on the existing source-agnostic type, so the dashboard and the worksheet
-can label a 12,000-character item. It does not change routing or storage.
+One optional discriminator on the existing source-agnostic type. It does not change routing or
+storage. `XContentSource` sets it, and today exactly one place reads it: `assembleItemBlock`
+labels the item's heading in the translation worksheet (`### <id> [article]`) so a reviewer
+preparing translations can tell a 12,000-character item from a 280-character one before opening it.
+
+That is the whole of what is built. It does **not** reach the dashboard's post-translation review
+queue — `Translation` (what the dashboard reads once a translation is saved) has no `kind` field —
+so a reviewer approving translations cannot yet tell an article from a post there. Wiring `kind`
+through `Translation` and the dashboard is future work, not implied by this decision.
 
 ## Architecture
 
