@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **X Article bodies are collected.** `advanced_search` has always returned X Articles inside a
+  normal `from:<user>` result, but their tweet `text` is a bare t.co link — a 12,000-character
+  report entered the translation queue as one URL, silently. `SourceTweet` now carries an optional
+  `article`, `CollectAuthoredContent` fetches each body via `GET /twitter/article?tweet_id=` (one
+  call per article, after thread gap-filling), and `XContentSource` renders the Draft.js content
+  blocks to markdown. `ContentItem.kind` (`"post"` / `"article"`) distinguishes them in the review
+  queue. A `divider` block is deliberately **not** rendered as `---`, which `toCanonical` would read
+  as a post boundary; `Italic` is flattened. Conversion (§5) and channel formatting (§6) are
+  unchanged and still assume post-shaped input — see
+  `docs/superpowers/specs/2026-07-23-x-article-support-design.md`.
 - **`pnpm impressions:record` (§9b ③).** Reads the Sheet `history` tab, fetches each published X
   post's current view count via the existing `SourceGateway.fetchByIds`
   (`GET /twitter/tweets?tweet_ids=`), and writes it to the reserved `impressions` / `impressionsAt`
