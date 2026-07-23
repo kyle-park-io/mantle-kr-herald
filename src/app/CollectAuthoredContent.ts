@@ -42,6 +42,7 @@ export class CollectAuthoredContent {
     const paginationExhausted = step.value;
 
     await this.gapFillMissingRoots(fetched, userName);
+    await this.fillArticleBodies(fetched);
 
     const assembled = assembleThreads(fetched);
     const { kept, truncated: truncatedByLimit } = applyThreadLimit(assembled, opts.limit);
@@ -96,6 +97,33 @@ export class CollectAuthoredContent {
           fetched.push(t);
           presentIds.add(t.id);
         }
+      }
+    }
+  }
+
+  /**
+   * Fetch each X Article's body. The search response marks a tweet as an article and gives its
+   * title and a truncated preview, but the body needs one call per article — without it the
+   * tweet's own `text` is a bare t.co link and the whole article is lost.
+   *
+   * Runs after gap-filling, because a root pulled in by `gapFillMissingRoots` can itself be an
+   * article. A failure is per-tweet: the article keeps its title and loses its body rather than
+   * aborting the collect, mirroring the gateway's `normalizeOrSkip`.
+   */
+  private async fillArticleBodies(tweets: SourceTweet[]): Promise<void> {
+    for (const t of tweets) {
+      if (!t.article || t.article.blocks) continue;
+      try {
+        const blocks = await this.source.fetchArticle(t.id);
+        if (blocks.length === 0) {
+          console.warn(`[collect] article ${t.id} returned no content blocks — keeping link only`);
+          continue;
+        }
+        t.article = { ...t.article, blocks };
+      } catch (err) {
+        console.warn(
+          `[collect] article body fetch failed for ${t.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   }

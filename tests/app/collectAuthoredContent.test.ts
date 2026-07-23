@@ -17,6 +17,7 @@ function tw(id: string, over: Partial<SourceTweet> = {}): SourceTweet {
     authorUserName: over.authorUserName ?? "Mantle_Official",
     isReply: over.isReply ?? false,
     isQuote: false,
+    article: over.article,
   };
 }
 
@@ -199,5 +200,58 @@ describe("CollectAuthoredContent", () => {
     await usecase.run("Mantle_Official", { limit: 1 });
 
     expect(wm.marks.get("Mantle_Official")).toBe("2020-01-01T00:00:00.000Z"); // unchanged
+  });
+
+  it("fetches the body for an article tweet exactly once and stores the blocks", async () => {
+    const gw = new FakeGateway([tw("1", { article: { title: "Phase 1: ClawHack" } }), tw("2")]);
+    gw.articles["1"] = [{ type: "unstyled", text: "Body" }];
+    const repo = new InMemoryRepo();
+    const uc = new CollectAuthoredContent(gw, repo, new InMemoryWatermark(), new InMemoryLedger());
+
+    await uc.run("Mantle_Official");
+
+    expect(gw.articleCalls).toEqual(["1"]);
+    const stored = repo.saved.flatMap((t) => t.tweets).find((t) => t.id === "1");
+    expect(stored?.article?.blocks).toEqual([{ type: "unstyled", text: "Body" }]);
+  });
+
+  it("makes no article call when nothing is an article", async () => {
+    const gw = new FakeGateway([tw("1"), tw("2")]);
+    const uc = new CollectAuthoredContent(gw, new InMemoryRepo(), new InMemoryWatermark(), new InMemoryLedger());
+
+    await uc.run("Mantle_Official");
+
+    expect(gw.articleCalls).toEqual([]);
+  });
+
+  it("completes the collect when an article body fetch fails", async () => {
+    const gw = new FakeGateway([tw("1", { article: { title: "T" } }), tw("2")]);
+    gw.articleError = new Error("HTTP 500");
+    const repo = new InMemoryRepo();
+    const uc = new CollectAuthoredContent(gw, repo, new InMemoryWatermark(), new InMemoryLedger());
+
+    const result = await uc.run("Mantle_Official");
+
+    expect(result.threadCount).toBe(2);
+    const stored = repo.saved.flatMap((t) => t.tweets).find((t) => t.id === "1");
+    expect(stored?.article?.title).toBe("T");
+    expect(stored?.article?.blocks).toBeUndefined();
+  });
+
+  it("fetches the body for an article pulled in by thread gap-filling", async () => {
+    // The root is absent from the authored page, so gapFillMissingRoots adds it — and it is
+    // itself an article. This pins that the article pass runs after gap-filling, not before.
+    const reply = tw("11", { conversationId: "10", isReply: true });
+    const root = tw("10", { article: { title: "Root article" } });
+    const gw = new FakeGateway([reply], { "10": [root] });
+    gw.articles["10"] = [{ type: "unstyled", text: "Root body" }];
+    const repo = new InMemoryRepo();
+    const uc = new CollectAuthoredContent(gw, repo, new InMemoryWatermark(), new InMemoryLedger());
+
+    await uc.run("Mantle_Official");
+
+    expect(gw.articleCalls).toEqual(["10"]);
+    const stored = repo.saved.flatMap((t) => t.tweets).find((t) => t.id === "10");
+    expect(stored?.article?.blocks).toEqual([{ type: "unstyled", text: "Root body" }]);
   });
 });
