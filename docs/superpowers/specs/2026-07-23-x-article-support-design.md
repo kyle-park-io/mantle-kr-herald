@@ -216,6 +216,21 @@ Observation, deliberately not fixed here: `gapFillMissingRoots` has no `try/catc
 - **`/twitter/user/articles` as a discovery path.** `advanced_search` already surfaces articles;
   adding a second discovery route would fork the watermark and the coverage ledger.
 
+## Live verification (2026-07-23)
+
+Run against the real API on the ClawHack article (`2042617042537451733`), with temp storage so the
+project's own `output/` was untouched: detected from `advanced_search` with its title, 77 blocks
+fetched, rendered to **5,880 characters** where the tweet's own `text` is 23. Title rendered as
+`# `, no lone `---` line anywhere, 58 `**` delimiters all balanced, **zero** whitespace-edged bold
+spans, 22 list items sequentially numbered, the one image preserved.
+
+**Found while verifying, and worth knowing:** `GET /twitter/tweets?tweet_ids=` — the endpoint behind
+`fetchByIds` — **does not return the `article` field at all**, while `advanced_search` does. Article
+detection therefore works only on the collection path. This is harmless today, because `fetchByIds`
+serves `reconcile` (deletion checks) and `impressions:record` (view counts), neither of which needs
+the field, and neither writes tweets back into the collection store. But anything that tries to
+detect or backfill articles through `fetchByIds` will silently find none.
+
 ## Known limitations
 
 - **Anchor-text links cannot be recovered.** Blocks carry no `entityRanges`, so a hyperlink attached
