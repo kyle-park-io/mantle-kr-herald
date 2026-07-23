@@ -238,6 +238,30 @@ describe("CollectAuthoredContent", () => {
     expect(stored?.article?.blocks).toBeUndefined();
   });
 
+  it("does not re-fetch an article body already present in the collection repository", async () => {
+    const gw = new FakeGateway([tw("1", { article: { title: "Phase 1: ClawHack" } })]);
+    const repo = new InMemoryRepo();
+    repo.saved = [
+      {
+        rootId: "1",
+        status: "active",
+        firstSeenAt: "2026-01-01T00:00:00.000Z",
+        tweets: [
+          tw("1", {
+            article: { title: "Phase 1: ClawHack", blocks: [{ type: "unstyled", text: "Stored body" }] },
+          }),
+        ],
+      },
+    ];
+    const uc = new CollectAuthoredContent(gw, repo, new InMemoryWatermark(), new InMemoryLedger());
+
+    await uc.run("Mantle_Official");
+
+    expect(gw.articleCalls).toEqual([]); // already stored — no API call
+    const stored = repo.saved.flatMap((t) => t.tweets).find((t) => t.id === "1");
+    expect(stored?.article?.blocks).toEqual([{ type: "unstyled", text: "Stored body" }]);
+  });
+
   it("fetches the body for an article pulled in by thread gap-filling", async () => {
     // The root is absent from the authored page, so gapFillMissingRoots adds it — and it is
     // itself an article. This pins that the article pass runs after gap-filling, not before.

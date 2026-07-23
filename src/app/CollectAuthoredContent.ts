@@ -1,5 +1,5 @@
 import { assembleThreads } from "../domain/threadAssembler";
-import type { CollectedThread, SourceTweet } from "../domain/models";
+import type { ArticleBlock, CollectedThread, SourceTweet } from "../domain/models";
 import { applyThreadLimit } from "../domain/threadLimit";
 import { computeCoverage, type CollectionRun } from "../domain/coverage";
 import type { SourceGateway } from "../ports/SourceGateway";
@@ -42,7 +42,7 @@ export class CollectAuthoredContent {
     const paginationExhausted = step.value;
 
     await this.gapFillMissingRoots(fetched, userName);
-    await this.fillArticleBodies(fetched);
+    await this.fillArticleBodies(fetched, await this.repo.loadAll());
 
     const assembled = assembleThreads(fetched);
     const { kept, truncated: truncatedByLimit } = applyThreadLimit(assembled, opts.limit);
@@ -109,10 +109,27 @@ export class CollectAuthoredContent {
    * Runs after gap-filling, because a root pulled in by `gapFillMissingRoots` can itself be an
    * article. A failure is per-tweet: the article keeps its title and loses its body rather than
    * aborting the collect, mirroring the gateway's `normalizeOrSkip`.
+   *
+   * `stored` seeds a skip-list of articles whose body is already in the collection repository, so
+   * an already-fetched article is never re-fetched. This is not just an efficiency saving (one
+   * fewer API call per article on every `--since` backfill): re-fetching on every run risked a
+   * transient failure or an empty response silently overwriting a good stored body with nothing —
+   * `LocalJsonStore.mergeTweets` now guards against that too, but there is no reason to court it.
    */
-  private async fillArticleBodies(tweets: SourceTweet[]): Promise<void> {
+  private async fillArticleBodies(tweets: SourceTweet[], stored: CollectedThread[]): Promise<void> {
+    const storedBlocks = new Map<string, ArticleBlock[]>();
+    for (const thread of stored) {
+      for (const t of thread.tweets) {
+        if (t.article?.blocks) storedBlocks.set(t.id, t.article.blocks);
+      }
+    }
     for (const t of tweets) {
       if (!t.article || t.article.blocks) continue;
+      const existingBlocks = storedBlocks.get(t.id);
+      if (existingBlocks) {
+        t.article = { ...t.article, blocks: existingBlocks };
+        continue;
+      }
       try {
         const blocks = await this.source.fetchArticle(t.id);
         if (blocks.length === 0) {
