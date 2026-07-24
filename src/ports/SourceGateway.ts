@@ -1,4 +1,4 @@
-import type { SourceTweet } from "../domain/models";
+import type { ArticleBlock, SourceTweet } from "../domain/models";
 
 export interface SourceGateway {
   /**
@@ -12,4 +12,10 @@ export interface SourceGateway {
   fetchThread(tweetId: string): Promise<SourceTweet[]>;
   /** Existence check: returns only tweets still alive among the given ids. */
   fetchByIds(ids: string[]): Promise<SourceTweet[]>;
+  /**
+   * Body blocks for an X Article tweet. The search response marks a tweet as an article but never
+   * includes its body, so this is a second call per article. Returns [] for a tweet that is not
+   * an article.
+   */
+  fetchArticle(tweetId: string): Promise<ArticleBlock[]>;
 }

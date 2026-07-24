@@ -41,8 +41,12 @@ const POST_BOUNDARY = "\n\n\n";
  * translation, and it is the team's own drafting convention for marking a tweet boundary. Matching
  * per line (via `/m`) rather than as a run of hyphens anywhere keeps inline hyphens — "가---나", "단어
  * - 단어", a leading "- bullet" — untouched, since those never occupy a whole line by themselves.
+ *
+ * Exported so `articleMarkdown.ts`'s divider/separator guard uses this exact definition instead of
+ * an independent copy. Per the caution above `BOLD`: use this only with `String.replace`, which
+ * resets `lastIndex`; `.test()`/`.exec()` on a shared `/g` regex carries state between calls.
  */
-const SEPARATOR_LINE = /^[ \t]*-{3,}[ \t]*$/gm;
+export const SEPARATOR_LINE = /^[ \t]*-{3,}[ \t]*$/gm;
 
 /**
  * Normalise text into canonical form. Channel-independent by definition.

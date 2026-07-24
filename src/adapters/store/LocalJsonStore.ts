@@ -36,12 +36,27 @@ export class LocalJsonStore implements CollectionRepository, WatermarkStore {
   }
 
   private mergeTweets(existing: SourceTweet[], incoming: SourceTweet[]): SourceTweet[] {
+    const existingById = new Map(existing.map((t) => [t.id, t]));
     const byId = new Map<string, SourceTweet>();
     for (const t of existing) byId.set(t.id, t);
-    for (const t of incoming) byId.set(t.id, t);
+    for (const t of incoming) byId.set(t.id, this.mergeTweet(existingById.get(t.id), t));
     return [...byId.values()].sort(
       (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
     );
+  }
+
+  /**
+   * Incoming otherwise wins outright (metrics legitimately change between runs), but an article's
+   * `blocks` must not regress: a gap-fill via `fetchThread` never carries `article` at all (the
+   * twitterapi.io thread_context endpoint omits the field), and a routine re-normalize from
+   * `advanced_search` never carries `blocks` either (only `CollectAuthoredContent.fillArticleBodies`
+   * fetches those, and only when they are not already stored). Without this, either path silently
+   * replaces a stored 77-block article body with a bare t.co link on the next collect.
+   */
+  private mergeTweet(existing: SourceTweet | undefined, incoming: SourceTweet): SourceTweet {
+    if (!existing?.article) return incoming;
+    const article = incoming.article?.blocks?.length ? incoming.article : existing.article;
+    return { ...incoming, article };
   }
 
   async listActiveTweetIds(): Promise<string[]> {

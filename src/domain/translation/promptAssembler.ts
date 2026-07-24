@@ -49,7 +49,11 @@ export function assembleSharedContext(ctx: SharedContext): string {
 
 /** Per-item block: content (+ optional ⑥ grounding). No shared context here. */
 export function assembleItemBlock(item: ContentItem, grounding?: string): string {
-  const lines = [`### ${item.id}`, "원문:", item.text];
+  // Nothing parses the worksheet back, so this label is free-form — it exists only so a reviewer
+  // scanning the sheet can tell an Article (thousands of characters) from an ordinary post before
+  // opening it. See ContentItem.kind.
+  const marker = item.kind === "article" ? " [article]" : "";
+  const lines = [`### ${item.id}${marker}`, "원문:", item.text];
   if (grounding && grounding.length > 0) {
     lines.push("⑥ 근거(grounding):", grounding);
   }

@@ -43,4 +43,17 @@ describe("assembleItemBlock", () => {
     const item: ContentItem = { id: "lark:9", source: "lark", text: "T", createdAt: "2026-01-01T00:00:00.000Z" };
     expect(assembleItemBlock(item, "GROUND")).toContain("GROUND");
   });
+
+  it("marks an article item in the heading so a reviewer can tell it apart before opening it", () => {
+    const article: ContentItem = { id: "x:1", source: "x", text: "T", createdAt: "2026-01-01T00:00:00.000Z", kind: "article" };
+    const out = assembleItemBlock(article);
+    expect(out.split("\n")[0]).toBe("### x:1 [article]");
+  });
+
+  it("does not mark a post item (kind undefined or 'post')", () => {
+    const noKind: ContentItem = { id: "x:2", source: "x", text: "T", createdAt: "2026-01-01T00:00:00.000Z" };
+    const post: ContentItem = { ...noKind, id: "x:3", kind: "post" };
+    expect(assembleItemBlock(noKind).split("\n")[0]).toBe("### x:2");
+    expect(assembleItemBlock(post).split("\n")[0]).toBe("### x:3");
+  });
 });

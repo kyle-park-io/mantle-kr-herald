@@ -145,4 +145,19 @@ describe("TwitterApiSourceGateway", () => {
     expect(http.calls[0].path).toBe("/twitter/tweets");
     expect(http.calls[0].params?.tweet_ids).toBe("1,2");
   });
+
+  it("fetchArticle calls /twitter/article with a snake_case tweet_id and returns the blocks", async () => {
+    const http = new FakeHttpClient(() => ({
+      status: "success",
+      article: { title: "T", contents: [{ type: "header-one", text: "Hello" }, { type: "divider" }] },
+    }));
+    const gw = new TwitterApiSourceGateway(http);
+
+    const blocks = await gw.fetchArticle("2042617042537451733");
+
+    expect(http.calls).toEqual([
+      { path: "/twitter/article", params: { tweet_id: "2042617042537451733" } },
+    ]);
+    expect(blocks).toEqual([{ type: "header-one", text: "Hello" }, { type: "divider" }]);
+  });
 });

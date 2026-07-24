@@ -53,6 +53,103 @@ describe("XContentSource", () => {
     const pending = await new XContentSource(join(dir, "missing.json")).loadPending(new Set());
     expect(pending).toEqual([]);
   });
+
+  it("renders an article body as markdown and marks the item as an article", async () => {
+    const items = [
+      {
+        rootId: "300",
+        status: "active",
+        firstSeenAt: "2026-01-01T00:00:00.000Z",
+        tweets: [
+          {
+            id: "300", conversationId: "300", text: "https://t.co/pa1EbjOsdZ",
+            createdAt: "2026-01-01T00:01:00.000Z", url: "u/300",
+            authorUserName: "Mantle_Official", isReply: false, isQuote: false,
+            article: {
+              title: "Phase 1: ClawHack",
+              blocks: [
+                { type: "header-two", text: "Section" },
+                { type: "divider" },
+                { type: "unstyled", text: "Body copy." },
+              ],
+            },
+          },
+        ],
+      },
+    ];
+    const path = join(dir, "items.json");
+    await writeFile(path, JSON.stringify(items), "utf8");
+
+    const pending = await new XContentSource(path).loadPending(new Set());
+
+    expect(pending).toHaveLength(1);
+    expect(pending[0].kind).toBe("article");
+    expect(pending[0].text).toBe("# Phase 1: ClawHack\n\n## Section\n\nBody copy.");
+    // The bare t.co link the tweet carried must not be what we translate.
+    expect(pending[0].text).not.toContain("t.co");
+  });
+
+  it("marks an ordinary thread as a post and leaves its text untouched", async () => {
+    const items = [
+      {
+        rootId: "400", status: "active", firstSeenAt: "2026-01-01T00:00:00.000Z",
+        tweets: [
+          { id: "400", conversationId: "400", text: "Plain", createdAt: "2026-01-01T00:01:00.000Z", url: "u/400", authorUserName: "Mantle_Official", isReply: false, isQuote: false },
+        ],
+      },
+    ];
+    const path = join(dir, "items.json");
+    await writeFile(path, JSON.stringify(items), "utf8");
+
+    const pending = await new XContentSource(path).loadPending(new Set());
+
+    expect(pending[0].kind).toBe("post");
+    expect(pending[0].text).toBe("Plain");
+  });
+
+  it("falls back to the tweet text when an article's blocks all render to nothing", async () => {
+    // No title, and the only block (a divider) renders to nothing — renderArticle returns "".
+    // Falling back keeps a non-empty 원문 in the worksheet instead of an empty one, and the
+    // item must not be mislabelled "article" when there is no article content in it.
+    const items = [
+      {
+        rootId: "600", status: "active", firstSeenAt: "2026-01-01T00:00:00.000Z",
+        tweets: [
+          {
+            id: "600", conversationId: "600", text: "https://t.co/empty",
+            createdAt: "2026-01-01T00:01:00.000Z", url: "u/600",
+            authorUserName: "Mantle_Official", isReply: false, isQuote: false,
+            article: { title: "", blocks: [{ type: "divider" }] },
+          },
+        ],
+      },
+    ];
+    const path = join(dir, "items.json");
+    await writeFile(path, JSON.stringify(items), "utf8");
+
+    const pending = await new XContentSource(path).loadPending(new Set());
+
+    expect(pending[0].kind).toBe("post");
+    expect(pending[0].text).toBe("https://t.co/empty");
+  });
+
+  it("falls back to the tweet text when an article has no fetched body", async () => {
+    const items = [
+      {
+        rootId: "500", status: "active", firstSeenAt: "2026-01-01T00:00:00.000Z",
+        tweets: [
+          { id: "500", conversationId: "500", text: "https://t.co/abc", createdAt: "2026-01-01T00:01:00.000Z", url: "u/500", authorUserName: "Mantle_Official", isReply: false, isQuote: false, article: { title: "No body" } },
+        ],
+      },
+    ];
+    const path = join(dir, "items.json");
+    await writeFile(path, JSON.stringify(items), "utf8");
+
+    const pending = await new XContentSource(path).loadPending(new Set());
+
+    expect(pending[0].kind).toBe("post");
+    expect(pending[0].text).toBe("https://t.co/abc");
+  });
 });
 
 describe("LarkContentSource", () => {
