@@ -160,7 +160,7 @@ through `Translation` and the dashboard is future work, not implied by this deci
 [edit] src/domain/translation/contentItem.ts  kind?: "post" | "article"
 [edit] src/adapters/store/LocalJsonStore.ts   mergeTweet: a stored article body survives a
                                                blockless/article-less incoming tweet (see
-                                               "Live verification" above)
+                                               "Live verification" below)
 ```
 
 The block→markdown conversion is a **pure domain function** with no knowledge of HTTP or files. The
