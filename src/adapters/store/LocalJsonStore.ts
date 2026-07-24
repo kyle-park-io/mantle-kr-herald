@@ -55,7 +55,7 @@ export class LocalJsonStore implements CollectionRepository, WatermarkStore {
    */
   private mergeTweet(existing: SourceTweet | undefined, incoming: SourceTweet): SourceTweet {
     if (!existing?.article) return incoming;
-    const article = incoming.article?.blocks ? incoming.article : existing.article;
+    const article = incoming.article?.blocks?.length ? incoming.article : existing.article;
     return { ...incoming, article };
   }
 

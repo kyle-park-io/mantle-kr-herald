@@ -149,6 +149,25 @@ describe("parseArticleContents", () => {
     expect(blocks.map((b) => b.text)).toEqual(["kept", "also kept"]);
   });
 
+  it("keeps an unrecognised key on an inline style range instead of discarding it", () => {
+    // Same rationale as ArticleBlockRaw's passthrough, one level down: InlineStyleRangeRaw was a
+    // plain z.object, so a key twitterapi.io adds to a range in the future would be silently
+    // stripped and, since blocks are never re-fetched once stored, unrecoverable without a
+    // re-collect.
+    const blocks = parseArticleContents({
+      article: {
+        contents: [
+          {
+            type: "unstyled",
+            text: "hi",
+            inlineStyleRanges: [{ offset: 0, length: 2, style: "Bold", futureKey: "x" }],
+          },
+        ],
+      },
+    });
+    expect((blocks[0].inlineStyleRanges?.[0] as unknown as Record<string, unknown>)["futureKey"]).toBe("x");
+  });
+
   it("keeps an unrecognised key (e.g. entityRanges) on the stored block instead of discarding it", () => {
     // The design spec's "Known limitations" names entityRanges as the one thing it cannot yet map
     // correctly — but the mapping can only ever be corrected later if the key survives collection.

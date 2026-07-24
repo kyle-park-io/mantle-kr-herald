@@ -1,4 +1,5 @@
 import type { ArticleBlock, ArticleBody, InlineStyleRange } from "./models";
+import { SEPARATOR_LINE } from "./formatting/canonical";
 
 /**
  * Render an X Article's Draft.js content blocks as markdown, so the body can travel through the
@@ -18,17 +19,20 @@ import type { ArticleBlock, ArticleBody, InlineStyleRange } from "./models";
 type Piece = { text: string; kind: "ordered" | "unordered" | "block" };
 
 /**
- * A rendered line consisting entirely of 3+ hyphens reads, downstream, exactly like the pipeline's
+ * True when a block's own rendered text, entirely on its own, reads exactly like the pipeline's
  * `---` thread/post-boundary separator (`toCanonical` in `domain/formatting/canonical.ts`). No
  * block in the 900-block sample this design was measured against renders this way, but the guard
- * against emitting `---` above only excludes the `divider` block *type* — a block of any other type
- * (e.g. `unstyled`) whose own *text* happens to be `"---"` would still produce a lone separator
- * line. This catches that case regardless of which block produced it.
+ * against emitting `---` in `renderBlock` below only excludes the `divider` block *type* — a block
+ * of any other type (e.g. `unstyled`) whose own *text* happens to be `"---"` would still produce a
+ * lone separator line. This catches that case for any block type that reaches the `default` case.
+ *
+ * Reuses canonical's own `SEPARATOR_LINE` (a shared `/g` regex) via `String.replace` rather than
+ * `.test()`, per the caution on its definition: `.test()` on a shared global regex carries
+ * `lastIndex` state between calls, which would silently skip matches across the loop in
+ * `renderArticle` below. `.replace()` always resets it, so this is safe to call once per block.
  */
-const SEPARATOR_LINE = /^[ \t]*-{3,}[ \t]*$/gm;
-
-function neutralizeSeparatorLines(text: string): string {
-  return text.replace(SEPARATOR_LINE, (line) => line.replace(/-/g, "\\-"));
+function isSeparatorLine(text: string): boolean {
+  return text.replace(SEPARATOR_LINE, "") === "";
 }
 
 /**
@@ -107,7 +111,12 @@ function renderBlock(block: ArticleBlock, ordinal: number): Piece | null {
     case "unordered-list-item":
       return { text: `- ${text}`, kind: "unordered" };
     default:
-      return { text, kind: "block" }; // unstyled, and any type we have not seen
+      // unstyled, and any type we have not seen. Unlike the other cases above, nothing prefixes
+      // `text` here, so this is the one place a block's own content can surface as a bare `---`
+      // line. Drop it whole — like `divider` — instead of escaping it: an escaped `\-\-\-` would
+      // still end up in `Translation.sourceText`, surviving `stripBold`/`linksToPlain` untouched
+      // and leaking literal backslashes into a Lark or Telegram message.
+      return isSeparatorLine(text) ? null : { text, kind: "block" };
   }
 }
 
@@ -135,5 +144,5 @@ export function renderArticle(article: ArticleBody): string {
       return (sameList ? "\n" : "\n\n") + piece.text;
     })
     .join("");
-  return neutralizeSeparatorLines(rendered);
+  return rendered;
 }

@@ -5,11 +5,14 @@ const MediaRaw = z
   .object({ type: z.string().optional(), media_url_https: z.string().optional() })
   .passthrough();
 
-const InlineStyleRangeRaw = z.object({
-  offset: z.number(),
-  length: z.number(),
-  style: z.string(),
-});
+/** Passthrough so an unrecognised key survives collection, matching ArticleBlockRaw's rationale. */
+const InlineStyleRangeRaw = z
+  .object({
+    offset: z.number(),
+    length: z.number(),
+    style: z.string(),
+  })
+  .passthrough();
 
 /** One Draft.js content block. Passthrough so an unrecognised key never fails an article. */
 const ArticleBlockRaw = z

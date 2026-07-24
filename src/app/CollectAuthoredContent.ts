@@ -120,11 +120,11 @@ export class CollectAuthoredContent {
     const storedBlocks = new Map<string, ArticleBlock[]>();
     for (const thread of stored) {
       for (const t of thread.tweets) {
-        if (t.article?.blocks) storedBlocks.set(t.id, t.article.blocks);
+        if (t.article?.blocks?.length) storedBlocks.set(t.id, t.article.blocks);
       }
     }
     for (const t of tweets) {
-      if (!t.article || t.article.blocks) continue;
+      if (!t.article || t.article.blocks?.length) continue;
       const existingBlocks = storedBlocks.get(t.id);
       if (existingBlocks) {
         t.article = { ...t.article, blocks: existingBlocks };

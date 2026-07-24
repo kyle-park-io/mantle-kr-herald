@@ -57,17 +57,18 @@ describe("renderArticle", () => {
     expect(out).toBe("# T\n\na\n\nb");
   });
 
-  it("neutralizes a lone hyphen line even when it comes from a block's own text, not a divider", () => {
+  it("drops a block whose own text is a lone hyphen line, not just a divider", () => {
     // The divider guard above excludes the `divider` block *type*; this covers any other block
     // (here `unstyled`) whose rendered text happens to be a bare "---" line, which would otherwise
-    // read as toCanonical's post-boundary separator.
+    // read as toCanonical's post-boundary separator. Dropped whole, exactly like `divider` — not
+    // escaped: an escaped `\-\-\-` would survive into `Translation.sourceText` and leak literal
+    // backslashes into a Lark/Telegram message, which never unescapes it.
     const out = renderArticle({
       title: "",
       blocks: [{ type: "unstyled", text: "a" }, { type: "unstyled", text: "---" }, { type: "unstyled", text: "b" }],
     });
-    expect(out).not.toMatch(/^[ \t]*-{3,}[ \t]*$/m);
-    expect(out).toContain("a");
-    expect(out).toContain("b");
+    expect(out).toBe("a\n\nb");
+    expect(out).not.toContain("\\-");
 
     // Confirm the central invariant end to end: toCanonical must not read it as a post boundary.
     expect(splitPosts(toCanonical(out))).toHaveLength(1);

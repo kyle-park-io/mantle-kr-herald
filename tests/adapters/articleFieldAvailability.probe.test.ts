@@ -22,16 +22,19 @@ function findById(tweets: unknown[], id: string): Record<string, unknown> | unde
 // docs/superpowers/specs/2026-07-23-x-article-support-design.md): `advanced_search` — the
 // collection page endpoint — carries the `article` field on an Article tweet, but
 // `thread_context` — the endpoint `CollectAuthoredContent.gapFillMissingRoots` uses to pull in a
-// missing thread root — does not. That gap is why `LocalJsonStore.mergeTweets` must not let a
+// missing thread root — does not. That gap is why `LocalJsonStore.mergeTweet` must not let a
 // gap-filled tweet's absent `article` field overwrite a previously stored article body.
 describe.skipIf(!apiKey)("PROBE: article field availability by endpoint", () => {
   it("advanced_search carries `article` for a known article tweet; thread_context does not", async () => {
     const client = new TwitterClient(apiKey!);
 
     const searchData = await client.get<RawTweetsResponse>("/twitter/tweet/advanced_search", {
-      // A tight time window around the known post date keeps this cheap and deterministic
-      // instead of paging through the account's full history looking for one tweet.
-      query: "from:Mantle_Official since_time:1775779200 until_time:1775865600",
+      // A ~4h window bracketing the known post time (2026-04-10T14:53:47Z), not a full 24h day:
+      // `advanced_search` returns 20 tweets/page and this probe reads only page 1, never following
+      // next_cursor, so a full day on a high-volume account can push the target tweet past page 1
+      // and fail the probe as if the API had regressed. since_time/until_time below are
+      // 1775825627 (2026-04-10T12:53:47Z) / 1775840027 (2026-04-10T16:53:47Z).
+      query: "from:Mantle_Official since_time:1775825627 until_time:1775840027",
       queryType: "Latest",
       cursor: "",
     });
@@ -58,5 +61,5 @@ describe.skipIf(!apiKey)("PROBE: article field availability by endpoint", () => 
 
     expect(fromThread).toBeDefined();
     expect(fromThread !== undefined && "article" in fromThread).toBe(false);
-  }, 60000); // live pagination over the network needs more than vitest's 5s default
+  }, 60000); // two live network calls (neither paginates) need more than vitest's 5s default
 });
