@@ -114,7 +114,7 @@ export class CollectAuthoredContent {
    * an already-fetched article is never re-fetched. This is not just an efficiency saving (one
    * fewer API call per article on every `--since` backfill): re-fetching on every run risked a
    * transient failure or an empty response silently overwriting a good stored body with nothing —
-   * `LocalJsonStore.mergeTweets` now guards against that too, but there is no reason to court it.
+   * `LocalJsonStore.mergeTweet` now guards against that too, but there is no reason to court it.
    */
   private async fillArticleBodies(tweets: SourceTweet[], stored: CollectedThread[]): Promise<void> {
     const storedBlocks = new Map<string, ArticleBlock[]>();
