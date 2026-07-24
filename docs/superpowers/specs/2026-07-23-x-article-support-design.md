@@ -150,14 +150,17 @@ through `Translation` and the dashboard is future work, not implied by this deci
 ## Architecture
 
 ```
-[new]  src/domain/x/articleBlocks.ts          blocks → markdown (pure, no I/O)
+[new]  src/domain/articleMarkdown.ts          blocks → markdown (pure, no I/O)
 [edit] src/domain/models.ts                   SourceTweet.article?: ArticleBody
-[edit] src/adapters/twitterapi/schemas.ts     article on TweetRaw + block schema + normalizeArticle
+[edit] src/adapters/twitterapi/schemas.ts     article on TweetRaw + block schema + toArticle
 [edit] src/adapters/twitterapi/TwitterApiSourceGateway.ts   fetchArticle(tweetId)
 [edit] src/ports/SourceGateway.ts             fetchArticle to the interface
 [edit] src/app/CollectAuthoredContent.ts      fillArticleBodies() enrichment pass
 [edit] src/adapters/content/XContentSource.ts render article markdown into ContentItem.text
 [edit] src/domain/translation/contentItem.ts  kind?: "post" | "article"
+[edit] src/adapters/store/LocalJsonStore.ts   mergeTweet: a stored article body survives a
+                                               blockless/article-less incoming tweet (see
+                                               "Live verification" above)
 ```
 
 The block→markdown conversion is a **pure domain function** with no knowledge of HTTP or files. The
@@ -171,7 +174,7 @@ advanced_search page
      ↓ normalizeTweet
 SourceTweet.article = {title, previewText, coverImageUrl, blocks: undefined}   ← body not yet fetched
      ↓ CollectAuthoredContent.fillArticleBodies()
-       for each tweet with article && !blocks → source.fetchArticle(id)  (exactly 1 call each)
+       for each tweet with article && !blocks, and not already stored → source.fetchArticle(id)
      ↓ repo.upsert
 output/x/items.json                                    ← raw blocks stored
      ↓ XContentSource.loadPending
@@ -201,7 +204,7 @@ Observation, deliberately not fixed here: `gapFillMissingRoots` has no `try/catc
 
 ## Testing
 
-- **`articleBlocks.test.ts`** — all 7 block types; divider dropped; italic flattened; image;
+- **`articleMarkdown.test.ts`** — all 7 block types; divider dropped; italic flattened; image;
   empty `contents`. The genuine hazard is **applying `inlineStyleRanges`**: `offset`/`length` index
   into the string, so multiple ranges must be applied back-to-front. Adjacent ranges, a range at
   index 0, and a range ending at the last character are each pinned explicitly.
@@ -233,14 +236,37 @@ fetched, rendered to **5,880 characters** where the tweet's own `text` is 23. Ti
 spans, 22 list items sequentially numbered, the one image preserved.
 
 **Found while verifying, and worth knowing:** `GET /twitter/tweets?tweet_ids=` — the endpoint behind
-`fetchByIds` — **does not return the `article` field at all**, while `advanced_search` does. Article
-detection therefore works only on the collection path. This is harmless today, because `fetchByIds`
-serves `reconcile` (deletion checks) and `impressions:record` (view counts), neither of which needs
-the field, and neither writes tweets back into the collection store. But anything that tries to
-detect or backfill articles through `fetchByIds` will silently find none.
+`fetchByIds` — **does not return the `article` field at all**, while `advanced_search` does.
+Confirmed since: `GET /twitter/tweet/thread_context` — the endpoint behind `fetchThread`, which
+`gapFillMissingRoots` calls to pull in a missing thread root — **omits the field too**
+(`tests/adapters/articleFieldAvailability.probe.test.ts` pins both, for the same known article
+tweet).
+
+That second gap means the conclusion isn't "article detection works on the collection path" —
+`thread_context` *is* on the collection path (`gapFillMissingRoots` runs on every `collect`) and
+still can't detect an article. Detection works only through `advanced_search` specifically: a thread
+root pulled in via `thread_context` is normalized with `article: undefined` regardless of whether
+the real tweet is an Article. `fetchByIds` stays harmless for the reason already given — it serves
+`reconcile` (deletion checks) and `impressions:record` (view counts), neither of which needs the
+field, and neither writes tweets back into the collection store. `thread_context` is not harmless in
+the same way: `gapFillMissingRoots` does write its results back into `fetched`, and from there into
+`repo.upsert`. That is the entire reason `LocalJsonStore.mergeTweet` (see the Architecture list
+above) refuses to let an incoming tweet's absent-or-blockless `article` overwrite a stored one —
+without that guard, a gap-filled re-normalize of an Article's own root would silently revert its
+stored body to a bare link on the next collect. Anything that tries to detect or backfill articles
+through either `fetchByIds` or `thread_context` will silently find none.
 
 ## Known limitations
 
+- **Once an article body is stored, no code path ever re-fetches it.** `fillArticleBodies`
+  deliberately skips any tweet whose id already has `blocks` in the collection repository — a good
+  body must never be put at risk of a transient failure or an empty response overwriting it (see
+  `LocalJsonStore.mergeTweet`). This is separate from Decision 2's "the mapping can be corrected
+  later without re-running collect": that's true of the block→markdown *rendering* logic, which runs
+  fresh on every `loadPending()`. It is not true of the *raw blocks themselves*. There is no flag, no
+  `--refetch`, no TTL, and no other trigger to fetch them again: an incomplete first fetch, or X
+  itself editing the article afterward, has no supported recovery short of hand-editing (or deleting
+  the `article.blocks` key from) `output/x/items.json` and re-running collect.
 - **Anchor-text links cannot be recovered.** Blocks carry no `entityRanges`, so a hyperlink attached
   to a span of text has nowhere to live. No article in the 12-article sample used one (every URL was
   plain text in `text`), but if one exists the link is silently lost — and nothing in the payload

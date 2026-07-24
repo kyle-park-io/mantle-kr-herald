@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   normal `from:<user>` result, but their tweet `text` is a bare t.co link — a 12,000-character
   report entered the translation queue as one URL, silently. `SourceTweet` now carries an optional
   `article`, `CollectAuthoredContent` fetches each body via `GET /twitter/article?tweet_id=` (one
-  call per article, after thread gap-filling), and `XContentSource` renders the Draft.js content
+  call per article not already stored, after thread gap-filling — an article's body is never
+  re-fetched once collected), and `XContentSource` renders the Draft.js content
   blocks to markdown. `ContentItem.kind` (`"post"` / `"article"`) is set by `XContentSource` and
   labels the item in the translation worksheet (`### <id> [article]`); `Translation`, what the
   dashboard reads after translation, carries no `kind`, so the post-translation review queue still
@@ -66,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A re-collect no longer reverts a stored X Article body to a bare link.** Neither
+  `GET /twitter/tweet/thread_context` (gap-filling a missing thread root) nor a routine
+  `advanced_search` re-normalize ever carries `article.blocks` — only `GET /twitter/article`, via
+  `fillArticleBodies`, does. Before this fix, `LocalJsonStore.upsert` let the incoming
+  (blockless-or-article-less) tweet win outright, so any collect run after the day an article was
+  first fetched silently dropped its stored body back to a link. `LocalJsonStore.mergeTweet` now
+  carries a stored article forward whenever the incoming tweet's own article is missing or has no
+  blocks.
 - **X length is now counted by weight, matching X's real limit — a bug fix, not a feature.**
   `weightedLength()` replaces a code-point count that compared `[...text].length` against 280. X
   actually counts by weight (`twitter-text` v3 config): a Hangul syllable costs 2, so a pure-Korean
