@@ -27,7 +27,8 @@ const usecase = new PrepareAlignment(
 const { worksheet, aligned, skipped } = await usecase.run(selector);
 
 if (aligned === 0) {
-  console.log(`nothing to align · skipped ${skipped} (no precedent)`);
+  const hint = skipped > 0 ? " — run `pnpm tm:promote` to add precedent pairs" : "";
+  console.log(`nothing to align · skipped ${skipped} (no precedent)${hint}`);
 } else {
   await mkdir(paths.translationsWorksheets, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");

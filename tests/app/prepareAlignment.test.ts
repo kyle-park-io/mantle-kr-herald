@@ -46,4 +46,32 @@ describe("PrepareAlignment", () => {
     expect(res.worksheet).toContain("### x:2");
     expect(res.worksheet).not.toContain("### x:1");
   });
+
+  it("filters by --since on translatedAt", async () => {
+    const cutoff = "2026-07-20T00:00:00.000Z";
+    const s = stores(
+      [
+        translation({ itemId: "x:1", sourceText: "gm $MNT", translatedAt: "2026-07-19T23:59:59.000Z" }), // before cutoff → excluded
+        translation({ itemId: "x:2", sourceText: "gm $MNT", translatedAt: "2026-07-20T00:00:00.000Z" }), // at cutoff → kept
+      ],
+      [{ source: "gm $MNT fam", target: "안녕" }],
+    );
+    const res = await new PrepareAlignment(s.translationStore, s.tmStore).run({ since: cutoff });
+    expect(res.aligned).toBe(1);
+    expect(res.worksheet).toContain("### x:2");
+    expect(res.worksheet).not.toContain("### x:1");
+  });
+
+  it("caps the number of drafts via --limit", async () => {
+    const s = stores(
+      [
+        translation({ itemId: "x:1", sourceText: "gm $MNT" }),
+        translation({ itemId: "x:2", sourceText: "gm $MNT" }),
+        translation({ itemId: "x:3", sourceText: "gm $MNT" }),
+      ],
+      [{ source: "gm $MNT fam", target: "안녕" }],
+    );
+    const res = await new PrepareAlignment(s.translationStore, s.tmStore).run({ limit: 2 });
+    expect(res.aligned).toBe(2);
+  });
 });
