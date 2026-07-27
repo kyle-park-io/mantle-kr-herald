@@ -114,6 +114,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Collection now expands `t.co` shortlinks instead of storing the redirect.** `normalizeTweet`
+  replaces each `t.co` link in a tweet's `text` with its real `expanded_url` (from `entities.urls`)
+  and removes a tweet's own photo/video `t.co` self-links — that media stays on
+  `SourceTweet.media`, it was never a link. Translations and Telegram/X delivery now carry the real
+  URL instead of `t.co`. See `docs/superpowers/specs/2026-07-28-tco-url-expansion-design.md`.
 - **Outbound `fetch` survives a broken IPv6 route (common on WSL2/Docker).** Node's default
   Happy-Eyeballs family autoselection raced a resolvable-but-unroutable IPv6 address against IPv4 and
   returned `ETIMEDOUT`, so a command could die with a bare `fetch failed` even though `curl` reached
