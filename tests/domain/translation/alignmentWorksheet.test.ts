@@ -16,7 +16,7 @@ describe("assembleAlignmentWorksheet", () => {
     expect(ws).toContain("원문:\ngm $MNT");
     expect(ws).toContain("현재 번역:\n지엠 $MNT");
     expect(ws).toContain("- EN: gm $MNT fam\n  KO: 안녕 $MNT 여러분");
-    expect(ws).toContain("번역:");
+    expect(ws).toContain("KO: 안녕 $MNT 여러분\n번역:");
   });
 
   it("handles an empty block list — header only, no item sections", () => {
