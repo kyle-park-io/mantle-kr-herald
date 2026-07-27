@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ArticleBlock, ArticleBody, MediaItem, SourceTweet, TweetMetrics } from "../../domain/models";
+import type { ArticleBlock, ArticleBody, MediaItem, SourceTweet, TweetMetrics, UserProfile } from "../../domain/models";
 
 const MediaRaw = z
   .object({ type: z.string().optional(), media_url_https: z.string().optional() })
@@ -169,4 +169,20 @@ export function parseArticleContents(data: unknown): ArticleBlock[] {
     blocks.push(result.data);
   }
   return blocks;
+}
+
+const UserProfileData = z
+  .object({ userName: z.string().optional(), statusesCount: z.number().optional() })
+  .passthrough();
+const UserInfoResponse = z.object({ data: UserProfileData });
+
+/** Validate a GET /twitter/user/info payload. Never throws: a malformed response degrades to
+ *  { userName: fallbackUserName, statusesCount: undefined } so `tm:measure` can still report. */
+export function parseUserProfile(data: unknown, fallbackUserName: string): UserProfile {
+  const r = UserInfoResponse.safeParse(data);
+  const d = r.success ? r.data.data : {};
+  return {
+    userName: d.userName ?? fallbackUserName,
+    statusesCount: typeof d.statusesCount === "number" ? d.statusesCount : undefined,
+  };
 }

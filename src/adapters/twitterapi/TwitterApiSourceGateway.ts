@@ -1,7 +1,7 @@
-import type { ArticleBlock, SourceTweet } from "../../domain/models";
+import type { ArticleBlock, SourceTweet, UserProfile } from "../../domain/models";
 import type { SourceGateway } from "../../ports/SourceGateway";
 import type { IHttpClient } from "../../shared/http/IHttpClient";
-import { normalizeTweet, parseArticleContents, parseTweetList } from "./schemas";
+import { normalizeTweet, parseArticleContents, parseTweetList, parseUserProfile } from "./schemas";
 
 // Safety backstop so a non-terminating cursor or a full-history/large-thread crawl
 // can never loop forever (20 tweets/page → up to ~1000 tweets).
@@ -91,5 +91,12 @@ export class TwitterApiSourceGateway implements SourceGateway {
   async fetchArticle(tweetId: string): Promise<ArticleBlock[]> {
     const data = await this.client.get<unknown>("/twitter/article", { tweet_id: tweetId });
     return parseArticleContents(data);
+  }
+
+  /** Account profile (for volume/cost estimation). Not on the SourceGateway port — only the
+   *  measure CLI needs it, and adding it to the port would force every stub to implement it. */
+  async fetchUserProfile(userName: string): Promise<UserProfile> {
+    const data = await this.client.get<unknown>("/twitter/user/info", { userName });
+    return parseUserProfile(data, userName);
   }
 }

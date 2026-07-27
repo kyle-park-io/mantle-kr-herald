@@ -5,8 +5,8 @@ import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
 
 export class JsonFewShotStore implements FewShotStore {
   private readonly path: string;
-  constructor(private readonly dir: string) {
-    this.path = join(dir, "few-shot.json");
+  constructor(private readonly dir: string, fileName = "few-shot.json") {
+    this.path = join(dir, fileName);
   }
   async load(): Promise<FewShotExample[]> {
     return readJsonFile<FewShotExample[]>(this.path, []);

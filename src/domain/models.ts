@@ -73,3 +73,9 @@ export interface CollectedThread {
   firstSeenAt: string; // when we first stored it (ISO)
   deletedAt?: string; // set only when status === "deleted"
 }
+
+/** A twitterapi.io account profile, read for volume/cost estimation (see `tm:measure`). */
+export interface UserProfile {
+  userName: string;
+  statusesCount?: number;
+}

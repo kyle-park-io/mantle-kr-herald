@@ -129,8 +129,39 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 | **E. 검수 대시보드** | 번역(1차)·채널 포맷(2차)을 검수·수정·승인·발행하는 로컬 웹 대시보드 | `pnpm serve`, `pnpm build:web`, `pnpm dev:web` | — |
 | **F. 콘텐츠 가공** | 승인된 번역을 §5 항목 변환(타입별 X/공지/KOL/PR)과 §6 채널 포맷(코드 변환 + 선택적 에이전트 다듬기) 두 단계로 채널용 게시물로 가공 | `pnpm convert:prepare`, `pnpm convert:save`, `pnpm format`, `pnpm format:save` | — |
 | **G. Google Sheet 데이터 허브** | 팀이 함께 편집하는 배포 대상 목록(`targets` 탭)과 게시 이력(`history` 탭) 관리 | `pnpm sheet:init`, `pnpm targets:list`, `pnpm history:record` | [`external-integrations.md`](../architecture/external-integrations.md) |
+| **H. 번역 메모리** | `@0xMantleKR`과 `Mantle_Official`의 실제 승인 EN↔KO 번역 쌍을 발굴해 사람 확인을 거쳐 번역 few-shot에 반영 | `pnpm collect:reference`, `pnpm tm:measure`, `pnpm tm:pair`, `pnpm tm:promote` | — |
 
-## 6. 다음으로
+## 6. 번역 메모리
+
+Mantle KR의 한국어 X 계정 `@0xMantleKR`은 `Mantle_Official`의 영어 게시물을 실제로 번역해 게시해
+왔습니다 — 두 계정을 짝지으면 이미 사람이 승인한 EN→KO 번역 쌍을 얻을 수 있습니다. 이 쌍을
+발굴해서 번역 few-shot에 추가하는 것이 번역 메모리(TM)입니다. 전체 흐름은 다음과 같습니다:
+
+```
+수집 → 측정 → 페어링 제안 → 사람 확인 → 승격 → 번역 프롬프트에 반영
+```
+
+- **수집** — `pnpm collect:reference`는 `@0xMantleKR`(환경변수 `REFERENCE_X_HANDLE`, 기본값
+  `0xMantleKR`)을 격리된 저장소 `output/x/reference/`에 수집합니다. 이 계정은 번역 대상이
+  아니라 페어링 재료이므로, `pnpm collect`가 채우는 번역 큐에는 섞이지 않습니다.
+- **측정** — `pnpm tm:measure`는 전체 백필을 돌리기 전에 `@0xMantleKR`의 게시물 수와 예상
+  수집 비용을 먼저 보고합니다.
+- **페어링 제안** — `pnpm tm:pair`는 `Mantle_Official`(영어)과 `@0xMantleKR`(한국어) 게시물
+  사이에서 캐시태그·해시태그·멘션 같은 공통 앵커가 일정 시간 창 안에서 겹치는 쌍을 EN↔KO 페어
+  후보로 제안하고, 사람이 검토할 워크시트를 `output/x/reference/`에 씁니다.
+- **사람 확인** — 제안된 각 페어는 사람이 직접 확인합니다. 거부하려면 워크시트 항목의
+  `accept`를 `false`로 바꾸면 됩니다 — 제안된 상태만으로는 아직 아무것도 채택된 것이 아닙니다.
+- **승격** — `pnpm tm:promote`는 사람이 승인한 페어만 `translation/tm.json`에 씁니다. 자동으로
+  승격되는 페어는 없습니다.
+- **번역 프롬프트에 반영** — `pnpm translate:prepare`는 기존의 큐레이션된 few-shot(변경 없음)에
+  더해, 번역 배치와 같은 언어 앵커가 겹치는 TM 페어 중 가장 관련도 높은 것들을 함께 워크시트에
+  넣습니다. 예전의 "최근 8개" 규칙은 이 방식으로 대체되었습니다.
+
+> `translation/tm.json`은 다른 스티어링 설정과 마찬가지로 이 저장소에는 커밋되지 않고 로컬에만
+> 남습니다 — 공개 저장소이기 때문입니다. 그리고 사람이 확인하지 않은 페어는 어떤 경로로도 TM에
+> 들어가지 않습니다.
+
+## 7. 다음으로
 
 - 처음 설치해서 로컬 모드로 써 보려면 → [`quickstart.md`](quickstart.md)
 - 팀 내부 운영자로서 주간 루틴·클라우드 전환·장애 대응이 궁금하면 → [`team-runbook.md`](team-runbook.md)
