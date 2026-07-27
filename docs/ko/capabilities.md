@@ -23,7 +23,7 @@ Google Sheet에 게시 이력도 남깁니다. 모든 단계는 개별 CLI 명�
    │
    ▼
 [번역]        pnpm translate:prepare → (로컬 에이전트가 워크시트 작성) → pnpm translate:save
-   │
+   │         (선택) pnpm translate:align → (로컬 에이전트가 선례에 맞춰 다듬음) → pnpm translate:save
    ▼
 [1차 검수]    pnpm serve  (번역 검수 모드)
    │
@@ -130,7 +130,7 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 |---|---|---|---|
 | **A. X 데이터 수집** | twitterapi.io로 지정한 계정의 트윗을 스레드 단위로 재구성해 증분 수집하고, 삭제된 트윗을 소프트 마크로 반영. X 아티클은 본문(Draft.js 블록)을 별도로 받아 마크다운으로 변환 | `pnpm collect [handle]`, `pnpm reconcile` | — |
 | **B. Lark 데이터 수집** | 지정한 Lark 그룹 채팅들의 텍스트/포스트 메시지를 채팅방별로 증분 수집 | `pnpm collect-lark` | [`setup/lark.md`](setup/lark.md) |
-| **C. 한국어 번역** | 수집된 X/Lark 콘텐츠로 번역 워크시트를 만들고, 로컬 에이전트가 채운 한국어 번역을 저장. 승인 시 few-shot 예시로 승격 | `pnpm translate:prepare`, `pnpm translate:save`, `pnpm glossary` | — |
+| **C. 한국어 번역** | 수집된 X/Lark 콘텐츠로 번역 워크시트를 만들고, 로컬 에이전트가 채운 한국어 번역을 저장. 승인 시 few-shot 예시로 승격. `translate:align`(선택)은 `translate:save`와 1차 검수 사이에서 초안을 가장 가까운 TM 선례에 맞춰 다듬음 | `pnpm translate:prepare`, `pnpm translate:save`, `pnpm translate:align`, `pnpm glossary` | — |
 | **D. Drive 업로드** | 승인/번역 완료된 결과를 마크다운으로 저장 — `cloud` 모드면 Google Drive와 Lark Drive에 업로드, `local` 모드면 `output/publish/local/{review,approved}/`에 파일로 저장 | `pnpm drive:publish`, `pnpm drive:init`, `pnpm google:auth` | [`setup/README.md`](setup/README.md), [`setup/google-drive.md`](setup/google-drive.md), [`setup/lark.md`](setup/lark.md) |
 | **E. 검수 대시보드** | 번역(1차)·채널 포맷(2차)을 검수·수정·승인·발행하는 로컬 웹 대시보드 | `pnpm serve`, `pnpm build:web`, `pnpm dev:web` | — |
 | **F. 콘텐츠 가공** | 승인된 번역을 §5 항목 변환(타입별 X/공지/KOL/PR)과 §6 채널 포맷(코드 변환 + 선택적 에이전트 다듬기) 두 단계로 채널용 게시물로 가공 | `pnpm convert:prepare`, `pnpm convert:save`, `pnpm format`, `pnpm format:save` | — |
@@ -168,6 +168,14 @@ Mantle KR의 한국어 X 계정 `@0xMantleKR`은 `Mantle_Official`의 영어 게
 > `translation/tm.json`은 다른 스티어링 설정과 마찬가지로 이 저장소에는 커밋되지 않고 로컬에만
 > 남습니다 — 공개 저장소이기 때문입니다. 그리고 사람이 확인하지 않은 페어는 어떤 경로로도 TM에
 > 들어가지 않습니다.
+
+**정렬 패스(선택)** — `pnpm translate:align [--ids …] [--since …] [--limit …]`는 위 흐름과 별개로,
+이미 `translate:save`로 저장했지만 아직 1차 검수를 통과하지 않은 초안을 대상으로 TM을 한 번 더
+적용하는 선택적 단계입니다. "번역 프롬프트에 반영"이 배치 전체에 걸쳐 TM을 섞어 넣는 것과 달리,
+정렬 패스는 초안 하나마다 그 영어 원문과 앵커가 겹치는 선례를 최대 3개만 골라 워크시트에 나란히
+놓고, 로컬 에이전트가 (재번역이 아니라) 선례의 표현·용어에 맞춰 초안을 다듬게 합니다. 겹치는 앵커가
+없는 초안은 워크시트에서 제외됩니다. 다듬은 결과는 그대로 `pnpm translate:save --id <id> --file
+<korean.txt>`로 다시 저장하며(`--approve` 없이), 1차 검수는 이 단계를 건너뛰어도 그대로 필요합니다.
 
 ## 7. X 성과 지표
 

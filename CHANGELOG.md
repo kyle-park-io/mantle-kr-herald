@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm translate:align [--ids …] [--since …] [--limit …]` — optional TM alignment pass.** A second,
+  focused pass over already-drafted-but-unapproved translations (`status === "translated"`), sitting
+  between `translate:save` and 1차 검수. For each draft it selects the top **K = 3** `translation/tm.json`
+  precedent pairs by shared-anchor overlap with the draft's English `sourceText` (reusing the #52
+  anchor engine; anchor-only, a lexical/text-similarity fallback for anchorless drafts is deferred) and
+  writes a slim worksheet — 원문 / 현재 번역 / 선례, no glossary or style guide — to
+  `output/translations/worksheets/align-<stamp>.md`. A draft with no shared-anchor precedent is skipped,
+  not emitted. The local agent revises each draft's phrasing/terminology to match its precedents (a
+  correction, not a re-translation) and writes it back with the **existing**
+  `translate:save --id <id> --file <korean.txt>` (no `--approve`) — 1차 검수 remains the human gate; no
+  new store, port, or `pending.json`. See
+  `docs/superpowers/specs/2026-07-28-tm-alignment-pass-design.md`.
 - **`pnpm send:channels [--target telegram|x|both] [--ids …]` — §8 channel delivery.** Sends each
   approved channel rendering to its real channel: **Telegram** via the Bot API (`sendMessage`, HTML,
   one message per segment, replies chained), **X** via **Typefully** (v2 draft published now, polled
