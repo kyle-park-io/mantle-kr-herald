@@ -42,4 +42,12 @@ describe("expandUrls", () => {
   it("returns text unchanged with no urls and no t.co", () => {
     expect(expandUrls("plain text", undefined)).toBe("plain text");
   });
+
+  it("skips an entity with a null expanded_url, so its t.co is stripped as media", () => {
+    expect(expandUrls("x https://t.co/a", [{ url: "https://t.co/a", expanded_url: null }])).toBe("x");
+  });
+
+  it("strips a leading media t.co and trims", () => {
+    expect(expandUrls("https://t.co/vid hello", [])).toBe("hello");
+  });
 });

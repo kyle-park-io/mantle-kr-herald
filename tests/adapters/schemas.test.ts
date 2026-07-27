@@ -80,6 +80,18 @@ describe("normalizeTweet", () => {
     expect(t.text).not.toContain("t.co");
     expect(t.media).toEqual([{ type: "video", url: "https://pbs.twimg.com/v.mp4" }]);
   });
+
+  it("tolerates a null-shaped entities.urls (live API sends null, not just absent) without throwing", () => {
+    const t = normalizeTweet({
+      id: "1",
+      url: "u",
+      createdAt: "Mon Jun 29 05:58:17 +0000 2026",
+      author: { userName: "Mantle_Official" },
+      text: "hi https://t.co/media",
+      entities: { urls: null },
+    });
+    expect(t.text).toBe("hi");
+  });
 });
 
 describe("parseTweetList", () => {

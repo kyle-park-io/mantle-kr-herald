@@ -1,6 +1,6 @@
 export interface UrlEntity {
-  url?: string;
-  expanded_url?: string;
+  url?: string | null;
+  expanded_url?: string | null;
 }
 
 /**

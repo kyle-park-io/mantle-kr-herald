@@ -71,11 +71,15 @@ const TweetRaw = z
     entities: z
       .object({
         urls: z
-          .array(z.object({ url: z.string().optional(), expanded_url: z.string().optional() }).passthrough())
-          .optional(),
+          .array(
+            z
+              .object({ url: z.string().nullable().optional(), expanded_url: z.string().nullable().optional() })
+              .passthrough(),
+          )
+          .nullish(),
       })
       .passthrough()
-      .optional(),
+      .nullish(),
     article: ArticleSummaryRaw.nullish(),
   })
   .passthrough();
@@ -128,7 +132,7 @@ export function normalizeTweet(raw: unknown): SourceTweet {
   return {
     id: t.id,
     conversationId: t.conversationId ?? t.id,
-    text: expandUrls(t.text, t.entities?.urls),
+    text: expandUrls(t.text, t.entities?.urls ?? undefined),
     createdAt: new Date(t.createdAt).toISOString(),
     url: t.url,
     authorUserName: t.author?.userName ?? "",
