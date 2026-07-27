@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { configCheck, cloudCheck, optionalCheck, parseScopes, scopeCheck, accessResult } from "../../src/doctor/checks";
+import { configCheck, cloudCheck, optionalCheck, parseScopes, scopeCheck, accessResult, sheetAccessResult } from "../../src/doctor/checks";
 
 const DRIVE = "https://www.googleapis.com/auth/drive.file";
 const SHEETS = "https://www.googleapis.com/auth/spreadsheets";
@@ -110,5 +110,30 @@ describe("accessResult", () => {
     const r = accessResult("Drive review", { ok: false, status: 403 });
     expect(r.status).toBe("fail");
     expect(r.detail).toContain("403");
+  });
+});
+
+describe("sheetAccessResult", () => {
+  it("ok when the sheet is reachable (with its title)", () => {
+    const r = sheetAccessResult("Sheet", { ok: true, status: 200, title: "2026 Q3 KR Work Sheet" });
+    expect(r.status).toBe("ok");
+    expect(r.detail).toContain("2026 Q3 KR Work Sheet");
+  });
+
+  it("403 hints at enabling the Sheets API (not a re-init like a Drive file)", () => {
+    const r = sheetAccessResult("Sheet", { ok: false, status: 403 });
+    expect(r.status).toBe("fail");
+    expect(r.detail).toMatch(/Google Sheets API/);
+    expect(r.detail).not.toContain("drive:init");
+  });
+
+  it("404 hints at a wrong id or a non-native .xlsx", () => {
+    const r = sheetAccessResult("Sheet", { ok: false, status: 404 });
+    expect(r.status).toBe("fail");
+    expect(r.detail).toMatch(/native Google Sheet|\.xlsx/);
+  });
+
+  it("other status → HTTP N", () => {
+    expect(sheetAccessResult("Sheet", { ok: false, status: 500 }).detail).toBe("HTTP 500");
   });
 });

@@ -209,11 +209,11 @@ Drive 발행만 쓸 거면 건너뛰어도 됩니다. **Google Sheet를 읽고 �
    소유한 시트라면 **당신 계정에 편집 권한으로 공유**만 되어 있으면 됩니다. 팀원에게 보여주는 공유는
    별개입니다.
 
-> **검증:** `pnpm doctor --live`가 부여된 스코프를 출력합니다(`spreadsheets`가 보여야 함). 다만
-> doctor의 **`Google Sheet file` 접근 체크는 Drive API(`drive.file`)** 로 확인하는데, 이건 **앱이 만든
-> 파일만** 봅니다 — 그래서 `sheet:init`이 아니라 **직접 만든/변환한 시트(성과 트래커 워크북)** 면 이
-> 한 줄은 Sheets API를 켜고 스코프가 맞아도 계속 `✗`로 뜹니다(오탐). 이때는 실제 명령(`pnpm
-> metrics:record` 등)으로 확인하세요 — 그쪽은 Sheets API를 씁니다.
+> **검증:** `pnpm doctor --live` 가 부여된 스코프(`spreadsheets`가 보여야 함)와 **`GSHEET_ID` 시트
+> 접근**을 확인합니다. 시트 접근은 **Sheets API**로 확인하므로 `sheet:init`으로 만든 것이든 직접
+> 만들어/변환한 워크북이든 정확히 검증됩니다. `Google Sheet file` 줄이 `✗`라면 대개 **① Sheets API
+> 미사용 설정(위 1단계)**, **② `.xlsx`를 가리킴(네이티브 시트로 변환 필요)**, **③ 그 계정이 시트에
+> 접근 불가** 중 하나이며, 오류 메시지가 어느 쪽인지 알려 줍니다.
 >
 > 이 명령들은 `HERALD_STORAGE_MODE=cloud`여야 스킵되지 않고 실행됩니다. 검증만 하고 다시 `local`로
 > 돌려도 됩니다.

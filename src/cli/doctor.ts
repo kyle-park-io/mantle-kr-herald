@@ -14,7 +14,7 @@ import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { HttpClient } from "../shared/http/HttpClient";
 import { paths } from "../paths";
 import { steeringFiles, missingSteeringFiles, skeletonSteeringFiles } from "../doctor/steering";
-import { configCheck, cloudCheck, optionalCheck, parseScopes, scopeCheck, accessResult } from "../doctor/checks";
+import { configCheck, cloudCheck, optionalCheck, parseScopes, scopeCheck, accessResult, sheetAccessResult } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
 
@@ -101,6 +101,15 @@ if (live) {
       const fileName = r.ok ? ((await r.json()) as { name?: string }).name : undefined;
       results.push(accessResult(label, { ok: r.ok, status: r.status, fileName }));
     };
+    // The Sheet is reached with the spreadsheets scope via the Sheets API — not drive.file — so this
+    // verifies a sheet the operator created themselves (unlike fileAccess, which only sees app-created files).
+    const sheetAccess = async (label: string, id: string): Promise<void> => {
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=spreadsheetId,properties.title`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const title = r.ok ? ((await r.json()) as { properties?: { title?: string } }).properties?.title : undefined;
+      results.push(sheetAccessResult(label, { ok: r.ok, status: r.status, title }));
+    };
     try {
       const g = loadGoogleDriveConfig();
       await fileAccess("Google Drive review   live", g.reviewFolderId);
@@ -110,7 +119,7 @@ if (live) {
     }
     try {
       const gs = loadGoogleSheetConfig();
-      await fileAccess("Google Sheet file  live", gs.spreadsheetId);
+      await sheetAccess("Google Sheet file  live", gs.spreadsheetId);
     } catch {
       // GSHEET_ID not set — the offline config check already reported it.
     }

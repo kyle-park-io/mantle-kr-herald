@@ -68,3 +68,21 @@ export function accessResult(name: string, res: { ok: boolean; status: number; f
       : `HTTP ${res.status}`;
   return { name, status: "fail", detail };
 }
+
+/**
+ * Interpret a Sheets-API spreadsheet fetch. Unlike Drive files (checked with drive.file, which only
+ * sees app-created files), a spreadsheet is reached with the `spreadsheets` scope, so this correctly
+ * verifies a sheet the operator created themselves (e.g. the performance-tracker workbook).
+ * 403 → the Sheets API is disabled in the GCP project, or the account can't access the sheet;
+ * 404 → wrong id, or an uploaded `.xlsx` rather than a native Google Sheet.
+ */
+export function sheetAccessResult(name: string, res: { ok: boolean; status: number; title?: string }): CheckResult {
+  if (res.ok) return { name, status: "ok", detail: `accessible${res.title ? ` (${res.title})` : ""}` };
+  const detail =
+    res.status === 403
+      ? "403 — enable the Google Sheets API in the GCP project, or confirm this account can access the sheet"
+      : res.status === 404
+        ? "not found — check GSHEET_ID (it must be a native Google Sheet, not an uploaded .xlsx)"
+        : `HTTP ${res.status}`;
+  return { name, status: "fail", detail };
+}
