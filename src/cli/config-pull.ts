@@ -23,5 +23,5 @@ if (!res) {
   const changed = res.changes.filter((c) => c.kind !== "same");
   console.log(changed.length === 0 ? "up to date (no changes)" : changed.map((c) => `  ${c.kind}: ${c.path}`).join("\n"));
 } else {
-  console.log(`pulled ${res.pulled} file(s) — backed up current → ${res.backupDir}`);
+  console.log(`pulled ${res.pulled} file(s)${res.backedUp > 0 ? ` — backed up ${res.backedUp} → ${res.backupDir}` : ""}`);
 }

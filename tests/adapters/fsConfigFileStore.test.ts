@@ -29,9 +29,21 @@ describe("FsConfigFileStore", () => {
     expect(files.find((f) => f.path === "conversion/announcement.md")!.content).toBe("# 공지");
   });
 
+  it("list skips nested subdirectories", async () => {
+    await mkdir(join(root, "translation", "nested"), { recursive: true });
+    await writeFile(join(root, "translation", "nested", "inner.json"), "[]", "utf8");
+    const files = await store().list();
+    expect(files.map((f) => f.path).sort()).toEqual(["conversion/announcement.md", "translation/glossary.json"]);
+  });
+
   it("write creates the file under the repo root", async () => {
     await store().write("translation/tm.json", "[1]");
     expect(await readFile(join(root, "translation", "tm.json"), "utf8")).toBe("[1]");
+  });
+
+  it("write creates missing parent directories", async () => {
+    await store().write("newdir/nested/file.json", "x");
+    expect(await readFile(join(root, "newdir", "nested", "file.json"), "utf8")).toBe("x");
   });
 
   it("backup copies the current set into destDir", async () => {

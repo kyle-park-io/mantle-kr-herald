@@ -8,6 +8,7 @@ export interface PullChange {
 }
 export interface PullResult {
   pulled: number;
+  backedUp: number;
   backupDir?: string;
   dryRun: boolean;
   changes: PullChange[];
@@ -31,11 +32,11 @@ export class PullConfig {
       kind: !current.has(f.path) ? "new" : current.get(f.path) === f.content ? "same" : "modified",
     }));
 
-    if (opts.dryRun) return { pulled: 0, dryRun: true, changes };
+    if (opts.dryRun) return { pulled: 0, backedUp: 0, dryRun: true, changes };
 
     const backupDir = `${this.archiveDir}/steering-${this.now().replace(/[:.]/g, "-")}`;
     await this.files.backup(backupDir); // before any write — a failure here aborts the pull
     for (const f of incoming) await this.files.write(f.path, f.content);
-    return { pulled: incoming.length, backupDir, dryRun: false, changes };
+    return { pulled: incoming.length, backedUp: current.size, backupDir, dryRun: false, changes };
   }
 }

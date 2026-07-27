@@ -27,6 +27,7 @@ describe("PullConfig", () => {
     expect(f.events[0]).toMatch(/^backup:/); // backup precedes writes
     expect(f.events).toContain("write:translation/tm.json");
     expect(res!.pulled).toBe(1);
+    expect(res!.backedUp).toBe(1);
     expect(res!.changes).toEqual([{ path: "translation/tm.json", kind: "modified" }]);
   });
 

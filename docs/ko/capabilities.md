@@ -141,6 +141,11 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 | **K. 항목 계보(lineage) 조회** | 번역·변환·포맷 각 단계에서 저장할 때마다(다듬기·재승인 포함) 그 시점 결과물을 항목별로 append — 나중 저장이 이전 값을 덮어써도 사라지지 않고, 어느 시점에 무엇이 어떻게 바뀌었는지 확인 가능. 항상 켜져 있고 best-effort(계보 기록 실패가 저장을 막지 않음) | `pnpm lineage [itemId]` | — |
 | **L. 설정 백업/공유** | git에 추적되지 않는 스티어링 설정(`translation/` + `conversion/`, `*.example.*` 제외 15개 파일)을 Google Drive에 타임스탬프 스냅샷(`steering-config-<시각>.json`)으로 백업하고, 팀원이 최신 스냅샷을 내려받아 복원 — 단일 관리자가 push(백업), 팀원은 pull(복원)만 하는 모델. `pull`은 덮어쓰기 전에 현재 로컬 설정을 `output/archive/`에 먼저 백업 | `pnpm config:push`, `pnpm config:pull [--dry-run]` | — |
 
+> **드라이브 스코프 주의(L):** `config:push`/`config:pull`로 팀원과 공유하려면, pull하는 사람도
+> **push한 사람과 같은 Google 자격증명**을 쓰거나(단일 유지보수자 모델), 그게 아니면 OAuth
+> 스코프를 `drive.file`에서 `drive`로 넓혀야 합니다 — `drive.file`은 그 자격증명이 만든 파일만
+> 보이기 때문입니다.
+
 ## 6. 번역 메모리
 
 Mantle KR의 한국어 X 계정 `@0xMantleKR`은 `Mantle_Official`의 영어 게시물을 실제로 번역해 게시해

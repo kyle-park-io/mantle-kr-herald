@@ -20,5 +20,6 @@ describe("PushConfig", () => {
     expect(res).toEqual({ name: "steering-config-2026-07-28T00-00-00-000Z.json", id: "F1", count: 1 });
     expect(uploads).toHaveLength(1);
     expect(parseConfigBundle(uploads[0].content)).toEqual([{ path: "translation/tm.json", content: "[1]" }]);
+    expect(JSON.parse(uploads[0].content).pushedAt).toBe("2026-07-28T00:00:00.000Z");
   });
 });
