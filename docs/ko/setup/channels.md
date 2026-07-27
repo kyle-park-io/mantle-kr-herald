@@ -79,6 +79,7 @@ X 공식 API/twitterapi.io 쓰기 대신 **Typefully**로 X에 올립니다(공�
 ### Y-2. v2 API 키 → `TYPEFULLY_API_KEY`
 
 - typefully.com → **Settings → API** → **v2** 키 발급(‼️ v1 키는 v2 API에서 안 됩니다).
+- 키 **이름/레이블**을 물으면 **`mantle-kr-herald-send`** 로 지정하세요(나중에 어떤 앱이 쓰는 키인지 알아보기 쉽게). 이름 칸이 없으면 넘어가세요.
   ```bash
   TYPEFULLY_API_KEY=...
   ```
