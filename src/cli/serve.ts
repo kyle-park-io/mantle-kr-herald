@@ -17,6 +17,7 @@ import { loadStorageMode, loadGoogleAuthConfig, loadGoogleDriveConfig, loadLarkD
 import { createUploaders, resolveTargets } from "./uploaders";
 import type { PublishResult } from "../app/PublishTranslations";
 import { REPO_ROOT, paths } from "../paths";
+import { buildLineage } from "./lineage-wiring";
 import { XContentSource } from "../adapters/content/XContentSource";
 import { LarkContentSource } from "../adapters/content/LarkContentSource";
 import { CompositeContentSource } from "../adapters/content/CompositeContentSource";
@@ -26,7 +27,7 @@ import { renderApproved, renderReview } from "../domain/publish/renderers";
 const port = Number(process.env.PORT) || 5757;
 const translationStore = new JsonTranslationStore(paths.translationsDir);
 const publishStore = new JsonPublishStore(paths.publishDir);
-const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotStore(paths.translationConfigDir));
+const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotStore(paths.translationConfigDir), undefined, buildLineage());
 const formattingStore = new JsonFormattingStore(paths.formattedDir);
 const conversionStore = new JsonConversionStore(paths.variantsDir);
 
@@ -108,8 +109,8 @@ const deps: ApiDeps = {
   storageMode,
   formattingStore,
   conversionStore,
-  saveRendering: new SaveRendering(formattingStore),
-  approveRendering: new ApproveRendering(formattingStore),
+  saveRendering: new SaveRendering(formattingStore, undefined, buildLineage()),
+  approveRendering: new ApproveRendering(formattingStore, undefined, buildLineage()),
   loadStatus,
   loadPublishState,
 };

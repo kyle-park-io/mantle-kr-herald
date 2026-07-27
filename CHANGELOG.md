@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm lineage [itemId]` — always-on per-item lineage.** Every save through the four
+  content-producing use-cases (`SaveTranslation`, `SaveConversion`, `SaveRendering`,
+  `ApproveRendering`) now appends a stage snapshot — best-effort, never blocks the save — to
+  `output/lineage/<id>.jsonl`, so a later overwrite (align, refine, approve) never loses the
+  previous version. `pnpm lineage <itemId>` prints the item's journey with a per-revision diff
+  against the previous entry of the same stage; `pnpm lineage` (no id) lists every item with
+  lineage. Wired at every save site (`translate:save`, `convert:save`, `format:save`, and the
+  `pnpm serve` dashboard). See `docs/superpowers/specs/2026-07-28-item-lineage-design.md`.
 - **`pnpm translate:align [--ids …] [--since …] [--limit …]` — optional TM alignment pass.** A second,
   focused pass over already-drafted-but-unapproved translations (`status === "translated"`), sitting
   between `translate:save` and 1차 검수. For each draft it selects the top **K = 3** `translation/tm.json`

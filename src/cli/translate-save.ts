@@ -7,6 +7,7 @@ import { SaveTranslation } from "../app/SaveTranslation";
 import { readJsonFile } from "../shared/store/jsonFile";
 import type { ContentItem } from "../domain/translation/contentItem";
 import { paths } from "../paths";
+import { buildLineage } from "./lineage-wiring";
 
 const id = argValue("--id");
 const file = argValue("--file");
@@ -33,7 +34,7 @@ if (!item) {
 
 const koreanText = (await readFile(file, "utf8")).trim();
 
-const usecase = new SaveTranslation(translationStore, new JsonFewShotStore(paths.translationConfigDir));
+const usecase = new SaveTranslation(translationStore, new JsonFewShotStore(paths.translationConfigDir), undefined, buildLineage());
 const res = await usecase.run({
   itemId: item.id,
   source: item.source,

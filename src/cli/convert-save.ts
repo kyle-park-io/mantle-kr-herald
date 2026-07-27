@@ -9,6 +9,7 @@ import { readJsonFile } from "../shared/store/jsonFile";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import type { PendingVariant } from "../app/PrepareConversions";
 import { paths } from "../paths";
+import { buildLineage } from "./lineage-wiring";
 
 const id = argValue("--id");
 const type = argValue("--type") as ConversionType | undefined;
@@ -36,7 +37,7 @@ const convertedText = (await readFile(file, "utf8")).trim();
 
 const fewShotByType = fewShotStoresByType(paths.conversionConfigDir);
 
-const usecase = new SaveConversion(conversionStore, fewShotByType);
+const usecase = new SaveConversion(conversionStore, fewShotByType, undefined, buildLineage());
 const res = await usecase.run({ itemId: id, type, sourceKorean, convertedText, approve });
 
 console.log(`saved ${res.itemId}/${res.type}${res.promoted ? " (approved → few-shot)" : ""}`);

@@ -138,6 +138,7 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 | **H. 번역 메모리** | `@0xMantleKR`과 `Mantle_Official`의 실제 승인 EN↔KO 번역 쌍을 발굴해 사람 확인을 거쳐 번역 few-shot에 반영 | `pnpm collect:reference`, `pnpm tm:measure`, `pnpm tm:pair`, `pnpm tm:promote` | — |
 | **I. X 성과 지표** | 사람이 관리하는 `KOL list` 탭(X 행만)을 읽어 KR 공식 계정과 각 X KOL의 팔로워·해당 월 게시물을 조회하고, 원시 성과 숫자를 기계 전용 `x-performance` 탭에 월별로 upsert | `pnpm metrics:record [--month YYYY-MM]` | — |
 | **J. 채널 발송** | 승인된 채널 렌더링(텔레그램·X)을 실제 API로 발송 — 텔레그램은 봇 API, X는 Typefully 경유(공식 API·twitterapi.io 쓰기 없음). 로컬 원장으로 멱등 보장, 어느 저장 모드에서도 동작 | `pnpm send:channels [--target telegram\|x\|both] [--ids]` | — |
+| **K. 항목 계보(lineage) 조회** | 번역·변환·포맷 각 단계에서 저장할 때마다(다듬기·재승인 포함) 그 시점 결과물을 항목별로 append — 나중 저장이 이전 값을 덮어써도 사라지지 않고, 어느 시점에 무엇이 어떻게 바뀌었는지 확인 가능. 항상 켜져 있고 best-effort(계보 기록 실패가 저장을 막지 않음) | `pnpm lineage [itemId]` | — |
 
 ## 6. 번역 메모리
 
