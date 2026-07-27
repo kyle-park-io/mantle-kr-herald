@@ -47,11 +47,17 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
 7. **채널 포맷** — 운영자가 `pnpm format`(결정적 포맷터, 즉시 저장)이나
    `pnpm format --refine`(에이전트 다듬기 필요 시) + `pnpm format:save`를 실행합니다.
 8. **2차 검수** — 검수자가 대시보드의 채널 검수 모드에서 채널별 렌더링을 검수·승인합니다.
-9. **발행** — 운영자가 `pnpm drive:publish`를 실행하거나(또는 대시보드의 발행 버튼) — 우리 팀은
-   항상 `cloud` 모드로 운영하므로, 이 순간에 실제로 Drive/Lark Drive에 업로드됩니다.
-10. **기록** — 운영자가 필요 시 `pnpm history:record`로 Google Sheet `history` 탭에 게시
+9. **채널 발송** — 운영자가 `pnpm send:channels [--target telegram|x|both]`를 실행해 승인된
+   텔레그램·X 렌더링을 실제로 발행합니다(텔레그램은 봇 API, X는 Typefully 경유). 사전에
+   `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, `TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID`
+   자격 증명이 준비돼 있어야 합니다(`pnpm doctor`로는 확인되지 않으니 직접 챙기세요). 이미
+   보낸 항목은 로컬 원장(`output/publish/channels.json`)이 걸러내므로, 실행이 중간에 끊기거나
+   실패해도 그대로 다시 실행하면 됩니다 — 재실행은 항상 안전합니다(멱등).
+10. **발행** — 운영자가 `pnpm drive:publish`를 실행하거나(또는 대시보드의 발행 버튼) — 우리 팀은
+    항상 `cloud` 모드로 운영하므로, 이 순간에 실제로 Drive/Lark Drive에 업로드됩니다.
+11. **기록** — 운영자가 필요 시 `pnpm history:record`로 Google Sheet `history` 탭에 게시
     이력을 남깁니다. 배포 대상 목록은 `pnpm targets:list`로 확인합니다.
-11. **정리** — 배치가 끝나면 `pnpm archive`를 실행합니다(§5).
+12. **정리** — 배치가 끝나면 `pnpm archive`를 실행합니다(§5).
 
 한 주가 끝나기 전에 `pnpm status`로 어디까지 진행됐는지 항상 확인할 수 있습니다.
 

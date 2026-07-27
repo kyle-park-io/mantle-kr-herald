@@ -11,7 +11,8 @@
 `Mantle_Official`)와 사내 Lark 그룹 채팅에서 원문을 수집하고, 로컬 Claude Code 에이전트가
 워크시트를 채우는 방식으로 한국어로 번역한 뒤, 승인된 번역을 채널(`x`/`telegram`/`kakao`/`pr_mail`)에
 맞게 변환·포맷하고, 사람이 두 차례(1차: 번역, 2차: 채널 포맷) 검수·승인한 결과만 저장 모드에 따라
-Google Drive/Lark Drive 또는 로컬 폴더(`output/publish/local/`)에 올립니다. `cloud` 모드에서는
+Google Drive/Lark Drive 또는 로컬 폴더(`output/publish/local/`)에 올립니다. 승인된 텔레그램·X
+렌더링은 `pnpm send:channels`로 실제 채널에도 보낼 수 있습니다(§8). `cloud` 모드에서는
 Google Sheet에 게시 이력도 남깁니다. 모든 단계는 개별 CLI 명령(`pnpm <script>`)으로 실행되며,
 자동으로 다음 단계가 실행되지 않습니다 — 사람이 각 단계 사이를 직접 잇습니다.
 
@@ -34,6 +35,9 @@ Google Sheet에 게시 이력도 남깁니다. 모든 단계는 개별 CLI 명�
    │
    ▼
 [2차 검수]    pnpm serve  (채널 검수 모드)
+   │
+   ▼
+[채널 발송]   pnpm send:channels  (텔레그램/X로 실제 발송)
    │
    ▼
 [발행]        pnpm drive:publish  (Drive 또는 로컬 폴더로)
@@ -83,23 +87,25 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 
 이 프로젝트가 실제로 하지 않는 일은, 하는 일 만큼 분명하게 알아야 합니다.
 
-- **어떤 채널로도 자동 게시하지 않습니다.** 발행은 `pnpm drive:publish`(또는 대시보드의 게시
-  버튼)를 사람이 직접 실행할 때만 일어납니다 — 대상은 저장 모드에 따라 Google/Lark Drive
-  (`cloud`) 또는 로컬 폴더 `output/publish/local/`(`local`)이며, 어느 쪽이든 X/텔레그램/카카오
-  같은 실제 채널에 자동으로 올라가지는 않습니다. 번역이나 채널 렌더링을 승인(approve)하는 것
-  자체는 업로드를 유발하지 않습니다 — 승인 경로(`SaveTranslation`, `ApproveRendering`)는 상태를
-  `approved`로 바꿀 뿐 업로드 코드를 호출하지 않습니다. 저장 모드별 게이팅은
+- **승인(approve)은 그 자체로 아무것도 전송·업로드하지 않습니다.** 승인 경로(`SaveTranslation`,
+  `ApproveRendering`)는 상태를 `approved`로 바꿀 뿐입니다 — 실제 업로드·전송은 항상 사람이 별도
+  명령을 실행해야 일어납니다. `pnpm drive:publish`(또는 대시보드의 게시 버튼)는 저장 모드에 따라
+  Google/Lark Drive(`cloud`) 또는 로컬 폴더 `output/publish/local/`(`local`)에 **기록을 보존**할
+  뿐, 그 자체로 X/텔레그램/카카오 같은 실제 채널에 올라가는 것은 아닙니다 — 실제 채널 전송은 아래
+  §8의 `pnpm send:channels`(텔레그램·X 한정) 몫입니다. 저장 모드별 게이팅은
   [`artifacts.md`](artifacts.md)의 "저장 모드" 절을 참고하세요.
-- **텔레그램 봇·Typefully·X API를 통한 자동 전송도 아직 없습니다.** `telegram_bot`·`x_typefully`
-  같은 목적지(destination)는 그 앱이 받아들이는 **텍스트를 만들어 줄 뿐**, 실제로 그 API를 호출해
-  전송하는 코드는 없습니다 — 사람이 대시보드에서 복사해 직접 붙여넣거나 보냅니다. 다음 작업입니다.
+- **카카오·메일(`pr_mail`)로는 여전히 자동 전송이 없습니다.** `pnpm send:channels`(§8)가 실제로
+  전송하는 채널은 텔레그램·X 두 개뿐입니다 — `kakao_paste`·`pr_mail` 목적지는 여전히 그 앱이
+  받아들이는 텍스트를 만들어 줄 뿐이고, 사람이 대시보드에서 복사해 직접 붙여넣거나 보내야 합니다.
 - **스레드를 자동으로 나누지 않습니다.** X 목적지에서 세그먼트 하나가 가중치 한도(280, 순수 한글
   기준 140자)를 넘어도 경고(`overLimit`)만 남길 뿐 잘라내지 않습니다 — 실제로 나누는 것은
   `pnpm format --refine` 워크시트를 채우는 작성자입니다.
 - **Typefully 붙여넣기 동작은 아직 실검증되지 않았습니다.** `x_typefully`는 현재 `x_paste`와 동일한
   텍스트를 냅니다. Typefully 에디터가 붙여넣은 텍스트에서 트윗 경계를 어떻게 처리하는지 1차 문서로
   확인된 바가 없어서입니다 — 실제 에디터에 canonical 초안을 붙여넣어 확인하기 전까지는 신뢰하지
-  마세요.
+  마세요. (이 우려는 사람이 손으로 붙여넣는 경우에만 해당합니다 — §8 `pnpm send:channels`는
+  Typefully 에디터에 붙여넣지 않고, 세그먼트를 그대로 API의 `posts` 배열로 보내므로 이 문제를
+  겪지 않습니다.)
 - **번역과 변환은 로컬 Claude Code 에이전트가 워크시트를 채우는 방식입니다 — 이 프로젝트는 Claude
   API를 호출하지 않습니다.** `pnpm translate:prepare`/`pnpm convert:prepare`가
   `output/*/worksheets/batch-<타임스탬프>.md` 워크시트를 만들면, 로컬 에이전트가 그 안의 번역/변환
@@ -131,6 +137,7 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 | **G. Google Sheet 데이터 허브** | 팀이 함께 편집하는 배포 대상 목록(`targets` 탭)과 게시 이력(`history` 탭) 관리 | `pnpm sheet:init`, `pnpm targets:list`, `pnpm history:record` | [`external-integrations.md`](../architecture/external-integrations.md) |
 | **H. 번역 메모리** | `@0xMantleKR`과 `Mantle_Official`의 실제 승인 EN↔KO 번역 쌍을 발굴해 사람 확인을 거쳐 번역 few-shot에 반영 | `pnpm collect:reference`, `pnpm tm:measure`, `pnpm tm:pair`, `pnpm tm:promote` | — |
 | **I. X 성과 지표** | 사람이 관리하는 `KOL list` 탭(X 행만)을 읽어 KR 공식 계정과 각 X KOL의 팔로워·해당 월 게시물을 조회하고, 원시 성과 숫자를 기계 전용 `x-performance` 탭에 월별로 upsert | `pnpm metrics:record [--month YYYY-MM]` | — |
+| **J. 채널 발송** | 승인된 채널 렌더링(텔레그램·X)을 실제 API로 발송 — 텔레그램은 봇 API, X는 Typefully 경유(공식 API·twitterapi.io 쓰기 없음). 로컬 원장으로 멱등 보장, 어느 저장 모드에서도 동작 | `pnpm send:channels [--target telegram\|x\|both] [--ids]` | — |
 
 ## 6. 번역 메모리
 
@@ -199,7 +206,47 @@ KOL list 읽기 → X 계정 조회 → 월간 집계 → x-performance 탭에 u
 게시물이 많은 계정의 수치가 실제보다 적게 잡힐 수 있습니다(트윗 수집이 최신순으로 진행되며
 `MAX_PAGES` 캡에 걸리면 목표 달에 도달하기 전에 멈추기 때문입니다).
 
-## 8. 다음으로
+## 8. 채널 발송
+
+2차 검수에서 승인된 채널 렌더링(`telegram`/`x`)을 실제 채널로 보내는 단계입니다. 그동안은 승인
+후에도 사람이 대시보드에서 텍스트를 복사해 직접 붙여넣어야 했지만, `pnpm send:channels`는
+텔레그램과 X(Typefully 경유) 두 채널에 한해 그 붙여넣기를 실제 API 호출로 대신합니다. 전체
+흐름은 다음과 같습니다:
+
+```
+승인된 렌더링 조회 → 채널별 sender 선택 → 발송 → 멱등 원장에 기록 → (cloud) history 탭에 best-effort 기록
+```
+
+- **대상** — `pnpm send:channels [--target telegram|x|both] [--ids <id1,id2,...>]`. `--target`을
+  생략하거나 `both`를 주면 텔레그램·X 모두가 대상이고, `--ids`로 특정 항목만 좁힐 수 있습니다.
+  `output/formatted/renderings.json`에서 `status: "approved"`이고 채널이 `telegram` 또는 `x`인
+  행만 대상입니다 — `kakao`/`pr_mail`은 대상이 아닙니다(§4 참고).
+- **텔레그램 = 봇 API.** Bot API `sendMessage`를 세그먼트(문단/트윗 경계)마다 한 번씩 HTML로
+  호출하고, 두 번째 메시지부터는 첫 메시지에 답장(reply)으로 걸어 하나의 스레드처럼 이어 붙입니다.
+- **X = Typefully 경유, 공식 API·twitterapi.io 쓰기는 쓰지 않습니다.** Typefully v2 draft API로
+  세그먼트를 그대로 `posts` 배열에 담아 draft를 만들고 즉시 게시(`publish_at: "now"`)한 뒤,
+  응답에 트윗 URL이 바로 오지 않으면 잠깐 폴링해서 받아옵니다. 공식 X API나 twitterapi.io로 직접
+  쓰지 않는 이유는 공식 계정이 자동화 탐지로 정지(ban)될 위험을 피하기 위해서입니다 —
+  twitterapi.io는 이 프로젝트 전체에서 읽기(수집·조회)로만 쓰이고, X에 무언가를 쓰는 경로는
+  Typefully 하나뿐입니다.
+- **멱등(idempotent) — 로컬 원장 `output/publish/channels.json`.** 발송에 성공한
+  `(itemId, type, channel)` 조합은 원장에 한 행으로 남고, 다음 실행에서는 건너뜁니다(`skipped`).
+  실패한 항목은 원장에 남지 않으므로 다음 실행에서 그대로 재시도됩니다 — 재실행은 항상 안전합니다.
+- **어느 저장 모드에서도 동작합니다.** 이 명령은 `HERALD_STORAGE_MODE`를 아예 읽지 않습니다 —
+  텔레그램 봇 토큰과 Typefully API 키만 있으면 `local`/`cloud` 구분 없이 그대로 발송됩니다
+  ([`artifacts.md`](artifacts.md) §2).
+- **Sheet `history` 탭 기록은 `cloud` 전용이고 best-effort입니다.** `GSHEET_ID`와 Google 인증이
+  설정돼 있으면 발송 성공 시 `history` 탭에도 기록을 시도하지만, 이 기록이 실패해도 이미 보낸
+  메시지를 취소하지는 않습니다 — 경고만 남기고 다음 항목을 계속 처리합니다. 설정이 없으면 이
+  기록 자체를 조용히 건너뜁니다.
+- **범위 밖.** 카카오·메일(`pr_mail`) 채널의 자동 전송, 이미지·미디어 첨부, 예약 발행, 대시보드의
+  "발송" 버튼은 아직 없습니다 — 이 명령은 CLI 전용이며 텔레그램·X 텍스트만 다룹니다.
+
+**사전 조건** — 텔레그램은 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, X(Typefully)는
+`TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID` 환경변수가 필요합니다(`--target`으로 요청한 채널의
+것만 있으면 됩니다). 값은 이 문서에 적지 않습니다 — `.env`에서 관리하세요.
+
+## 9. 다음으로
 
 - 처음 설치해서 로컬 모드로 써 보려면 → [`quickstart.md`](quickstart.md)
 - 팀 내부 운영자로서 주간 루틴·클라우드 전환·장애 대응이 궁금하면 → [`team-runbook.md`](team-runbook.md)
