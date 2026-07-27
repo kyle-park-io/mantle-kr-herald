@@ -1,9 +1,8 @@
 import "./registerErrorHandler";
-import { writeFile } from "node:fs/promises";
 import { XContentSource } from "../adapters/content/XContentSource";
 import { proposePairs } from "../domain/tm/pairing";
 import { toProposedRecords, renderPairsReview } from "../domain/tm/pairsReview";
-import { writeJsonFileAtomic } from "../shared/store/jsonFile";
+import { writeJsonFileAtomic, writeTextFileAtomic } from "../shared/store/jsonFile";
 import { paths } from "../paths";
 
 // Conservative defaults — precision over recall. Tune from the first real worksheet.
@@ -16,7 +15,7 @@ const koItems = await new XContentSource(paths.referenceItems).loadPending(new S
 const pairs = proposePairs(enItems, koItems, { windowDays: PAIR_WINDOW_DAYS, minAnchors: PAIR_MIN_ANCHORS });
 
 await writeJsonFileAtomic(paths.referenceDir, paths.referencePairsProposed, toProposedRecords(pairs));
-await writeFile(paths.referencePairsReview, renderPairsReview(pairs), "utf8");
+await writeTextFileAtomic(paths.referenceDir, paths.referencePairsReview, renderPairsReview(pairs));
 
 console.log(
   `proposed ${pairs.length} pair(s). Review ${paths.referencePairsReview}, ` +

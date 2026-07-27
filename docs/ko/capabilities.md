@@ -129,9 +129,9 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 | **E. 검수 대시보드** | 번역(1차)·채널 포맷(2차)을 검수·수정·승인·발행하는 로컬 웹 대시보드 | `pnpm serve`, `pnpm build:web`, `pnpm dev:web` | — |
 | **F. 콘텐츠 가공** | 승인된 번역을 §5 항목 변환(타입별 X/공지/KOL/PR)과 §6 채널 포맷(코드 변환 + 선택적 에이전트 다듬기) 두 단계로 채널용 게시물로 가공 | `pnpm convert:prepare`, `pnpm convert:save`, `pnpm format`, `pnpm format:save` | — |
 | **G. Google Sheet 데이터 허브** | 팀이 함께 편집하는 배포 대상 목록(`targets` 탭)과 게시 이력(`history` 탭) 관리 | `pnpm sheet:init`, `pnpm targets:list`, `pnpm history:record` | [`external-integrations.md`](../architecture/external-integrations.md) |
-| **H. 번역 메모리(TM)** | `@0xMantleKR`과 `Mantle_Official`의 실제 승인 EN↔KO 번역 쌍을 발굴해 사람 확인을 거쳐 번역 few-shot에 반영 | `pnpm collect:reference`, `pnpm tm:measure`, `pnpm tm:pair`, `pnpm tm:promote` | — |
+| **H. 번역 메모리** | `@0xMantleKR`과 `Mantle_Official`의 실제 승인 EN↔KO 번역 쌍을 발굴해 사람 확인을 거쳐 번역 few-shot에 반영 | `pnpm collect:reference`, `pnpm tm:measure`, `pnpm tm:pair`, `pnpm tm:promote` | — |
 
-## 6. 번역 메모리 (Translation Memory)
+## 6. 번역 메모리
 
 Mantle KR의 한국어 X 계정 `@0xMantleKR`은 `Mantle_Official`의 영어 게시물을 실제로 번역해 게시해
 왔습니다 — 두 계정을 짝지으면 이미 사람이 승인한 EN→KO 번역 쌍을 얻을 수 있습니다. 이 쌍을
