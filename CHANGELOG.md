@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm send:channels [--target telegram|x|both] [--ids …]` — §8 channel delivery.** Sends each
+  approved channel rendering to its real channel: **Telegram** via the Bot API (`sendMessage`, HTML,
+  one message per segment, replies chained), **X** via **Typefully** (v2 draft published now, polled
+  for the tweet url). Idempotent — a local ledger `output/publish/channels.json` (row per
+  `(itemId, type, channel)`) means a succeeded send never repeats and a failed one retries. Works in
+  any storage mode (the senders need only their own tokens); recording to the Sheet `history` tab is
+  cloud-only and best-effort. X goes through Typefully only — no official X API, no twitterapi.io
+  write (ban-risk on the official account). Config: `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`,
+  `TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID`. Kakao/mail senders and media are out of scope.
+  See `docs/superpowers/specs/2026-07-27-channel-delivery-design.md`.
 - **`pnpm metrics:record [--month YYYY-MM]` — monthly X performance into the team workbook.** Reads
   the human `KOL list` tab (X rows only, matched by header name), then for the KR official account
   (`REFERENCE_X_HANDLE`, default `0xMantleKR`) and each X KOL fetches follower count + that month's

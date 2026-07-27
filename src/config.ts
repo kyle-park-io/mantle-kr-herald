@@ -130,6 +130,30 @@ export function loadGoogleSheetConfig(): GoogleSheetConfig {
   return { spreadsheetId };
 }
 
+export interface TelegramConfig {
+  botToken: string;
+  chatId: string;
+}
+export function loadTelegramConfig(): TelegramConfig {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!botToken) throw new Error("Missing required environment variable: TELEGRAM_BOT_TOKEN");
+  if (!chatId) throw new Error("Missing required environment variable: TELEGRAM_CHAT_ID");
+  return { botToken, chatId };
+}
+
+export interface TypefullyConfig {
+  apiKey: string;
+  socialSetId: string;
+}
+export function loadTypefullyConfig(): TypefullyConfig {
+  const apiKey = process.env.TYPEFULLY_API_KEY;
+  const socialSetId = process.env.TYPEFULLY_SOCIAL_SET_ID;
+  if (!apiKey) throw new Error("Missing required environment variable: TYPEFULLY_API_KEY");
+  if (!socialSetId) throw new Error("Missing required environment variable: TYPEFULLY_SOCIAL_SET_ID");
+  return { apiKey, socialSetId };
+}
+
 export type { StorageMode };
 
 export function loadStorageMode(): StorageMode {

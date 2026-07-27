@@ -62,9 +62,10 @@ HERALD_STORAGE_MODE=local|cloud
 **저장 모드를 실제로 읽어서 검사하는 명령은 소수뿐입니다** — 위 여섯 개 CLI(`drive:init`/
 `sheet:init`/`targets:list`/`history:record`/`impressions:record`/`metrics:record`), `pnpm doctor`,
 `pnpm drive:publish`, `pnpm serve`가 전부입니다. `pnpm collect`, `collect:reference`, `tm:*`,
-`translate:*`, `convert:*`, `format`, `pnpm archive`, `pnpm clean` 등 나머지 명령은 저장 모드를 아예
-참조하지 않으므로(참고 계정 수집·번역 메모리 명령은 어느 모드에서도 동일하게 동작합니다), 모드가
-없거나 잘못돼도 이들에는 애초에 영향이 없습니다. `pnpm status`도 이쪽에 가깝지만 이유가 다릅니다 — 클라우드 명령이 아니라 읽기 전용
+`translate:*`, `convert:*`, `format`, `pnpm send:channels`, `pnpm archive`, `pnpm clean` 등 나머지
+명령은 저장 모드를 아예 참조하지 않으므로(참고 계정 수집·번역 메모리 명령과 마찬가지로
+`send:channels`도 어느 모드에서든 동일하게 동작합니다 — 필요한 것은 텔레그램/Typefully 자체
+토큰뿐입니다), 모드가 없거나 잘못돼도 이들에는 애초에 영향이 없습니다. `pnpm status`도 이쪽에 가깝지만 이유가 다릅니다 — 클라우드 명령이 아니라 읽기 전용
 진단이므로, `src/cli/status.ts`는 `parseStorageMode`도 `tryParseStorageMode`도 import하지 않고
 저장 모드를 전혀 읽지 않은 채 `output/` 아래 로컬 저장소 파일들만 읽어 계산합니다. 그래서 모드가
 없거나 잘못 설정돼 있어도 멈추지 않으며, 아래 표처럼 `local`과 `cloud`에서 정확히 동일하게 경고를
@@ -126,6 +127,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm glossary [add --term --rule ...]` | `translation/glossary.json` | `add` 서브커맨드일 때만 `translation/glossary.json`(upsert) | 없음 |
 | `pnpm config:init` | `translation/*.example.*`, `conversion/*.example.*` | 실제 파일이 아직 없는 것만 생성(`translation/{glossary,locale,style-guide,few-shot}.*`, `conversion/{x,announcement,kol,pr}.md`, `conversion/few-shot.{x,announcement,kol,pr}.json`) — 이미 있으면 절대 덮어쓰지 않음 | 없음 |
 | `pnpm drive:publish [--target google\|lark\|local\|both\|<쉼표로 나열>]` | `output/translations/translations.json`; 중복 게시 방지 및 `stale` 판정을 위한 `output/publish/state.json` | `output/publish/state.json`(신규 업로드는 SyncEntry 추가, `stale` 항목은 기존 행을 갱신 — 둘 다 §4); `output/publish/local/{review,approved}/*.md`(`local` 모드, 또는 `--target`에 `local`이 포함된 경우) | 모드/`--target`에 따라 다름 — 없음(`local`만인 경우), 또는 Google Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 파일 갱신 엔드포인트도) 그리고/또는 Lark Drive API(파일 생성 엔드포인트, 그리고 `stale` 항목에는 삭제 엔드포인트도 — 콘텐츠 교체 엔드포인트가 없어 새로 올린 뒤 예전 파일을 지우는 방식, §4) |
+| `pnpm send:channels [--target telegram\|x\|both] [--ids <id1,id2,...>]` | 승인된 채널 렌더링을 위한 `output/formatted/renderings.json`(`status: "approved"`이고 채널이 `telegram`/`x`인 행만); 이미 보낸 것 제외를 위한 `output/publish/channels.json`; `--target`으로 요청한 채널에 따라 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`(텔레그램) 또는 `TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID`(X, env) | `output/publish/channels.json`(upsert, `(itemId, type, channel)`별 1행 — 이 파일이 없어지면 다음 실행이 이미 보낸 메시지를 실제로 다시 보냅니다, 단순 재업로드가 아님); `cloud` 모드에서 `GSHEET_ID`/Google 인증이 있으면 `history` 탭에도 best-effort로 기록(실패해도 발송은 취소되지 않고 경고만 남김) | Telegram Bot API(`sendMessage`), Typefully API(v2 draft 생성+발행+폴링); 기록 시 Google Sheets API. **`local` 모드에서도 스킵되지 않습니다 — 위 여섯 개 CLI의 `skipIfLocal` 대상이 아닙니다.** |
 | `pnpm drive:init [--force]` | `local` 모드면 스킵. 로컬 파일 없음(env만) | 로컬 파일 없음 — 생성된 폴더 id를 `.env`에 붙여넣도록 콘솔에 출력 | Google Drive API(폴더 생성/공유) |
 | `pnpm targets:list [--active-only]` | `local` 모드면 스킵. 로컬 파일 없음 | 없음 | Google Sheets API(`targets` 탭 조회) |
 | `pnpm history:record --item --type --channel --status [...]` | `local` 모드면 스킵. 로컬 파일 없음 | 로컬 파일 없음 | Google Sheets API(`history` 탭에 행 추가) |
