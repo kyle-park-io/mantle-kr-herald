@@ -1,7 +1,7 @@
 import type { ProposedPair } from "./pairing";
 
 export interface ProposedRecord extends ProposedPair {
-  accept: boolean;
+  accept?: boolean;
 }
 
 export function toProposedRecords(pairs: ProposedPair[]): ProposedRecord[] {
