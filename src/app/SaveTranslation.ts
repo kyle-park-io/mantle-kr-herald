@@ -1,6 +1,7 @@
 import type { Translation } from "../domain/translation/models";
 import type { TranslationStore } from "../ports/TranslationStore";
 import type { FewShotStore } from "../ports/FewShotStore";
+import type { LineageStore } from "../ports/LineageStore";
 
 /**
  * A promoted few-shot example is inlined into every subsequent worksheet (the last `MAX_FEW_SHOTS`
@@ -28,6 +29,7 @@ export class SaveTranslation {
     private readonly translationStore: TranslationStore,
     private readonly fewShotStore: FewShotStore,
     private readonly now: () => string = () => new Date().toISOString(),
+    private readonly lineage?: LineageStore,
   ) {}
 
   async run(input: SaveInput): Promise<{ itemId: string; promoted: boolean }> {
@@ -42,6 +44,14 @@ export class SaveTranslation {
       approvedAt: input.approve ? timestamp : undefined,
     };
     await this.translationStore.upsert(translation);
+
+    if (this.lineage) {
+      try {
+        await this.lineage.append({ itemId: input.itemId, stage: "translated", content: input.koreanText, status: translation.status, sourceText: input.sourceText, at: timestamp });
+      } catch (err) {
+        console.warn(`[lineage] append failed for ${input.itemId}: ${(err as Error).message}`);
+      }
+    }
 
     // Approval and saving always succeed regardless of size — only promotion into the few-shot
     // corpus is gated, so an oversized source (an X Article) does not dominate every future prompt.
