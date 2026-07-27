@@ -86,9 +86,11 @@ X 공식 API/twitterapi.io 쓰기 대신 **Typefully**로 X에 올립니다(공�
 
 ### Y-3. `social_set_id` → `TYPEFULLY_SOCIAL_SET_ID`
 
-소셜셋(연결된 계정 묶음) id를 조회합니다. 프롬프트에서 `! ` 로 실행하면 출력이 이 세션에 들어옵니다:
+소셜셋(연결된 계정 묶음) id를 조회합니다. Y-2에서 발급한 키를 셸 변수에 넣고 조회하세요(두 줄을
+**한 번에** 실행 — 셸 변수는 명령마다 초기화됩니다). 프롬프트에서 `! ` 로 실행하면 출력이 이 세션에 들어옵니다:
 
 ```bash
+TYPEFULLY_API_KEY='여기에_Y-2_v2_키_붙여넣기'
 curl -s https://api.typefully.com/v2/social-sets -H "Authorization: Bearer $TYPEFULLY_API_KEY"
 ```
 
