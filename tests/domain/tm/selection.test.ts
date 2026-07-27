@@ -53,7 +53,35 @@ describe("selectPrecedents", () => {
     expect(got.every((p) => p.source.includes("$MNT"))).toBe(true);
   });
 
-  it("returns nothing when the draft has no anchors", () => {
+  it("returns nothing when no anchor AND no lexical match above threshold", () => {
     expect(selectPrecedents("plain text no anchors", [pair("$MNT x", "y")], 3)).toEqual([]);
+  });
+
+  it("fills an anchorless draft by lexical similarity above the threshold", () => {
+    const tm2 = [
+      pair("Tokenized stocks trade onchain every weekend", "주말 거래"),
+      pair("Hackathon builders gather in Seoul", "해커톤"),
+    ];
+    // draft has no $/#/@ anchors → anchor picks 0 → lexical fill
+    const got = selectPrecedents("Tokenized stocks now trade onchain on weekends", tm2, 3);
+    expect(got.map((e) => e.target)).toEqual(["주말 거래"]);
+  });
+
+  it("skips a weak lexical match (below threshold) rather than attaching it", () => {
+    const tm2 = [pair("Hackathon builders gather in Seoul for the demo day", "해커톤")];
+    expect(selectPrecedents("Tokenized stocks trade onchain", tm2, 3)).toEqual([]);
+  });
+
+  it("keeps anchor picks first, then lexical-fills the rest without duplicating", () => {
+    const tm2 = [
+      pair("$MNT staking on Mantle", "스테이킹"), // anchor: shares $mnt
+      pair("Staking rewards on Mantle network grow", "리워드"), // lexical: shares mantle/staking/network
+      pair("Unrelated hackathon in Seoul", "무관"),
+    ];
+    const got = selectPrecedents("$MNT staking on Mantle network", tm2, 3);
+    expect(got[0].target).toBe("스테이킹"); // anchor pick first
+    expect(got.map((e) => e.target)).toContain("리워드"); // lexical fill
+    expect(got.map((e) => e.target)).not.toContain("무관");
+    expect(new Set(got.map((e) => e.target)).size).toBe(got.length); // no duplicate
   });
 });
