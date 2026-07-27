@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm metrics:record [--month YYYY-MM]` — monthly X performance into the team workbook.** Reads
+  the human `KOL list` tab (X rows only, matched by header name), then for the KR official account
+  (`REFERENCE_X_HANDLE`, default `0xMantleKR`) and each X KOL fetches follower count + that month's
+  authored tweets and writes `followers / posts / views / engagement` to a machine-owned
+  `x-performance` tab, upserting one row per `(account, month)`. Raw numbers only — Avg/rates/
+  Cost-per-Impression stay as spreadsheet formulas; the human roster/contract/monthly tabs and cost
+  columns are never written. Telegram KOLs are left for manual entry (twitterapi.io is X-only). Cloud
+  mode + the OAuth `spreadsheets` scope + `GSHEET_ID` required; `skipIfLocal`-gated. Not yet
+  live-verified. See `docs/superpowers/specs/2026-07-27-x-performance-tracker-design.md`.
 - **Translation memory from @0xMantleKR.** The team's Korean X account publishes translations of
   Mantle_Official's English posts, so the two accounts form real approved EN→KO pairs.
   `pnpm collect:reference` collects @0xMantleKR into an isolated `output/x/reference/` store (never
