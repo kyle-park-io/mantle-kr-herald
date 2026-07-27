@@ -89,6 +89,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`history` auto-creates its tab, so one workbook can hold every machine tab.** `RecordPublish`
+  (behind `history:record` and `send:channels`) now ensures the `history` tab + header before
+  writing, mirroring how `metrics:record` handles `x-performance`. You can point `GSHEET_ID` at your
+  existing team workbook and skip `sheet:init` — a `send:channels` run in cloud mode no longer logs
+  `history record failed: HTTP 400` just because the sheet was created by hand or by `metrics:record`
+  rather than by `sheet:init`. (`targets` for `targets:list` is still the one tab you fill by hand.)
 - **`--x-bold` removed.** Unicode "bold" characters are skipped entirely by screen readers, are not
   matched by X search, and cost double the weighted length of a plain character. `pnpm format
   --x-bold unicode` and `--x-bold=unicode` now fail immediately, naming the reason. Write
@@ -96,6 +102,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Outbound `fetch` survives a broken IPv6 route (common on WSL2/Docker).** Node's default
+  Happy-Eyeballs family autoselection raced a resolvable-but-unroutable IPv6 address against IPv4 and
+  returned `ETIMEDOUT`, so a command could die with a bare `fetch failed` even though `curl` reached
+  the same host — hit while live-verifying `send:channels` against api.telegram.org. Every CLI now
+  disables family autoselection at startup (`src/cli/preferIpv4.ts`, equivalent to
+  `--no-network-family-autoselection`).
 - **A re-collect no longer reverts a stored X Article body to a bare link.** Neither
   `GET /twitter/tweet/thread_context` (gap-filling a missing thread root) nor a routine
   `advanced_search` re-normalize ever carries `article.blocks` — only `GET /twitter/article`, via
