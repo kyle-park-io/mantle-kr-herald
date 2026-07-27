@@ -38,6 +38,7 @@ const usecase = new PrepareTranslations(
   new JsonFewShotStore(paths.translationConfigDir),
   new FileTranslationConfig(paths.translationConfigDir),
   new JsonTranslationStore(paths.translationsDir),
+  new JsonFewShotStore(paths.translationConfigDir, "tm.json"),
 );
 
 const { worksheet, pending } = await usecase.run(selector);

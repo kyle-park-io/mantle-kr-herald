@@ -1,5 +1,6 @@
 import { DEFAULT_ROLE } from "../domain/translation/role";
 import { assembleItemBlock, assembleSharedContext } from "../domain/translation/promptAssembler";
+import { selectRelevantTm } from "../domain/tm/selection";
 import type { ContentItem } from "../domain/translation/contentItem";
 import type { ContentSource } from "../ports/ContentSource";
 import type { GlossaryStore } from "../ports/GlossaryStore";
@@ -15,6 +16,7 @@ export interface Selector {
 
 const DEFAULT_LIMIT = 20;
 const MAX_FEW_SHOTS = 8;
+const MAX_TM_FEW_SHOTS = 6;
 
 export class PrepareTranslations {
   constructor(
@@ -23,6 +25,7 @@ export class PrepareTranslations {
     private readonly fewShotStore: FewShotStore,
     private readonly config: TranslationConfig,
     private readonly translationStore: TranslationStore,
+    private readonly tmStore: FewShotStore,
     private readonly role: string = DEFAULT_ROLE,
   ) {}
 
@@ -31,11 +34,12 @@ export class PrepareTranslations {
     let pending = await this.source.loadPending(translatedIds);
     pending = this.applySelector(pending, selector);
 
-    const [glossary, styleGuide, locale, fewShots] = await Promise.all([
+    const [glossary, styleGuide, locale, fewShots, tm] = await Promise.all([
       this.glossaryStore.load(),
       this.config.loadStyleGuide(),
       this.config.loadLocale(),
       this.fewShotStore.load(),
+      this.tmStore.load(),
     ]);
 
     const header = assembleSharedContext({
@@ -43,7 +47,7 @@ export class PrepareTranslations {
       glossary,
       styleGuide,
       locale,
-      fewShots: fewShots.slice(-MAX_FEW_SHOTS),
+      fewShots: [...fewShots.slice(-MAX_FEW_SHOTS), ...selectRelevantTm(pending, tm, MAX_TM_FEW_SHOTS)],
     });
     const blocks = pending.map((item) => assembleItemBlock(item));
     const worksheet = [header, ...blocks].join("\n");
