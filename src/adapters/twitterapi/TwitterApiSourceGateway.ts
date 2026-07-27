@@ -1,7 +1,7 @@
-import type { SourceTweet } from "../../domain/models";
+import type { ArticleBlock, SourceTweet } from "../../domain/models";
 import type { SourceGateway } from "../../ports/SourceGateway";
 import type { IHttpClient } from "../../shared/http/IHttpClient";
-import { normalizeTweet, parseTweetList } from "./schemas";
+import { normalizeTweet, parseArticleContents, parseTweetList } from "./schemas";
 
 // Safety backstop so a non-terminating cursor or a full-history/large-thread crawl
 // can never loop forever (20 tweets/page → up to ~1000 tweets).
@@ -86,5 +86,10 @@ export class TwitterApiSourceGateway implements SourceGateway {
     return tweets
       .map((raw) => this.normalizeOrSkip(raw))
       .filter((t): t is SourceTweet => t !== null);
+  }
+
+  async fetchArticle(tweetId: string): Promise<ArticleBlock[]> {
+    const data = await this.client.get<unknown>("/twitter/article", { tweet_id: tweetId });
+    return parseArticleContents(data);
   }
 }

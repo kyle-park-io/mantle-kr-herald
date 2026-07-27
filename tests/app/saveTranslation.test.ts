@@ -36,4 +36,29 @@ describe("SaveTranslation", () => {
     expect(s.saved[0].approvedAt).toBe("2026-05-05T00:00:00.000Z");
     expect(s.fewShots).toEqual([{ source: "hi", target: "안녕", itemId: "x:1" }]);
   });
+
+  it("saves and approves an oversized (article-length) translation, but skips few-shot promotion", async () => {
+    const s = stores();
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const hugeSource = "x".repeat(2001); // one char over the promotion threshold
+    const res = await uc.run({ itemId: "x:article", source: "x", sourceText: hugeSource, koreanText: "번역", approve: true });
+
+    expect(res).toEqual({ itemId: "x:article", promoted: false });
+    // The translation itself still saves and approves normally.
+    expect(s.saved[0].status).toBe("approved");
+    expect(s.saved[0].approvedAt).toBe("2026-05-05T00:00:00.000Z");
+    expect(s.saved[0].sourceText).toBe(hugeSource);
+    // Only the few-shot promotion is skipped.
+    expect(s.fewShots).toHaveLength(0);
+  });
+
+  it("still promotes a translation right at the threshold", async () => {
+    const s = stores();
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const atThreshold = "x".repeat(2000);
+    const res = await uc.run({ itemId: "x:2", source: "x", sourceText: atThreshold, koreanText: "번역", approve: true });
+
+    expect(res.promoted).toBe(true);
+    expect(s.fewShots).toHaveLength(1);
+  });
 });

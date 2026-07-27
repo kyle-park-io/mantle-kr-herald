@@ -42,4 +42,11 @@ const res = await usecase.run({
   approve,
 });
 
-console.log(`saved ${res.itemId}${res.promoted ? " (approved → few-shot)" : ""}`);
+// `approve` (the CLI flag), not `res.promoted`, is the approval signal: an oversized source
+// (an X Article) is approved but deliberately skipped for few-shot promotion (SaveTranslation's
+// MAX_FEW_SHOT_SOURCE_LENGTH gate), and that must not read as "not approved".
+let suffix = "";
+if (approve) {
+  suffix = res.promoted ? " (approved → few-shot)" : " (approved; source too long for few-shot)";
+}
+console.log(`saved ${res.itemId}${suffix}`);

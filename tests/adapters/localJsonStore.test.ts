@@ -104,6 +104,92 @@ describe("LocalJsonStore", () => {
     expect(all[0].tweets.find((t) => t.id === "1")?.text).toBe("new");
   });
 
+  it("upsert preserves a stored article body when the incoming tweet carries no article field at all", async () => {
+    // Mirrors a gap-fill via fetchThread (thread_context): the endpoint never returns `article`,
+    // so a re-collect must not let that silently erase the stored body.
+    const store = new LocalJsonStore(dir);
+    const withArticle: CollectedThread = {
+      rootId: "1",
+      tweets: [
+        {
+          id: "1", conversationId: "1", text: "https://t.co/x", createdAt: "2026-01-01T00:00:00.000Z",
+          url: "u/1", authorUserName: "Mantle_Official", isReply: false, isQuote: false,
+          article: { title: "T", blocks: [{ type: "unstyled", text: "Body" }] },
+        },
+      ],
+      status: "active",
+      firstSeenAt: "2026-01-01T00:00:00.000Z",
+    };
+    await store.upsert([withArticle]);
+
+    const noArticleField: CollectedThread = {
+      ...withArticle,
+      tweets: [{ ...withArticle.tweets[0], article: undefined, text: "https://t.co/x" }],
+    };
+    await store.upsert([noArticleField]);
+
+    const all = await store.loadAll();
+    expect(all[0].tweets[0].article?.blocks).toEqual([{ type: "unstyled", text: "Body" }]);
+  });
+
+  it("upsert preserves a stored article body when the incoming article has no blocks (unfetched re-normalize)", async () => {
+    const store = new LocalJsonStore(dir);
+    const withArticle: CollectedThread = {
+      rootId: "1",
+      tweets: [
+        {
+          id: "1", conversationId: "1", text: "https://t.co/x", createdAt: "2026-01-01T00:00:00.000Z",
+          url: "u/1", authorUserName: "Mantle_Official", isReply: false, isQuote: false,
+          article: { title: "T", blocks: [{ type: "unstyled", text: "Body" }] },
+        },
+      ],
+      status: "active",
+      firstSeenAt: "2026-01-01T00:00:00.000Z",
+    };
+    await store.upsert([withArticle]);
+
+    const blocklessArticle: CollectedThread = {
+      ...withArticle,
+      tweets: [{ ...withArticle.tweets[0], article: { title: "T" }, metrics: { likeCount: 5 } }],
+    };
+    await store.upsert([blocklessArticle]);
+
+    const all = await store.loadAll();
+    expect(all[0].tweets[0].article?.blocks).toEqual([{ type: "unstyled", text: "Body" }]);
+    // The rest of the incoming tweet still wins (metrics legitimately change between runs).
+    expect(all[0].tweets[0].metrics?.likeCount).toBe(5);
+  });
+
+  it("upsert preserves a stored article body when the incoming article carries an empty blocks array", async () => {
+    // blocks: [] must count the same as "no body", not as "has a body" — otherwise an incoming
+    // empty-blocks article would beat (and permanently discard) a good stored one, the mirror image
+    // of the previous test. No current path produces blocks: [] on an incoming tweet, but the
+    // truthiness check that used to guard this (`incoming.article?.blocks`) was latently wrong.
+    const store = new LocalJsonStore(dir);
+    const withArticle: CollectedThread = {
+      rootId: "1",
+      tweets: [
+        {
+          id: "1", conversationId: "1", text: "https://t.co/x", createdAt: "2026-01-01T00:00:00.000Z",
+          url: "u/1", authorUserName: "Mantle_Official", isReply: false, isQuote: false,
+          article: { title: "T", blocks: [{ type: "unstyled", text: "Body" }] },
+        },
+      ],
+      status: "active",
+      firstSeenAt: "2026-01-01T00:00:00.000Z",
+    };
+    await store.upsert([withArticle]);
+
+    const emptyBlocksArticle: CollectedThread = {
+      ...withArticle,
+      tweets: [{ ...withArticle.tweets[0], article: { title: "T", blocks: [] } }],
+    };
+    await store.upsert([emptyBlocksArticle]);
+
+    const all = await store.loadAll();
+    expect(all[0].tweets[0].article?.blocks).toEqual([{ type: "unstyled", text: "Body" }]);
+  });
+
   it("watermark get returns undefined initially, then the set value", async () => {
     const store = new LocalJsonStore(dir);
     expect(await store.get("acct")).toBeUndefined();

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeTweet, parseTweetList } from "../../src/adapters/twitterapi/schemas";
+import { normalizeTweet, parseArticleContents, parseTweetList } from "../../src/adapters/twitterapi/schemas";
 
 const rawTweet = {
   id: "2071473308198158423",
@@ -86,5 +86,100 @@ describe("parseTweetList", () => {
     expect(parsed.tweets).toEqual([]);
     expect(parsed.hasNextPage).toBe(false);
     expect(parsed.nextCursor).toBe("");
+  });
+});
+
+describe("normalizeTweet — articles", () => {
+  it("maps the article summary that rides on a search result, without a body", () => {
+    const t = normalizeTweet({
+      ...rawTweet,
+      text: "https://t.co/pa1EbjOsdZ",
+      article: {
+        title: "Phase 1: ClawHack",
+        preview_text: "AI isn't just a narrative anymore.",
+        cover_media_img_url: "https://pbs.twimg.com/media/HFjTzAgaQAA1DzU.jpg",
+      },
+    });
+    expect(t.article?.title).toBe("Phase 1: ClawHack");
+    expect(t.article?.previewText).toBe("AI isn't just a narrative anymore.");
+    expect(t.article?.coverImageUrl).toBe("https://pbs.twimg.com/media/HFjTzAgaQAA1DzU.jpg");
+    // The search response never carries the body.
+    expect(t.article?.blocks).toBeUndefined();
+  });
+
+  it("leaves article undefined for an ordinary tweet, including an explicit null", () => {
+    expect(normalizeTweet(rawTweet).article).toBeUndefined();
+    expect(normalizeTweet({ ...rawTweet, article: null }).article).toBeUndefined();
+  });
+});
+
+describe("parseArticleContents", () => {
+  it("extracts the content blocks from a GET /twitter/article response", () => {
+    const blocks = parseArticleContents({
+      status: "success",
+      msg: "success",
+      article: {
+        title: "Phase 1: ClawHack",
+        viewCount: "90334", // a string here, a number on the tweet endpoint — must not be assumed
+        contents: [
+          { type: "header-two", text: "Introducing The Turing Test Hackathon" },
+          { type: "unstyled", text: "Bold me", inlineStyleRanges: [{ offset: 0, length: 4, style: "Bold" }] },
+          { type: "divider" },
+          { type: "image", url: "https://pbs.twimg.com/media/x.jpg", width: 1280, height: 720 },
+        ],
+      },
+    });
+
+    expect(blocks).toHaveLength(4);
+    expect(blocks[0]).toEqual({ type: "header-two", text: "Introducing The Turing Test Hackathon" });
+    expect(blocks[1].inlineStyleRanges).toEqual([{ offset: 0, length: 4, style: "Bold" }]);
+    expect(blocks[2]).toEqual({ type: "divider" });
+    expect(blocks[3].url).toBe("https://pbs.twimg.com/media/x.jpg");
+  });
+
+  it("returns an empty array when the response has no article or no contents", () => {
+    expect(parseArticleContents({ status: "error", msg: "not found", article: null })).toEqual([]);
+    expect(parseArticleContents({ article: { title: "t" } })).toEqual([]);
+  });
+
+  it("skips a malformed block instead of rejecting the whole article", () => {
+    const blocks = parseArticleContents({
+      article: { contents: [{ type: "unstyled", text: "kept" }, { text: "no type" }, { type: "unstyled", text: "also kept" }] },
+    });
+    expect(blocks.map((b) => b.text)).toEqual(["kept", "also kept"]);
+  });
+
+  it("keeps an unrecognised key on an inline style range instead of discarding it", () => {
+    // Same rationale as ArticleBlockRaw's passthrough, one level down: InlineStyleRangeRaw was a
+    // plain z.object, so a key twitterapi.io adds to a range in the future would be silently
+    // stripped and, since blocks are never re-fetched once stored, unrecoverable without a
+    // re-collect.
+    const blocks = parseArticleContents({
+      article: {
+        contents: [
+          {
+            type: "unstyled",
+            text: "hi",
+            inlineStyleRanges: [{ offset: 0, length: 2, style: "Bold", futureKey: "x" }],
+          },
+        ],
+      },
+    });
+    expect((blocks[0].inlineStyleRanges?.[0] as unknown as Record<string, unknown>)["futureKey"]).toBe("x");
+  });
+
+  it("keeps an unrecognised key (e.g. entityRanges) on the stored block instead of discarding it", () => {
+    // The design spec's "Known limitations" names entityRanges as the one thing it cannot yet map
+    // correctly — but the mapping can only ever be corrected later if the key survives collection.
+    const blocks = parseArticleContents({
+      article: {
+        contents: [
+          { type: "unstyled", text: "hi", entityRanges: [{ offset: 0, length: 2, key: 0 }] },
+        ],
+      },
+    });
+    expect((blocks[0] as unknown as Record<string, unknown>)["entityRanges"]).toEqual([
+      { offset: 0, length: 2, key: 0 },
+    ]);
   });
 });
