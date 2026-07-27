@@ -22,17 +22,24 @@ describe("TypefullySender", () => {
     expect(calls[0].auth).toBe("Bearer KEY");
     expect((calls[0].body as any).platforms.x.posts).toEqual([{ text: "a" }, { text: "b" }, { text: "c" }]);
     expect((calls[0].body as any).publish_at).toBe("now");
-    expect(res).toEqual({ postId: "77", url: "https://x.com/i/status/1" });
+    // postId must be the X tweet id parsed from x_published_url (what RecordImpressions looks up
+    // via twitterapi.io), not Typefully's own draft id ("77").
+    expect(res).toEqual({ postId: "1", url: "https://x.com/i/status/1" });
   });
 
   it("polls the draft for x_published_url when the create response lacks it", async () => {
-    const { fn } = fakeFetch([
+    const { fn, calls } = fakeFetch([
       { ok: true, status: 200, body: { id: 77 } },
       { ok: true, status: 200, body: {} },
       { ok: true, status: 200, body: { x_published_url: "https://x.com/i/status/9" } },
     ]);
     const res = await new TypefullySender("KEY", "42", fn, noSleep).send({ itemId: "x:1", type: "x", channel: "x", segments: ["a"] });
-    expect(res).toEqual({ postId: "77", url: "https://x.com/i/status/9" });
+    expect(res).toEqual({ postId: "9", url: "https://x.com/i/status/9" });
+    // The poll GETs must hit the specific draft's endpoint with the bearer auth carried through.
+    expect(calls[1].url).toContain("/v2/social-sets/42/drafts/77");
+    expect(calls[1].auth).toBe("Bearer KEY");
+    expect(calls[2].url).toContain("/v2/social-sets/42/drafts/77");
+    expect(calls[2].auth).toBe("Bearer KEY");
   });
 
   it("returns the draft id without a url when the poll never resolves", async () => {

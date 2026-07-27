@@ -70,4 +70,33 @@ describe("SendChannels", () => {
     expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
     expect(sends).toBe(1);
   });
+
+  it("sends only the item(s) named by the ids filter", async () => {
+    const store = fakeStore([
+      rendering({ itemId: "x:1", channel: "telegram" }),
+      rendering({ itemId: "x:2", channel: "telegram" }),
+    ]);
+    const { ledger, added } = fakeLedger();
+    const sender = okSender("telegram");
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger).run({
+      targets: ["telegram"],
+      ids: new Set(["x:2"]),
+    });
+    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(added.map((e) => e.itemId)).toEqual(["x:2"]);
+  });
+
+  it("fails fast on an over-limit segment instead of calling the sender (no 400→retry loop)", async () => {
+    // "a".repeat(5000) survives emitTelegramBot's flattening/escaping untouched, so its visible
+    // length (5000) genuinely exceeds TELEGRAM_MAX (4096) — this is a real overLimit segment
+    // produced by the real emitter, not a stubbed/faked EmitResult.
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: "a".repeat(5000) })]);
+    const { ledger, added } = fakeLedger();
+    let sends = 0;
+    const sender: ChannelSender = { name: "telegram", send: async () => { sends++; return { postId: "p" }; } };
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger).run({ targets: ["telegram"] });
+    expect(res).toEqual({ sent: 0, skipped: 0, failed: 1 });
+    expect(sends).toBe(0);
+    expect(added).toEqual([]);
+  });
 });

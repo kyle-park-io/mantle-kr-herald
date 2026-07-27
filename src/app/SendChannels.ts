@@ -53,8 +53,16 @@ export class SendChannels {
         skipped += 1;
         continue;
       }
+      const emitResult = emit(r.text, DELIVERY_DESTINATION[r.channel]);
+      if (emitResult.segments.some((s) => s.overLimit)) {
+        // Sending would just 400 forever (the emitter refuses to split further) — fail fast
+        // instead of hammering the API on every rerun. A human has to edit the rendering.
+        console.warn(`[send] ${key} skipped: a segment exceeds the channel limit — edit the rendering`);
+        failed += 1;
+        continue;
+      }
       try {
-        const segments = emit(r.text, DELIVERY_DESTINATION[r.channel]).segments.map((s) => s.text);
+        const segments = emitResult.segments.map((s) => s.text);
         const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments });
         const sentAt = this.now();
         // The send already happened — a ledger-write failure from here on must NOT be
