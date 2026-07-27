@@ -13,6 +13,19 @@
 
 추적되는 것은 `*.example.*` 스켈레톤뿐입니다. 실제 파일은 `.gitignore`로 제외됩니다.
 
+### 어떤 파일이 자동으로 갱신되나 (자동 vs 수기)
+
+| 파일 | 갱신 방식 |
+| --- | --- |
+| `translation/few-shot.json` | **자동** — `translate:save --approve` 시 예시로 승격 |
+| `conversion/few-shot.{x,announcement,kol,pr}.json` | **자동** — `convert:save --approve` 시 승격 |
+| `translation/tm.json` | **반자동** — `tm:promote`(사람이 pair를 확인한 뒤) |
+| `translation/glossary.json` | **수기** — `pnpm glossary add …` 또는 직접 편집 |
+| `translation/style-guide.md` · `locale.json` · `conversion/*.md` · `checklist.*.md` | **수기** — 직접 편집만 |
+
+few-shot(자동 성장분)만 승인으로 자라고, 용어집·문체·로케일·채널 지침은 **의도적으로 사람이 큐레이션**합니다
+(승인된 번역에서 용어를 자동 추출하면 잘못된 역어가 섞일 수 있어서). 자동으로 자라는 만큼 §6 백업이 중요합니다.
+
 ## 2. 어떻게 받나 — 두 갈래입니다
 
 ### 외부·오픈소스 사용자
@@ -54,13 +67,14 @@ wc -l translation/style-guide.md conversion/x.md conversion/announcement.md
 용어집이 `0 entries`이거나 스타일 가이드가 열 줄 남짓이면 **스켈레톤을 받은 것**입니다. 다시
 요청하세요.
 
-## 4. 원본은 어디 있나
+## 4. 원본·정본
 
-스티어링 파일은 **KR 팀 Lark 문서에서 이관해 온 것**이고, 그 Lark 문서가 정본입니다. 각 파일 맨 위
-`> 출처:` 줄에 원본 링크가 적혀 있습니다.
+스티어링 파일은 **KR 팀 Lark 문서에서 초기 이관**해 온 것이고, 각 파일 맨 위 `> 출처:` 줄에 그 Lark
+링크가 적혀 있습니다.
 
-규칙이 바뀌면 **Lark를 먼저 고치고**, 그 다음 이 파일에 반영합니다. 반대로 하면 다음에 파일을 다시
-받는 사람이 옛 규칙을 받게 됩니다.
+**이제는 이 저장소의 파일이 유지보수 정본입니다** — 규칙이 바뀌면 **여기를 고치세요.** 필요하면 위 Lark
+문서(초기 이관본)에도 반영할 수 있습니다. Lark를 정본으로 되돌리지 마세요: 승인으로 자동으로 자란
+few-shot은 Lark에 없고, 정기 백업은 §6의 `config:push`(→ Google Drive)가 담당합니다.
 
 ## 5. 잃어버렸을 때
 
@@ -68,7 +82,9 @@ wc -l translation/style-guide.md conversion/x.md conversion/announcement.md
 업그레이드 노트). 이 파일들이 추적 대상에서 빠지던 그 커밋에서 벌어진 일입니다.
 
 **`pnpm config:init`은 이 상황의 복구 방법이 아닙니다** — 스켈레톤으로 조용히 덮어씁니다.
-저장소 히스토리에 마지막으로 추적되던 시점이 남아 있으니 거기서 되살립니다.
+
+**Drive 스냅샷이 있으면 `pnpm config:pull`이 1순위 복원입니다**(§6 — 최신 스냅샷을 그대로 되살림).
+스냅샷이 없거나 `config:push` 이전 데이터라면, 저장소 히스토리에 마지막으로 추적되던 시점에서 되살립니다.
 
 ```bash
 # <커밋> = 파일들이 아직 추적되던 마지막 커밋
@@ -81,9 +97,24 @@ done
 
 ## 6. 백업
 
-**저장소 밖에 사본을 두세요.** git은 더 이상 이 파일들을 지켜주지 않습니다 — 의도한 설계입니다.
-승인이 쌓일수록(few-shot 플라이휠) 저장소 히스토리의 마지막 스냅샷과 멀어지므로, 히스토리 복구는
-그 시점까지만 되돌려 줍니다.
+git은 더 이상 이 파일들을 지켜주지 않고(의도한 설계) few-shot 플라이휠로 계속 자라므로, **정기 백업이
+필요합니다.**
+
+**권장 — Google Drive 스냅샷 (`config:push`/`config:pull`):**
+
+```bash
+pnpm config:push              # 스티어링 전체를 Drive에 타임스탬프 스냅샷으로 백업
+pnpm config:pull --dry-run    # 최신 스냅샷과 로컬의 차이 미리보기
+pnpm config:pull              # 최신 스냅샷으로 복원 (덮어쓰기 전 output/archive/steering-<stamp>/에 로컬 백업)
+```
+
+스냅샷은 **덮어쓰지 않고 히스토리로 쌓여** 이전 상태로 롤백할 수 있습니다. 처음 `config:push`는 Drive의
+`Mantle KR Herald` 폴더 밑에 `steering-config` 폴더를 만들고 id를 알려주니 `.env`의
+`GDRIVE_CONFIG_FOLDER_ID`에 넣으세요. (팀원이 `config:pull`하려면 push한 사람과 **같은 Google
+자격증명**을 쓰거나 OAuth 스코프를 `drive.file`→`drive`로 넓혀야 합니다 — `drive.file`은 그 자격증명이
+만든 파일만 보이기 때문입니다.)
+
+**오프라인 사본(추가):**
 
 ```bash
 cp -r translation conversion ~/mantle-steering-backup-$(date +%Y%m%d)/
