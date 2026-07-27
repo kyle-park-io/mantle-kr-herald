@@ -13,7 +13,10 @@
 
 ### T-1. BotFather로 봇 생성 → 토큰
 
-1. Telegram에서 **@BotFather** 검색 → `/newbot` → 표시 이름과 username(`..._bot`) 지정
+1. Telegram에서 **@BotFather** 검색 → `/newbot` → 이름 지정:
+   - **표시 이름(name): `Mantle KR Herald`** (동의 화면 등에 보이는 이름 — 아무거나 돼도 이걸 권장)
+   - **username: `mantle_kr_herald_bot`** (‼️ **전역에서 유일**해야 하고 반드시 `bot`으로 끝남 — 이미
+     있으면 `mantle_kr_herald2_bot` 처럼 뒤에 숫자를 붙이세요)
 2. BotFather가 주는 토큰(`123456789:ABCdef...`)을 `.env`에:
    ```bash
    TELEGRAM_BOT_TOKEN=123456789:ABCdef...
@@ -24,8 +27,9 @@
 
 봇은 **자기가 들어가 있는** 채널/그룹에만 발행할 수 있고, 사람이 먼저 추가해야 합니다(자동 참여 없음).
 
-- 대상 채널(**처음엔 테스트 채널** 권장) → **관리자(Administrators) 추가** → 봇 선택 →
-  **"메시지 게시(Post messages)" 권한 켜기**.
+- 대상 채널 → **관리자(Administrators) 추가** → 봇 선택 → **"메시지 게시(Post messages)" 권한 켜기**.
+  - **처음엔 테스트 채널** 권장 — 이름 예: **`Mantle KR Herald — 발송 테스트`**. 검증이 끝나면 실제
+    공지 채널로 바꾸면 됩니다(`TELEGRAM_CHAT_ID`만 교체).
 
 ### T-3. `chat_id` 확인 → `TELEGRAM_CHAT_ID`
 
@@ -48,6 +52,7 @@
 ```bash
 pnpm send:channels --target telegram
 ```
+
 승인된 `telegram` 렌더링이 그 채널에 뜨면 성공. (보낼 게 없으면 `sent 0` — §"보낼 게 없을 때" 참고.)
 
 ---
@@ -73,10 +78,13 @@ X 공식 API/twitterapi.io 쓰기 대신 **Typefully**로 X에 올립니다(공�
 ### Y-3. `social_set_id` → `TYPEFULLY_SOCIAL_SET_ID`
 
 소셜셋(연결된 계정 묶음) id를 조회합니다. 프롬프트에서 `! ` 로 실행하면 출력이 이 세션에 들어옵니다:
+
 ```bash
 curl -s https://api.typefully.com/v2/social-sets -H "Authorization: Bearer $TYPEFULLY_API_KEY"
 ```
+
 응답에서 그 X 계정이 연결된 셋의 `id`를 `.env`에:
+
 ```bash
 TYPEFULLY_SOCIAL_SET_ID=42
 ```
@@ -86,6 +94,7 @@ TYPEFULLY_SOCIAL_SET_ID=42
 ```bash
 pnpm send:channels --target x
 ```
+
 승인된 `x` 렌더링이 Typefully를 통해 그 X 계정에 발행되고 트윗 URL이 기록되면 성공.
 
 ---
@@ -112,12 +121,12 @@ pnpm send:channels --ids x:123,x:456  # 특정 아이템만
 
 ## 자주 나는 오류
 
-| 증상                                            | 원인 / 해결                                                               |
-| ----------------------------------------------- | ------------------------------------------------------------------------- |
-| Telegram `400 chat not found`                   | 봇이 그 채널에 없거나 `TELEGRAM_CHAT_ID` 오타 → 봇을 관리자로 추가, id 재확인 |
-| Telegram `403 ... not enough rights`            | 봇에 "메시지 게시" 권한 없음 → 채널 관리자 설정에서 켜기                    |
-| Typefully `401`                                 | API 키가 v1이거나 오타 → Settings → API에서 **v2** 키                      |
-| `social_set_id`를 모름                          | `GET /v2/social-sets`로 목록 조회(Y-3)                                     |
-| 발행했는데 아무 것도 안 나감 (`sent 0`)          | 보낼 승인 렌더링 없음 → 2차 검수에서 telegram/x 렌더링을 approved로        |
+| 증상                                    | 원인 / 해결                                                                   |
+| --------------------------------------- | ----------------------------------------------------------------------------- |
+| Telegram `400 chat not found`           | 봇이 그 채널에 없거나 `TELEGRAM_CHAT_ID` 오타 → 봇을 관리자로 추가, id 재확인 |
+| Telegram `403 ... not enough rights`    | 봇에 "메시지 게시" 권한 없음 → 채널 관리자 설정에서 켜기                      |
+| Typefully `401`                         | API 키가 v1이거나 오타 → Settings → API에서 **v2** 키                         |
+| `social_set_id`를 모름                  | `GET /v2/social-sets`로 목록 조회(Y-3)                                        |
+| 발행했는데 아무 것도 안 나감 (`sent 0`) | 보낼 승인 렌더링 없음 → 2차 검수에서 telegram/x 렌더링을 approved로           |
 
 > **보안:** 봇 토큰·API 키·`.env`는 절대 공유·커밋하지 마세요. 각자 로컬에서만 사용합니다.
