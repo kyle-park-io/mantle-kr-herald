@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm config:push` / `pnpm config:pull [--dry-run]` — steering config backup & share via
+  Drive.** The git-ignored steering config (`translation/` + `conversion/`, 15 files,
+  `*.example.*` skeletons excluded) is the single most valuable, evolving artifact in the
+  project — the few-shot corpuses auto-grow on every `translate:save`/`convert:save --approve`
+  and `translation/tm.json` grows on `tm:promote` — yet it lived only in one person's working
+  tree, with no version control and no backup. `config:push` bundles the config into one JSON
+  manifest and uploads it as a timestamped `steering-config-<stamp>.json` snapshot to a
+  dedicated Drive folder (auto-provisioned on first run via `GoogleDriveProvisioner`, printing
+  `GDRIVE_CONFIG_FOLDER_ID=<id>` to add to `.env`); snapshots accumulate, so any past state stays
+  recoverable. `config:pull` finds the newest snapshot and restores it, backing up the current
+  local config to `output/archive/steering-<stamp>/` **before** writing anything (a backup
+  failure aborts the pull before any file is touched); `--dry-run` reports which files are new/
+  modified without writing. Single-maintainer model — push is local→Drive, pull is Drive→local,
+  last push wins, no multi-writer merge. Not storage-mode-gated: it only needs Google auth and
+  the folder id, same as `google:auth`. See
+  `docs/superpowers/specs/2026-07-28-config-sync-design.md`.
 - **`pnpm lineage [itemId]` — always-on per-item lineage.** Every save through the four
   content-producing use-cases (`SaveTranslation`, `SaveConversion`, `SaveRendering`,
   `ApproveRendering`) now appends a stage snapshot — best-effort, never blocks the save — to

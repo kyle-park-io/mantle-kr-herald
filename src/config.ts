@@ -154,6 +154,10 @@ export function loadTypefullyConfig(): TypefullyConfig {
   return { apiKey, socialSetId };
 }
 
+export function loadGoogleConfigFolder(): string | undefined {
+  return process.env.GDRIVE_CONFIG_FOLDER_ID?.trim() || undefined;
+}
+
 export type { StorageMode };
 
 export function loadStorageMode(): StorageMode {

@@ -35,6 +35,8 @@
     "archive": "tsx src/cli/archive.ts",
     "clean": "tsx src/cli/clean.ts",
     "config:init": "tsx src/cli/config-init.ts",
+    "config:push": "tsx --env-file-if-exists=.env src/cli/config-push.ts",
+    "config:pull": "tsx --env-file-if-exists=.env src/cli/config-pull.ts",
     "glossary": "tsx src/cli/glossary.ts",
     "google:auth": "tsx --env-file-if-exists=.env src/cli/google-auth.ts",
     "serve": "tsx --env-file-if-exists=.env src/cli/serve.ts",
