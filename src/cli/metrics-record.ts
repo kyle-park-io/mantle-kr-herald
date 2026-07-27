@@ -13,7 +13,13 @@ import { currentMonth } from "../domain/metrics/window";
 skipIfLocal("metrics:record");
 
 const month = argValue("--month") ?? currentMonth(new Date());
-const officialHandle = process.env.REFERENCE_X_HANDLE?.trim() || "0xMantleKR";
+const officialHandle = process.env.REFERENCE_X_HANDLE?.trim().replace(/^@/, "") || "0xMantleKR";
+
+if (month !== currentMonth(new Date())) {
+  console.warn(
+    `[metrics] ${month} is a past month — high-volume accounts may undercount (the fetch pages newest-first and caps at MAX_PAGES). Current-month runs are exact.`,
+  );
+}
 
 const auth = await createGoogleAuth(loadGoogleAuthConfig());
 const sheet = new GoogleSheetClient(auth, loadGoogleSheetConfig().spreadsheetId);

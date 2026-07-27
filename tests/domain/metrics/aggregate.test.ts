@@ -28,4 +28,7 @@ describe("aggregateMonth", () => {
   it("returns zeros for empty input", () => {
     expect(aggregateMonth([], win)).toEqual({ posts: 0, views: 0, engagement: 0 });
   });
+  it("includes a tweet at exactly startISO (inclusive lower bound)", () => {
+    expect(aggregateMonth([tw("2026-07-01T00:00:00.000Z", { viewCount: 5 })], win)).toEqual({ posts: 1, views: 5, engagement: 0 });
+  });
 });

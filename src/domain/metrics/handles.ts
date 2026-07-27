@@ -5,7 +5,7 @@ export function extractXHandle(platform: string, link: string): string | undefin
   if (!/^\s*(x|twitter)\s*$/i.test(platform)) return undefined;
   const s = (link ?? "").trim();
   if (s === "") return undefined;
-  const url = /^https?:\/\/(?:www\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})/i.exec(s);
+  const url = /^https?:\/\/(?:www\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})(?=$|[/?#])/i.exec(s);
   if (url) return url[1];
   const bare = /^@?([A-Za-z0-9_]{1,15})$/.exec(s);
   if (bare) return bare[1];

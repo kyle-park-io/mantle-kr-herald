@@ -18,4 +18,10 @@ describe("extractXHandle", () => {
     expect(extractXHandle("X", "")).toBeUndefined();
     expect(extractXHandle("X", "https://t.me/foo")).toBeUndefined();
   });
+  it("rejects a >15-char first path segment instead of truncating it", () => {
+    expect(extractXHandle("X", "https://x.com/ThisHandleIsWayTooLong")).toBeUndefined();
+  });
+  it("resolves the handle from a profile URL with a trailing path", () => {
+    expect(extractXHandle("X", "https://x.com/marine_x/status/123")).toBe("marine_x");
+  });
 });
