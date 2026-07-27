@@ -18,3 +18,8 @@ export interface PublishRecord {
 
 export const TARGETS_HEADER = ["channel", "name", "address", "active", "notes"];
 export const HISTORY_HEADER = ["itemId", "type", "channel", "postId", "url", "status", "publishedAt", "impressions", "impressionsAt"];
+
+export interface RosterEntry {
+  name: string;
+  handle: string; // X handle without @
+}
