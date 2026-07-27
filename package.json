@@ -31,6 +31,7 @@
     "sheet:init": "tsx --env-file-if-exists=.env src/cli/sheet-init.ts",
     "doctor": "tsx --env-file-if-exists=.env src/cli/doctor.ts",
     "status": "tsx --env-file-if-exists=.env src/cli/status.ts",
+    "lineage": "tsx src/cli/lineage.ts",
     "archive": "tsx src/cli/archive.ts",
     "clean": "tsx src/cli/clean.ts",
     "config:init": "tsx src/cli/config-init.ts",

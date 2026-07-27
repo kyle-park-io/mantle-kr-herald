@@ -9,6 +9,7 @@ import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import { ALL_CHANNELS, type Channel } from "../domain/formatting/models";
 import type { PendingRendering } from "../app/PrepareRefinements";
 import { paths } from "../paths";
+import { buildLineage } from "./lineage-wiring";
 
 const id = argValue("--id");
 const type = argValue("--type") as ConversionType | undefined;
@@ -37,5 +38,10 @@ if (!match) {
 }
 
 const text = (await readFile(file, "utf8")).trim();
-const res = await new SaveRendering(formattingStore).run({ itemId: match.itemId, type: match.type, channel: match.channel, text });
+const res = await new SaveRendering(formattingStore, undefined, buildLineage()).run({
+  itemId: match.itemId,
+  type: match.type,
+  channel: match.channel,
+  text,
+});
 console.log(`saved ${res.itemId}/${res.type}/${res.channel} (refined)`);

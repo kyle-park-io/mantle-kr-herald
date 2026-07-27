@@ -34,6 +34,7 @@ export const paths = {
   publishDir: join(OUTPUT_DIR, "publish"),
   publishLocalDir: join(OUTPUT_DIR, "publish", "local"),
   archiveDir: join(OUTPUT_DIR, "archive"),
+  lineageDir: join(OUTPUT_DIR, "lineage"),
   translationConfigDir: join(REPO_ROOT, "translation"),
   conversionConfigDir: join(REPO_ROOT, "conversion"),
 } as const;
