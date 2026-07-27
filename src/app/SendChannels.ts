@@ -57,7 +57,13 @@ export class SendChannels {
         const segments = emit(r.text, DELIVERY_DESTINATION[r.channel]).segments.map((s) => s.text);
         const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments });
         const sentAt = this.now();
-        await this.ledger.add({ itemId: r.itemId, type: r.type, channel: r.channel, postId: res.postId, url: res.url, senderName: sender.name, sentAt });
+        // The send already happened — a ledger-write failure from here on must NOT be
+        // reported as a "failed" send (that would make the next run re-send it live).
+        try {
+          await this.ledger.add({ itemId: r.itemId, type: r.type, channel: r.channel, postId: res.postId, url: res.url, senderName: sender.name, sentAt });
+        } catch (err) {
+          console.warn(`[send] ⚠ ${key} was SENT but could NOT be recorded in the ledger: ${(err as Error).message} — a rerun will re-send it; reconcile manually.`);
+        }
         if (this.record) {
           try {
             await this.record({ itemId: r.itemId, type: r.type, channel: r.channel, postId: res.postId, url: res.url, status: "posted", publishedAt: sentAt });

@@ -57,4 +57,17 @@ describe("SendChannels", () => {
     expect(res).toEqual({ sent: 1, skipped: 0, failed: 1 });
     expect(added.map((e) => e.itemId)).toEqual(["x:2"]); // failed one is NOT ledgered → retryable
   });
+
+  it("counts a post-send ledger-write failure as sent, not failed — never re-sends a live post", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram" })]);
+    const ledger = {
+      loadKeys: async () => new Set<string>(),
+      add: async () => { throw new Error("disk full"); },
+    };
+    let sends = 0;
+    const sender: ChannelSender = { name: "telegram", send: async () => { sends++; return { postId: "p" }; } };
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger).run({ targets: ["telegram"] });
+    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(sends).toBe(1);
+  });
 });
