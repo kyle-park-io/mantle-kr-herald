@@ -16,8 +16,7 @@ describe("toProposedRecords", () => {
 describe("renderPairsReview", () => {
   it("shows the ids, score, and both texts", () => {
     const md = renderPairsReview([pair]);
-    expect(md).toContain("x:1");
-    expect(md).toContain("x:100");
+    expect(md).toContain("x:1 ↔ x:100");
     expect(md).toContain("score 2");
     expect(md).toContain("$MNT rewards #Mantle");
     expect(md).toContain("$MNT 리워드 #Mantle");
