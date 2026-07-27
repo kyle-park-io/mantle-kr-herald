@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Translation memory from @0xMantleKR.** The team's Korean X account publishes translations of
+  Mantle_Official's English posts, so the two accounts form real approved EN→KO pairs.
+  `pnpm collect:reference` collects @0xMantleKR into an isolated `output/x/reference/` store (never
+  the translation queue); `pnpm tm:measure` reports the account's post count and estimated backfill
+  cost before a full crawl; `pnpm tm:pair` proposes EN↔KO pairs by shared cashtag/hashtag/mention
+  anchors within a temporal window and writes a review worksheet; `pnpm tm:promote` writes the pairs
+  a human accepted into `translation/tm.json`. `translate:prepare` now inlines the curated few-shot
+  (unchanged) **plus** the TM pairs most relevant to the batch (by same-language anchor overlap),
+  replacing the old last-8-by-recency rule. The reference account handle is `REFERENCE_X_HANDLE`
+  (default `0xMantleKR`). See `docs/superpowers/specs/2026-07-27-translation-memory-backfill-design.md`.
 - **X Article bodies are collected.** `advanced_search` has always returned X Articles inside a
   normal `from:<user>` result, but their tweet `text` is a bare t.co link — a 12,000-character
   report entered the translation queue as one URL, silently. `SourceTweet` now carries an optional
