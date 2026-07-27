@@ -174,32 +174,47 @@ review 폴더에 `.md`가 올라오고 공유한 팀원이 열어볼 수 있으�
 
 Drive 발행만 쓸 거면 건너뛰어도 됩니다. **Google Sheet를 읽고 쓰는 명령**(`sheet:init`,
 `targets:list`, `history:record`, `impressions:record`, `metrics:record`)을 쓰려면 위 OAuth를 그대로
-재사용하되, **스코프를 하나 넓히고 재인증**해야 합니다.
+재사용하되, **① GCP에서 Sheets API를 켜고 ② 스코프를 하나 넓혀 재인증**해야 합니다.
 
-1. **`spreadsheets` 스코프 추가** — `.env` (‼️ `drive.file`을 반드시 함께 유지하세요. 빼면 Drive
+> **⚠️ 대상 시트는 반드시 네이티브 Google 시트여야 합니다 — `.xlsx`는 안 됩니다.** Sheets API v4는
+> 네이티브 Google 시트(MIME `application/vnd.google-apps.spreadsheet`)에만 동작하고, Drive에 올린
+> `.xlsx` 바이너리는 — Sheets UI의 "Office 편집 모드"로 열려 있어도 — 접근을 거부합니다. `.xlsx`가
+> 있으면 Drive에서 **'파일 → Google Sheets로 저장'**(또는 업로드 시 자동 변환 설정)으로 변환한 뒤,
+> 변환된 시트의 id를 쓰세요.
+
+1. **GCP에서 Google Sheets API 사용 설정** — 공통 1에서 Drive API를 켠 것과 **별개**입니다.
+   콘솔 → **APIs & Services → Library → "Google Sheets API" → Enable**
+   (또는 `https://console.cloud.google.com/apis/library/sheets.googleapis.com`). 안 켜면 시트 호출이
+   `403 SERVICE_DISABLED`("Google Sheets API has not been used … or it is disabled")로 실패합니다.
+   방금 켰다면 전파에 **몇 분** 걸립니다.
+2. **`spreadsheets` 스코프 추가** — `.env` (‼️ `drive.file`을 반드시 함께 유지하세요. 빼면 Drive
    발행이 깨집니다):
    ```bash
    GOOGLE_OAUTH_SCOPE="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets"
    ```
-2. **재인증** — 스코프는 **토큰에 박혀** 발급되므로, `.env`의 SCOPE만 바꾸고 재인증을 안 하면 예전
+3. **재인증** — 스코프는 **토큰에 박혀** 발급되므로, `.env`의 SCOPE만 바꾸고 재인증을 안 하면 예전
    토큰엔 여전히 `drive.file`만 있어 시트 접근이 `403`입니다. 다시:
    ```bash
    pnpm google:auth
    ```
    브라우저에서 새 스코프를 승인하고, 출력된 `GOOGLE_OAUTH_REFRESH_TOKEN`을 `.env`에 갱신합니다.
-3. **`GSHEET_ID` 설정** — 대상 스프레드시트 id를 `.env`에 넣습니다.
+4. **`GSHEET_ID` 설정** — 대상 스프레드시트 id를 `.env`에 넣습니다.
    - **데이터 허브(§9a/§9b)** 를 새로 만들 때: `pnpm sheet:init`이 `targets`/`history` 탭을 갖춘 시트를
      만들고 id를 출력합니다.
    - **성과 트래커(`metrics:record`)** 는 팀이 이미 쓰는 워크북(예: KOL 워크시트)을 대상으로 합니다.
      그 시트 URL `docs.google.com/spreadsheets/d/`**`<이 부분>`**`/edit` 이 id입니다. `x-performance`
      탭은 없으면 툴이 만듭니다.
-4. **공유는 파이프라인엔 불필요** — OAuth는 **당신 계정을 대행**하므로, `google:auth`한 계정이
+5. **공유는 파이프라인엔 불필요** — OAuth는 **당신 계정을 대행**하므로, `google:auth`한 계정이
    소유하거나 접근 가능한 시트면 그대로 됩니다(서비스계정처럼 "자기가 만든 것만" 제약 없음). 팀원이
    소유한 시트라면 **당신 계정에 편집 권한으로 공유**만 되어 있으면 됩니다. 팀원에게 보여주는 공유는
    별개입니다.
-5. **검증** — `pnpm doctor --live`가 실제로 부여된 스코프와 `GSHEET_ID` 접근 여부까지 확인해 줍니다.
-   `spreadsheets`가 안 보이거나 시트 접근이 안 되면 2~4를 다시 확인하세요.
 
+> **검증:** `pnpm doctor --live`가 부여된 스코프를 출력합니다(`spreadsheets`가 보여야 함). 다만
+> doctor의 **`Google Sheet file` 접근 체크는 Drive API(`drive.file`)** 로 확인하는데, 이건 **앱이 만든
+> 파일만** 봅니다 — 그래서 `sheet:init`이 아니라 **직접 만든/변환한 시트(성과 트래커 워크북)** 면 이
+> 한 줄은 Sheets API를 켜고 스코프가 맞아도 계속 `✗`로 뜹니다(오탐). 이때는 실제 명령(`pnpm
+> metrics:record` 등)으로 확인하세요 — 그쪽은 Sheets API를 씁니다.
+>
 > 이 명령들은 `HERALD_STORAGE_MODE=cloud`여야 스킵되지 않고 실행됩니다. 검증만 하고 다시 `local`로
 > 돌려도 됩니다.
 
