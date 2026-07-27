@@ -59,11 +59,12 @@ HERALD_STORAGE_MODE=local|cloud
 언급하는 에러와 함께 `pnpm doctor` 실행을 안내하며 즉시 실패합니다
 (`src/storage/mode.ts`의 `parseStorageMode`).
 
-**저장 모드를 실제로 읽어서 검사하는 명령은 소수뿐입니다** — 위 네 개 CLI(`drive-init`/
-`sheet-init`/`targets-list`/`history-record`), `pnpm doctor`, `pnpm drive:publish`, `pnpm serve`가
-전부입니다. `pnpm collect`, `translate:*`, `convert:*`, `format`, `pnpm archive`, `pnpm clean` 등
-나머지 명령은 저장 모드를 아예 참조하지 않으므로, 모드가 없거나 잘못돼도 이들에는 애초에 영향이
-없습니다. `pnpm status`도 이쪽에 가깝지만 이유가 다릅니다 — 클라우드 명령이 아니라 읽기 전용
+**저장 모드를 실제로 읽어서 검사하는 명령은 소수뿐입니다** — 위 여섯 개 CLI(`drive:init`/
+`sheet:init`/`targets:list`/`history:record`/`impressions:record`/`metrics:record`), `pnpm doctor`,
+`pnpm drive:publish`, `pnpm serve`가 전부입니다. `pnpm collect`, `collect:reference`, `tm:*`,
+`translate:*`, `convert:*`, `format`, `pnpm archive`, `pnpm clean` 등 나머지 명령은 저장 모드를 아예
+참조하지 않으므로(참고 계정 수집·번역 메모리 명령은 어느 모드에서도 동일하게 동작합니다), 모드가
+없거나 잘못돼도 이들에는 애초에 영향이 없습니다. `pnpm status`도 이쪽에 가깝지만 이유가 다릅니다 — 클라우드 명령이 아니라 읽기 전용
 진단이므로, `src/cli/status.ts`는 `parseStorageMode`도 `tryParseStorageMode`도 import하지 않고
 저장 모드를 전혀 읽지 않은 채 `output/` 아래 로컬 저장소 파일들만 읽어 계산합니다. 그래서 모드가
 없거나 잘못 설정돼 있어도 멈추지 않으며, 아래 표처럼 `local`과 `cloud`에서 정확히 동일하게 경고를
@@ -72,15 +73,14 @@ HERALD_STORAGE_MODE=local|cloud
 | | `local` | `cloud` |
 |---|---|---|
 | `collect` → `translate` → `convert` → `format` | 동일하게 동작 | 동일하게 동작 |
-| `drive:init`, `sheet:init`, `targets:list`, `history:record` (네 개) | `"<command>: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)"`을 출력하고 종료 코드 `0` | 정상 실행 |
+| `drive:init`, `sheet:init`, `targets:list`, `history:record`, `impressions:record`, `metrics:record` (여섯 개) | `"<command>: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)"`을 출력하고 종료 코드 `0` | 정상 실행 |
 | `drive:publish` | `output/publish/local/{review,approved}/`에 마크다운 저장 | Google/Lark Drive에 업로드 |
 | `pnpm archive` | 완료된 워크시트만 옮길 뿐 `output/publish/local/`은 건드리지 않습니다 — 그 트리의 백업은 사용자 책임입니다(§1) | Drive가 원본이므로 보조 수단 |
 | `pnpm status` | 동기화되지 않은/오래된(stale) 항목이 있으면 `cloud`와 동일하게 `⚠`로 경고 | 동기화되지 않은/오래된(stale) 항목이 있으면 `⚠`로 경고 |
 | `pnpm doctor` | 클라우드 자격증명이 없어도 전부 `warn`, 종료 코드 `0` (Storage mode·steering 누락만 `fail`) | **Google auth·Google Drive**(코어 발행 경로)가 없으면 `fail`·종료 코드 `1`. **twitterapi·Lark app·Lark Drive·Google Sheet는 소스/opt-in이라 없어도 `warn`뿐** — Google+X만 쓰는 셋업도 종료 코드 `0` |
 
 스킵은 실패가 아니라 정상 동작이므로 종료 코드는 `0`입니다 — 비영(非零) 종료 코드는 래퍼 스크립트를
-깨뜨릴 수 있기 때문입니다. 이 게이트는 네 개 CLI(`drive-init.ts`, `targets-list.ts`,
-`history-record.ts`, `sheet-init.ts`)가 공통으로 호출하는
+깨뜨릴 수 있기 때문입니다. 이 게이트는 위 여섯 개 CLI가 공통으로 호출하는
 `skipIfLocal()`(`src/cli/skipIfLocal.ts`)로 구현되어 있습니다. `publish.ts`는 이 목록에 없습니다 —
 `local` 모드에서도 스킵하지 않고 파일시스템을 대상으로 정상 실행됩니다.
 
@@ -113,8 +113,12 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm lark:chats` | `LARK_APP_ID`/`LARK_APP_SECRET`(env) | 없음(표준 출력만) | Lark Open API(봇이 속한 채팅방 목록 조회) |
 | `pnpm lark:send` | `LARK_APP_ID`/`LARK_APP_SECRET`(env); `--chat`/`--text` 인자 또는 `LARK_CHAT_IDS`의 첫 값 | 없음 | Lark Open API(메시지 전송) |
 | `pnpm reconcile` | `output/x/items.json`(활성 상태 트윗 id 목록) | `output/x/items.json`(삭제가 감지된 스레드만 `status: "deleted"`로 갱신) | twitterapi.io API(id로 트윗 재조회) |
-| `pnpm translate:prepare [--source x\|lark] [--ids] [--since] [--limit]` | `output/x/items.json`, `output/lark/items.json`(`--source`로 한쪽만 선택 가능); 이미 번역된 id 제외를 위한 `output/translations/translations.json`; `translation/glossary.json`, `translation/few-shot.json`, `translation/style-guide.md`, `translation/locale.json` | `output/translations/worksheets/`에 `batch-<타임스탬프>.md` 워크시트 생성; `output/translations/pending.json` 갱신(덮어쓰기 전 이전 배치를 `output/archive/<YYYY-MM-DD>/`로 자동 이동) | 없음 |
-| `pnpm translate:save --id --file [--approve]` | `output/translations/pending.json`(없으면 `output/translations/translations.json`에서 이미 저장된 항목으로 폴백); `--file`로 지정한 로컬 한글 텍스트 | `output/translations/translations.json`(upsert); `--approve` 시 `translation/few-shot.json`에 예시 추가 | 없음 |
+| `pnpm translate:prepare [--source x\|lark] [--ids] [--since] [--limit]` | `output/x/items.json`, `output/lark/items.json`(`--source`로 한쪽만 선택 가능); 이미 번역된 id 제외를 위한 `output/translations/translations.json`; `translation/glossary.json`, `translation/few-shot.json`, `translation/tm.json`(번역 메모리 — 큐레이션 few-shot에 더해 이 배치에 관련도 높은 쌍만 골라 인라인), `translation/style-guide.md`, `translation/locale.json` | `output/translations/worksheets/`에 `batch-<타임스탬프>.md` 워크시트 생성; `output/translations/pending.json` 갱신(덮어쓰기 전 이전 배치를 `output/archive/<YYYY-MM-DD>/`로 자동 이동) | 없음 |
+| `pnpm translate:save --id --file [--approve]` | `output/translations/pending.json`(없으면 `output/translations/translations.json`에서 이미 저장된 항목으로 폴백); `--file`로 지정한 로컬 한글 텍스트 | `output/translations/translations.json`(upsert); `--approve` 시 `translation/few-shot.json`에 예시 추가(원문이 너무 길면 승격 생략) | 없음 |
+| `pnpm collect:reference [target] [--since <3d\|12h\|1w\|ISO>] [--limit <n>]` | `TWITTERAPI_IO_KEY`(env); 참고 계정 핸들 `REFERENCE_X_HANDLE`(env, 기본 `0xMantleKR`); 기존 스레드 병합을 위한 `output/x/reference/items.json`; 워터마크 조회를 위한 `output/x/reference/state.json` | `output/x/reference/{items,state,runs}.json`(`collect`과 동일한 엔진, **소스 스토어(`output/x/`)와 격리** — 한국어 완성본이 번역 큐에 절대 안 섞임) | twitterapi.io API |
+| `pnpm tm:measure [target]` | `TWITTERAPI_IO_KEY`(env); `REFERENCE_X_HANDLE`(env, 기본 `0xMantleKR`) | 없음(표준 출력만 — 계정 게시물 수 + 백필 예상 비용) | twitterapi.io API(`GET /twitter/user/info`) |
+| `pnpm tm:pair` | `output/x/items.json`(Mantle_Official 영어) + `output/x/reference/items.json`(참고 계정 한국어) | `output/x/reference/pairs-proposed.json`(제안 쌍 — 사람이 `accept`를 `false`로 편집해 거절); `output/x/reference/pairs-review.md`(사람이 눈으로 검토) | 없음(오프라인 — `$MNT`/`#`/`@` 앵커 + 시간창으로 EN↔KO 쌍 제안) |
+| `pnpm tm:promote` | `output/x/reference/pairs-proposed.json`(`accept !== false`인 쌍만) | `translation/tm.json`(upsert — 번역 메모리; `translate:prepare`가 읽음) | 없음 |
 | `pnpm convert:prepare [--ids] [--since] [--limit] [--types]` | 승인된 항목을 위한 `output/translations/translations.json`; 이미 변환된 키 제외를 위한 `output/variants/variants.json`; `translation/glossary.json`, `translation/locale.json`; `conversion/{x,announcement,kol,pr}.md`, `conversion/few-shot.{x,announcement,kol,pr}.json` | `output/variants/worksheets/`에 `batch-<타임스탬프>.md` 워크시트; `output/variants/pending.json` 갱신(이전 배치는 `output/archive/<YYYY-MM-DD>/`로 이동) | 없음 |
 | `pnpm convert:save --id --type --file [--approve]` | `output/variants/pending.json`(없으면 `output/variants/variants.json`에서 폴백); `--file` | `output/variants/variants.json`(upsert); `--approve` 시 `conversion/few-shot.<type>.json` | 없음 |
 | `pnpm format [--ids] [--types] [--channels] [--refine]` | 승인된 항목을 위한 `output/variants/variants.json` | 기본 모드: `output/formatted/renderings.json`에 canonical 텍스트(`**볼드**`, `[텍스트](URL)`, 빈 줄 하나 = 문단 구분, 빈 줄 두 개 = 트윗 경계)로 직접 upsert — 입력의 `---` 한 줄도 경계로 인식하지만 저장되는 값은 항상 빈 줄 두 개입니다. `--refine` 모드: `output/formatted/worksheets/`에 `batch-<타임스탬프>.md`(채널 제약 + 초안에 등장한 용어집 + 세그먼트별 길이 리포트 포함), `output/formatted/pending.json` 갱신(이전 배치는 `output/archive/<YYYY-MM-DD>/`로 이동) | 없음 |
@@ -126,6 +130,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm targets:list [--active-only]` | `local` 모드면 스킵. 로컬 파일 없음 | 없음 | Google Sheets API(`targets` 탭 조회) |
 | `pnpm history:record --item --type --channel --status [...]` | `local` 모드면 스킵. 로컬 파일 없음 | 로컬 파일 없음 | Google Sheets API(`history` 탭에 행 추가) |
 | `pnpm impressions:record [--since <YYYY-MM-DD>]` | `local` 모드면 스킵. `history` 탭 전체(`history!A2:I`); `channel=x`이고 `postId` 있는 행의 트윗을 `GET /twitter/tweets`로 조회(`--since`면 `publishedAt` ≥ 커트오프만). `TWITTERAPI_IO_KEY`(env) | 각 행의 **H(impressions=viewCount)·I(impressionsAt)** 만 갱신 — A–G는 안 건드림 | twitterapi.io(트윗 조회), Google Sheets(history 갱신) |
+| `pnpm metrics:record [--month <YYYY-MM>]` | `local` 모드면 스킵. `GSHEET_ID`(env) 워크북의 `'KOL list'` 탭(헤더 이름으로 매핑, `Social media`가 X인 행만); `REFERENCE_X_HANDLE`(env)의 공식 계정 + 각 X KOL을 `GET /twitter/user/info`(followers) + advanced_search(그 달 글)로 조회. `TWITTERAPI_IO_KEY`(env). 기본 대상은 이번 달 | 같은 워크북의 `x-performance` 탭(없으면 생성)에 `(account, month)`별 행 upsert — followers/posts/views/engagement **raw 숫자만**. **사람 탭(로스터·계약·월별)·비용 컬럼은 절대 안 건드림**; 파생 지표(Cost per Impression 등)는 시트 수식이 담당 | twitterapi.io(계정 조회), Google Sheets(`x-performance` 갱신) |
 | `pnpm sheet:init` | `local` 모드면 스킵. 로컬 파일 없음 | 로컬 파일 없음 — 생성된 스프레드시트 id를 콘솔에 출력 | Google Sheets API(스프레드시트 + `targets`/`history` 탭 생성) |
 | `pnpm doctor [--live]` | 모든 env 설정 로더; `translation/glossary.json`, `translation/style-guide.md`, `translation/locale.json`, `conversion/x.md`의 존재 여부(4개 파일만 확인) | 없음 | `--live`일 때만: Google OAuth tokeninfo, Google Drive/Sheets 파일 메타데이터 조회, Lark 인증 + 채팅 목록 조회 |
 | `pnpm status` | `output/x/items.json`, `output/lark/items.json`, `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 없음 | 없음 |

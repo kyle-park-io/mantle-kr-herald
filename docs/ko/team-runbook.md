@@ -55,6 +55,23 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
 
 한 주가 끝나기 전에 `pnpm status`로 어디까지 진행됐는지 항상 확인할 수 있습니다.
 
+### 주기적·선택 작업
+
+주간 루틴과 별개로, 필요할 때(대략 월 1회) 돌리는 작업들입니다.
+
+- **번역 메모리 갱신 (번역 품질 향상, 어느 모드에서도 가능).** 우리 한국어 계정(`@0xMantleKR`,
+  `REFERENCE_X_HANDLE`)에 이미 올라간 **완성 번역**을 번역 프롬프트로 끌어옵니다.
+  `pnpm collect:reference`(참고 계정 수집 — 소스 스토어와 격리) → `pnpm tm:pair`(영어 원문 ↔
+  한국어 완성본 쌍 제안) → `output/x/reference/pairs-proposed.json`에서 **틀린 쌍의 `accept`를
+  `false`로** 고친 뒤 → `pnpm tm:promote`. 이후 `pnpm translate:prepare`가 배치에 관련도 높은 쌍을
+  자동으로 프롬프트에 넣습니다. 규모가 궁금하면 먼저 `pnpm tm:measure`로 계정 게시물 수를 봅니다.
+- **월간 성과 기록 (cloud 전용).** `pnpm metrics:record [--month <YYYY-MM>]` — `GSHEET_ID` 워크북의
+  `'KOL list'` 탭에서 X 기반 KOL을 읽어, 공식 계정 + 각 KOL의 그 달 성과(followers·posts·views·
+  engagement)를 조회해 같은 워크북의 `x-performance` 탭에 기록합니다. **사람이 관리하는 로스터·
+  계약·비용 탭은 건드리지 않고**, 파생 지표(Cost per Impression 등)는 시트 수식이 계산합니다.
+  Telegram KOL은 수기로 채웁니다. 현재 달은 정확하지만, 게시량이 많은 계정의 **과거 달 백필은
+  과소집계**될 수 있어 CLI가 경고합니다.
+
 ## 3. 검수 기준
 
 번역 톤·용어 규칙은 `translation/style-guide.md`와 `translation/glossary.json`을, 채널별
