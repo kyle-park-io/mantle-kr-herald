@@ -8,6 +8,7 @@
     "collect": "tsx --env-file-if-exists=.env src/cli/collect.ts",
     "collect:reference": "tsx --env-file-if-exists=.env src/cli/collect-reference.ts",
     "tm:measure": "tsx --env-file-if-exists=.env src/cli/tm-measure.ts",
+    "tm:pair": "tsx src/cli/tm-pair.ts",
     "collect-lark": "tsx --env-file-if-exists=.env src/cli/collect-lark.ts",
     "reconcile": "tsx --env-file-if-exists=.env src/cli/reconcile.ts",
     "lark:chats": "tsx --env-file-if-exists=.env src/cli/lark-chats.ts",
