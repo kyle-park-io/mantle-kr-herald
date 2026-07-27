@@ -57,6 +57,25 @@ describe("GoogleSheetClient", () => {
     expect(body.sheets.map((s: { properties: { title: string } }) => s.properties.title)).toEqual(["targets", "history"]);
   });
 
+  it("ensureTab creates the tab only when it is absent", async () => {
+    const calls: { url: string; method?: string }[] = [];
+    const fetchFn = (async (url: string, init?: { method?: string }) => {
+      calls.push({ url: String(url), method: init?.method });
+      if (String(url).includes("?fields=sheets.properties.title")) {
+        return { ok: true, json: async () => ({ sheets: [{ properties: { title: "targets" } }] }) } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const c = new GoogleSheetClient({ getToken: async () => "tok" }, "SID", fetchFn);
+    await c.ensureTab("x-performance"); // absent → must batchUpdate
+    expect(calls.some((x) => x.url.includes(":batchUpdate") && x.method === "POST")).toBe(true);
+
+    calls.length = 0;
+    await c.ensureTab("targets"); // present → must NOT batchUpdate
+    expect(calls.some((x) => x.url.includes(":batchUpdate"))).toBe(false);
+  });
+
   it("throws on a non-ok response (all methods)", async () => {
     const badFetch = (async () => new Response("nope", { status: 500 })) as unknown as typeof fetch;
     const c = new GoogleSheetClient(auth, "SID", badFetch);

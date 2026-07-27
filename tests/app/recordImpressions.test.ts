@@ -30,6 +30,7 @@ function sheetHarness(existing: string[][]) {
       updated.push({ range, rows });
     },
     createSpreadsheet: async () => ({ spreadsheetId: "x" }),
+    ensureTab: async () => {},
   };
   return { sheet, updated };
 }
@@ -43,6 +44,7 @@ function source(tweets: SourceTweet[]) {
         seen.push(ids);
         return tweets;
       },
+      fetchUserProfile: async () => ({ userName: "stub" }),
     },
   };
 }
@@ -144,6 +146,7 @@ describe("RecordImpressions", () => {
         updated.push({ range, rows });
       },
       createSpreadsheet: async () => ({ spreadsheetId: "x" }),
+      ensureTab: async () => {},
     };
     const s = source([tweet("twA", 1), tweet("twB", 2)]);
 

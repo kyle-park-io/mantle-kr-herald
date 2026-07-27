@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { ReconcileDeletions } from "../../src/app/ReconcileDeletions";
 import type { SourceGateway } from "../../src/ports/SourceGateway";
 import type { CollectionRepository } from "../../src/ports/CollectionRepository";
-import type { SourceTweet } from "../../src/domain/models";
+import type { SourceTweet, UserProfile } from "../../src/domain/models";
 
 function tw(id: string): SourceTweet {
   return {
@@ -32,6 +32,9 @@ class FakeGateway implements SourceGateway {
   }
   async fetchArticle(): Promise<[]> {
     return [];
+  }
+  async fetchUserProfile(): Promise<UserProfile> {
+    return { userName: "stub" };
   }
 }
 

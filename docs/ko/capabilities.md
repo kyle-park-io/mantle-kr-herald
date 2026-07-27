@@ -130,6 +130,7 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 | **F. 콘텐츠 가공** | 승인된 번역을 §5 항목 변환(타입별 X/공지/KOL/PR)과 §6 채널 포맷(코드 변환 + 선택적 에이전트 다듬기) 두 단계로 채널용 게시물로 가공 | `pnpm convert:prepare`, `pnpm convert:save`, `pnpm format`, `pnpm format:save` | — |
 | **G. Google Sheet 데이터 허브** | 팀이 함께 편집하는 배포 대상 목록(`targets` 탭)과 게시 이력(`history` 탭) 관리 | `pnpm sheet:init`, `pnpm targets:list`, `pnpm history:record` | [`external-integrations.md`](../architecture/external-integrations.md) |
 | **H. 번역 메모리** | `@0xMantleKR`과 `Mantle_Official`의 실제 승인 EN↔KO 번역 쌍을 발굴해 사람 확인을 거쳐 번역 few-shot에 반영 | `pnpm collect:reference`, `pnpm tm:measure`, `pnpm tm:pair`, `pnpm tm:promote` | — |
+| **I. X 성과 지표** | 사람이 관리하는 `KOL list` 탭(X 행만)을 읽어 KR 공식 계정과 각 X KOL의 팔로워·해당 월 게시물을 조회하고, 원시 성과 숫자를 기계 전용 `x-performance` 탭에 월별로 upsert | `pnpm metrics:record [--month YYYY-MM]` | — |
 
 ## 6. 번역 메모리
 
@@ -161,7 +162,44 @@ Mantle KR의 한국어 X 계정 `@0xMantleKR`은 `Mantle_Official`의 영어 게
 > 남습니다 — 공개 저장소이기 때문입니다. 그리고 사람이 확인하지 않은 페어는 어떤 경로로도 TM에
 > 들어가지 않습니다.
 
-## 7. 다음으로
+## 7. X 성과 지표
+
+`pnpm metrics:record [--month YYYY-MM]`는 KR 공식 계정과 X로 활동하는 KOL들의 그 달 X 성과를
+매달 워크북에 기록합니다. `--month`를 생략하면 실행 시점이 속한 달을 씁니다. 전체 흐름은 다음과
+같습니다:
+
+```
+KOL list 읽기 → X 계정 조회 → 월간 집계 → x-performance 탭에 upsert
+```
+
+- **KOL list 읽기** — 사람이 관리하는 `KOL list` 탭을 헤더 이름으로 매핑해서 읽습니다. 플랫폼이
+  X인 행만 골라내고, 섹션 구분용 행이나 빈 행, X가 아닌 행(예: 텔레그램)은 건너뜁니다.
+- **X 계정 조회** — KR 공식 계정(`REFERENCE_X_HANDLE`, 기본값 `0xMantleKR`)과 앞서 골라낸 각 X
+  KOL에 대해 팔로워 수와 그 달에 작성한 트윗을 twitterapi.io로 조회합니다.
+- **월간 집계** — 조회한 트윗을 계정별로 모아 게시물 수(posts), 조회수 합(views), 참여
+  (engagement = 좋아요+리트윗+답글+인용 합)를 계산하고, 팔로워 수는 조회 시점 스냅샷으로 씁니다.
+- **`x-performance` 탭에 upsert** — 계정(account)·월(month) 조합을 키로 해당 행을 찾아 없으면
+  추가하고 있으면 덮어씁니다. 이 탭은 이 명령이 전용으로 쓰는 기계 탭이며, `followers` /
+  `posts` / `views` / `engagement`(+ 조회 시각) 같은 **원시 숫자만** 기록합니다 — 평균, 비율,
+  Cost-per-Impression 같은 파생 값은 스프레드시트 수식이 담당하고 이 명령은 건드리지 않습니다.
+
+**자동 vs 수동** — 자동으로 채워지는 것은 성과 숫자(팔로워/게시물/조회수/참여)뿐입니다. KOL
+로스터 등록·계약 조건·정산 관련 컬럼은 여전히 사람이 `KOL list`/계약/월별 탭에서 직접 관리합니다.
+텔레그램 KOL의 지표는 twitterapi.io가 X 전용이라 이 명령이 다루지 못하므로 계속 수동 입력입니다.
+
+**기계는 사람 탭을 건드리지 않습니다** — 이 명령은 `x-performance` 탭에만 쓰고, 사람이 편집하는
+`KOL list`/계약/월별 탭에는 절대 쓰지 않습니다(읽기 전용으로만 사용). 사람이 만든 파생 수식이나
+서식이 실행할 때마다 덮어써질 걱정 없이 유지됩니다.
+
+**사전 조건** — `cloud` 저장 모드, OAuth `spreadsheets` 스코프, `GSHEET_ID` 환경변수가 모두
+필요합니다(`local` 모드에서는 `skipIfLocal`에 의해 아무 것도 하지 않고 건너뜁니다). 아직 실
+워크북 기준으로 라이브 검증되지 않았습니다.
+
+**과거 달 백필 주의** — 이번 달(`--month` 생략) 실행은 정확하지만, 과거 달을 지정해 백필할 때는
+게시물이 많은 계정의 수치가 실제보다 적게 잡힐 수 있습니다(트윗 수집이 최신순으로 진행되며
+`MAX_PAGES` 캡에 걸리면 목표 달에 도달하기 전에 멈추기 때문입니다).
+
+## 8. 다음으로
 
 - 처음 설치해서 로컬 모드로 써 보려면 → [`quickstart.md`](quickstart.md)
 - 팀 내부 운영자로서 주간 루틴·클라우드 전환·장애 대응이 궁금하면 → [`team-runbook.md`](team-runbook.md)
