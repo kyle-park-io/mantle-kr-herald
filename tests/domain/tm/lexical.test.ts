@@ -22,4 +22,8 @@ describe("lexicalSimilarity", () => {
   it("is 0 when one side has no content tokens", () => {
     expect(lexicalSimilarity("the a on to", "tokenized stocks")).toBe(0);
   });
+
+  it("is 0 when both sides have no content tokens", () => {
+    expect(lexicalSimilarity("the a on to", "is it we no")).toBe(0);
+  });
 });

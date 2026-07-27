@@ -84,4 +84,11 @@ describe("selectPrecedents", () => {
     expect(got.map((e) => e.target)).not.toContain("무관");
     expect(new Set(got.map((e) => e.target)).size).toBe(got.length); // no duplicate
   });
+
+  it("drops a partial lexical match that scores below the 0.2 threshold", () => {
+    // draft content tokens {tokenized,stocks,liquidity,depth,pricing} (5);
+    // pair {hackathon,builders,seoul,demo,stocks,event} (6); share {stocks}=1 → 1/10 = 0.1 < 0.2
+    const tm2 = [pair("Hackathon builders Seoul demo stocks event", "무관")];
+    expect(selectPrecedents("Tokenized stocks liquidity depth pricing", tm2, 3)).toEqual([]);
+  });
 });
