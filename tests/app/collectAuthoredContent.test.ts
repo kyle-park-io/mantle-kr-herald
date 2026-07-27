@@ -5,7 +5,7 @@ import type { CollectionRepository } from "../../src/ports/CollectionRepository"
 import type { WatermarkStore } from "../../src/shared/store/WatermarkStore";
 import type { CollectionRunLedger } from "../../src/ports/CollectionRunLedger";
 import type { CollectionRun } from "../../src/domain/coverage";
-import type { ArticleBlock, CollectedThread, SourceTweet } from "../../src/domain/models";
+import type { ArticleBlock, CollectedThread, SourceTweet, UserProfile } from "../../src/domain/models";
 
 function tw(id: string, over: Partial<SourceTweet> = {}): SourceTweet {
   return {
@@ -48,6 +48,9 @@ class FakeGateway implements SourceGateway {
     this.articleCalls.push(tweetId);
     if (this.articleError) throw this.articleError;
     return this.articles[tweetId] ?? [];
+  }
+  async fetchUserProfile(): Promise<UserProfile> {
+    return { userName: "stub" };
   }
 }
 

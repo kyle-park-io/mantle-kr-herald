@@ -14,4 +14,11 @@ describe("parseUserProfile", () => {
   it("tolerates a malformed response", () => {
     expect(parseUserProfile({ nope: true }, "0xMantleKR")).toEqual({ userName: "0xMantleKR", statusesCount: undefined });
   });
+
+  it("captures followers when present, undefined when absent", () => {
+    expect(parseUserProfile({ data: { userName: "0xMantleKR", statusesCount: 4317, followers: 4164 } }, "fb"))
+      .toEqual({ userName: "0xMantleKR", statusesCount: 4317, followers: 4164 });
+    expect(parseUserProfile({ data: { userName: "0xMantleKR" } }, "fb"))
+      .toEqual({ userName: "0xMantleKR", statusesCount: undefined, followers: undefined });
+  });
 });

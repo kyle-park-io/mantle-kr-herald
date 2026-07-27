@@ -93,8 +93,8 @@ export class TwitterApiSourceGateway implements SourceGateway {
     return parseArticleContents(data);
   }
 
-  /** Account profile (for volume/cost estimation). Not on the SourceGateway port — only the
-   *  measure CLI needs it, and adding it to the port would force every stub to implement it. */
+  /** Account profile (followers / statusesCount) for a handle, used for volume/cost estimation
+   *  and by app-layer use cases via the SourceGateway port. */
   async fetchUserProfile(userName: string): Promise<UserProfile> {
     const data = await this.client.get<unknown>("/twitter/user/info", { userName });
     return parseUserProfile(data, userName);

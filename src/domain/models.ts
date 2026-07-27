@@ -78,4 +78,5 @@ export interface CollectedThread {
 export interface UserProfile {
   userName: string;
   statusesCount?: number;
+  followers?: number;
 }

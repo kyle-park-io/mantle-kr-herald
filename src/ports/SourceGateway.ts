@@ -1,4 +1,4 @@
-import type { ArticleBlock, SourceTweet } from "../domain/models";
+import type { ArticleBlock, SourceTweet, UserProfile } from "../domain/models";
 
 export interface SourceGateway {
   /**
@@ -18,4 +18,6 @@ export interface SourceGateway {
    * an article.
    */
   fetchArticle(tweetId: string): Promise<ArticleBlock[]>;
+  /** Account profile (followers / statusesCount) for a handle. */
+  fetchUserProfile(userName: string): Promise<UserProfile>;
 }

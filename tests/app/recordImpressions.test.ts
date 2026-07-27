@@ -43,6 +43,7 @@ function source(tweets: SourceTweet[]) {
         seen.push(ids);
         return tweets;
       },
+      fetchUserProfile: async () => ({ userName: "stub" }),
     },
   };
 }
