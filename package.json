@@ -16,6 +16,7 @@
     "lark:send": "tsx --env-file-if-exists=.env src/cli/lark-send.ts",
     "translate:prepare": "tsx src/cli/translate-prepare.ts",
     "translate:save": "tsx src/cli/translate-save.ts",
+    "translate:align": "tsx --env-file-if-exists=.env src/cli/translate-align.ts",
     "convert:prepare": "tsx src/cli/convert-prepare.ts",
     "convert:save": "tsx src/cli/convert-save.ts",
     "format": "tsx src/cli/format.ts",

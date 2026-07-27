@@ -38,26 +38,30 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
 3. **번역** — Claude Code 에이전트가 워크시트의 번역 섹션을 채웁니다.
 4. **번역 저장** — 운영자가 `pnpm translate:save --id <id> --file <ko.txt>`로 저장합니다
    (아직 승인은 아님).
-5. **1차 검수** — 검수자가 `pnpm serve`를 띄우고 대시보드의 번역 검수 모드에서 각 항목을
+5. **정렬 (선택)** — 필요하면 운영자가 `pnpm translate:align`로 방금 저장한 초안들을 가장 가까운
+   TM 선례와 나란히 놓은 워크시트를 만들고, 에이전트가 선례의 표현·용어에 맞춰 초안을 다듬으면
+   (재번역이 아니라 교정입니다), 다시 `pnpm translate:save --id <id> --file <ko.txt>`로 저장합니다.
+   건너뛰어도 파이프라인은 그대로 진행됩니다([`capabilities.md`](capabilities.md) §6).
+6. **1차 검수** — 검수자가 `pnpm serve`를 띄우고 대시보드의 번역 검수 모드에서 각 항목을
    읽고, 필요하면 고쳐서 승인(approve)합니다. 승인해도 업로드는 일어나지 않습니다 — approve는
    상태만 바꿀 뿐입니다([`capabilities.md`](capabilities.md) §4).
-6. **변환 준비 → 변환 → 저장** — 운영자가 `pnpm convert:prepare`로 워크시트를 만들고,
+7. **변환 준비 → 변환 → 저장** — 운영자가 `pnpm convert:prepare`로 워크시트를 만들고,
    에이전트가 X/공지/KOL/PR 타입별로 채우고, `pnpm convert:save --id <id> --type <t> --file <f>`로
    저장합니다.
-7. **채널 포맷** — 운영자가 `pnpm format`(결정적 포맷터, 즉시 저장)이나
+8. **채널 포맷** — 운영자가 `pnpm format`(결정적 포맷터, 즉시 저장)이나
    `pnpm format --refine`(에이전트 다듬기 필요 시) + `pnpm format:save`를 실행합니다.
-8. **2차 검수** — 검수자가 대시보드의 채널 검수 모드에서 채널별 렌더링을 검수·승인합니다.
-9. **채널 발송** — 운영자가 `pnpm send:channels [--target telegram|x|both]`를 실행해 승인된
-   텔레그램·X 렌더링을 실제로 발행합니다(텔레그램은 봇 API, X는 Typefully 경유). 사전에
-   `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, `TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID`
-   자격 증명이 준비돼 있어야 합니다(`pnpm doctor`로는 확인되지 않으니 직접 챙기세요). 이미
-   보낸 항목은 로컬 원장(`output/publish/channels.json`)이 걸러내므로, 실행이 중간에 끊기거나
-   실패해도 그대로 다시 실행하면 됩니다 — 재실행은 항상 안전합니다(멱등).
-10. **발행** — 운영자가 `pnpm drive:publish`를 실행하거나(또는 대시보드의 발행 버튼) — 우리 팀은
+9. **2차 검수** — 검수자가 대시보드의 채널 검수 모드에서 채널별 렌더링을 검수·승인합니다.
+10. **채널 발송** — 운영자가 `pnpm send:channels [--target telegram|x|both]`를 실행해 승인된
+    텔레그램·X 렌더링을 실제로 발행합니다(텔레그램은 봇 API, X는 Typefully 경유). 사전에
+    `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, `TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID`
+    자격 증명이 준비돼 있어야 합니다(`pnpm doctor`로는 확인되지 않으니 직접 챙기세요). 이미
+    보낸 항목은 로컬 원장(`output/publish/channels.json`)이 걸러내므로, 실행이 중간에 끊기거나
+    실패해도 그대로 다시 실행하면 됩니다 — 재실행은 항상 안전합니다(멱등).
+11. **발행** — 운영자가 `pnpm drive:publish`를 실행하거나(또는 대시보드의 발행 버튼) — 우리 팀은
     항상 `cloud` 모드로 운영하므로, 이 순간에 실제로 Drive/Lark Drive에 업로드됩니다.
-11. **기록** — 운영자가 필요 시 `pnpm history:record`로 Google Sheet `history` 탭에 게시
+12. **기록** — 운영자가 필요 시 `pnpm history:record`로 Google Sheet `history` 탭에 게시
     이력을 남깁니다. 배포 대상 목록은 `pnpm targets:list`로 확인합니다.
-12. **정리** — 배치가 끝나면 `pnpm archive`를 실행합니다(§5).
+13. **정리** — 배치가 끝나면 `pnpm archive`를 실행합니다(§5).
 
 한 주가 끝나기 전에 `pnpm status`로 어디까지 진행됐는지 항상 확인할 수 있습니다.
 
@@ -71,6 +75,8 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
   한국어 완성본 쌍 제안) → `output/x/reference/pairs-proposed.json`에서 **틀린 쌍의 `accept`를
   `false`로** 고친 뒤 → `pnpm tm:promote`. 이후 `pnpm translate:prepare`가 배치에 관련도 높은 쌍을
   자동으로 프롬프트에 넣습니다. 규모가 궁금하면 먼저 `pnpm tm:measure`로 계정 게시물 수를 봅니다.
+  이미 저장해 둔 초안을 새로 승격된 쌍에 맞춰 다듬고 싶다면 주간 루틴의 정렬 단계
+  (`pnpm translate:align`, §2 5단계)를 다시 돌리면 됩니다.
 - **월간 성과 기록 (cloud 전용).** `pnpm metrics:record [--month <YYYY-MM>]` — `GSHEET_ID` 워크북의
   `'KOL list'` 탭에서 X 기반 KOL을 읽어, 공식 계정 + 각 KOL의 그 달 성과(followers·posts·views·
   engagement)를 조회해 같은 워크북의 `x-performance` 탭에 기록합니다. **사람이 관리하는 로스터·
