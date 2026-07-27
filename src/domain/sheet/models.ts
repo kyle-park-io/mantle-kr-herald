@@ -23,3 +23,5 @@ export interface RosterEntry {
   name: string;
   handle: string; // X handle without @
 }
+
+export const X_PERFORMANCE_HEADER = ["account", "name", "type", "month", "followers", "posts", "views", "engagement", "fetchedAt"];
