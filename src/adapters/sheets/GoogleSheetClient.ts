@@ -45,4 +45,19 @@ export class GoogleSheetClient implements SheetClient {
     if (!data.spreadsheetId) throw new Error("Sheets createSpreadsheet response missing spreadsheetId");
     return { spreadsheetId: data.spreadsheetId };
   }
+
+  async ensureTab(title: string): Promise<void> {
+    const metaUrl = `${BASE}/${this.spreadsheetId}?fields=sheets.properties.title`;
+    const metaRes = await this.fetchFn(metaUrl, { method: "GET", headers: await this.headers() });
+    if (!metaRes.ok) throw new Error(`Sheets get metadata failed: HTTP ${metaRes.status}`);
+    const meta = (await metaRes.json()) as { sheets?: { properties?: { title?: string } }[] };
+    const exists = (meta.sheets ?? []).some((s) => s.properties?.title === title);
+    if (exists) return;
+    const res = await this.fetchFn(`${BASE}/${this.spreadsheetId}:batchUpdate`, {
+      method: "POST",
+      headers: await this.headers(),
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title } } }] }),
+    });
+    if (!res.ok) throw new Error(`Sheets addSheet failed: HTTP ${res.status}`);
+  }
 }

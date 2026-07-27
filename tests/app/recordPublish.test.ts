@@ -14,6 +14,7 @@ function harness(existing: string[][] = []) {
     appendValues: async (_range, rows) => { calls.appended.push(rows); },
     updateValues: async (range, rows) => { calls.updated.push({ range, rows }); },
     createSpreadsheet: async () => ({ spreadsheetId: "x" }),
+    ensureTab: async () => {},
   };
   return { sheet, calls };
 }
