@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ const entry = (over: Partial<LineageEntry> = {}): LineageEntry => ({
 describe("JsonlLineageStore", () => {
   let dir: string;
   beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "lineage-")); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
   it("appends and loads entries in order for an id containing ':'", async () => {
     const s = new JsonlLineageStore(dir);
