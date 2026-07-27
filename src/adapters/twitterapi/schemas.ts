@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ArticleBlock, ArticleBody, MediaItem, SourceTweet, TweetMetrics, UserProfile } from "../../domain/models";
+import { expandUrls } from "./expandUrls";
 
 const MediaRaw = z
   .object({ type: z.string().optional(), media_url_https: z.string().optional() })
@@ -67,6 +68,14 @@ const TweetRaw = z
     viewCount: z.number().optional(),
     bookmarkCount: z.number().optional(),
     extendedEntities: z.object({ media: z.array(MediaRaw).optional() }).passthrough().optional(),
+    entities: z
+      .object({
+        urls: z
+          .array(z.object({ url: z.string().optional(), expanded_url: z.string().optional() }).passthrough())
+          .optional(),
+      })
+      .passthrough()
+      .optional(),
     article: ArticleSummaryRaw.nullish(),
   })
   .passthrough();
@@ -119,7 +128,7 @@ export function normalizeTweet(raw: unknown): SourceTweet {
   return {
     id: t.id,
     conversationId: t.conversationId ?? t.id,
-    text: t.text,
+    text: expandUrls(t.text, t.entities?.urls),
     createdAt: new Date(t.createdAt).toISOString(),
     url: t.url,
     authorUserName: t.author?.userName ?? "",

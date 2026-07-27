@@ -65,6 +65,21 @@ describe("normalizeTweet", () => {
     expect(normalizeTweet({ ...base, author: {} }).authorUserName).toBe("");
     expect(normalizeTweet(base).authorUserName).toBe("");
   });
+
+  it("expands t.co links via entities.urls and strips media t.co, keeping media on SourceTweet", () => {
+    const t = normalizeTweet({
+      id: "1",
+      url: "u",
+      createdAt: "Mon Jun 29 05:58:17 +0000 2026",
+      author: { userName: "Mantle_Official" },
+      text: "Trade here: https://t.co/real\n\nclip https://t.co/media",
+      entities: { urls: [{ url: "https://t.co/real", expanded_url: "http://fluxion.network/trade" }] },
+      extendedEntities: { media: [{ type: "video", media_url_https: "https://pbs.twimg.com/v.mp4" }] },
+    });
+    expect(t.text).toBe("Trade here: http://fluxion.network/trade\n\nclip");
+    expect(t.text).not.toContain("t.co");
+    expect(t.media).toEqual([{ type: "video", url: "https://pbs.twimg.com/v.mp4" }]);
+  });
 });
 
 describe("parseTweetList", () => {
