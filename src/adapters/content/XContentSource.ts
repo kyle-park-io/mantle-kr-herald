@@ -51,6 +51,7 @@ export class XContentSource implements ContentSource {
         text,
         createdAt: first?.createdAt ?? "",
         refUrl: first?.url,
+        isReply: first?.isReply,
         kind: hasArticle ? "article" : "post",
       });
     }
