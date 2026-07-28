@@ -64,6 +64,11 @@ describe("renderReview header annotation", () => {
   it("is today's header when neither field is present", () => {
     expect(renderReview(tr({ itemId: "x:1" })).split("\n")[0]).toBe("# x:1");
   });
+
+  it("puts one blank line between the source content and the 한글 heading", () => {
+    const doc = renderReview(tr({ sourceText: "src", koreanText: "번역" }));
+    expect(doc).toContain("src\n\n\n## 한글 (Korean)\n\n번역");
+  });
 });
 
 describe("renderApproved", () => {

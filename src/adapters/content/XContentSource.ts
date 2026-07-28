@@ -9,6 +9,16 @@ import { renderArticle } from "../../domain/articleMarkdown";
  *  from a line break inside a single tweet). */
 const THREAD_TWEET_SEPARATOR = "\n\n---\n\n";
 
+/** A reply Mantle made to someone else's comment, bundled into a thread by conversationId — its text
+ *  leads with an @mention. A self-thread continuation is also `isReply` but does NOT lead with `@`, so
+ *  it stays unmarked. Applied to non-root tweets only: a standalone reply item (root isReply) is already
+ *  flagged by the item-level header marker (ContentItem.isReply). */
+export const COMMENTER_REPLY_MARKER = "(댓글 · 지워도 됨)";
+
+function isCommenterReply(t: SourceTweet): boolean {
+  return t.isReply && t.text.trimStart().startsWith("@");
+}
+
 /**
  * Render one tweet's text for the worksheet. A tweet with a fetched article body renders as
  * markdown; everything else keeps its own text. Rendering happens exactly once here and both
@@ -39,10 +49,10 @@ export class XContentSource implements ContentSource {
       // ordinary replies still reads correctly.
       let hasArticle = false;
       const text = thread.tweets
-        .map((t) => {
+        .map((t, i) => {
           const rendered = renderTweetText(t);
           if (rendered.isArticle) hasArticle = true;
-          return rendered.text;
+          return i > 0 && isCommenterReply(t) ? `${COMMENTER_REPLY_MARKER} ${rendered.text}` : rendered.text;
         })
         .join(THREAD_TWEET_SEPARATOR);
       items.push({

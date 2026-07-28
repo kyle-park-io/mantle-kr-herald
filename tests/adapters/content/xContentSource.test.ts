@@ -29,4 +29,24 @@ describe("XContentSource isReply", () => {
     const [item] = await new XContentSource(path).loadPending(new Set());
     expect(item.isReply).toBe(false);
   });
+
+  it("prefixes a nested commenter-reply (isReply + leading @), but not the root or a self-continuation", async () => {
+    const path = await writeThreads([{ rootId: "100", status: "active", tweets: [
+      tweet({ id: "100", text: "24/7 access to markets" }),                  // root, isReply false
+      tweet({ id: "101", text: "Come Saturday, trade here", isReply: true }), // self-continuation, no @
+      tweet({ id: "102", text: "@churchi 🫡", isReply: true }),                // commenter-reply
+    ] }]);
+    const [item] = await new XContentSource(path).loadPending(new Set());
+    expect(item.text).toBe(
+      "24/7 access to markets\n\n---\n\nCome Saturday, trade here\n\n---\n\n(댓글 · 지워도 됨) @churchi 🫡",
+    );
+  });
+
+  it("does not inline-mark a root commenter-reply (index 0)", async () => {
+    const path = await writeThreads([{ rootId: "200", status: "active", tweets: [
+      tweet({ id: "200", text: "@someone thanks", isReply: true }),
+    ] }]);
+    const [item] = await new XContentSource(path).loadPending(new Set());
+    expect(item.text).toBe("@someone thanks"); // unmarked; PR #66's header marker handles a standalone reply
+  });
 });
