@@ -155,6 +155,22 @@ export function OutletCard(props: {
   };
 
   /**
+   * [포맷 다시] overwrites whatever `FormatVariants` last stored for this (type, channel): the
+   * group's own text goes back to the plain converted text, and — unlike a text edit — the group's
+   * approval is lost too, since a freshly rendered copy is never approved. Say both plainly before
+   * doing it; a button that silently reverts a reviewer's approved copy is worse than no button.
+   */
+  const confirmReformat = (): boolean => {
+    const bits = [
+      `${TYPE_LABEL[type]} · ${CHANNEL_LABEL[channel]} 카드를 변환본에서 다시 생성합니다.`,
+      "지금 저장된 문구는 사라지고, 새로 만든 문구로 바뀝니다.",
+    ];
+    if (group.status === "approved") bits.push("승인 상태도 취소됩니다 — 다시 승인해야 발송할 수 있습니다.");
+    bits.push("✎ 따로 쓰기로 갈라진 방의 글은 영향받지 않습니다.", "되돌릴 수 없습니다. 계속할까요?");
+    return window.confirm(bits.join("\n"));
+  };
+
+  /**
    * Drop a row's draft so the next render re-reads what the server stored. `collapse` closes the
    * editor with an explicit `false` rather than by deleting the key — a forked row defaults to
    * open, so deleting it would spring the editor straight back open.
@@ -213,6 +229,26 @@ export function OutletCard(props: {
             편집 중 · 저장 전
           </span>
         )}
+        <button
+          className={btnDanger}
+          disabled={busy}
+          title="변환본에서 이 카드를 다시 생성합니다 — 지금 문구와 승인 상태가 사라집니다"
+          onClick={() => {
+            if (!confirmReformat()) return;
+            void run(async () => {
+              const result = await api.formatItem(itemId, [type], [channel]);
+              await props.onGroupChanged();
+              // A successful reformat can still produce a card the operator should look at (e.g.
+              // over the X limit) — surface it the same way a partial send does, since there is no
+              // other message channel on this card besides the shared error banner.
+              if (result.warnings.length > 0) {
+                onError(`⚠ 포맷 경고 ${result.warnings.length}건: ${result.warnings.flatMap((w) => w.messages).join("; ")}`);
+              }
+            });
+          }}
+        >
+          포맷 다시
+        </button>
         <span className="ml-auto text-[11px] text-faint">
           {rows.filter((r) => r.deliveryStatus).length}/{rows.length}곳 완료
         </span>

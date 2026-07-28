@@ -4,6 +4,7 @@ import { ALL_CHANNELS } from "../../src/domain/formatting/models";
 import { DESTINATIONS_BY_CHANNEL } from "../../src/domain/formatting/emitters";
 import { ALL_OUTLETS } from "../../src/domain/outlet/models";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
+import type { FormatWarning } from "../../src/app/FormatVariants";
 import {
   ALL_TYPES as WEB_TYPES,
   ALL_CHANNELS as WEB_CHANNELS,
@@ -14,6 +15,7 @@ import {
   type BoardView as WebBoardView,
   type BoardGroup as WebBoardGroup,
   type BoardRow as WebBoardRow,
+  type FormatWarning as WebFormatWarning,
 } from "../../web/src/types";
 
 /**
@@ -93,6 +95,19 @@ describe("web type mirror", () => {
     // The assertion is the compile above; this only keeps the bindings live.
     expect([rowFromDomain, rowToDomain, groupFromDomain, groupToDomain, viewFromDomain, viewToDomain]).toHaveLength(6);
     expect([rowKeys, groupKeys, viewKeys]).toEqual([true, true, true]);
+  });
+
+  /**
+   * `POST /api/items/:id/format`'s response mirror. A silent drift here would show a reviewer
+   * fewer/renamed warning fields than the server actually computed — the same blind spot the board
+   * payload check above exists for, just for §10's route instead of §8's.
+   */
+  it("mirrors FormatWarning field-for-field, in both directions", () => {
+    const fromDomain: WebFormatWarning = {} as FormatWarning;
+    const toDomain: FormatWarning = {} as WebFormatWarning;
+    const keys: SameKeys<WebFormatWarning, FormatWarning> = true;
+    expect([fromDomain, toDomain]).toHaveLength(2);
+    expect(keys).toBe(true);
   });
 
   /** [복사] hands a human the `_paste` spelling; the canonical text would paste raw markdown. */

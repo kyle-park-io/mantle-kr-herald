@@ -31,6 +31,14 @@ function fakeBoardDeps(): Pick<ApiDeps, "loadBoard" | "saveOutletOverride" | "ma
   };
 }
 
+/** §10 conversion/format triggers, likewise irrelevant to transport-level tests. */
+function fakeConvertFormatDeps(): Pick<ApiDeps, "prepareConversionRun" | "formatVariants"> {
+  return {
+    prepareConversionRun: { run: async () => ({ worksheetPath: "", pending: 0 }) } as unknown as ApiDeps["prepareConversionRun"],
+    formatVariants: { run: async () => ({ renderings: [], warnings: [] }) } as unknown as ApiDeps["formatVariants"],
+  };
+}
+
 function fakeDeps(): ApiDeps {
   return {
     translationStore: { loadAll: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }], upsert: async () => {}, listTranslatedIds: async () => new Set() },
@@ -39,6 +47,7 @@ function fakeDeps(): ApiDeps {
     storageMode: "cloud",
     ...fakeRenderingDeps(),
     ...fakeBoardDeps(),
+    ...fakeConvertFormatDeps(),
     loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [] }),
     loadPublishState: async () => [],
     loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
@@ -92,6 +101,7 @@ describe("startServer", () => {
       storageMode: "cloud",
       ...fakeRenderingDeps(),
       ...fakeBoardDeps(),
+      ...fakeConvertFormatDeps(),
       loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [] }),
       loadPublishState: async () => [],
       loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
@@ -129,6 +139,7 @@ describe("startServer", () => {
       storageMode: "cloud",
       ...fakeRenderingDeps(),
       ...fakeBoardDeps(),
+      ...fakeConvertFormatDeps(),
       loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [] }),
       loadPublishState: async () => [],
       loadTranslations: async () => {

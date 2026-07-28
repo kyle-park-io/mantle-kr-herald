@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { TYPE_LABEL, itemUrl, type BoardView } from "../types";
+import { TYPE_LABEL, itemUrl, type BoardView, type ConversionType, type ConvertPrepareReply } from "../types";
 import { OutletCard } from "./OutletCard";
 
 /**
@@ -26,6 +26,12 @@ export function OutletBoard(props: {
   const [error, setError] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
+  // §10 [변환 준비]: which not-yet-converted types the operator picked, and the last worksheet
+  // handoff for THIS item — cleared on an item switch so a stale path from the previous item is
+  // never shown under a new one.
+  const [prepareTypes, setPrepareTypes] = useState<Set<ConversionType>>(new Set());
+  const [preparing, setPreparing] = useState(false);
+  const [prepareResult, setPrepareResult] = useState<ConvertPrepareReply | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -39,6 +45,8 @@ export function OutletBoard(props: {
     setBoard(null);
     setError(null);
     setDirtyKeys(new Set());
+    setPrepareTypes(new Set());
+    setPrepareResult(null);
     void reload();
   }, [itemId, reload]);
 
@@ -147,15 +155,65 @@ export function OutletBoard(props: {
 
       {board.unconverted.length > 0 && (
         <details className="mt-5 rounded-xl border border-line bg-surface px-4 py-2.5 text-[13px] shadow-sm">
+          {/* No `open` prop: the checkboxes/button below only exist while the operator already has
+              this expanded (that is how they would have reached them), so React does not need to
+              fight the browser's own open/close state after a successful prepare. */}
           <summary className="cursor-pointer text-muted marker:text-faint">
             아직 변환 안 됨 —{" "}
             <span className="text-ink">{board.unconverted.map((t) => TYPE_LABEL[t]).join(" · ")}</span>
           </summary>
           <p className="mt-2 text-[12px] leading-relaxed text-faint">
-            대시보드는 변환하지 않습니다. <code className="font-mono">pnpm convert:prepare</code> 로 워크시트를 만들고,
-            에이전트가 채운 뒤 <code className="font-mono">pnpm convert:save</code> 와 <code className="font-mono">pnpm format</code> 을
-            실행하면 여기에 카드가 생깁니다.
+            대시보드는 변환하지 않습니다 — 여기서는 유형을 골라 워크시트만 준비할 수 있고, 채우는 것은 로컬
+            에이전트의 몫입니다.
           </p>
+          <div className="mt-2.5 flex flex-wrap items-center gap-3">
+            {board.unconverted.map((t) => (
+              <label key={t} className="inline-flex items-center gap-1.5 text-[12px] text-ink">
+                <input
+                  type="checkbox"
+                  checked={prepareTypes.has(t)}
+                  onChange={(e) =>
+                    setPrepareTypes((prev) => {
+                      const next = new Set(prev);
+                      if (e.target.checked) next.add(t);
+                      else next.delete(t);
+                      return next;
+                    })
+                  }
+                />
+                {TYPE_LABEL[t]}
+              </label>
+            ))}
+          </div>
+          <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+            <button
+              className="rounded-md bg-mint px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40"
+              disabled={preparing || prepareTypes.size === 0}
+              onClick={() => {
+                setPreparing(true);
+                setError(null);
+                setPrepareResult(null);
+                api
+                  .convertPrepare(board.itemId, [...prepareTypes])
+                  .then(setPrepareResult)
+                  .catch((e) => setError(String((e as Error).message ?? e)))
+                  .finally(() => setPreparing(false));
+              }}
+            >
+              변환 준비
+            </button>
+            {prepareResult &&
+              (prepareResult.pending > 0 ? (
+                <p className="text-[12px] font-medium text-mint">
+                  워크시트 준비됨 — 에이전트에게 변환을 요청하세요:{" "}
+                  <code className="font-mono text-ink">{prepareResult.worksheetPath}</code>
+                </p>
+              ) : (
+                <p className="text-[12px] text-faint">
+                  대기 중인 항목이 없습니다 — 승인된 원문이 없거나 이미 변환된 상태입니다.
+                </p>
+              ))}
+          </div>
         </details>
       )}
     </div>

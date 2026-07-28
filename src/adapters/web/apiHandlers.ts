@@ -3,8 +3,8 @@ import type { Translation } from "../../domain/translation/models";
 import type { TranslationStore } from "../../ports/TranslationStore";
 import type { SaveTranslation } from "../../app/SaveTranslation";
 import type { PublishResult } from "../../app/PublishTranslations";
-import type { ChannelRendering, Channel } from "../../domain/formatting/models";
-import type { ConversionType } from "../../domain/conversion/models";
+import { ALL_CHANNELS, type ChannelRendering, type Channel } from "../../domain/formatting/models";
+import { ALL_TYPES, type ConversionType } from "../../domain/conversion/models";
 import type { FormattingStore } from "../../ports/FormattingStore";
 import type { ConversionStore } from "../../ports/ConversionStore";
 import type { SaveRendering } from "../../app/SaveRendering";
@@ -15,6 +15,8 @@ import type { ApiTranslation } from "./attachKind";
 import type { BoardView } from "./board";
 import type { SaveOutletOverride } from "../../app/SaveOutletOverride";
 import type { MarkDelivery } from "../../app/MarkDelivery";
+import type { PrepareConversionRun } from "../../app/PrepareConversionRun";
+import type { FormatVariants } from "../../app/FormatVariants";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -67,6 +69,10 @@ export interface ApiDeps {
   saveOutletOverride: SaveOutletOverride;
   markDelivery: MarkDelivery;
   sendToOutlet: (itemId: string, type: string, outletId: string) => Promise<{ sent: number; failed: number; error?: string }>;
+  /** Writes a conversion worksheet for the dashboard; the local agent still fills it in. */
+  prepareConversionRun: PrepareConversionRun;
+  /** Pure code — unlike conversion, the dashboard can run this one itself. */
+  formatVariants: FormatVariants;
 }
 
 /** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */
@@ -188,8 +194,51 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     }
   }
 
-  if (method === "GET" && segments.length === 4 && segments[1] === "items" && segments[3] === "board") {
-    return { status: 200, json: await deps.loadBoard(decodeURIComponent(segments[2])) };
+  if (segments[1] === "items" && segments.length === 4) {
+    const itemId = decodeURIComponent(segments[2]);
+
+    if (method === "GET" && segments[3] === "board") {
+      return { status: 200, json: await deps.loadBoard(itemId) };
+    }
+
+    // The board cannot convert (no Claude API, zod-only runtime) — this runs `convert:prepare` and
+    // hands back where the worksheet landed. Filling it is the local agent's job; the operator asks
+    // for that separately, which is why the reply carries a path rather than converted text.
+    if (method === "POST" && segments[3] === "convert-prepare") {
+      const typesRaw = (body as { types?: unknown })?.types;
+      if (!Array.isArray(typesRaw) || typesRaw.length === 0) {
+        return { status: 400, json: { error: "types (non-empty array) required" } };
+      }
+      const invalid = typesRaw.filter((t) => typeof t !== "string" || !ALL_TYPES.includes(t as ConversionType));
+      if (invalid.length > 0) return { status: 400, json: { error: `invalid types: ${invalid.join(", ")}` } };
+      const result = await deps.prepareConversionRun.run({ itemId, types: typesRaw as ConversionType[] });
+      return { status: 200, json: result };
+    }
+
+    // Unlike conversion, `FormatVariants` is pure code — this button really does the work, and
+    // overwrites whatever was stored (including an edit or an approval) for the chosen (type,
+    // channel) pairs. The dashboard is expected to confirm that loss with the operator before
+    // calling this; the route itself does not ask twice.
+    if (method === "POST" && segments[3] === "format") {
+      const b = (body ?? {}) as { types?: unknown; channels?: unknown };
+      const typesRaw = b.types;
+      if (!Array.isArray(typesRaw) || typesRaw.length === 0) {
+        return { status: 400, json: { error: "types (non-empty array) required" } };
+      }
+      const invalidTypes = typesRaw.filter((t) => typeof t !== "string" || !ALL_TYPES.includes(t as ConversionType));
+      if (invalidTypes.length > 0) return { status: 400, json: { error: `invalid types: ${invalidTypes.join(", ")}` } };
+
+      let channels: Channel[] | undefined;
+      if (b.channels !== undefined) {
+        if (!Array.isArray(b.channels)) return { status: 400, json: { error: "channels must be an array" } };
+        const invalidChannels = b.channels.filter((c) => typeof c !== "string" || !ALL_CHANNELS.includes(c as Channel));
+        if (invalidChannels.length > 0) return { status: 400, json: { error: `invalid channels: ${invalidChannels.join(", ")}` } };
+        channels = b.channels as Channel[];
+      }
+
+      const { renderings, warnings } = await deps.formatVariants.run({ ids: [itemId], types: typesRaw as ConversionType[], channels });
+      return { status: 200, json: { rendered: renderings.length, warnings } };
+    }
   }
 
   if (segments[1] === "outlets" && segments.length >= 5) {

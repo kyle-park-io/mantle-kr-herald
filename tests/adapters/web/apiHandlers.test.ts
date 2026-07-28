@@ -23,13 +23,21 @@ interface BoardSpy {
   marks: unknown[];
   sends: unknown[];
   boards: string[];
+  prepares: unknown[];
+  formats: unknown[];
+}
+
+/** Shared by every describe block below that needs a spied board (or §10) route. */
+function spied(board: Parameters<typeof makeDeps>[4] = {}) {
+  const spy: BoardSpy = { overrides: [], marks: [], sends: [], boards: [], prepares: [], formats: [] };
+  return { spy, d: makeDeps([], [], [], spy, board) };
 }
 
 function makeDeps(
   list: Translation[],
   renderings: ChannelRendering[] = [],
   variants: ContentVariant[] = [],
-  spy: BoardSpy = { overrides: [], marks: [], sends: [], boards: [] },
+  spy: BoardSpy = { overrides: [], marks: [], sends: [], boards: [], prepares: [], formats: [] },
   board: Partial<{ override: () => void; mark: () => void; send: () => { sent: number; failed: number; error?: string } }> = {},
 ): ApiDeps {
   const state = { list: [...list] };
@@ -120,6 +128,18 @@ function makeDeps(
       spy.sends.push({ itemId, type, outletId });
       return board.send?.() ?? { sent: 1, failed: 0 };
     },
+    prepareConversionRun: {
+      run: async (input: unknown) => {
+        spy.prepares.push(input);
+        return { worksheetPath: "/ws/batch-1.md", pending: 1 };
+      },
+    } as unknown as ApiDeps["prepareConversionRun"],
+    formatVariants: {
+      run: async (input: unknown) => {
+        spy.formats.push(input);
+        return { renderings: [], warnings: [] };
+      },
+    } as unknown as ApiDeps["formatVariants"],
   };
 }
 
@@ -357,11 +377,6 @@ describe("GET /api/config", () => {
 });
 
 describe("board routes", () => {
-  const spied = (board: Parameters<typeof makeDeps>[4] = {}) => {
-    const spy: BoardSpy = { overrides: [], marks: [], sends: [], boards: [] };
-    return { spy, d: makeDeps([], [], [], spy, board) };
-  };
-
   it("GET /api/items/:id/board decodes the colon in the item id", async () => {
     const { spy, d } = spied();
     const res = await handleApi(d, "GET", "/api/items/x%3A1/board", undefined);
@@ -475,5 +490,96 @@ describe("dashboard save preserves review annotations (isReply/refUrl)", () => {
     const { d, calls } = recordingDeps({ status: "approved", approvedAt: "a" });
     await handleApi(d, "POST", "/api/translations/x%3A1/unapprove", undefined);
     expect(calls[0]).toMatchObject({ approve: false, isReply: true, refUrl: "https://x.com/i/status/1" });
+  });
+});
+
+describe("POST /api/items/:id/convert-prepare", () => {
+  it("runs PrepareConversionRun with the decoded item id and the requested types, and returns its result as-is", async () => {
+    const { spy, d } = spied();
+    d.prepareConversionRun = {
+      run: async (input: unknown) => {
+        spy.prepares.push(input);
+        return { worksheetPath: "/ws/batch-1.md", pending: 2 };
+      },
+    } as unknown as ApiDeps["prepareConversionRun"];
+
+    const res = await handleApi(d, "POST", "/api/items/x%3A1/convert-prepare", { types: ["announcement", "casual"] });
+
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ worksheetPath: "/ws/batch-1.md", pending: 2 });
+    expect(spy.prepares).toEqual([{ itemId: "x:1", types: ["announcement", "casual"] }]);
+  });
+
+  it("400s without a non-empty types array", async () => {
+    const { spy, d } = spied();
+    expect((await handleApi(d, "POST", "/api/items/x%3A1/convert-prepare", {})).status).toBe(400);
+    expect((await handleApi(d, "POST", "/api/items/x%3A1/convert-prepare", { types: [] })).status).toBe(400);
+    expect((await handleApi(d, "POST", "/api/items/x%3A1/convert-prepare", { types: "announcement" })).status).toBe(400);
+    // None of the malformed requests above should have reached the use-case.
+    expect(spy.prepares).toEqual([]);
+  });
+
+  it("400s on an unknown type, without running the use-case", async () => {
+    const { spy, d } = spied();
+    const res = await handleApi(d, "POST", "/api/items/x%3A1/convert-prepare", { types: ["announcement", "nope"] });
+    expect(res.status).toBe(400);
+    expect(spy.prepares).toEqual([]);
+  });
+});
+
+describe("POST /api/items/:id/format", () => {
+  it("runs FormatVariants scoped to the item, the requested types and channels", async () => {
+    const { spy, d } = spied();
+    d.formatVariants = {
+      run: async (input: unknown) => {
+        spy.formats.push(input);
+        return { renderings: [rnd(), rnd()], warnings: [] };
+      },
+    } as unknown as ApiDeps["formatVariants"];
+
+    const res = await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"], channels: ["telegram"] });
+
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ rendered: 2, warnings: [] });
+    expect(spy.formats).toEqual([{ ids: ["x:1"], types: ["announcement"], channels: ["telegram"] }]);
+  });
+
+  it("omits channels from the selector when the request does not name any (FormatVariants applies its own defaults)", async () => {
+    const { spy, d } = spied();
+    d.formatVariants = {
+      run: async (input: unknown) => {
+        spy.formats.push(input);
+        return { renderings: [], warnings: [] };
+      },
+    } as unknown as ApiDeps["formatVariants"];
+
+    await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"] });
+
+    expect(spy.formats).toEqual([{ ids: ["x:1"], types: ["announcement"], channels: undefined }]);
+  });
+
+  it("surfaces FormatVariants' warnings in the response, alongside the rendered count", async () => {
+    const { d } = spied();
+    const warning = { itemId: "x:1", type: "announcement" as const, channel: "telegram" as const, messages: ["over the X limit"] };
+    d.formatVariants = { run: async () => ({ renderings: [rnd()], warnings: [warning] }) } as unknown as ApiDeps["formatVariants"];
+
+    const res = await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"] });
+
+    expect(res.json).toEqual({ rendered: 1, warnings: [warning] });
+  });
+
+  it("400s without a non-empty types array, and does not run the use-case", async () => {
+    const { spy, d } = spied();
+    expect((await handleApi(d, "POST", "/api/items/x%3A1/format", {})).status).toBe(400);
+    expect((await handleApi(d, "POST", "/api/items/x%3A1/format", { types: [] })).status).toBe(400);
+    expect(spy.formats).toEqual([]);
+  });
+
+  it("400s on an unknown type or an unknown channel", async () => {
+    const { spy, d } = spied();
+    expect((await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["nope"] })).status).toBe(400);
+    expect((await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"], channels: ["nope"] })).status).toBe(400);
+    expect((await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"], channels: "telegram" })).status).toBe(400);
+    expect(spy.formats).toEqual([]);
   });
 });

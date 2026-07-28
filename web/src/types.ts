@@ -217,3 +217,29 @@ export interface SendReply extends BoardReply {
   failed: number;
   error?: string;
 }
+
+// Mirrors src/app/FormatVariants.ts — one destination's over-limit or otherwise-noteworthy result,
+// carried on the /api/items/:id/format response so the board can show what to double-check.
+export interface FormatWarning {
+  itemId: string;
+  type: ConversionType;
+  channel: Channel;
+  messages: string[];
+}
+
+/**
+ * `POST /api/items/:id/convert-prepare`. The board cannot convert (no Claude API here, `zod`-only
+ * runtime) — this is the worksheet handoff: `pending === 0` means nothing was written (either
+ * already converted, or nothing approved yet for the chosen types), so a caller must check it
+ * before telling the operator a worksheet is waiting.
+ */
+export interface ConvertPrepareReply {
+  worksheetPath: string;
+  pending: number;
+}
+
+/** `POST /api/items/:id/format`. Unlike conversion this always does real work — see `FormatVariants`. */
+export interface FormatReply {
+  rendered: number;
+  warnings: FormatWarning[];
+}

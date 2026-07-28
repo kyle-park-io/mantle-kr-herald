@@ -1,6 +1,6 @@
 import type {
   Translation, PublishResult, Rendering, ConversionType, Channel, AppStatus, PublishStateRow, Emissions,
-  BoardView, BoardReply, SendReply,
+  BoardView, BoardReply, SendReply, ConvertPrepareReply, FormatReply,
 } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
@@ -78,4 +78,26 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ delivered }),
     }).then((r) => json<BoardReply>(r)),
+
+  /**
+   * The board cannot convert — no Claude API, `zod`-only runtime — so this writes a worksheet and
+   * hands back where it landed; the operator still has to ask the local agent to fill it in.
+   */
+  convertPrepare: (itemId: string, types: ConversionType[]) =>
+    fetch(`/api/items/${encodeURIComponent(itemId)}/convert-prepare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ types }),
+    }).then((r) => json<ConvertPrepareReply>(r)),
+  /**
+   * Unlike conversion, `FormatVariants` is pure code, so this button really does the work — and
+   * overwrites whatever was stored for the given (type, channel) pairs, discarding any edit or
+   * approval. The caller is expected to confirm that loss with the operator first.
+   */
+  formatItem: (itemId: string, types: ConversionType[], channels?: Channel[]) =>
+    fetch(`/api/items/${encodeURIComponent(itemId)}/format`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(channels ? { types, channels } : { types }),
+    }).then((r) => json<FormatReply>(r)),
 };

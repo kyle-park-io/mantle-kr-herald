@@ -1,5 +1,6 @@
 import "./registerErrorHandler";
 // src/cli/serve.ts
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startServer } from "../adapters/web/HttpServer";
 import type { ApiDeps } from "../adapters/web/apiHandlers";
@@ -7,6 +8,10 @@ import type { StatusView, PublishStateRow, IntegrationStatus } from "../adapters
 import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { JsonPublishStore } from "../adapters/store/JsonPublishStore";
 import { JsonFewShotStore } from "../adapters/store/JsonFewShotStore";
+import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
+import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
+import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
+import { fewShotStoresByType } from "../adapters/store/JsonTypedFewShotStore";
 import { SaveTranslation } from "../app/SaveTranslation";
 import { PublishTranslations } from "../app/PublishTranslations";
 import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
@@ -18,6 +23,11 @@ import { ApproveRendering } from "../app/ApproveRendering";
 import { SaveOutletOverride } from "../app/SaveOutletOverride";
 import { MarkDelivery } from "../app/MarkDelivery";
 import { SendChannels } from "../app/SendChannels";
+import { PrepareConversions, type PendingVariant } from "../app/PrepareConversions";
+import { PrepareConversionRun } from "../app/PrepareConversionRun";
+import { FormatVariants } from "../app/FormatVariants";
+import { archiveFile } from "../shared/store/archive";
+import { writeJsonFileAtomic } from "../shared/store/jsonFile";
 import { buildBoard, type BoardView } from "../adapters/web/board";
 import { deliveredByChannelSender, outletById, outletsForChannel } from "../domain/outlet/models";
 import { createSenders } from "./channelSenders";
@@ -271,6 +281,39 @@ const sendToOutlet = async (itemId: string, type: string, outletId: string): Pro
   }
 };
 
+// Same construction as `src/cli/convert-prepare.ts`, so the board and the CLI read and write the
+// same worksheets and the same `output/variants/pending.json` batch.
+const prepareConversions = new PrepareConversions(
+  translationStore,
+  new JsonGlossaryStore(paths.translationConfigDir),
+  new FileTranslationConfig(paths.translationConfigDir),
+  new FileConversionConfig(paths.conversionConfigDir),
+  fewShotStoresByType(paths.conversionConfigDir),
+  conversionStore,
+);
+
+/** Persists the pending batch exactly like the CLI does — archive-then-overwrite, one batch live at a time. */
+const savePendingVariants = async (pending: PendingVariant[]): Promise<void> => {
+  const archived = await archiveFile(paths.variantsPending, paths.archiveDir, "pending-variants");
+  if (archived) console.log(`  archived the previous unsaved batch → ${archived}`);
+  await writeJsonFileAtomic(paths.variantsDir, paths.variantsPending, pending);
+};
+
+const prepareConversionRun = new PrepareConversionRun(
+  prepareConversions,
+  async (path, body) => {
+    await mkdir(paths.variantsWorksheets, { recursive: true });
+    await writeFile(path, body, "utf8");
+  },
+  paths.variantsWorksheets,
+  undefined,
+  savePendingVariants,
+);
+
+// Same stores and xMaxWeighted as `src/cli/format.ts` (non-refine branch), so a board-triggered
+// reformat renders byte-identical output to `pnpm format`.
+const formatVariants = new FormatVariants(conversionStore, formattingStore, undefined, loadXMaxWeighted());
+
 const deps: ApiDeps = {
   translationStore,
   saveTranslation,
@@ -287,6 +330,8 @@ const deps: ApiDeps = {
   loadBoard,
   saveOutletOverride: new SaveOutletOverride(overrideStore),
   markDelivery: new MarkDelivery(deliveryLedger),
+  prepareConversionRun,
+  formatVariants,
   sendToOutlet,
 };
 
