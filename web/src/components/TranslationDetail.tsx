@@ -9,6 +9,8 @@ const TARGET_LABEL: Record<"local" | "google" | "lark", string> = {
   lark: "Lark Drive",
 };
 
+const TARGET_RANK: Record<string, number> = { local: 0, google: 1, lark: 2 };
+
 export function TranslationDetail(props: {
   item: Translation;
   publishRows: PublishStateRow[];
@@ -140,33 +142,48 @@ export function TranslationDetail(props: {
           <p className="text-[13px] text-faint">아직 발행되지 않았습니다.</p>
         ) : (
           <ul className="flex flex-col gap-1.5">
-            {props.publishRows.map((r) => (
-              <li
-                key={`${r.status}:${r.target}`}
-                className="flex items-center gap-2.5 rounded-lg border border-line bg-surface px-3 py-2 text-[13px]"
-              >
-                <span className="font-mono text-[11px] text-faint uppercase">{r.target}</span>
-                <span className="text-muted">{r.status}</span>
-                <span className="ml-auto">
-                  {r.target === "local" && r.remoteId ? (
-                    <a
-                      className="text-mint underline-offset-2 hover:underline"
-                      href={`/api/publish/local/${r.remoteId.split("/").map(encodeURIComponent).join("/")}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      열기 ↗
-                    </a>
-                  ) : r.url ? (
-                    <a className="text-mint underline-offset-2 hover:underline" href={r.url} target="_blank" rel="noreferrer">
-                      Drive에서 열기 ↗
-                    </a>
-                  ) : (
-                    <span className="text-faint">링크 없음</span>
-                  )}
-                </span>
-              </li>
-            ))}
+            {[...props.publishRows]
+              .sort((a, b) => (TARGET_RANK[a.target] ?? 9) - (TARGET_RANK[b.target] ?? 9))
+              .map((r) => (
+                <li
+                  key={`${r.status}:${r.target}`}
+                  className="flex items-center gap-2.5 rounded-lg border border-line bg-surface px-3 py-2 text-[13px]"
+                >
+                  <span className="font-mono text-[11px] text-faint uppercase">{r.target}</span>
+                  <span className="text-muted">{r.status}</span>
+                  <span className="ml-auto flex items-center gap-3">
+                    {r.target === "local" ? (
+                      r.remoteId ? (
+                        <a
+                          className="text-mint underline-offset-2 hover:underline"
+                          href={`/api/publish/local/${r.remoteId.split("/").map(encodeURIComponent).join("/")}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          파일 열기 ↗
+                        </a>
+                      ) : (
+                        <span className="text-faint">링크 없음</span>
+                      )
+                    ) : r.folderUrl || r.fileUrl ? (
+                      <>
+                        {r.folderUrl && (
+                          <a className="text-mint underline-offset-2 hover:underline" href={r.folderUrl} target="_blank" rel="noreferrer">
+                            폴더 열기 ↗
+                          </a>
+                        )}
+                        {r.fileUrl && (
+                          <a className="text-mint underline-offset-2 hover:underline" href={r.fileUrl} target="_blank" rel="noreferrer">
+                            파일 열기 ↗
+                          </a>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-faint">링크 없음</span>
+                    )}
+                  </span>
+                </li>
+              ))}
           </ul>
         )}
       </section>

@@ -56,6 +56,8 @@ export interface PublishStateRow {
   url?: string;
   remoteId?: string;
   fileName?: string;
+  folderUrl?: string;
+  fileUrl?: string;
 }
 
 // Mirrors src/domain/formatting/emitters/types.ts — keep in sync.
