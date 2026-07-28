@@ -138,4 +138,25 @@ describe("SendChannels", () => {
     expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
     expect(added.map((e) => e.itemId)).toEqual(["x:1"]); // send + ledger stood; only the archive failed
   });
+
+  it("passes photosFor(itemId) through to the sender", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved" })]);
+    const { ledger } = fakeLedger();
+    const got: (string[] | undefined)[] = [];
+    const sender: ChannelSender = { name: "x", send: async (req) => { got.push(req.photos); return { postId: "1" }; } };
+    await new SendChannels(
+      store, { telegram: undefined, x: sender }, ledger, undefined, undefined, undefined,
+      async (id: string) => (id === "x:1" ? ["https://pbs.twimg.com/media/a.jpg"] : []),
+    ).run({ targets: ["x"] });
+    expect(got[0]).toEqual(["https://pbs.twimg.com/media/a.jpg"]);
+  });
+
+  it("with no photosFor dep, the sender still receives photos: [] (backward compat)", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram" })]);
+    const { ledger } = fakeLedger();
+    const got: (string[] | undefined)[] = [];
+    const sender: ChannelSender = { name: "telegram", send: async (req) => { got.push(req.photos); return { postId: "p" }; } };
+    await new SendChannels(store, { telegram: sender, x: undefined }, ledger).run({ targets: ["telegram"] });
+    expect(got[0]).toEqual([]);
+  });
 });

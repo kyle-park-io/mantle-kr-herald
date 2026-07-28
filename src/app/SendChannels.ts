@@ -34,6 +34,7 @@ export class SendChannels {
     private readonly record?: Recorder,
     private readonly archive?: Archiver,
     private readonly now: () => string = () => new Date().toISOString(),
+    private readonly photosFor?: (itemId: string) => Promise<string[]>,
   ) {}
 
   async run(input: SendChannelsInput): Promise<SendChannelsResult> {
@@ -64,8 +65,9 @@ export class SendChannels {
         continue;
       }
       try {
+        const photos = this.photosFor ? await this.photosFor(r.itemId) : [];
         const segments = emitResult.segments.map((s) => s.text);
-        const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments });
+        const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments, photos });
         const sentAt = this.now();
         // The send already happened — a ledger-write failure from here on must NOT be
         // reported as a "failed" send (that would make the next run re-send it live).
