@@ -152,28 +152,28 @@ describe("normalizeTweet — quoted-tweet link", () => {
     const t = normalizeTweet({
       ...base,
       text: "The full breakdown ↓",
-      quoted_tweet: { id: "999", url: "https://x.com/nansen_ai/status/999" },
+      quoted_tweet: { id: "999", url: "https://x.com/quoted_acct/status/999" },
     });
-    expect(t.text).toBe("The full breakdown ↓\nhttps://x.com/nansen_ai/status/999");
+    expect(t.text).toBe("The full breakdown ↓\nhttps://x.com/quoted_acct/status/999");
     expect(t.isQuote).toBe(true);
   });
 
   it("does not duplicate a quoted url the text already contains", () => {
     const t = normalizeTweet({
       ...base,
-      text: "see https://x.com/nansen_ai/status/999",
-      quoted_tweet: { id: "999", url: "https://x.com/nansen_ai/status/999" },
+      text: "see https://x.com/quoted_acct/status/999",
+      quoted_tweet: { id: "999", url: "https://x.com/quoted_acct/status/999" },
     });
-    expect(t.text).toBe("see https://x.com/nansen_ai/status/999");
+    expect(t.text).toBe("see https://x.com/quoted_acct/status/999");
   });
 
   it("does not append when the text already contains the quoted tweet's id (t.co-expanded)", () => {
     const t = normalizeTweet({
       ...base,
-      text: "context https://twitter.com/nansen_ai/status/999",
-      quoted_tweet: { id: "999", url: "https://x.com/nansen_ai/status/999" },
+      text: "context https://twitter.com/quoted_acct/status/999",
+      quoted_tweet: { id: "999", url: "https://x.com/quoted_acct/status/999" },
     });
-    expect(t.text).toBe("context https://twitter.com/nansen_ai/status/999");
+    expect(t.text).toBe("context https://twitter.com/quoted_acct/status/999");
   });
 
   it("leaves text unchanged when the quoted tweet has no url (still isQuote)", () => {
