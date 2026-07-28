@@ -1,4 +1,5 @@
 import type { Destination } from "../formatting/emitters";
+import type { ConversionType } from "../conversion/models";
 
 export type SendableChannel = "telegram" | "x";
 
@@ -20,4 +21,14 @@ export interface ChannelSentEntry {
 
 export function sentKey(e: Pick<ChannelSentEntry, "itemId" | "type" | "channel">): string {
   return `${e.itemId}:${e.type}:${e.channel}`;
+}
+
+export interface SentArchiveEntry {
+  itemId: string;
+  type: ConversionType;
+  channel: SendableChannel;
+  text: string;
+  postId?: string;
+  url?: string;
+  sentAt: string;
 }
