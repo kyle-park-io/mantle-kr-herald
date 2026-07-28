@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Translation } from "../types";
+import { datePrefix, type Translation } from "../types";
 
 type Filter = "all" | "translated" | "approved";
 
@@ -80,7 +80,10 @@ export function TranslationList(props: {
                       <StatusChip status={t.status} />
                     </span>
                   </div>
-                  <p className="line-clamp-2 text-[13px] leading-snug text-ink/90">{preview(t)}</p>
+                  <p className="line-clamp-2 text-[13px] leading-snug text-ink/90">
+                    {t.postedAt && <span className="mr-1 font-mono text-faint">{datePrefix(t.postedAt)}</span>}
+                    {preview(t)}
+                  </p>
                 </button>
               </li>
             );

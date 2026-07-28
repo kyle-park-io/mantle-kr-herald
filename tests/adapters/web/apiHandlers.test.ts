@@ -78,7 +78,7 @@ function makeDeps(
     loadStatus: async () => ({
       storageMode: "cloud" as const,
       funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
-      sync: { published: 1, unsynced: 2, stale: 0 },
+      sync: { synced: 1, needsRepublish: 2, unpublished: 0 },
       availableTargets: ["local"],
     }),
     loadPublishState: async () => [
@@ -201,7 +201,7 @@ describe("handleApi", () => {
     expect(res.json).toEqual({
       storageMode: "cloud",
       funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
-      sync: { published: 1, unsynced: 2, stale: 0 },
+      sync: { synced: 1, needsRepublish: 2, unpublished: 0 },
       availableTargets: ["local"],
     });
   });

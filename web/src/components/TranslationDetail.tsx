@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { itemUrl } from "../types";
+import { datePrefix, itemUrl } from "../types";
 import type { Translation, PublishStateRow } from "../types";
 import { StatusChip, KindBadge } from "./TranslationList";
 
@@ -41,13 +41,16 @@ export function TranslationDetail(props: {
 
   const url = itemUrl(props.item.itemId);
   const approved = props.item.status === "approved";
-  // The published file lags the current approval status until re-published (publish-before-approve,
-  // or un-approve after publishing): flag it so "파일 열기" showing the old doc isn't confusing.
-  const stalePublish = props.publishRows.some((r) => r.status !== props.item.status);
+  // A published row is out of date (status changed since upload, or content edited) — the server
+  // computes this against the current render. Flag it so "파일 열기" showing the old doc isn't confusing.
+  const stalePublish = props.publishRows.some((r) => r.synced === false);
 
   return (
     <div className="mx-auto max-w-3xl p-6 sm:p-8">
       <div className="mb-6 flex flex-wrap items-center gap-2.5">
+        {props.item.postedAt && (
+          <span className="font-mono text-[13px] font-medium text-faint">{datePrefix(props.item.postedAt)}</span>
+        )}
         {url ? (
           <a
             href={url}
@@ -149,7 +152,7 @@ export function TranslationDetail(props: {
       {stalePublish && (
         <p className="mt-3 flex items-center gap-1.5 rounded-lg bg-amber-soft px-3 py-2 text-[12px] text-amber-ink">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-ink" />
-          발행된 파일이 현재 승인 상태와 다릅니다 — <span className="font-medium">발행을 다시 눌러</span> 파일을 갱신하세요.
+          발행된 파일이 최신이 아닙니다 (승인 상태 변경 또는 내용 수정) — <span className="font-medium">발행을 다시 눌러</span> 갱신하세요.
         </p>
       )}
 
@@ -167,17 +170,23 @@ export function TranslationDetail(props: {
                   className="flex items-center gap-2.5 rounded-lg border border-line bg-surface px-3 py-2 text-[13px]"
                 >
                   <span className="font-mono text-[11px] text-faint uppercase">{r.target}</span>
-                  <span className="text-muted">{r.status}</span>
-                  {r.status !== props.item.status && (
-                    <span className="rounded bg-amber-soft px-1.5 py-0.5 text-[10px] font-medium text-amber-ink">
+                  {r.synced === true ? (
+                    <span className="inline-flex items-center gap-1 text-[12px] text-mint">
+                      <span className="h-1.5 w-1.5 rounded-full bg-mint" />
+                      발행됨
+                    </span>
+                  ) : r.synced === false ? (
+                    <span className="rounded bg-amber-soft px-1.5 py-0.5 text-[11px] font-medium text-amber-ink">
                       재발행 필요
                     </span>
+                  ) : (
+                    <span className="text-muted">{r.status}</span>
                   )}
                   <span className="ml-auto flex items-center gap-3">
                     {r.target === "local" ? (
                       r.remoteId ? (
                         <a
-                          className="text-mint underline-offset-2 hover:underline"
+                          className="text-mint underline decoration-mint/40 underline-offset-2 hover:decoration-mint"
                           href={`/api/publish/local/${r.remoteId.split("/").map(encodeURIComponent).join("/")}`}
                           target="_blank"
                           rel="noreferrer"
@@ -190,12 +199,12 @@ export function TranslationDetail(props: {
                     ) : r.folderUrl || r.fileUrl ? (
                       <>
                         {r.folderUrl && (
-                          <a className="text-mint underline-offset-2 hover:underline" href={r.folderUrl} target="_blank" rel="noreferrer">
+                          <a className="text-mint underline decoration-mint/40 underline-offset-2 hover:decoration-mint" href={r.folderUrl} target="_blank" rel="noreferrer">
                             폴더 열기 ↗
                           </a>
                         )}
                         {r.fileUrl && (
-                          <a className="text-mint underline-offset-2 hover:underline" href={r.fileUrl} target="_blank" rel="noreferrer">
+                          <a className="text-mint underline decoration-mint/40 underline-offset-2 hover:decoration-mint" href={r.fileUrl} target="_blank" rel="noreferrer">
                             파일 열기 ↗
                           </a>
                         )}

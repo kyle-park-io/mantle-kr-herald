@@ -89,7 +89,7 @@ export function App() {
   };
 
   const isCloud = status?.storageMode === "cloud";
-  const syncWarn = !!status && (status.sync.unsynced > 0 || status.sync.stale > 0);
+  const syncWarn = !!status && (status.sync.needsRepublish > 0 || status.sync.unpublished > 0);
 
   return (
     <div className="flex h-screen flex-col bg-bg text-ink">
@@ -163,12 +163,12 @@ export function App() {
               <span className="h-4 w-px bg-line" />
               <span
                 className={`inline-flex items-center gap-1.5 text-xs font-medium ${syncWarn ? "text-amber-ink" : "text-mint"}`}
-                title="published / unsynced / stale"
+                title="발행됨 · 재발행 필요 · 미발행"
               >
                 <span className={`h-1.5 w-1.5 rounded-full ${syncWarn ? "bg-amber-ink" : "bg-mint"}`} />
-                {status.sync.published} synced
-                {status.sync.unsynced > 0 ? ` · ${status.sync.unsynced} 미발행` : ""}
-                {status.sync.stale > 0 ? ` · ${status.sync.stale} stale` : ""}
+                발행됨 {status.sync.synced}
+                {status.sync.needsRepublish > 0 ? ` · 재발행 필요 ${status.sync.needsRepublish}` : ""}
+                {status.sync.unpublished > 0 ? ` · 미발행 ${status.sync.unpublished}` : ""}
               </span>
             </div>
           )}

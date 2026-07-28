@@ -16,7 +16,7 @@ import type { ApiTranslation } from "./attachKind";
 export interface StatusView {
   storageMode: StorageMode;
   funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
-  sync: { published: number; unsynced: number; stale: number };
+  sync: { synced: number; needsRepublish: number; unpublished: number };
   availableTargets: ("local" | "google" | "lark")[];
 }
 
@@ -29,6 +29,8 @@ export interface PublishStateRow {
   fileName?: string;
   folderUrl?: string; // NEW — "open folder" for Google/Lark
   fileUrl?: string; // NEW — "open file" for Google/Lark
+  /** Whether this row is up to date with the item's current status + content (else: needs republish). */
+  synced?: boolean;
 }
 
 export interface ApiResult {
