@@ -2,12 +2,12 @@ import { describe, it, expect } from "vitest";
 import { TypefullyMedia } from "../../../src/adapters/send/TypefullyMedia";
 
 function routingFetch(overrides: Record<string, () => Response> = {}) {
-  const calls: { url: string; method: string; isBinary?: boolean }[] = [];
+  const calls: { url: string; method: string; isBinary?: boolean; headers?: any }[] = [];
   const fn = (async (url: string, init?: any) => {
     const u = String(url);
     const method = init?.method ?? "GET";
     const isBinary = init?.body instanceof ArrayBuffer || ArrayBuffer.isView(init?.body);
-    calls.push({ url: u, method, isBinary });
+    calls.push({ url: u, method, isBinary, headers: init?.headers });
     for (const key in overrides) if (u.includes(key)) return overrides[key]();
     const reply = (body: unknown, ct = "application/json") =>
       ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body), arrayBuffer: async () => new ArrayBuffer(4), headers: { get: () => ct } }) as unknown as Response;
@@ -29,6 +29,8 @@ describe("TypefullyMedia", () => {
     expect(calls.map((c) => c.method)).toEqual(["GET", "POST", "PUT", "GET"]); // download, upload, s3 put, poll
     expect(calls.find((c) => c.url === "https://s3.example/put")!.isBinary).toBe(true);
     expect(calls[1].url).toContain("/social-sets/42/media/upload");
+    const put = calls.find((c) => c.url === "https://s3.example/put")!;
+    expect((put as any).headers?.["Content-Type"]).toBeUndefined();
   });
 
   it("throws when a media step fails", async () => {
