@@ -64,7 +64,9 @@ export async function buildArchiver(): Promise<Archiver | undefined> {
       try {
         await u.upload({ name, content, folder: "sent" });
       } catch (err) {
-        console.warn(`[archive] ${entry.itemId}/${entry.channel} → ${u.name} failed: ${(err as Error).message}`);
+        // Keyed by room, not channel: two rooms on one channel produce two archive entries, and
+        // `x:1/telegram` failing twice gave no way to tell which room's file was lost.
+        console.warn(`[archive] ${entry.itemId}/${entry.outletId} → ${u.name} failed: ${(err as Error).message}`);
       }
     }
   };

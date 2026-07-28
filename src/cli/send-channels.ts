@@ -50,4 +50,9 @@ const result = await new SendChannels(
   outletsForChannel,
   loadTelegramChatIds(),
 ).run({ targets, ids, outletIds });
-console.log(`sent ${result.sent} · skipped ${result.skipped} (already sent) · failed ${result.failed}`);
+// The extra segments appear only when they happened, so an ordinary run prints the line it always
+// printed. Both are kept out of `failed`: neither is a send that went wrong.
+const parts = [`sent ${result.sent}`, `skipped ${result.skipped} (already sent)`, `failed ${result.failed}`];
+if (result.unconfigured > 0) parts.push(`미설정 ${result.unconfigured} (${result.unconfiguredEnv.join(", ")})`);
+if (result.withheld > 0) parts.push(`보류 ${result.withheld} (첫 발송 — --outlets 로 방을 지정하세요)`);
+console.log(parts.join(" · "));
