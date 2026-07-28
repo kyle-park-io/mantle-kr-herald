@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { TypefullyArticleSender } from "../../../src/adapters/send/TypefullyArticleSender";
+import { scheduledPublishAt } from "../../../src/adapters/send/typefullyPublish";
 
 function fakeFetch(responses: { ok: boolean; status: number; body: unknown }[]) {
   const calls: { url: string; method?: string; body: any }[] = [];
@@ -12,30 +13,31 @@ function fakeFetch(responses: { ok: boolean; status: number; body: unknown }[]) 
   return { fn, calls };
 }
 const noSleep = async () => {};
+const AT = 1_800_000_000_000;
+const now = () => AT;
 
 describe("TypefullyArticleSender", () => {
-  it("posts an x_article draft (no enabled/posts) and parses the article id from x_article_published_url", async () => {
-    const { fn, calls } = fakeFetch([{ ok: true, status: 200, body: { id: 5, x_article_published_url: "https://x.com/i/article/123" } }]);
-    const res = await new TypefullyArticleSender("KEY", "42", fn, noSleep).send({ content_markdown: "# T\n\nbody", cover_media_id: "C1" });
+  it("posts a scheduled x_article draft (no enabled/posts) and returns the share_url", async () => {
+    const { fn, calls } = fakeFetch([{ ok: true, status: 200, body: { id: 5, share_url: "https://typefully.com/t/art" } }]);
+    const res = await new TypefullyArticleSender("KEY", "42", fn, noSleep, now).send({ content_markdown: "# T\n\nbody", cover_media_id: "C1" });
     expect(calls[0].url).toContain("/social-sets/42/drafts");
     expect(calls[0].body.platforms.x_article).toEqual({ content_markdown: "# T\n\nbody", cover_media_id: "C1" });
     expect(calls[0].body.platforms.x_article.enabled).toBeUndefined();
-    expect(calls[0].body.publish_at).toBe("now");
-    expect(res).toEqual({ postId: "123", url: "https://x.com/i/article/123" });
+    expect(calls[0].body.publish_at).toBe(scheduledPublishAt(now));
+    expect(calls[0].body.publish_at).not.toBe("now");
+    expect(res).toEqual({ postId: "5", url: "https://typefully.com/t/art" });
+    expect(calls).toHaveLength(1); // no poll
   });
 
-  it("omits cover_media_id when not provided, and polls for the url when the create lacks it", async () => {
-    const { fn, calls } = fakeFetch([
-      { ok: true, status: 200, body: { id: 5 } },
-      { ok: true, status: 200, body: { x_article_published_url: "https://x.com/i/article/9" } },
-    ]);
-    const res = await new TypefullyArticleSender("KEY", "42", fn, noSleep).send({ content_markdown: "# T" });
+  it("omits cover_media_id when not provided", async () => {
+    const { fn, calls } = fakeFetch([{ ok: true, status: 200, body: { id: 5, share_url: "https://typefully.com/t/art" } }]);
+    const res = await new TypefullyArticleSender("KEY", "42", fn, noSleep, now).send({ content_markdown: "# T" });
     expect("cover_media_id" in calls[0].body.platforms.x_article).toBe(false);
-    expect(res).toEqual({ postId: "9", url: "https://x.com/i/article/9" });
+    expect(res).toEqual({ postId: "5", url: "https://typefully.com/t/art" });
   });
 
   it("throws on a create error", async () => {
     const { fn } = fakeFetch([{ ok: false, status: 400, body: { error: "bad" } }]);
-    await expect(new TypefullyArticleSender("KEY", "42", fn, noSleep).send({ content_markdown: "# T" })).rejects.toThrow(/HTTP 400/);
+    await expect(new TypefullyArticleSender("KEY", "42", fn, noSleep, now).send({ content_markdown: "# T" })).rejects.toThrow(/HTTP 400/);
   });
 });

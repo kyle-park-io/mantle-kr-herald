@@ -19,7 +19,6 @@ export class TypefullyMedia {
     const dl = await this.fetchFn(url);
     if (!dl.ok) throw new Error(`Typefully media download failed: HTTP ${dl.status} for ${url}`);
     const bytes = await dl.arrayBuffer();
-    const contentType = dl.headers.get("content-type") ?? "image/jpeg";
     const fileName = url.split("/").pop()?.split("?")[0] || "media.jpg";
 
     const up = await this.fetchFn(`${API}/social-sets/${this.socialSetId}/media/upload`, {
@@ -30,7 +29,7 @@ export class TypefullyMedia {
     if (!up.ok) throw new Error(`Typefully media/upload failed: HTTP ${up.status}`);
     const { media_id, upload_url } = (await up.json()) as { media_id: string; upload_url: string };
 
-    const put = await this.fetchFn(upload_url, { method: "PUT", headers: { "Content-Type": contentType }, body: bytes });
+    const put = await this.fetchFn(upload_url, { method: "PUT", body: bytes });
     if (!put.ok) throw new Error(`Typefully media S3 upload failed: HTTP ${put.status}`);
 
     for (let i = 0; i < POLL_ATTEMPTS; i++) {
