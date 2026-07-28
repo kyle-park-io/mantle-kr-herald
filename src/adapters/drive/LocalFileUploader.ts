@@ -42,6 +42,12 @@ export class LocalFileUploader implements DriveUploader {
     return result;
   }
 
+  async delete(remoteId: string): Promise<void> {
+    await unlink(resolve(this.rootDir, remoteId)).catch((err: unknown) => {
+      if (!isErrnoException(err) || err.code !== "ENOENT") throw err; // already gone is not a failure
+    });
+  }
+
   /** `url` is omitted: the dashboard is served over http, where browsers block file:// links. */
   private async write(req: UploadRequest): Promise<UploadResult> {
     // req.name comes from publishFileName, whose date prefix is not slugified. A hand-corrupted

@@ -28,4 +28,10 @@ export class JsonPublishStore implements PublishStore {
     next.push(entry);
     await writeJsonFileAtomic(this.dir, this.path, { entries: next } satisfies StateFile);
   }
+
+  async remove(key: string): Promise<void> {
+    const entries = await this.listEntries();
+    const next = entries.filter((e) => entryKey(e) !== key);
+    await writeJsonFileAtomic(this.dir, this.path, { entries: next } satisfies StateFile);
+  }
 }

@@ -262,3 +262,37 @@ describe("LarkDriveUploader.update", () => {
     warn.mockRestore();
   });
 });
+
+describe("LarkDriveUploader.delete", () => {
+  it("deletes a file by token as type=file and returns on a {code:0} response", async () => {
+    const calls: Call[] = [];
+    const uploader = new LarkDriveUploader(
+      auth,
+      "https://open.larksuite.com",
+      folders,
+      recordingFetch(calls, [okDelete()]),
+    );
+
+    await uploader.delete("tok");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("DELETE");
+    expect(calls[0].url).toBe("https://open.larksuite.com/open-apis/drive/v1/files/tok?type=file");
+  });
+
+  it("throws when the Lark envelope code is non-zero", async () => {
+    const uploader = new LarkDriveUploader(
+      auth,
+      "https://open.larksuite.com",
+      folders,
+      recordingFetch([], [
+        new Response(JSON.stringify({ code: 99, msg: "boom" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ]),
+    );
+
+    await expect(uploader.delete("tok")).rejects.toThrow(/code=99/);
+  });
+});

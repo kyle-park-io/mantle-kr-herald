@@ -93,6 +93,7 @@ describe("PublishTranslations", () => {
       record: async (e) => {
         recorded.push(e);
       },
+      remove: async () => {},
     };
     const uploader: DriveUploader = {
       name: "google",
@@ -188,6 +189,7 @@ describe("PublishTranslations", () => {
       record: async () => {
         throw new Error("disk full");
       },
+      remove: async () => {},
     };
 
     const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();
@@ -210,6 +212,7 @@ describe("PublishTranslations", () => {
       record: async () => {
         throw new Error("disk full");
       },
+      remove: async () => {},
     };
 
     const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();

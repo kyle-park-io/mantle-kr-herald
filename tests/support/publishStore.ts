@@ -17,4 +17,8 @@ export class InMemoryPublishStore implements PublishStore {
     this.entries = this.entries.filter((e) => entryKey(e) !== entryKey(entry));
     this.entries.push(entry);
   }
+
+  async remove(key: string): Promise<void> {
+    this.entries = this.entries.filter((e) => entryKey(e) !== key);
+  }
 }
