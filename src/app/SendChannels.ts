@@ -4,6 +4,7 @@ import type { ChannelSentEntry, SendableChannel, SentArchiveEntry } from "../dom
 import { DELIVERY_DESTINATION, sentKey } from "../domain/send/channels";
 import { emit } from "../domain/formatting/emitters";
 import type { PublishRecord } from "../domain/sheet/models";
+import { extractMedia } from "../domain/media/sourceMedia";
 
 export interface ChannelLedger {
   loadKeys(): Promise<Set<string>>;
@@ -34,7 +35,6 @@ export class SendChannels {
     private readonly record?: Recorder,
     private readonly archive?: Archiver,
     private readonly now: () => string = () => new Date().toISOString(),
-    private readonly photosFor?: (itemId: string) => Promise<string[]>,
   ) {}
 
   async run(input: SendChannelsInput): Promise<SendChannelsResult> {
@@ -65,9 +65,10 @@ export class SendChannels {
         continue;
       }
       try {
-        const photos = this.photosFor ? await this.photosFor(r.itemId) : [];
+        const { photos, videos } = extractMedia(r.text);
         const segments = emitResult.segments.map((s) => s.text);
         const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments, photos });
+        if (videos.length > 0) console.warn(`[send] ${key}: ${videos.length} video(s) present in the rendering, not attached this cycle`);
         const sentAt = this.now();
         // The send already happened — a ledger-write failure from here on must NOT be
         // reported as a "failed" send (that would make the next run re-send it live).

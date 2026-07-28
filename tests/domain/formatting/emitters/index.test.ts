@@ -38,6 +38,26 @@ describe("emitAll", () => {
   });
 });
 
+describe("emit strips media markers", () => {
+  it("removes a photo marker from the delivered text", () => {
+    const joined = emit("맨틀 소식\n\n![](https://img/a.jpg)", "telegram_bot").segments.map((s) => s.text).join("");
+    expect(joined).toContain("맨틀 소식");
+    expect(joined).not.toContain("![](");
+  });
+
+  it("does not count a stripped photo marker toward the length limit", () => {
+    const body = "가".repeat(135); // ~270 weighted, under X's 280
+    const withMarker = `${body}\n\n![](https://pbs.twimg.com/media/HOO5ibObIAArZVJ.png)`; // raw length > 280
+    expect(emit(withMarker, "x_typefully").segments.some((s) => s.overLimit)).toBe(false);
+  });
+
+  it("removes a [영상] marker from the delivered text", () => {
+    const joined = emit("영상 트윗\n\n[영상]", "telegram_bot").segments.map((s) => s.text).join("");
+    expect(joined).toContain("영상 트윗");
+    expect(joined).not.toContain("[영상]");
+  });
+});
+
 describe("DESTINATIONS_BY_CHANNEL", () => {
   it("covers every channel", () => {
     expect(Object.keys(DESTINATIONS_BY_CHANNEL)).toEqual(["x", "telegram", "kakao", "pr_mail"]);

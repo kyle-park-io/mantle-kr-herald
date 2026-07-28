@@ -1,4 +1,4 @@
-import type { CollectedThread, SourceTweet } from "../../domain/models";
+import type { CollectedThread, MediaItem, SourceTweet } from "../../domain/models";
 import type { ContentItem } from "../../domain/translation/contentItem";
 import type { ContentSource } from "../../ports/ContentSource";
 import { readJsonFile } from "../../shared/store/jsonFile";
@@ -19,6 +19,15 @@ function isCommenterReply(t: SourceTweet): boolean {
   return t.isReply && t.text.trimStart().startsWith("@");
 }
 
+/** Surface a post's media as canonical markers, each on its own line, so it is visible through the
+ *  pipeline and delivered from the reviewed text (see domain/media/sourceMedia). Photos use the
+ *  empty-alt image form; a video/gif uses a paren-free [영상] marker (mp4 upload is a follow-up). */
+function mediaMarkers(media: MediaItem[] | undefined): string {
+  if (!media || media.length === 0) return "";
+  const lines = media.map((m) => (m.type === "photo" ? `![](${m.url})` : "[영상]"));
+  return `\n\n${lines.join("\n")}`;
+}
+
 /**
  * Render one tweet's text for the worksheet. A tweet with a fetched article body renders as
  * markdown; everything else keeps its own text. Rendering happens exactly once here and both
@@ -31,7 +40,7 @@ function renderTweetText(t: SourceTweet): { text: string; isArticle: boolean } {
     const rendered = renderArticle(t.article);
     if (rendered !== "") return { text: rendered, isArticle: true };
   }
-  return { text: t.text, isArticle: false };
+  return { text: t.text + mediaMarkers(t.media), isArticle: false };
 }
 
 export class XContentSource implements ContentSource {

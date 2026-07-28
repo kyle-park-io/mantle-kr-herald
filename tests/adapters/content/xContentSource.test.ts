@@ -50,3 +50,28 @@ describe("XContentSource isReply", () => {
     expect(item.text).toBe("@someone thanks"); // unmarked; PR #66's header marker handles a standalone reply
   });
 });
+
+describe("XContentSource media markers", () => {
+  it("surfaces a post's photo as an empty-alt image marker after the text", async () => {
+    const p = await writeThreads([{ rootId: "300", status: "active", tweets: [
+      tweet({ id: "300", text: "본문", media: [{ type: "photo", url: "https://pbs.twimg.com/media/a.jpg" }] }),
+    ] }]);
+    const [item] = await new XContentSource(p).loadPending(new Set());
+    expect(item.text).toBe("본문\n\n![](https://pbs.twimg.com/media/a.jpg)");
+  });
+
+  it("surfaces a video as a paren-free [영상] marker, without the thumbnail url", async () => {
+    const p = await writeThreads([{ rootId: "301", status: "active", tweets: [
+      tweet({ id: "301", text: "영상 트윗", media: [{ type: "video", url: "https://pbs.twimg.com/amplify_video_thumb/x.jpg" }] }),
+    ] }]);
+    const [item] = await new XContentSource(p).loadPending(new Set());
+    expect(item.text).toBe("영상 트윗\n\n[영상]");
+    expect(item.text).not.toContain("amplify_video_thumb");
+  });
+
+  it("appends nothing to a text-only post", async () => {
+    const p = await writeThreads([{ rootId: "302", status: "active", tweets: [tweet({ id: "302", text: "본문만" })] }]);
+    const [item] = await new XContentSource(p).loadPending(new Set());
+    expect(item.text).toBe("본문만");
+  });
+});

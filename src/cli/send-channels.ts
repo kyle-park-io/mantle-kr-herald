@@ -7,7 +7,6 @@ import { SendChannels } from "../app/SendChannels";
 import { resolveChannelTargets, createSenders } from "./channelSenders";
 import { buildRecorder } from "./recorder";
 import { buildArchiver } from "./archiver";
-import { xPhotos } from "../adapters/content/xMediaLookup";
 
 const targets = resolveChannelTargets(argValue("--target"));
 const senders = createSenders(targets);
@@ -19,5 +18,5 @@ const ledger = new JsonChannelLedger(paths.publishDir);
 const record = await buildRecorder();
 const archive = await buildArchiver();
 
-const result = await new SendChannels(store, senders, ledger, record, archive, undefined, xPhotos(paths.xItems)).run({ targets, ids });
+const result = await new SendChannels(store, senders, ledger, record, archive).run({ targets, ids });
 console.log(`sent ${result.sent} · skipped ${result.skipped} (already sent) · failed ${result.failed}`);
