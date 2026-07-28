@@ -140,6 +140,64 @@ describe("normalizeTweet — articles", () => {
   });
 });
 
+describe("normalizeTweet — quoted-tweet link", () => {
+  const base = {
+    id: "1",
+    url: "https://x.com/Mantle_Official/status/1",
+    createdAt: "Mon Jun 29 05:58:17 +0000 2026",
+    author: { userName: "Mantle_Official" },
+  };
+
+  it("appends the quoted tweet's url after the text when it is not already there", () => {
+    const t = normalizeTweet({
+      ...base,
+      text: "The full breakdown ↓",
+      quoted_tweet: { id: "999", url: "https://x.com/nansen_ai/status/999" },
+    });
+    expect(t.text).toBe("The full breakdown ↓\nhttps://x.com/nansen_ai/status/999");
+    expect(t.isQuote).toBe(true);
+  });
+
+  it("does not duplicate a quoted url the text already contains", () => {
+    const t = normalizeTweet({
+      ...base,
+      text: "see https://x.com/nansen_ai/status/999",
+      quoted_tweet: { id: "999", url: "https://x.com/nansen_ai/status/999" },
+    });
+    expect(t.text).toBe("see https://x.com/nansen_ai/status/999");
+  });
+
+  it("does not append when the text already contains the quoted tweet's id (t.co-expanded)", () => {
+    const t = normalizeTweet({
+      ...base,
+      text: "context https://twitter.com/nansen_ai/status/999",
+      quoted_tweet: { id: "999", url: "https://x.com/nansen_ai/status/999" },
+    });
+    expect(t.text).toBe("context https://twitter.com/nansen_ai/status/999");
+  });
+
+  it("leaves text unchanged when the quoted tweet has no url (still isQuote)", () => {
+    const t = normalizeTweet({ ...base, text: "hi", quoted_tweet: { id: "999" } });
+    expect(t.text).toBe("hi");
+    expect(t.isQuote).toBe(true);
+  });
+
+  it("leaves text unchanged and isQuote false when there is no quoted tweet", () => {
+    const t = normalizeTweet({ ...base, text: "hi" });
+    expect(t.text).toBe("hi");
+    expect(t.isQuote).toBe(false);
+  });
+
+  it("tolerates an unknown extra field on quoted_tweet (passthrough)", () => {
+    const t = normalizeTweet({
+      ...base,
+      text: "hi",
+      quoted_tweet: { id: "999", url: "https://x.com/a/status/999", futureKey: "x" },
+    });
+    expect(t.text).toBe("hi\nhttps://x.com/a/status/999");
+  });
+});
+
 describe("parseArticleContents", () => {
   it("extracts the content blocks from a GET /twitter/article response", () => {
     const blocks = parseArticleContents({

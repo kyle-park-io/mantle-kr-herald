@@ -60,7 +60,11 @@ const TweetRaw = z
     // (e.g. gap-filled thread roots from deleted/suspended accounts). Tolerate it
     // rather than aborting the whole collect.
     author: z.object({ userName: z.string().optional() }).passthrough().optional(),
-    quoted_tweet: z.unknown().nullable().optional(),
+    quoted_tweet: z
+      .object({ url: z.string().nullable().optional(), id: z.string().nullable().optional() })
+      .passthrough()
+      .nullable()
+      .optional(),
     likeCount: z.number().optional(),
     retweetCount: z.number().optional(),
     replyCount: z.number().optional(),
@@ -126,13 +130,26 @@ function toMetrics(raw: z.infer<typeof TweetRaw>): TweetMetrics | undefined {
   return Object.values(metrics).some((v) => v !== undefined) ? metrics : undefined;
 }
 
+/**
+ * Surface the quoted tweet's link at the end of the text (where a "↓" typically points), unless it
+ * is already present — either as the URL itself or as a t.co the API expanded to the same tweet id.
+ * Link only: the quoted tweet's own text is never inlined.
+ */
+function appendQuotedUrl(text: string, quoted?: { url?: string | null; id?: string | null } | null): string {
+  const url = quoted?.url ?? undefined;
+  if (!url) return text;
+  if (text.includes(url)) return text;
+  if (quoted?.id && text.includes(quoted.id)) return text;
+  return `${text}\n${url}`;
+}
+
 /** Validate and convert a raw twitterapi.io tweet into a domain SourceTweet. */
 export function normalizeTweet(raw: unknown): SourceTweet {
   const t = TweetRaw.parse(raw);
   return {
     id: t.id,
     conversationId: t.conversationId ?? t.id,
-    text: expandUrls(t.text, t.entities?.urls ?? undefined),
+    text: appendQuotedUrl(expandUrls(t.text, t.entities?.urls ?? undefined), t.quoted_tweet),
     createdAt: new Date(t.createdAt).toISOString(),
     url: t.url,
     authorUserName: t.author?.userName ?? "",
