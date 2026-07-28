@@ -1,4 +1,5 @@
-import type { ChannelSentEntry } from "../domain/send/channels";
+import type { DeliveryLedger } from "../ports/DeliveryLedger";
+import { outletById } from "../domain/outlet/models";
 
 /** Published X url(s) + parsed ids for a Typefully draft, as returned by `TypefullyDraftLookup`. */
 interface Published {
@@ -9,10 +10,6 @@ interface Published {
 }
 interface Lookup {
   published(draftId: string): Promise<Published>;
-}
-interface ChannelLedger {
-  loadAll(): Promise<ChannelSentEntry[]>;
-  add(entry: ChannelSentEntry): Promise<void>;
 }
 interface ArticleRow {
   itemId: string;
@@ -34,10 +31,15 @@ const isXUrl = (url?: string): boolean => !!url && url.includes("x.com");
  * once it has published and rewrites the row's `postId` → the real X id and `url` → the `x.com` url,
  * so §9b impressions and the dashboard links can find it. Idempotent: already-`x.com` rows are skipped,
  * and a still-scheduled / unavailable draft leaves its row untouched (`pending`).
+ *
+ * Reads the same outlet-keyed ledger `send:channels` writes. It used to read the pre-outlet
+ * `channels.json`, which stopped being written the moment sends became per-room — every fix would
+ * have landed in a file nothing else reads, leaving the board showing Typefully draft ids for every
+ * X post.
  */
 export class ReconcilePublished {
   constructor(
-    private readonly channel: ChannelLedger,
+    private readonly delivery: Pick<DeliveryLedger, "loadAll" | "add">,
     private readonly article: ArticleLedger,
     private readonly lookup: Lookup,
   ) {}
@@ -46,8 +48,10 @@ export class ReconcilePublished {
     let reconciled = 0;
     let pending = 0;
 
-    for (const row of await this.channel.loadAll()) {
-      if (row.channel !== "x" || isXUrl(row.url) || !row.postId) continue;
+    for (const row of await this.delivery.loadAll()) {
+      // Resolved through the outlet, since the row records a room rather than a channel. Telegram
+      // rooms publish immediately and carry a t.me url already, so only X rooms are ever scheduled.
+      if (outletById(row.outletId)?.channel !== "x" || isXUrl(row.url) || !row.postId) continue;
       let u: Published;
       try {
         u = await this.lookup.published(row.postId);
@@ -56,7 +60,7 @@ export class ReconcilePublished {
         continue;
       }
       if (u.xUrl) {
-        await this.channel.add({ ...row, postId: u.xId ?? row.postId, url: u.xUrl });
+        await this.delivery.add({ ...row, postId: u.xId ?? row.postId, url: u.xUrl });
         reconciled += 1;
       } else {
         pending += 1;

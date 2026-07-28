@@ -129,8 +129,9 @@ describe("SendChannels", () => {
     const { ledger, added } = fakeLedger();
     let sends = 0;
     const sender: ChannelSender = { name: "telegram", send: async () => { sends++; return { postId: "p" }; } };
-    // Chat ids supplied on purpose: without them the rooms would be skipped for a missing id and
-    // this test would pass even if the over-limit guard were deleted.
+    // Chat ids supplied on purpose. Without them the rooms would drop out on the missing-id path
+    // instead of the guard, and `expect(sends).toBe(0)` would hold for the wrong reason — the
+    // sender is only proven untouched *by the guard* when the rooms are otherwise deliverable.
     const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
     // Still 1: the limit is a property of the rendering, so it is counted once, not once per room.
     expect(res).toEqual({ sent: 0, skipped: 0, failed: 1 });
@@ -150,10 +151,14 @@ describe("SendChannels", () => {
       archived.push(e);
     }, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
     expect(res).toEqual({ sent: 2, skipped: 0, failed: 0 });
-    // One archive entry per send. SentArchiveEntry is still channel-keyed (no outletId), so the two
-    // rooms produce the same payload — the archive is a copy of the text, not a per-room receipt.
+    // One archive entry per send, each naming its own room. The archivers `upload()` rather than
+    // `update()`, so two entries that differ only in message id would otherwise land in the Drive
+    // `sent/` folder under one name — see sentFileName.
     const entry = { itemId: "x:1", type: "announcement", channel: "telegram", text: "공지1", postId: "p9", url: "u9", sentAt: expect.any(String) };
-    expect(archived).toEqual([entry, entry]);
+    expect(archived).toEqual([
+      { ...entry, outletId: "tg-community" },
+      { ...entry, outletId: "tg-dev" },
+    ]);
   });
 
   it("does not archive a skipped (already-sent) rendering", async () => {
@@ -238,13 +243,18 @@ describe("SendChannels", () => {
     expect((await ledger.loadKeys()).size).toBe(2);
   });
 
-  it("skips an auto outlet with no chat id configured, and still sends to the others", async () => {
+  it("counts an auto outlet with no chat id as failed, and still sends to the others", async () => {
     const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: "본문" })]);
     const sender: ChannelSender = { name: "telegram-bot", send: async () => ({ postId: "m1" }) };
     const { ledger } = fakeLedger();
+    // Day one of Task 2's staged .env migration: only the legacy TELEGRAM_CHAT_ID is set, so the map
+    // holds 커뮤니티 alone and 데브방 has no id.
     const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, { "tg-community": "-100111" }).run({ targets: ["telegram"] });
 
-    expect(res.sent).toBe(1);
+    // failed: 1, not a silent skip — `sent 1 · skipped 0 · failed 0` would read as complete success
+    // while 데브방 received nothing, which is the exact silence this task exists to remove.
+    expect(res).toEqual({ sent: 1, skipped: 0, failed: 1 });
+    // Nothing ledgered for the unconfigured room, so a rerun after fixing .env delivers only it.
     expect([...(await ledger.loadKeys())]).toEqual(["x:1:announcement:tg-community"]);
   });
 

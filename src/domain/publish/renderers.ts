@@ -50,6 +50,7 @@ export function renderSent(e: SentArchiveEntry): string {
   return (
     `# ${e.itemId} · ${e.channel} (${e.type})\n\n` +
     `- sent: ${e.sentAt}\n` +
+    `- outlet: ${e.outletId}\n` +
     `- postId: ${e.postId ?? "—"}\n` +
     `- url: ${e.url ?? "—"}\n\n` +
     `---\n\n` +
@@ -57,9 +58,13 @@ export function renderSent(e: SentArchiveEntry): string {
   );
 }
 
-/** "<sentDate>-<safeItemId>-<channel>.md" — browsable, and needs no translation lookup at send time. */
-export function sentFileName(e: Pick<SentArchiveEntry, "itemId" | "channel" | "sentAt">): string {
+/**
+ * "<sentDate>-<safeItemId>-<outletId>.md" — browsable, and needs no translation lookup at send time.
+ * Named by room, not by channel: two auto rooms share a channel, and the archivers `upload()` (they
+ * never `update()`), so a channel-named archive lands twice in the same folder under one name.
+ */
+export function sentFileName(e: Pick<SentArchiveEntry, "itemId" | "outletId" | "sentAt">): string {
   const date = e.sentAt.slice(0, 10);
   const id = safeItemId(e.itemId);
-  return `${date}-${id}-${e.channel}.md`;
+  return `${date}-${id}-${e.outletId}.md`;
 }

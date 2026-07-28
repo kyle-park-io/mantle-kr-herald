@@ -88,7 +88,12 @@ export class SendChannels {
         const key = keyFor(outlet);
         const chatId = outlet.chatIdEnv ? this.chatIds[outlet.id] : undefined;
         if (outlet.chatIdEnv && !chatId) {
-          console.warn(`[send] ${key} skipped: ${outlet.chatIdEnv} is not set`);
+          // Counted, not swallowed. A room that received nothing has to show up in the totals, or
+          // `sent 1 · skipped 0 · failed 0` reads as complete success while 데브방 got nothing —
+          // the exact silence this task exists to remove. Nothing is ledgered, so a rerun after
+          // fixing `.env` delivers this room only.
+          console.warn(`[send] ${key} not sent: ${outlet.chatIdEnv} is not set`);
+          failed += 1;
           continue;
         }
         try {
@@ -113,7 +118,7 @@ export class SendChannels {
           }
           if (this.archive) {
             try {
-              await this.archive({ itemId: r.itemId, type: r.type, channel: r.channel, text: r.text, postId: res.postId, url: res.url, sentAt });
+              await this.archive({ itemId: r.itemId, type: r.type, channel: r.channel, outletId: outlet.id, text: r.text, postId: res.postId, url: res.url, sentAt });
             } catch (err) {
               console.warn(`[send] ${key} sent, but archive failed: ${(err as Error).message}`);
             }
