@@ -77,8 +77,16 @@ export function OutletCard(props: {
 
   const [text, setText] = useState(group.text);
   const [busy, setBusy] = useState(false);
-  /** Keyed by outletId; `""` is the group's own text. A fork gets its own entry. */
-  const [emissions, setEmissions] = useState<Record<string, Emissions>>({});
+  /**
+   * Spellings keyed by outletId (`""` is the group's own text), stamped with the `emitSig` they
+   * were fetched for. The stamp is what makes them safe to copy: without it, a save clears `dirty`
+   * as soon as it returns while these still hold the pre-save spelling, and [복사] hands over text
+   * one round trip old.
+   */
+  const [emissions, setEmissions] = useState<{ sig: string; byOutlet: Record<string, Emissions> }>({
+    sig: "",
+    byOutlet: {},
+  });
   const [copied, setCopied] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -87,33 +95,46 @@ export function OutletCard(props: {
 
   useEffect(() => setText(group.text), [group.text]);
 
-  // One signature over every text this card can emit, so a fork's spelling is refetched when the
-  // fork is edited and not otherwise.
-  const forkSig = group.rows.filter((r) => r.forked).map((r) => `${r.outletId}\u0000${r.text}`).join("\u0001");
+  /**
+   * Every text this card can emit, as one string: the group’s, plus each fork’s. It is both the
+   * effect’s dependency and the stamp stored beside the fetched spellings, so a spelling from
+   * before a save is never handed to [복사] while the refetch is still in flight.
+   *
+   * JSON, not a delimiter: a literal separator byte here makes the whole file binary to git, and
+   * a diff nobody can read is a diff nobody reviews.
+   */
+  const emitSig = JSON.stringify([group.text, ...group.rows.filter((r) => r.forked).map((r) => [r.outletId, r.text])]);
   useEffect(() => {
     let live = true;
     const ids = ["", ...group.rows.filter((r) => r.forked).map((r) => r.outletId)];
     Promise.all(
       ids.map(async (id) => [id, await api.emissions(itemId, type, channel, id || undefined).catch(() => ({}))] as const),
     ).then((entries) => {
-      if (live) setEmissions(Object.fromEntries(entries));
+      if (live) setEmissions({ sig: emitSig, byOutlet: Object.fromEntries(entries) });
     });
     return () => {
       live = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- forkSig stands in for the fork texts
-  }, [itemId, type, channel, group.text, forkSig]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- emitSig stands in for every text read below
+  }, [itemId, type, channel, emitSig]);
 
   function rowText(outletId: string): string {
     return group.rows.find((r) => r.outletId === outletId)?.text ?? group.text;
   }
   const draftDirty = (id: string) => drafts[id] !== undefined && drafts[id] !== rowText(id);
+  /**
+   * The group textarea differs from what is stored. An unsaved textarea is not what `SendChannels`
+   * reads — it reads the store — so fixing a wrong figure and pressing 발송 without 저장 would post
+   * the *pre-edit* copy to a live room and ledger it `sent`, which `MarkDelivery` refuses to
+   * reverse. Every action that copies or delivers the group's text is gated on this.
+   */
   const groupDirty = text !== group.text;
   /**
-   * Card-wide, and every irreversible or copy action is gated on it. An unsaved textarea is not
-   * what `SendChannels` reads: it reads the store. Without this gate, fixing a wrong figure and
-   * pressing 발송 without 저장 posts the *pre-edit* copy to a live room and ledgers it `sent`,
-   * which `MarkDelivery` then refuses to reverse.
+   * Card-wide, for the header badge and the navigation guard only. Row actions are gated on
+   * `groupDirty || draftDirty(that row)` instead: a stray keystroke in one room's editor must not
+   * freeze the rooms next to it, whose copy it cannot affect. It especially must not push the
+   * operator toward that row's 저장 — on an unforked row, saving *forks* the room, which then needs
+   * its own approval and silently sits out a group send.
    */
   const dirty = groupDirty || Object.keys(drafts).some(draftDirty);
   useEffect(() => {
@@ -133,19 +154,18 @@ export function OutletCard(props: {
     }
   };
 
-  /** Drop a row's local editor state so the next render re-reads what the server just stored. */
+  /**
+   * Drop a row's draft so the next render re-reads what the server stored. `collapse` closes the
+   * editor with an explicit `false` rather than by deleting the key — a forked row defaults to
+   * open, so deleting it would spring the editor straight back open.
+   */
   const settle = (outletId: string, collapse = false) => {
     setDrafts((prev) => {
       const next = { ...prev };
       delete next[outletId];
       return next;
     });
-    if (collapse)
-      setOpen((prev) => {
-        const next = { ...prev };
-        delete next[outletId];
-        return next;
-      });
+    if (collapse) setOpen((prev) => ({ ...prev, [outletId]: false }));
   };
 
   const copy = async (key: string, value: string) => {
@@ -154,9 +174,12 @@ export function OutletCard(props: {
     setTimeout(() => setCopied(null), 1500);
   };
 
-  const groupPaste = pasteSegments(emissions[""], channel);
-  const warnings = (Object.keys(emissions[""] ?? {}) as Destination[]).flatMap((d) =>
-    (emissions[""]?.[d]?.warnings ?? []).map((w) => `${DESTINATION_LABEL[d]} — ${w}`),
+  // Spellings fetched for a different text are not this card's spellings. Treating them as absent
+  // disables [복사] for the round trip rather than handing over yesterday's bytes.
+  const spellings = emissions.sig === emitSig ? emissions.byOutlet : {};
+  const groupPaste = pasteSegments(spellings[""], channel);
+  const warnings = (Object.keys(spellings[""] ?? {}) as Destination[]).flatMap((d) =>
+    (spellings[""]?.[d]?.warnings ?? []).map((w) => `${DESTINATION_LABEL[d]} — ${w}`),
   );
 
   const pending: ViewRow[] = added
@@ -244,7 +267,7 @@ export function OutletCard(props: {
             id="group"
             copied={copied}
             segments={groupPaste}
-            disabledReason={dirty ? SAVE_FIRST : undefined}
+            disabledReason={groupDirty ? SAVE_FIRST : undefined}
             onCopy={(v) => copy("group", v)}
           />
         </div>
@@ -267,45 +290,54 @@ export function OutletCard(props: {
         <Source convertedText={props.convertedText} />
         <DestinationPreview
           label="목적지별 출력 — 실제로 나가는 바이트"
-          emissions={emissions[""] ?? {}}
+          emissions={spellings[""] ?? {}}
           copiedPrefix="group"
           copied={copied}
-          disabledReason={dirty ? SAVE_FIRST : undefined}
+          disabledReason={groupDirty ? SAVE_FIRST : undefined}
           onCopy={copy}
         />
       </div>
 
       <ul className="border-t border-line">
-        {rows.map((row) => (
-          <Row
-            key={row.outletId}
-            row={row}
-            group={group}
-            itemId={itemId}
-            busy={busy}
-            dirty={dirty}
-            hovered={props.hovered}
-            onHover={props.onHover}
-            open={!!open[row.outletId] || (row.forked && open[row.outletId] !== false)}
-            onToggle={() =>
-              setOpen((p) => ({ ...p, [row.outletId]: !(p[row.outletId] || (row.forked && p[row.outletId] !== false)) }))
-            }
-            draft={drafts[row.outletId] ?? row.text}
-            onDraft={(v) => setDrafts((p) => ({ ...p, [row.outletId]: v }))}
-            copied={copied}
-            // A forked room has its own `_paste` spelling, fetched per room; an unforked one shares
-            // the group's. Never the canonical text — KakaoTalk parses no markup, so `**굵게**`
-            // would land verbatim in a live room.
-            segments={pasteSegments(row.forked ? emissions[row.outletId] : emissions[""], channel)}
-            emissions={(row.forked ? emissions[row.outletId] : emissions[""]) ?? {}}
-            onCopy={copy}
-            onDrop={() => setAdded((p) => p.filter((id) => id !== row.outletId))}
-            onSettle={(collapse) => settle(row.outletId, collapse)}
-            onBoard={props.onBoard}
-            onError={onError}
-            run={run}
-          />
-        ))}
+        {rows.map((row) => {
+          const isOpen = !!open[row.outletId] || (row.forked && open[row.outletId] !== false);
+          return (
+            <Row
+              key={row.outletId}
+              row={row}
+              group={group}
+              itemId={itemId}
+              busy={busy}
+              // Scoped to this room: the group's text, which every unforked room sends, plus this
+              // room's own unsaved draft. A keystroke in the room above must not lock this one.
+              dirty={groupDirty || draftDirty(row.outletId)}
+              hovered={props.hovered}
+              onHover={props.onHover}
+              open={isOpen}
+              // Collapsing drops the draft. The editor is the only place a draft is visible, so
+              // keeping one behind a closed editor is invisible state that locks the row with
+              // nothing on screen to explain it.
+              onToggle={() =>
+                isOpen ? settle(row.outletId, true) : setOpen((p) => ({ ...p, [row.outletId]: true }))
+              }
+              draft={drafts[row.outletId] ?? row.text}
+              onDraft={(v) => setDrafts((p) => ({ ...p, [row.outletId]: v }))}
+              onCancel={() => settle(row.outletId)}
+              copied={copied}
+              // A forked room has its own `_paste` spelling, fetched per room; an unforked one
+              // shares the group's. Never the canonical text — KakaoTalk parses no markup, so
+              // `**굵게**` would land verbatim in a live room.
+              segments={pasteSegments(row.forked ? spellings[row.outletId] : spellings[""], channel)}
+              emissions={(row.forked ? spellings[row.outletId] : spellings[""]) ?? {}}
+              onCopy={copy}
+              onDrop={() => setAdded((p) => p.filter((id) => id !== row.outletId))}
+              onSettle={(collapse) => settle(row.outletId, collapse)}
+              onBoard={props.onBoard}
+              onError={onError}
+              run={run}
+            />
+          );
+        })}
         {rows.length === 0 && (
           <li className="px-4 py-3 text-[12px] text-faint">이 타입을 받는 방이 아직 없습니다. 아래에서 추가하세요.</li>
         )}
@@ -484,6 +516,8 @@ function Row(props: {
   onToggle: () => void;
   draft: string;
   onDraft: (value: string) => void;
+  /** Throw the draft away without saving — the only exit that does not fork the room. */
+  onCancel: () => void;
   copied: string | null;
   segments: string[] | null;
   emissions: Emissions;
@@ -661,10 +695,21 @@ function Row(props: {
             <button
               className={btn}
               disabled={busy || props.draft.trim() === "" || props.draft === row.text}
+              title={row.forked ? undefined : "저장하면 이 방은 그룹과 분리되어 따로 검수·발송합니다"}
               onClick={() => run(async () => apply(await api.editOutlet(itemId, type, row.outletId, props.draft)))}
             >
               저장
             </button>
+            {props.draft !== row.text && (
+              <button
+                className={btn}
+                disabled={busy}
+                title={row.forked ? "고친 내용을 버리고 저장된 이 방 글로 되돌립니다" : "고친 내용을 버립니다 — 이 방은 그룹 글을 계속 씁니다"}
+                onClick={props.onCancel}
+              >
+                취소
+              </button>
+            )}
             {row.forked &&
               (row.status === "approved" ? (
                 <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[12px] font-medium text-mint">
