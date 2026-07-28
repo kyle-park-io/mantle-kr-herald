@@ -37,6 +37,11 @@ class UpdatableUploader extends FakeUploader {
   }
 }
 
+class DeletingUploader extends FakeUploader {
+  public deleted: string[] = [];
+  async delete(remoteId: string): Promise<void> { this.deleted.push(remoteId); }
+}
+
 describe("PublishTranslations", () => {
   it("uploads review docs for translated + approved docs for approved, to every uploader, and records per drive", async () => {
     const g = new FakeUploader("google");
@@ -93,6 +98,7 @@ describe("PublishTranslations", () => {
       record: async (e) => {
         recorded.push(e);
       },
+      remove: async () => {},
     };
     const uploader: DriveUploader = {
       name: "google",
@@ -188,6 +194,7 @@ describe("PublishTranslations", () => {
       record: async () => {
         throw new Error("disk full");
       },
+      remove: async () => {},
     };
 
     const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();
@@ -210,6 +217,7 @@ describe("PublishTranslations", () => {
       record: async () => {
         throw new Error("disk full");
       },
+      remove: async () => {},
     };
 
     const res = await new PublishTranslations(translationStore([t]), [uploader], store).run();
@@ -271,5 +279,79 @@ describe("PublishTranslations", () => {
     expect(g.reqs.map((r) => r.name)).toHaveLength(1);
     expect(res.uploaded).toBe(1);
     expect(store.entries.map((e) => e.itemId)).toEqual(["x:2"]);
+  });
+
+  it("moves the doc: an item now approved deletes its prior review (translated) doc + ledger row", async () => {
+    const g = new DeletingUploader("google");
+    const store = new InMemoryPublishStore();
+    await store.record({ itemId: "x:1", stage: "translation", status: "translated", target: "google", fileName: "old.md", remoteId: "google-old", contentHash: "h", uploadedAt: "t" });
+    await new PublishTranslations(translationStore([tr("x:1", "approved")]), [g], store).run();
+    expect(g.deleted).toEqual(["google-old"]);
+    const keys = (await store.listEntries()).map(entryKey);
+    expect(keys).toContain("x:1:approved:google");
+    expect(keys).not.toContain("x:1:translated:google");
+  });
+
+  it("moves back on un-approval: an item now translated deletes its prior approved doc", async () => {
+    const g = new DeletingUploader("google");
+    const store = new InMemoryPublishStore();
+    await store.record({ itemId: "x:1", stage: "translation", status: "approved", target: "google", fileName: "app.md", remoteId: "google-app", contentHash: "h", uploadedAt: "t" });
+    await new PublishTranslations(translationStore([tr("x:1", "translated")]), [g], store).run();
+    expect(g.deleted).toEqual(["google-app"]);
+    const keys = (await store.listEntries()).map(entryKey);
+    expect(keys).toContain("x:1:translated:google");
+    expect(keys).not.toContain("x:1:approved:google");
+  });
+
+  it("does not delete when there is no other-status sibling", async () => {
+    const g = new DeletingUploader("google");
+    await new PublishTranslations(translationStore([tr("x:1", "approved")]), [g], new InMemoryPublishStore()).run();
+    expect(g.deleted).toEqual([]);
+  });
+
+  it("a failed sibling delete warns but still publishes; the stale row is left", async () => {
+    class FailDelete extends FakeUploader { async delete(): Promise<void> { throw new Error("nope"); } }
+    const g = new FailDelete("google");
+    const store = new InMemoryPublishStore();
+    await store.record({ itemId: "x:1", stage: "translation", status: "translated", target: "google", fileName: "old.md", remoteId: "google-old", contentHash: "h", uploadedAt: "t" });
+    const res = await new PublishTranslations(translationStore([tr("x:1", "approved")]), [g], store).run();
+    expect(res.failed).toBe(0);
+    const keys = (await store.listEntries()).map(entryKey);
+    expect(keys).toContain("x:1:approved:google");
+    expect(keys).toContain("x:1:translated:google"); // stale row LEFT, not silently removed
+  });
+
+  it("skips the move for an uploader without delete", async () => {
+    const g = new FakeUploader("google"); // no delete()
+    const store = new InMemoryPublishStore();
+    await store.record({ itemId: "x:1", stage: "translation", status: "translated", target: "google", fileName: "old.md", remoteId: "google-old", contentHash: "h", uploadedAt: "t" });
+    const res = await new PublishTranslations(translationStore([tr("x:1", "approved")]), [g], store).run();
+    expect(res.failed).toBe(0);
+    expect((await store.listEntries()).map(entryKey)).toContain("x:1:translated:google");
+  });
+
+  it("a move-phase listEntries fault warns but does not fail the publish", async () => {
+    // The use-case calls listEntries() once at the top for the byKey snapshot, then again per
+    // item for the move scan. Throw only from the 2nd call onward to simulate a read fault that
+    // hits specifically during the move, after the upload itself already succeeded.
+    const inner = new InMemoryPublishStore();
+    let calls = 0;
+    const store: PublishStore = {
+      listEntries: async () => {
+        calls += 1;
+        if (calls > 1) throw new Error("state.json read fault");
+        return inner.listEntries();
+      },
+      record: async (e) => inner.record(e),
+      remove: async (k) => inner.remove(k),
+    };
+    const g = new DeletingUploader("google");
+
+    const res = await new PublishTranslations(translationStore([tr("x:1", "approved")]), [g], store).run();
+
+    expect(res.failed).toBe(0);
+    expect(res.uploaded).toBe(1);
+    expect(res.byDrive).toEqual({ google: 1 });
+    expect(g.deleted).toEqual([]); // the scan itself failed, so no delete was even attempted
   });
 });

@@ -13,6 +13,9 @@ export interface DriveUploader {
    * item rather than creating a duplicate.
    */
   update?(remoteId: string, req: UploadRequest): Promise<UploadResult>;
+  /** Delete an uploaded file by its remoteId. Throws on failure. Optional: an uploader that cannot
+   *  delete omits it, and the caller leaves the file (with a warning) rather than failing. */
+  delete?(remoteId: string): Promise<void>;
   /** Stable name for idempotency keys + reporting, e.g. `google`, `lark`, `local`. */
   readonly name: string;
 }

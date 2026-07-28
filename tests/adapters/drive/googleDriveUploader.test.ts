@@ -116,4 +116,20 @@ describe("GoogleDriveUploader", () => {
       }),
     ).rejects.toThrow(/404.*File not found/);
   });
+
+  it("deletes a file by id with DELETE and a bearer token", async () => {
+    const cap: { url?: string; headers?: Record<string, string> } = {};
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      cap.url = String(url); cap.headers = init?.headers as Record<string, string>;
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+    await new GoogleDriveUploader(auth, folders, fetchFn).delete("file123");
+    expect(cap.url).toBe("https://www.googleapis.com/drive/v3/files/file123");
+    expect(cap.headers?.["Authorization"]).toBe("Bearer ya29.tok");
+  });
+
+  it("throws on a non-ok delete", async () => {
+    const badFetch = (async () => new Response("no", { status: 404 })) as unknown as typeof fetch;
+    await expect(new GoogleDriveUploader(auth, folders, badFetch).delete("x")).rejects.toThrow(/404/);
+  });
 });

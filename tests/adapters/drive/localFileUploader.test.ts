@@ -94,4 +94,12 @@ describe("LocalFileUploader", () => {
     // The guard fires before any write, so nothing should have landed in rootDir or beside it.
     expect(await readdir(root)).toEqual([]);
   });
+
+  it("deletes a written file, and treats a missing file as already gone", async () => {
+    const uploader = new LocalFileUploader(root);
+    const { id } = await uploader.upload({ name: "x-1.md", content: "hi", folder: "approved" });
+    await uploader.delete(id);
+    await expect(readFile(join(root, "approved", "x-1.md"), "utf8")).rejects.toThrow();
+    await expect(uploader.delete(id)).resolves.toBeUndefined(); // second delete: ENOENT is not an error
+  });
 });

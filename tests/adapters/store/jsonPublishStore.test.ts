@@ -69,4 +69,14 @@ describe("JsonPublishStore", () => {
     expect(entries.find((e) => e.target === "google")?.remoteId).toBe("b");
     expect(entries.find((e) => e.target === "lark")?.remoteId).toBe("c");
   });
+
+  it("remove drops the entry with the given key and keeps the rest", async () => {
+    const store = new JsonPublishStore(dir);
+    const a: SyncEntry = { itemId: "x:1", stage: "translation", status: "translated", target: "google", fileName: "a.md", remoteId: "ra", contentHash: "h", uploadedAt: "t" };
+    const b: SyncEntry = { ...a, status: "approved", fileName: "b.md", remoteId: "rb" };
+    await store.record(a); await store.record(b);
+    await store.remove(entryKey(a));
+    const keys = (await store.listEntries()).map(entryKey);
+    expect(keys).toEqual(["x:1:approved:google"]);
+  });
 });

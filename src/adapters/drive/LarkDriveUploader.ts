@@ -60,6 +60,26 @@ export class LarkDriveUploader implements DriveUploader {
   }
 
   /**
+   * Public delete: mirrors the DELETE request `deletePrevious` already makes, but throws on
+   * failure instead of warning. Used for a status-move prune, where the caller (Task 2) wraps the
+   * call itself and decides how to handle a failure — unlike `update`, where suppressing the error
+   * here is what keeps the sync ledger pointed at the file that was just published.
+   */
+  async delete(remoteId: string): Promise<void> {
+    const token = await this.auth.getToken();
+    const res = await this.fetchFn(
+      `${this.baseUrl}/open-apis/drive/v1/files/${encodeURIComponent(remoteId)}?type=file`,
+      { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) {
+      const detail = await extractLarkErrorDetail(res);
+      throw new Error(`Lark Drive delete failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
+    }
+    const data = (await res.json()) as { code?: number; msg?: string };
+    if (data.code !== 0) throw new Error(`Lark Drive delete failed: code=${data.code} ${data.msg ?? ""}`.trim());
+  }
+
+  /**
    * Warns rather than throwing. PublishTranslations records the ledger row only when update()
    * returns, so throwing here would leave the file just uploaded unrecorded and the next run would
    * upload another copy — duplicates compounding on every run, which is what the sync ledger exists

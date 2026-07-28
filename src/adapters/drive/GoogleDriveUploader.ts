@@ -68,6 +68,18 @@ export class GoogleDriveUploader implements DriveUploader {
     const data = (await res.json()) as { id?: string; name?: string; webViewLink?: string };
     return { id: data.id ?? remoteId, name: data.name ?? req.name, url: data.webViewLink };
   }
+
+  async delete(remoteId: string): Promise<void> {
+    const token = await this.auth.getToken();
+    const res = await this.fetchFn(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const detail = await extractErrorDetail(res);
+      throw new Error(`Google Drive delete failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
+    }
+  }
 }
 
 async function extractErrorDetail(res: Response): Promise<string> {
