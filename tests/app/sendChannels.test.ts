@@ -99,4 +99,43 @@ describe("SendChannels", () => {
     expect(sends).toBe(0);
     expect(added).toEqual([]);
   });
+
+  it("archives each successful send once, with the rendering's text and send metadata", async () => {
+    const store = fakeStore([
+      rendering({ itemId: "x:1", channel: "telegram", text: "공지1" }),
+      rendering({ itemId: "x:2", channel: "telegram", status: "rendered" }), // not approved → not archived
+    ]);
+    const { ledger } = fakeLedger();
+    const archived: unknown[] = [];
+    const sender: ChannelSender = { name: "telegram", send: async () => ({ postId: "p9", url: "u9" }) };
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, async (e) => {
+      archived.push(e);
+    }).run({ targets: ["telegram"] });
+    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(archived).toEqual([
+      { itemId: "x:1", type: "announcement", channel: "telegram", text: "공지1", postId: "p9", url: "u9", sentAt: expect.any(String) },
+    ]);
+  });
+
+  it("does not archive a skipped (already-sent) rendering", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram" })]);
+    const { ledger } = fakeLedger();
+    await ledger.add({ itemId: "x:1", type: "announcement", channel: "telegram", senderName: "telegram", sentAt: "t" });
+    let archives = 0;
+    const res = await new SendChannels(store, { telegram: okSender("telegram"), x: undefined }, ledger, undefined, async () => {
+      archives++;
+    }).run({ targets: ["telegram"] });
+    expect(res).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    expect(archives).toBe(0);
+  });
+
+  it("a best-effort archive failure does not fail the send", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram" })]);
+    const { ledger, added } = fakeLedger();
+    const res = await new SendChannels(store, { telegram: okSender("telegram"), x: undefined }, ledger, undefined, async () => {
+      throw new Error("disk full");
+    }).run({ targets: ["telegram"] });
+    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(added.map((e) => e.itemId)).toEqual(["x:1"]); // send + ledger stood; only the archive failed
+  });
 });
