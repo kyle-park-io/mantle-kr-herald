@@ -37,7 +37,7 @@ export function publishFileName(t: Translation): string {
 
 /** Review doc: source + Korean side by side (for 1차 검수). */
 export function renderReview(t: Translation): string {
-  return `# ${t.itemId}${replyAndLinkSuffix(t.isReply, t.refUrl)}\n\n## 원문 (source)\n\n${t.sourceText}\n\n## 한글 (Korean)\n\n${t.koreanText}\n`;
+  return `# ${t.itemId}${replyAndLinkSuffix(t.isReply, t.refUrl)}\n\n## 원문 (source)\n\n${t.sourceText}\n\n\n## 한글 (Korean)\n\n${t.koreanText}\n`;
 }
 
 /** Approved doc: Korean text only (final). */
