@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { renderingKey, type Rendering } from "../types";
+import { ALL_CHANNELS, ALL_TYPES, TYPE_LABEL, renderingKey, type Rendering } from "../types";
 
 const STATUS_FILTERS: ["all" | Rendering["status"], string][] = [
   ["all", "전체"],
@@ -57,17 +57,19 @@ export function RenderingList(props: {
         <div className="flex gap-2">
           <select className={`${selectClass} flex-1`} value={channel} onChange={(e) => setChannel(e.target.value as typeof channel)}>
             <option value="all">모든 채널</option>
-            <option value="x">x</option>
-            <option value="telegram">telegram</option>
-            <option value="kakao">kakao</option>
-            <option value="pr_mail">pr_mail</option>
+            {ALL_CHANNELS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
           </select>
           <select className={`${selectClass} flex-1`} value={type} onChange={(e) => setType(e.target.value as typeof type)}>
             <option value="all">모든 타입</option>
-            <option value="x">x</option>
-            <option value="announcement">announcement</option>
-            <option value="kol">kol</option>
-            <option value="pr">pr</option>
+            {ALL_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {TYPE_LABEL[t]}
+              </option>
+            ))}
           </select>
         </div>
       </div>
