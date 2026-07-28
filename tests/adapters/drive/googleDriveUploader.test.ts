@@ -40,6 +40,20 @@ describe("GoogleDriveUploader", () => {
     expect(cap.body).toContain('"parents":["APPROVED_FOLDER"]');
   });
 
+  it("maps the sent folder", async () => {
+    const cap: { body?: string } = {};
+    const uploader = new GoogleDriveUploader(auth, { sent: "SENT_FOLDER" }, fakeFetch(cap));
+    await uploader.upload({ name: "x-1-telegram.md", content: "c", folder: "sent" });
+    expect(cap.body).toContain('"parents":["SENT_FOLDER"]');
+  });
+
+  it("throws when the requested folder is not configured", async () => {
+    const uploader = new GoogleDriveUploader(auth, { sent: "SENT_FOLDER" }, fakeFetch({}));
+    await expect(uploader.upload({ name: "n", content: "c", folder: "review" })).rejects.toThrow(
+      /no folder configured for "review"/,
+    );
+  });
+
   it("throws on a non-ok response", async () => {
     const badFetch = (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch;
     const uploader = new GoogleDriveUploader(auth, folders, badFetch);

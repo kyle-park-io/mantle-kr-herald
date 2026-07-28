@@ -1,4 +1,4 @@
-export type FolderKind = "review" | "approved";
+export type FolderKind = "review" | "approved" | "sent";
 
 export interface UploadRequest {
   name: string;

@@ -99,6 +99,30 @@ describe("LarkDriveUploader", () => {
     const uploader = new LarkDriveUploader(auth, "https://open.larksuite.com", folders, badFetch);
     await expect(uploader.upload({ name: "n", content: "c", folder: "review" })).rejects.toThrow(/502/);
   });
+
+  it("maps the sent folder", async () => {
+    const cap: { url?: string; headers?: Record<string, string>; form?: FormData } = {};
+    const uploader = new LarkDriveUploader(
+      auth,
+      "https://open.larksuite.com",
+      { sent: "SENT_TOKEN" },
+      fakeFetch(cap),
+    );
+    await uploader.upload({ name: "x-1-telegram.md", content: "c", folder: "sent" });
+    expect(cap.form?.get("parent_node")).toBe("SENT_TOKEN");
+  });
+
+  it("throws when the requested folder is not configured", async () => {
+    const uploader = new LarkDriveUploader(
+      auth,
+      "https://open.larksuite.com",
+      { sent: "SENT_TOKEN" },
+      fakeFetch({}),
+    );
+    await expect(uploader.upload({ name: "n", content: "c", folder: "review" })).rejects.toThrow(
+      /no folder configured for "review"/,
+    );
+  });
 });
 
 describe("LarkDriveUploader.update", () => {
