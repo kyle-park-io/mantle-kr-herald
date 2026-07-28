@@ -38,15 +38,12 @@ describe("PrepareConversions", () => {
       glossaryStore, config, conversionConfig, fewShotByType(), convStore(["x:1:x"]),
     );
     const { worksheet, pending } = await uc.run({});
-    // x:2 is not approved → excluded; x:1 approved → announcement + kol + pr (x already converted)
-    expect(pending).toEqual([
-      { itemId: "x:1", type: "announcement", sourceKorean: "승인 카피" },
-      { itemId: "x:1", type: "kol", sourceKorean: "승인 카피" },
-      { itemId: "x:1", type: "pr", sourceKorean: "승인 카피" },
-    ]);
-    expect(worksheet).toContain("guide-announcement");
-    expect(worksheet).toContain("guide-kol");
-    expect(worksheet).toContain("guide-pr");
+    // x:2 is not approved → excluded; x:1 approved → every type except x, which is already converted.
+    // Derived from ALL_TYPES so adding a type extends the expectation instead of breaking it, while
+    // still pinning the exact set and order — a leaked x:2, or an unskipped x, still fails.
+    const expectedTypes = ALL_TYPES.filter((t) => t !== "x");
+    expect(pending).toEqual(expectedTypes.map((type) => ({ itemId: "x:1", type, sourceKorean: "승인 카피" })));
+    for (const type of expectedTypes) expect(worksheet, `guide for ${type}`).toContain(`guide-${type}`);
     expect(worksheet).not.toContain("## 유형: X");
     expect(worksheet).toContain("승인 카피");
   });

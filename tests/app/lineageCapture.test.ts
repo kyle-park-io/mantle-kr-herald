@@ -9,7 +9,7 @@ import type { TranslationStore } from "../../src/ports/TranslationStore";
 import type { FewShotStore } from "../../src/ports/FewShotStore";
 import type { FormattingStore } from "../../src/ports/FormattingStore";
 import type { ConversionStore } from "../../src/ports/ConversionStore";
-import type { ConversionType } from "../../src/domain/conversion/models";
+import { ALL_TYPES, type ConversionType } from "../../src/domain/conversion/models";
 
 function fakeLineage() {
   const appended: LineageEntry[] = [];
@@ -24,7 +24,8 @@ const noTranslationStore: TranslationStore = { loadAll: async () => [], upsert: 
 const noFewShot: FewShotStore = { load: async () => [], add: async () => {} };
 const fakeFormatting: FormattingStore = { loadAll: async () => [], upsert: async () => {}, listRenderedKeys: async () => new Set() };
 const fakeConversionStore: ConversionStore = { loadAll: async () => [], upsert: async () => {}, listConvertedKeys: async () => new Set() };
-const fakeFewShotByType: Record<ConversionType, FewShotStore> = { x: noFewShot, announcement: noFewShot, kol: noFewShot, pr: noFewShot };
+// Built from ALL_TYPES so a new ConversionType does not have to be hand-added here.
+const fakeFewShotByType = Object.fromEntries(ALL_TYPES.map((t) => [t, noFewShot])) as Record<ConversionType, FewShotStore>;
 
 describe("lineage capture", () => {
   it("SaveTranslation appends a translated entry with sourceText", async () => {

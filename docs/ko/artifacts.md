@@ -25,7 +25,7 @@
 않습니다(임시 파일 패턴만 청소).
 
 `translation/`, `conversion/` 디렉터리는 `*.example.*` 스켈레톤만 git에 추적되고, 실제 팀 콘텐츠
-(`glossary.json`, `style-guide.md`, `locale.json`, `few-shot*.json`, `x.md`/`announcement.md`/`kol.md`/`pr.md`)는
+(`glossary.json`, `style-guide.md`, `locale.json`, `tm.json`, `few-shot*.json`, 타입별 `conversion/<타입>.md`)는
 `.gitignore`로 제외됩니다. `pnpm config:init`이 예시 파일을 복사해 실제 파일을 만들어 줍니다
 (§3 참고).
 

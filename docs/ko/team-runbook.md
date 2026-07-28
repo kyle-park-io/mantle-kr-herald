@@ -46,7 +46,7 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
    읽고, 필요하면 고쳐서 승인(approve)합니다. 승인해도 업로드는 일어나지 않습니다 — approve는
    상태만 바꿀 뿐입니다([`capabilities.md`](capabilities.md) §4).
 7. **변환 준비 → 변환 → 저장** — 운영자가 `pnpm convert:prepare`로 워크시트를 만들고,
-   에이전트가 X/공지/KOL/PR 타입별로 채우고, `pnpm convert:save --id <id> --type <t> --file <f>`로
+   에이전트가 X/공지/해설/소통/KOL/PR 타입별로 채우고, `pnpm convert:save --id <id> --type <t> --file <f>`로
    저장합니다.
 8. **채널 포맷** — 운영자가 `pnpm format`(결정적 포맷터, 즉시 저장)이나
    `pnpm format --refine`(에이전트 다듬기 필요 시) + `pnpm format:save`를 실행합니다.
@@ -89,8 +89,8 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
 
 ## 3. 검수 기준
 
-번역 톤·용어 규칙은 `translation/style-guide.md`와 `translation/glossary.json`을, 채널별
-(X/공지/KOL/PR) 변환 규칙은 `conversion/x.md`, `conversion/announcement.md`, `conversion/kol.md`, `conversion/pr.md`를 따릅니다
+번역 톤·용어 규칙은 `translation/style-guide.md`와 `translation/glossary.json`을, 타입별
+(X/공지/해설/소통/KOL/PR) 변환 규칙은 `conversion/<타입>.md`를 따릅니다
 — 규칙 자체는 이 문서에 옮겨 적지 않습니다. git에 추적되지 않는 로컬 파일이라 저장소를 새로 받은
 직후에는 존재하지 않습니다 — 팀이 검수하면서 직접 다듬어 나가는 살아있는 문서입니다.
 

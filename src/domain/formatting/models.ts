@@ -12,6 +12,8 @@ export const ALL_CHANNELS: Channel[] = ["x", "telegram", "kakao", "pr_mail"];
 export const DEFAULT_CHANNELS_BY_TYPE: Record<ConversionType, Channel[]> = {
   x: ["x"],
   announcement: ["telegram", "kakao"],
+  explainer: ["telegram"],
+  casual: ["telegram"],
   kol: ["telegram"],
   pr: ["pr_mail"],
 };

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **두 개의 새 변환 타입 — `explainer`(해설)과 `casual`(소통).** 지금까지 텔레그램으로 나가는 글은
+  `announcement`(공지) 하나뿐이라, 같은 소식을 데브방과 커뮤니티방에 성격을 달리해 보낼 방법이
+  없었습니다. `explainer`는 무슨 일이 있었는지에서 멈추지 않고 **왜 중요하고 어떻게 동작하는지**를
+  풀어 쓰는 글(맨틀 한국 데브방 기준), `casual`은 기념일·수상자 발표·초대처럼 커뮤니티가 함께
+  반응할 여지가 있는 **가벼운 소식**(맨틀 한국 커뮤니티 기준)입니다. 둘 다 존댓말과 규제 표현
+  규칙은 그대로 지키며, 차이는 문체가 아니라 **레지스터**에 있습니다. 각각
+  `conversion/explainer.md`·`conversion/casual.md` 지침으로 조종되고, 기본 채널은 `telegram`입니다.
+  `ConversionType`을 쓰는 곳(라벨·기본 채널·few-shot 스토어·`doctor` 스티어링 검사·CLI usage 문자열)은
+  모두 `ALL_TYPES`에서 파생되므로 별도 배선이 필요 없었습니다 — 기존 불변식 테스트가 누락을 잡습니다.
+  `conversion/{kol,pr}.md`도 이번에 스켈레톤(각 7줄)에서 실제 지침으로 채웠습니다.
+
 - **`pnpm config:push` / `pnpm config:pull [--dry-run]` — steering config backup & share via
   Drive.** The git-ignored steering config (`translation/` + `conversion/`, 15 files,
   `*.example.*` skeletons excluded) is the single most valuable, evolving artifact in the

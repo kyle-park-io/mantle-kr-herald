@@ -21,6 +21,8 @@ describe("typeLabel", () => {
   it("maps types to display labels", () => {
     expect(typeLabel("x")).toBe("X");
     expect(typeLabel("announcement")).toBe("공지");
+    expect(typeLabel("explainer")).toBe("해설");
+    expect(typeLabel("casual")).toBe("소통");
     expect(typeLabel("kol")).toBe("KOL");
     expect(typeLabel("pr")).toBe("PR");
   });
