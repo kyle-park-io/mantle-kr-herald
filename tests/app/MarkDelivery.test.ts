@@ -21,6 +21,14 @@ describe("MarkDelivery", () => {
     expect(l.rows()).toEqual([{ ...args, status: "delivered", by: "manual", at: "2026-07-29T00:00:00.000Z" }]);
   });
 
+  it("accepts PR 메일 — no mail sender exists, so a human sends it and ticks it", async () => {
+    // As an `auto` room this was unreachable in both directions: send:channels cannot send
+    // `pr_mail` at all, and MarkDelivery refused the tick precisely because it was `auto`.
+    const l = fakeLedger();
+    await new MarkDelivery(l, () => "T").run({ itemId: "x:1", type: "pr", outletId: "pr-mail", delivered: true });
+    expect(l.rows()).toEqual([{ itemId: "x:1", type: "pr", outletId: "pr-mail", status: "delivered", by: "manual", at: "T" }]);
+  });
+
   it("unticks a manual delivery", async () => {
     const l = fakeLedger([{ ...args, status: "delivered", by: "manual", at: "T" }]);
     await new MarkDelivery(l, () => "T2").run({ ...args, delivered: false });

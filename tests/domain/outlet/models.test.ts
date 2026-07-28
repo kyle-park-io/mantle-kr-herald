@@ -48,6 +48,17 @@ describe("outlet model", () => {
     // same copy on the account twice.
     expect(deliveredByChannelSender(outletById("x-post")!)).toBe(true);
     expect(deliveredByChannelSender(outletById("x-article")!)).toBe(false);
-    expect(ALL_OUTLETS.filter(deliveredByChannelSender).map((o) => o.id)).toEqual(["x-post", "tg-community", "tg-dev", "pr-mail"]);
+    expect(ALL_OUTLETS.filter(deliveredByChannelSender).map((o) => o.id)).toEqual(["x-post", "tg-community", "tg-dev"]);
+  });
+
+  it("claims a channel sender only for rooms a channel sender can actually reach", () => {
+    // `pr-mail` was `auto` with no mail sender anywhere in the repo: send:channels could not reach
+    // it (pr_mail is not a SendableChannel) and MarkDelivery refused to tick it *because* it was
+    // auto, so the room could never be delivered and never be marked. Every room this predicate
+    // claims must sit on a channel send:channels actually sends.
+    const sendable = ["x", "telegram"];
+    for (const o of ALL_OUTLETS.filter(deliveredByChannelSender)) {
+      expect(sendable, `${o.id} is claimed as bot-delivered but ${o.channel} has no sender`).toContain(o.channel);
+    }
   });
 });

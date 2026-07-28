@@ -44,7 +44,11 @@ export const ALL_OUTLETS: Outlet[] = [
   { id: "tg-blockchain", label: "한국 블록체인 커뮤니티방", channel: "telegram", delivery: "manual", suggestedTypes: ["announcement"] },
   { id: "kakao-kol", label: "오픈카톡 KOL방", channel: "kakao", delivery: "manual", suggestedTypes: ["announcement"] },
   { id: "kakao-blockchain", label: "오픈카톡 블록체인 커뮤니티방", channel: "kakao", delivery: "manual", suggestedTypes: ["announcement"] },
-  { id: "pr-mail", label: "PR 메일", channel: "pr_mail", delivery: "auto", suggestedTypes: ["pr"] },
+  // `manual` until a mail sender exists: `pr_mail` is not a SendableChannel, so `send:channels`
+  // can never reach it, and as `auto` it was also refused by MarkDelivery — permanently
+  // undeliverable and permanently unmarkable. Manual is the truth today: a human sends the mail
+  // and ticks 전달함. Flip it back to `auto` on the day a mail sender lands.
+  { id: "pr-mail", label: "PR 메일", channel: "pr_mail", delivery: "manual", suggestedTypes: ["pr"] },
 ];
 
 /**
