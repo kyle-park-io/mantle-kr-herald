@@ -6,6 +6,8 @@ export interface SendRequest {
   channel: SendableChannel;
   /** Per-post strings already spelled for the delivery destination by emit(). */
   segments: string[];
+  /** Photo URLs to attach to the lead post (undefined/empty = text only). */
+  photos?: string[];
 }
 
 export interface SendResult {

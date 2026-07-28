@@ -33,3 +33,36 @@ describe("TelegramBotSender", () => {
       .rejects.toThrow(/400/);
   });
 });
+
+describe("TelegramBotSender media", () => {
+  it("one photo + short text → sendPhoto with the text as caption, no separate sendMessage", async () => {
+    const calls: { url: string; body: any }[] = [];
+    const fn = (async (url: string, init?: any) => { calls.push({ url: String(url), body: JSON.parse(init.body) });
+      return { ok: true, status: 200, json: async () => ({ result: { message_id: 5 } }), text: async () => "" } as Response; }) as unknown as typeof fetch;
+    await new TelegramBotSender("T", "-100999", fn).send({ itemId: "x:1", type: "announcement", channel: "telegram", segments: ["짧은 공지"], photos: ["https://pbs.twimg.com/media/a.jpg"] });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("/sendPhoto");
+    expect(calls[0].body).toMatchObject({ photo: "https://pbs.twimg.com/media/a.jpg", caption: "짧은 공지" });
+  });
+
+  it("two photos → sendMediaGroup, then the text as a reply message", async () => {
+    const calls: { url: string; body: any }[] = [];
+    const fn = (async (url: string, init?: any) => { const u = String(url); calls.push({ url: u, body: JSON.parse(init.body) });
+      const result = u.includes("sendMediaGroup") ? [{ message_id: 5 }] : { message_id: 6 };
+      return { ok: true, status: 200, json: async () => ({ result }), text: async () => "" } as Response; }) as unknown as typeof fetch;
+    await new TelegramBotSender("T", "-100999", fn).send({ itemId: "x:1", type: "x", channel: "telegram", segments: ["본문"], photos: ["https://pbs.twimg.com/media/a.jpg", "https://pbs.twimg.com/media/b.jpg"] });
+    expect(calls[0].url).toContain("/sendMediaGroup");
+    expect(calls[0].body.media).toHaveLength(2);
+    expect(calls[0].body.media[0]).toMatchObject({ type: "photo", media: "https://pbs.twimg.com/media/a.jpg" });
+    expect(calls[1].url).toContain("/sendMessage");
+    expect(calls[1].body).toMatchObject({ text: "본문", reply_to_message_id: 5 });
+  });
+
+  it("no photos → sendMessage only (unchanged)", async () => {
+    const calls: string[] = [];
+    const fn = (async (url: string) => { calls.push(String(url)); return { ok: true, status: 200, json: async () => ({ result: { message_id: 1 } }), text: async () => "" } as Response; }) as unknown as typeof fetch;
+    await new TelegramBotSender("T", "-100999", fn).send({ itemId: "x:1", type: "x", channel: "telegram", segments: ["a", "b"] });
+    expect(calls.every((u) => u.includes("/sendMessage"))).toBe(true);
+    expect(calls).toHaveLength(2);
+  });
+});
