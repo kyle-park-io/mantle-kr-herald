@@ -6,7 +6,12 @@ export class TelegramBotSender implements ChannelSender {
   readonly name = "telegram";
   constructor(
     private readonly token: string,
-    private readonly chatId: string,
+    /**
+     * Fallback chat id, used only when a request carries none. `SendChannels` always passes the
+     * room's own id, so this stays undefined on a per-room `.env` — which is why construction must
+     * not require it.
+     */
+    private readonly chatId: string | undefined,
     private readonly fetchFn: typeof fetch = fetch,
   ) {}
 
@@ -23,6 +28,9 @@ export class TelegramBotSender implements ChannelSender {
 
   async send(req: SendRequest): Promise<SendResult> {
     const chatId = req.chatId ?? this.chatId;
+    // Refused here rather than at construction: a room's id is a property of the send, and a
+    // missing one must not stop the other rooms' sends from being built and delivered.
+    if (!chatId) throw new Error("No Telegram chat id for this send: set the room's TELEGRAM_CHAT_ID_* variable");
     const photos = (req.photos ?? []).slice(0, 10); // Telegram media-group cap
     let firstId: number | undefined;
     let textSegments = req.segments;

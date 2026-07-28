@@ -47,6 +47,18 @@ describe("TelegramBotSender per-request chatId override", () => {
     expect((calls[0]?.body as { chat_id: string }).chat_id).toBe("-100111");
   });
 
+  it("builds with no configured chatId, and refuses only a send that has none either", async () => {
+    // A per-room `.env` has no legacy TELEGRAM_CHAT_ID at all: construction must succeed, since
+    // every real send passes its room's id. Only a send with nothing to address is an error.
+    const { fn, calls } = fakeFetch([{ ok: true, status: 200, body: { result: { message_id: 1 } } }]);
+    const sender = new TelegramBotSender("TOK", undefined, fn);
+    await sender.send({ itemId: "x:1", type: "announcement", channel: "telegram", segments: ["안녕"], chatId: "-100222" });
+    expect((calls[0]?.body as { chat_id: string }).chat_id).toBe("-100222");
+    await expect(sender.send({ itemId: "x:1", type: "announcement", channel: "telegram", segments: ["안녕"] }))
+      .rejects.toThrow(/chat id/i);
+    expect(calls).toHaveLength(1); // the refused send never reached the API
+  });
+
   it("uses the overridden chatId for sendPhoto and for the derived t.me url", async () => {
     const calls: { url: string; body: any }[] = [];
     const fn = (async (url: string, init?: any) => { calls.push({ url: String(url), body: JSON.parse(init.body) });

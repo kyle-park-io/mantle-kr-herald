@@ -147,14 +147,18 @@ export function loadGoogleSheetConfig(): GoogleSheetConfig {
 
 export interface TelegramConfig {
   botToken: string;
-  chatId: string;
+  /**
+   * The legacy single-room id. Optional: rooms are configured per outlet (`loadTelegramChatIds`)
+   * and every send passes its room's id explicitly, so this is only a fallback for the primary
+   * room. Requiring it here made a correctly configured per-room `.env` — the one `.env.example`
+   * now documents — fail to build a sender at all, losing every Telegram delivery.
+   */
+  chatId?: string;
 }
 export function loadTelegramConfig(): TelegramConfig {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!botToken) throw new Error("Missing required environment variable: TELEGRAM_BOT_TOKEN");
-  if (!chatId) throw new Error("Missing required environment variable: TELEGRAM_CHAT_ID");
-  return { botToken, chatId };
+  return { botToken, chatId: process.env.TELEGRAM_CHAT_ID || undefined };
 }
 
 /**
