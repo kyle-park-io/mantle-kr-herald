@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { itemUrl } from "../types";
 import type { Translation, PublishStateRow } from "../types";
-import { StatusChip } from "./TranslationList";
+import { StatusChip, KindBadge } from "./TranslationList";
 
 const TARGET_LABEL: Record<"local" | "google" | "lark", string> = {
   local: "로컬 폴더",
@@ -60,6 +60,7 @@ export function TranslationDetail(props: {
         <span className="rounded-md border border-line px-1.5 py-0.5 font-mono text-[11px] text-faint uppercase">
           {props.item.source}
         </span>
+        <KindBadge kind={props.item.kind} />
         <StatusChip status={props.item.status} />
       </div>
 

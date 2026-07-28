@@ -10,6 +10,7 @@ export interface Translation {
   status: "translated" | "approved";
   translatedAt: string;
   approvedAt?: string;
+  kind?: "post" | "article";
 }
 export interface PublishResult {
   uploaded: number;

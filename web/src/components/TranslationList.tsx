@@ -23,6 +23,15 @@ export function StatusChip({ status }: { status: Translation["status"] }) {
   );
 }
 
+export function KindBadge({ kind }: { kind?: "post" | "article" }) {
+  if (!kind) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-md border border-line px-1.5 py-0.5 text-[10px] font-medium text-muted">
+      {kind === "article" ? "아티클" : "포스트"}
+    </span>
+  );
+}
+
 const preview = (t: Translation) => (t.koreanText || t.sourceText).replace(/\s+/g, " ").trim();
 
 export function TranslationList(props: {
@@ -66,7 +75,8 @@ export function TranslationList(props: {
                 >
                   <div className="flex items-center gap-2">
                     <code className="truncate font-mono text-[11px] text-faint">{t.itemId}</code>
-                    <span className="ml-auto">
+                    <span className="ml-auto flex items-center gap-1.5">
+                      <KindBadge kind={t.kind} />
                       <StatusChip status={t.status} />
                     </span>
                   </div>
