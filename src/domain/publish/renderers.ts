@@ -1,9 +1,14 @@
 import type { Translation } from "../translation/models";
 import type { SentArchiveEntry } from "../send/channels";
 
+/** Sanitize an itemId ("x:100") into a filename-safe token ("x-100"). */
+export function safeItemId(itemId: string): string {
+  return itemId.replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+
 /** Turn an itemId ("x:100") into a safe .md filename ("x-100.md"). */
 export function safeFileName(itemId: string): string {
-  return `${itemId.replace(/[^a-zA-Z0-9._-]/g, "-")}.md`;
+  return `${safeItemId(itemId)}.md`;
 }
 
 /** First ~6 alphanumeric words of the source text, dash-joined (URLs & punctuation dropped). */
@@ -25,7 +30,7 @@ function slugify(text: string): string {
 export function publishFileName(t: Translation): string {
   const date = (t.approvedAt ?? t.translatedAt).slice(0, 10);
   const slug = slugify(t.sourceText);
-  const id = t.itemId.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const id = safeItemId(t.itemId);
   return `${[date, slug, id].filter(Boolean).join("-")}.md`;
 }
 
@@ -54,6 +59,6 @@ export function renderSent(e: SentArchiveEntry): string {
 /** "<sentDate>-<safeItemId>-<channel>.md" — browsable, and needs no translation lookup at send time. */
 export function sentFileName(e: Pick<SentArchiveEntry, "itemId" | "channel" | "sentAt">): string {
   const date = e.sentAt.slice(0, 10);
-  const id = e.itemId.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const id = safeItemId(e.itemId);
   return `${date}-${id}-${e.channel}.md`;
 }

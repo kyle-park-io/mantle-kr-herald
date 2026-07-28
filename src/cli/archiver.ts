@@ -43,14 +43,19 @@ export async function buildArchiver(): Promise<Archiver | undefined> {
 
   const uploaders: DriveUploader[] = [];
   for (const t of targets) {
-    if (t === "local") {
-      uploaders.push(new LocalFileUploader(paths.publishLocalDir));
-    } else if (t === "google") {
-      uploaders.push(new GoogleDriveUploader(await createGoogleAuth(loadGoogleAuthConfig()), { sent: g!.sentFolderId }));
-    } else {
-      uploaders.push(new LarkDriveUploader(new LarkAuth(new HttpClient(l!.baseUrl), l!.appId, l!.appSecret), l!.baseUrl, { sent: l!.sentFolderToken }));
+    try {
+      if (t === "local") {
+        uploaders.push(new LocalFileUploader(paths.publishLocalDir));
+      } else if (t === "google") {
+        uploaders.push(new GoogleDriveUploader(await createGoogleAuth(loadGoogleAuthConfig()), { sent: g!.sentFolderId }));
+      } else {
+        uploaders.push(new LarkDriveUploader(new LarkAuth(new HttpClient(l!.baseUrl), l!.appId, l!.appSecret), l!.baseUrl, { sent: l!.sentFolderToken }));
+      }
+    } catch (err) {
+      console.warn(`[archive] could not initialize ${t} archiver: ${(err as Error).message} — skipping`);
     }
   }
+  if (uploaders.length === 0) return undefined;
 
   return async (entry) => {
     const name = sentFileName(entry);
