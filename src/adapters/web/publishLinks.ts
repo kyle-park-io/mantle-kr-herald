@@ -31,7 +31,8 @@ export function publishRowLinks(
   if (row.target === "lark") {
     if (!cfg.lark) return {};
     const token = approved ? cfg.lark.approvedFolderToken : cfg.lark.reviewFolderToken;
-    const ws = cfg.lark.workspaceUrl;
+    const ws = cfg.lark.workspaceUrl.replace(/\/+$/, ""); // tolerate a trailing slash even though config strips it
+
     return {
       folderUrl: `${ws}/drive/folder/${token}`,
       fileUrl: row.remoteId ? `${ws}/file/${row.remoteId}` : undefined,

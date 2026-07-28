@@ -36,4 +36,9 @@ describe("publishRowLinks", () => {
   it("no lark config → empty", () => {
     expect(publishRowLinks({ target: "lark", status: "translated", remoteId: "TK" }, {})).toEqual({});
   });
+  it("tolerates a trailing slash on the lark workspace url", () => {
+    const trailing: PublishLinkConfig = { lark: { workspaceUrl: "https://t.larksuite.com/", reviewFolderToken: "LR", approvedFolderToken: "LA" } };
+    expect(publishRowLinks({ target: "lark", status: "translated", remoteId: "TK" }, trailing))
+      .toEqual({ folderUrl: "https://t.larksuite.com/drive/folder/LR", fileUrl: "https://t.larksuite.com/file/TK" });
+  });
 });
