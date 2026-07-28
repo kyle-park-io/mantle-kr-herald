@@ -508,15 +508,9 @@ export class JsonDeliveryLedger implements DeliveryLedger {
 }
 ```
 
-- [ ] **Step 5: Add the path**
+- [ ] **Step 5: No path change needed**
 
-In `src/paths.ts`, beside the other `publish` entries:
-
-```ts
-  deliveries: join(OUTPUT_DIR, "publish"),
-```
-
-Note: the ledger takes a *directory*, and `publishDir` already points there — use `paths.publishDir` at call sites and skip this step if `publishDir` is already exported. Confirm by reading `src/paths.ts:34` before editing; do not add a duplicate key.
+`src/paths.ts:34` already exports `publishDir: join(OUTPUT_DIR, "publish")`, and `JsonDeliveryLedger` takes a directory. Use `paths.publishDir` at call sites. Do **not** add a `deliveries` key — a second name for the same directory is exactly the kind of duplication that drifts.
 
 - [ ] **Step 6: Run test to verify it passes**
 
@@ -1199,7 +1193,7 @@ git commit -m "feat(outlet): per-room text override, forked on edit"
 
 **Interfaces:**
 - Consumes: `textFor`/`OutletOverride` (Task 7), `ALL_OUTLETS`/`outletsForChannel` (Task 1), `deliveryKey`/`DeliveryEntry` (Task 3), `MarkDelivery` (Task 6), `SaveOutletOverride` (Task 7), `FormattingStore`.
-- Produces: `buildBoard(itemId, renderings, overrides, deliveries): BoardView`; `BoardView { itemId, groups: BoardGroup[], unconverted: ConversionType[] }`; `BoardGroup { type, channel, text, status, rows: BoardRow[] }`; `BoardRow { outletId, label, delivery, forked, status, text, deliveryStatus?, at?, url?, siblingCount, siblingIndex }`. New routes on `handleApi`.
+- Produces: `buildBoard(itemId, renderings, overrides, deliveries): BoardView`; `BoardView { itemId, groups: BoardGroup[], unconverted: ConversionType[] }`; `BoardGroup { type, channel, text, status, rows: BoardRow[], addableOutletIds: string[] }`; `BoardRow { outletId, label, delivery, forked, status, text, deliveryStatus?, at?, url?, siblingCount, siblingIndex }`. New routes on `handleApi`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1220,10 +1214,29 @@ describe("buildBoard", () => {
     expect(group?.rows.map((row) => row.outletId)).toEqual(["tg-community", "tg-dev", "tg-blockchain"]);
   });
 
-  it("omits a room whose suggestedTypes exclude the group's type", () => {
+  it("rows the suggested rooms and offers the channel's remaining rooms as addable", () => {
     const board = buildBoard("x:1", [r("kol", "telegram", "브리프")], [], []);
     const group = board.groups.find((g) => g.type === "kol");
     expect(group?.rows.map((row) => row.outletId)).toEqual(["tg-kol"]);
+    // suggestedTypes is a default, not a constraint — the rest of the channel stays reachable.
+    expect(group?.addableOutletIds).toEqual(["tg-community", "tg-dev", "tg-blockchain"]);
+  });
+
+  it("rows a non-suggested room once it has a delivery, and drops it from addable", () => {
+    const board = buildBoard("x:1", [r("kol", "telegram", "브리프")], [], [
+      { itemId: "x:1", type: "kol", outletId: "tg-community", status: "delivered", at: "T", by: "manual" },
+    ]);
+    const group = board.groups.find((g) => g.type === "kol");
+    expect(group?.rows.map((row) => row.outletId)).toEqual(["tg-kol", "tg-community"]);
+    expect(group?.addableOutletIds).not.toContain("tg-community");
+  });
+
+  it("rows a non-suggested room once it has an override", () => {
+    const board = buildBoard("x:1", [r("kol", "telegram", "브리프")], [
+      { itemId: "x:1", type: "kol", outletId: "tg-dev", text: "데브방용", status: "rendered", createdAt: "T" },
+    ], []);
+    const group = board.groups.find((g) => g.type === "kol");
+    expect(group?.rows.map((row) => row.outletId)).toEqual(["tg-kol", "tg-dev"]);
   });
 
   it("marks a forked room and gives it its own text and status", () => {
@@ -1267,7 +1280,7 @@ Expected: FAIL — module not found.
 Create `src/adapters/web/board.ts` as a **pure** function (no I/O — the caller loads the three stores). It must:
 
 1. Group the item's renderings by `(type, channel)`, one `BoardGroup` each, carrying the group `text` and `status`.
-2. For each group, take `outletsForChannel(channel)` and keep those whose `suggestedTypes` include the group's `type`.
+2. For each group, row the outlets on that channel whose `suggestedTypes` include the group's `type`, **then append any other outlet on that channel that already has an override or a delivery for this `(itemId, type)`** — suggestion is a default, not a constraint, so a room the operator reached for stays visible on every later load. `addableOutletIds` is the channel's remaining outlets: neither suggested nor already rowed. Rows keep `outletsForChannel` order within each of the two segments.
 3. For each kept outlet, resolve `textFor(rendering, override)` and attach the matching `DeliveryEntry` (by `deliveryKey`) as `deliveryStatus` / `at` / `url`.
 4. Compute `siblingIndex` / `siblingCount` per outlet across the **whole board**, in group order, so a room in two groups reads `1/2` then `2/2`.
 5. Set `unconverted` to `ALL_TYPES` minus the types that have any rendering, preserving `ALL_TYPES` order.
@@ -1335,6 +1348,8 @@ One card per group: header shows `타입 · 채널` and the group status, body s
 | `delivered` | `[전달함 ☑]` with the date, untickable |
 
 A forked row expands to its own textarea with `저장` / `승인 ✓` / `그룹 글로 되돌리기`.
+
+Below the rows, a `+ 다른 방 추가` control lists `addableOutletIds` by label. Picking one appends a row locally — nothing is stored yet, because there is nothing to store until the operator acts. The moment that row is sent, ticked, or forked, the delivery ledger or the override store holds it, and `buildBoard` rows it on every later load. This is how `suggestedTypes` stays a default rather than a constraint without inventing a fourth store.
 
 - [ ] **Step 4: Build `OutletBoard`**
 
