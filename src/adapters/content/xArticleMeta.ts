@@ -2,7 +2,7 @@ import { readJsonFile } from "../../shared/store/jsonFile";
 
 interface RawThread {
   rootId?: string;
-  tweets?: { article?: { coverImageUrl?: string } }[];
+  tweets?: { article?: { coverImageUrl?: string; blocks?: unknown[] } }[];
 }
 
 /** Whether an item is an X Article and its cover image url, from the collected items. Never throws. */
@@ -16,7 +16,10 @@ export function xArticleMeta(itemsPath: string): (itemId: string) => Promise<{ i
       return { isArticle: false };
     }
     const thread = threads.find((t) => t.rootId === itemId.slice(2));
-    const article = thread?.tweets?.map((t) => t.article).find((a) => a);
+    // Match XContentSource's definition: an article contributes markdown to koreanText only when it has
+    // body blocks, so a metadata-only article (blocks not fetched) is NOT sent — its koreanText would
+    // not be the article's `# Title` markdown that X Article requires.
+    const article = thread?.tweets?.map((t) => t.article).find((a) => a?.blocks?.length);
     if (!article) return { isArticle: false };
     return { isArticle: true, coverImageUrl: article.coverImageUrl };
   };
