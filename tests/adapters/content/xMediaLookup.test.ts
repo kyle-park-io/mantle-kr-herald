@@ -38,4 +38,11 @@ describe("xPhotos", () => {
     expect(await xPhotos(path)("x:9")).toEqual([]);
     expect(await xPhotos("/no/such/file.json")("x:1")).toEqual([]);
   });
+
+  it("returns [] for a corrupt items.json instead of throwing (must not fail a text-only send)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "items-"));
+    const path = join(dir, "items.json");
+    await writeFile(path, "{ not valid json");
+    expect(await xPhotos(path)("x:1")).toEqual([]);
+  });
 });

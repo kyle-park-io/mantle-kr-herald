@@ -19,7 +19,14 @@ export function xPhotos(itemsPath: string): (itemId: string) => Promise<string[]
   return async (itemId: string): Promise<string[]> => {
     if (!itemId.startsWith("x:")) return [];
     const rootId = itemId.slice(2);
-    const threads = await readJsonFile<RawThread[]>(itemsPath, []);
+    // Never throw: a corrupt/half-written items.json must not fail an otherwise-fine (text-only)
+    // send — readJsonFile only maps ENOENT to the default, and re-throws on malformed JSON.
+    let threads: RawThread[];
+    try {
+      threads = await readJsonFile<RawThread[]>(itemsPath, []);
+    } catch {
+      return [];
+    }
     const thread = threads.find((t) => t.rootId === rootId);
     if (!thread?.tweets) return [];
     return thread.tweets
