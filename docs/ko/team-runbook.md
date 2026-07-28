@@ -51,11 +51,16 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
 8. **채널 포맷** — 운영자가 `pnpm format`(결정적 포맷터, 즉시 저장)이나
    `pnpm format --refine`(에이전트 다듬기 필요 시) + `pnpm format:save`를 실행합니다.
 9. **2차 검수** — 검수자가 대시보드의 채널 검수 모드에서 채널별 렌더링을 검수·승인합니다.
-10. **채널 발송** — 운영자가 `pnpm send:channels [--target telegram|x|both]`를 실행해 승인된
-    텔레그램·X 렌더링을 실제로 발행합니다(텔레그램은 봇 API, X는 Typefully 경유). 사전에
-    `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, `TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID`
+10. **채널 발송** — 운영자가 `pnpm send:channels [--target telegram|x|both] [--outlets <방 id>]`를
+    실행해 승인된 텔레그램·X 렌더링을 실제로 발행합니다(텔레그램은 봇 API, X는 Typefully 경유).
+    발송은 **채널이 아니라 방 단위**라 텔레그램 한 건이 커뮤니티방·데브방 두 곳으로 나가고,
+    `--outlets tg-dev`처럼 방을 지정하면 그 방으로만 보냅니다(새로 설정한 방의 백로그를 확인하고
+    내보낼 때 필요합니다 — [`setup/channels.md`](setup/channels.md) T-3). 사전에
+    `TELEGRAM_BOT_TOKEN` + 방별 `TELEGRAM_CHAT_ID_COMMUNITY`/`TELEGRAM_CHAT_ID_DEV`,
+    `TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID`
     자격 증명이 준비돼 있어야 합니다(`pnpm doctor`로는 확인되지 않으니 직접 챙기세요). 이미
-    보낸 항목은 로컬 원장(`output/publish/channels.json`)이 걸러내므로, 실행이 중간에 끊기거나
+    보낸 항목은 로컬 원장(`output/publish/deliveries.json` — 방별 1행, 예전
+    `channels.json`은 읽기 전용으로 이관)이 걸러내므로, 실행이 중간에 끊기거나
     실패해도 그대로 다시 실행하면 됩니다 — 재실행은 항상 안전합니다(멱등). 발송 시 실제 나간
     공지가 2차 완성본으로 `output/publish/local/sent/`(local) 또는 Drive `sent/` 폴더(cloud,
     `GDRIVE_SENT_FOLDER_ID`/`LARK_DRIVE_SENT_FOLDER_TOKEN` 설정 시)에 best-effort로
