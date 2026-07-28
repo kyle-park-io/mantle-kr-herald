@@ -131,7 +131,7 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 | **A. X 데이터 수집** | twitterapi.io로 지정한 계정의 트윗을 스레드 단위로 재구성해 증분 수집하고, 삭제된 트윗을 소프트 마크로 반영. X 아티클은 본문(Draft.js 블록)을 별도로 받아 마크다운으로 변환 | `pnpm collect [handle]`, `pnpm reconcile` | — |
 | **B. Lark 데이터 수집** | 지정한 Lark 그룹 채팅들의 텍스트/포스트 메시지를 채팅방별로 증분 수집 | `pnpm collect-lark` | [`setup/lark.md`](setup/lark.md) |
 | **C. 한국어 번역** | 수집된 X/Lark 콘텐츠로 번역 워크시트를 만들고, 로컬 에이전트가 채운 한국어 번역을 저장. 승인 시 few-shot 예시로 승격. `translate:align`(선택)은 `translate:save`와 1차 검수 사이에서 초안을 가장 가까운 TM 선례에 맞춰 다듬음 | `pnpm translate:prepare`, `pnpm translate:save`, `pnpm translate:align`, `pnpm glossary` | — |
-| **D. Drive 업로드** | 승인/번역 완료된 결과를 마크다운으로 저장 — `cloud` 모드면 Google Drive와 Lark Drive에 업로드, `local` 모드면 `output/publish/local/{review,approved}/`에 파일로 저장 | `pnpm drive:publish`, `pnpm drive:init`, `pnpm google:auth` | [`setup/README.md`](setup/README.md), [`setup/google-drive.md`](setup/google-drive.md), [`setup/lark.md`](setup/lark.md) |
+| **D. Drive 업로드** | 승인/번역 완료된 결과를 마크다운으로 저장 — `cloud` 모드면 Google Drive와 Lark Drive에 업로드, `local` 모드면 `output/publish/local/{review,approved}/`에 파일로 저장(발송된 렌더링의 2차 완성본은 `sent/`에 별도로 best-effort 아카이브 — §8 참고) | `pnpm drive:publish`, `pnpm drive:init`, `pnpm google:auth` | [`setup/README.md`](setup/README.md), [`setup/google-drive.md`](setup/google-drive.md), [`setup/lark.md`](setup/lark.md) |
 | **E. 검수 대시보드** | 번역(1차)·채널 포맷(2차)을 검수·수정·승인·발행하는 로컬 웹 대시보드 | `pnpm serve`, `pnpm build:web`, `pnpm dev:web` | — |
 | **F. 콘텐츠 가공** | 승인된 번역을 §5 항목 변환(타입별 X/공지/KOL/PR)과 §6 채널 포맷(코드 변환 + 선택적 에이전트 다듬기) 두 단계로 채널용 게시물로 가공 | `pnpm convert:prepare`, `pnpm convert:save`, `pnpm format`, `pnpm format:save` | — |
 | **G. Google Sheet 데이터 허브** | 팀이 함께 편집하는 배포 대상 목록(`targets` 탭)과 게시 이력(`history` 탭) 관리 | `pnpm sheet:init`, `pnpm targets:list`, `pnpm history:record` | [`external-integrations.md`](../architecture/external-integrations.md) |
@@ -254,6 +254,10 @@ KOL list 읽기 → X 계정 조회 → 월간 집계 → x-performance 탭에 u
   설정돼 있으면 발송 성공 시 `history` 탭에도 기록을 시도하지만, 이 기록이 실패해도 이미 보낸
   메시지를 취소하지는 않습니다 — 경고만 남기고 다음 항목을 계속 처리합니다. 설정이 없으면 이
   기록 자체를 조용히 건너뜁니다.
+- **발송된 렌더링은 2차 완성본으로 best-effort 아카이브됩니다.** 실제로 나간 공지가
+  `output/publish/local/sent/`(local) 또는 Drive `sent/` 폴더(cloud, `GDRIVE_SENT_FOLDER_ID`/
+  `LARK_DRIVE_SENT_FOLDER_TOKEN` 설정 시)에 저장됩니다 — 미설정이어도 발송 자체는 그대로
+  진행됩니다.
 - **범위 밖.** 카카오·메일(`pr_mail`) 채널의 자동 전송, 이미지·미디어 첨부, 예약 발행, 대시보드의
   "발송" 버튼은 아직 없습니다 — 이 명령은 CLI 전용이며 텔레그램·X 텍스트만 다룹니다.
 

@@ -32,6 +32,13 @@ describe("LocalFileUploader", () => {
     expect(await readFile(join(root, "approved", "x-2.md"), "utf8")).toBe("ko");
   });
 
+  it("writes a sent doc under sent/", async () => {
+    const uploader = new LocalFileUploader(root);
+    const result = await uploader.upload({ name: "x-1-telegram.md", content: "공지", folder: "sent" });
+    expect(result).toEqual({ id: join("sent", "x-1-telegram.md"), name: "x-1-telegram.md" });
+    expect(await readFile(join(root, "sent", "x-1-telegram.md"), "utf8")).toBe("공지");
+  });
+
   it("overwrites in place when the filename did not change", async () => {
     const uploader = new LocalFileUploader(root);
     const first = await uploader.upload({ name: "x-1.md", content: "old", folder: "approved" });

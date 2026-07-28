@@ -11,17 +11,19 @@ export class LarkDriveUploader implements DriveUploader {
   constructor(
     private readonly auth: TokenSource,
     private readonly baseUrl: string,
-    private readonly folders: Record<FolderKind, string>,
+    private readonly folders: Partial<Record<FolderKind, string>>,
     private readonly fetchFn: typeof fetch = fetch,
   ) {}
 
   async upload(req: UploadRequest): Promise<UploadResult> {
     const token = await this.auth.getToken();
+    const parent = this.folders[req.folder];
+    if (!parent) throw new Error(`LarkDriveUploader: no folder configured for "${req.folder}"`);
     const bytes = Buffer.from(req.content, "utf8");
     const form = new FormData();
     form.append("file_name", req.name);
     form.append("parent_type", "explorer");
-    form.append("parent_node", this.folders[req.folder]);
+    form.append("parent_node", parent);
     form.append("size", String(bytes.length));
     form.append("file", new Blob([bytes], { type: "text/markdown" }), req.name);
 

@@ -12,13 +12,15 @@ export class GoogleDriveUploader implements DriveUploader {
 
   constructor(
     private readonly auth: TokenSource,
-    private readonly folders: Record<FolderKind, string>,
+    private readonly folders: Partial<Record<FolderKind, string>>,
     private readonly fetchFn: typeof fetch = fetch,
   ) {}
 
   async upload(req: UploadRequest): Promise<UploadResult> {
     const token = await this.auth.getToken();
-    const { boundary, body } = multipartBody({ name: req.name, parents: [this.folders[req.folder]] }, req.content);
+    const parent = this.folders[req.folder];
+    if (!parent) throw new Error(`GoogleDriveUploader: no folder configured for "${req.folder}"`);
+    const { boundary, body } = multipartBody({ name: req.name, parents: [parent] }, req.content);
 
     const res = await this.fetchFn(UPLOAD_URL, {
       method: "POST",

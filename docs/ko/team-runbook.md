@@ -56,7 +56,10 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
     `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, `TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID`
     자격 증명이 준비돼 있어야 합니다(`pnpm doctor`로는 확인되지 않으니 직접 챙기세요). 이미
     보낸 항목은 로컬 원장(`output/publish/channels.json`)이 걸러내므로, 실행이 중간에 끊기거나
-    실패해도 그대로 다시 실행하면 됩니다 — 재실행은 항상 안전합니다(멱등).
+    실패해도 그대로 다시 실행하면 됩니다 — 재실행은 항상 안전합니다(멱등). 발송 시 실제 나간
+    공지가 2차 완성본으로 `output/publish/local/sent/`(local) 또는 Drive `sent/` 폴더(cloud,
+    `GDRIVE_SENT_FOLDER_ID`/`LARK_DRIVE_SENT_FOLDER_TOKEN` 설정 시)에 best-effort로
+    아카이브된다 — 미설정이어도 발송은 그대로 진행됩니다.
 11. **발행** — 운영자가 `pnpm drive:publish`를 실행하거나(또는 대시보드의 발행 버튼) — 우리 팀은
     항상 `cloud` 모드로 운영하므로, 이 순간에 실제로 Drive/Lark Drive에 업로드됩니다.
 12. **기록** — 운영자가 필요 시 `pnpm history:record`로 Google Sheet `history` 탭에 게시

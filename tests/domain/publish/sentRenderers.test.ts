@@ -1,0 +1,33 @@
+import { describe, it, expect } from "vitest";
+import { renderSent, sentFileName } from "../../../src/domain/publish/renderers";
+import type { SentArchiveEntry } from "../../../src/domain/send/channels";
+
+const base: SentArchiveEntry = {
+  itemId: "x:2080608995371597892", type: "announcement", channel: "telegram",
+  text: "📢 **맨틀 Q2**\n\n본문", postId: "10", url: undefined, sentAt: "2026-07-28T01:34:42.000Z",
+};
+
+describe("renderSent", () => {
+  it("renders the metadata header + body, with — for a missing url", () => {
+    expect(renderSent(base)).toBe(
+      "# x:2080608995371597892 · telegram (announcement)\n\n" +
+        "- sent: 2026-07-28T01:34:42.000Z\n" +
+        "- postId: 10\n" +
+        "- url: —\n\n" +
+        "---\n\n" +
+        "📢 **맨틀 Q2**\n\n본문\n",
+    );
+  });
+
+  it("shows a present url and a — for a missing postId", () => {
+    const doc = renderSent({ ...base, url: "https://t.me/c/1/10", postId: undefined });
+    expect(doc).toContain("- postId: —\n");
+    expect(doc).toContain("- url: https://t.me/c/1/10\n");
+  });
+});
+
+describe("sentFileName", () => {
+  it("is <sentDate>-<safeItemId>-<channel>.md with the id sanitized", () => {
+    expect(sentFileName(base)).toBe("2026-07-28-x-2080608995371597892-telegram.md");
+  });
+});

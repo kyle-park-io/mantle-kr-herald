@@ -1,6 +1,6 @@
 import type { FormattingStore } from "../ports/FormattingStore";
 import type { ChannelSender } from "../ports/ChannelSender";
-import type { ChannelSentEntry, SendableChannel } from "../domain/send/channels";
+import type { ChannelSentEntry, SendableChannel, SentArchiveEntry } from "../domain/send/channels";
 import { DELIVERY_DESTINATION, sentKey } from "../domain/send/channels";
 import { emit } from "../domain/formatting/emitters";
 import type { PublishRecord } from "../domain/sheet/models";
@@ -10,6 +10,7 @@ export interface ChannelLedger {
   add(entry: ChannelSentEntry): Promise<void>;
 }
 export type Recorder = (rec: PublishRecord) => Promise<void>;
+export type Archiver = (entry: SentArchiveEntry) => Promise<void>;
 
 export interface SendChannelsInput {
   targets: SendableChannel[];
@@ -31,6 +32,7 @@ export class SendChannels {
     private readonly senders: Record<SendableChannel, ChannelSender | undefined>,
     private readonly ledger: ChannelLedger,
     private readonly record?: Recorder,
+    private readonly archive?: Archiver,
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
@@ -77,6 +79,13 @@ export class SendChannels {
             await this.record({ itemId: r.itemId, type: r.type, channel: r.channel, postId: res.postId, url: res.url, status: "posted", publishedAt: sentAt });
           } catch (err) {
             console.warn(`[send] ${key} sent, but history record failed: ${(err as Error).message}`);
+          }
+        }
+        if (this.archive) {
+          try {
+            await this.archive({ itemId: r.itemId, type: r.type, channel: r.channel, text: r.text, postId: res.postId, url: res.url, sentAt });
+          } catch (err) {
+            console.warn(`[send] ${key} sent, but archive failed: ${(err as Error).message}`);
           }
         }
         sent += 1;
