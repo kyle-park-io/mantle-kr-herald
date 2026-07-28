@@ -80,6 +80,7 @@ function makeDeps(
       funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
       sync: { synced: 1, needsRepublish: 2, unpublished: 0 },
       availableTargets: ["local"],
+      integrations: [],
     }),
     loadPublishState: async () => [
       { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
@@ -203,6 +204,7 @@ describe("handleApi", () => {
       funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
       sync: { synced: 1, needsRepublish: 2, unpublished: 0 },
       availableTargets: ["local"],
+      integrations: [],
     });
   });
 

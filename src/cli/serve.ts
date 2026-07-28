@@ -3,7 +3,7 @@ import "./registerErrorHandler";
 import { join } from "node:path";
 import { startServer } from "../adapters/web/HttpServer";
 import type { ApiDeps } from "../adapters/web/apiHandlers";
-import type { StatusView, PublishStateRow } from "../adapters/web/apiHandlers";
+import type { StatusView, PublishStateRow, IntegrationStatus } from "../adapters/web/apiHandlers";
 import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { JsonPublishStore } from "../adapters/store/JsonPublishStore";
 import { JsonFewShotStore } from "../adapters/store/JsonFewShotStore";
@@ -13,7 +13,17 @@ import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
 import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
 import { SaveRendering } from "../app/SaveRendering";
 import { ApproveRendering } from "../app/ApproveRendering";
-import { loadStorageMode, loadGoogleAuthConfig, loadGoogleDriveConfig, loadLarkDriveConfig } from "../config";
+import {
+  loadStorageMode,
+  loadGoogleAuthConfig,
+  loadGoogleDriveConfig,
+  loadLarkDriveConfig,
+  loadConfig,
+  loadLarkAppConfig,
+  loadGoogleSheetConfig,
+  loadTelegramConfig,
+  loadTypefullyConfig,
+} from "../config";
 import { createUploaders, resolveTargets } from "./uploaders";
 import type { PublishResult } from "../app/PublishTranslations";
 import { REPO_ROOT, paths } from "../paths";
@@ -55,6 +65,36 @@ const usableTargets = ((): ("local" | "google" | "lark")[] => {
     }
   }
   return targets;
+})();
+
+/** Credential presence per integration (env only, no live calls) — for the dashboard's env panel. */
+const integrations: IntegrationStatus[] = ((): IntegrationStatus[] => {
+  const probe = (fn: () => unknown): boolean => {
+    try {
+      fn();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return [
+    { key: "twitterapi", label: "X (twitterapi.io)", group: "collect", configured: probe(loadConfig) },
+    { key: "lark_app", label: "Lark 앱", group: "collect", configured: probe(loadLarkAppConfig) },
+    { key: "local", label: "로컬 폴더", group: "publish", configured: true },
+    {
+      key: "google_drive",
+      label: "Google Drive",
+      group: "publish",
+      configured: probe(() => {
+        loadGoogleAuthConfig();
+        loadGoogleDriveConfig();
+      }),
+    },
+    { key: "lark_drive", label: "Lark Drive", group: "publish", configured: probe(loadLarkDriveConfig) },
+    { key: "telegram", label: "Telegram", group: "send", configured: probe(loadTelegramConfig) },
+    { key: "typefully", label: "Typefully", group: "send", configured: probe(loadTypefullyConfig) },
+    { key: "google_sheets", label: "Google Sheets", group: "data", configured: probe(loadGoogleSheetConfig) },
+  ];
 })();
 
 const linkCfg: PublishLinkConfig = {};
@@ -103,6 +143,7 @@ const loadStatus = async (): Promise<StatusView> => {
     },
     sync,
     availableTargets: usableTargets,
+    integrations,
   };
 };
 
