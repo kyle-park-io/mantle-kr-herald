@@ -41,6 +41,9 @@ export function TranslationDetail(props: {
 
   const url = itemUrl(props.item.itemId);
   const approved = props.item.status === "approved";
+  // The published file lags the current approval status until re-published (publish-before-approve,
+  // or un-approve after publishing): flag it so "파일 열기" showing the old doc isn't confusing.
+  const stalePublish = props.publishRows.some((r) => r.status !== props.item.status);
 
   return (
     <div className="mx-auto max-w-3xl p-6 sm:p-8">
@@ -74,12 +77,13 @@ export function TranslationDetail(props: {
       <section>
         <div className="mb-2 flex items-center gap-2">
           <span className="eyebrow">한글 · korean</span>
-          {dirty && (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-ink">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-ink" />
-              편집 중
-            </span>
-          )}
+          {/* Always in layout (invisible when clean) so the textarea doesn't jump when editing starts. */}
+          <span
+            className={`inline-flex items-center gap-1 text-[11px] font-medium text-amber-ink ${dirty ? "" : "invisible"}`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-ink" />
+            편집 중
+          </span>
         </div>
         <textarea
           className="min-h-64 w-full resize-y rounded-xl border border-line bg-surface p-4 text-[15px] leading-relaxed text-ink shadow-sm outline-none transition-colors focus:border-mint focus:ring-4 focus:ring-mint/10"
@@ -100,17 +104,22 @@ export function TranslationDetail(props: {
         </button>
         {approved ? (
           <button
-            className="group inline-flex items-center rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+            className="group grid min-w-[5.5rem] place-items-center rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
             disabled={busy}
             onClick={() => run(() => props.onUnapprove(props.item.itemId))}
             title="클릭하면 승인을 취소합니다"
           >
-            <span className="group-hover:hidden">승인됨 ✓</span>
-            <span className="hidden group-hover:inline">승인 취소</span>
+            {/* Both labels share one grid cell, so the button sizes to the wider and never jumps on hover. */}
+            <span className="col-start-1 row-start-1 whitespace-nowrap transition-opacity group-hover:opacity-0">
+              승인됨 ✓
+            </span>
+            <span className="col-start-1 row-start-1 whitespace-nowrap opacity-0 transition-opacity group-hover:opacity-100">
+              승인 취소
+            </span>
           </button>
         ) : (
           <button
-            className="rounded-lg bg-mint px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40"
+            className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-mint px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40"
             disabled={busy || dirty}
             onClick={() => run(() => props.onApprove(props.item.itemId))}
             title={dirty ? "편집 내용을 먼저 저장하세요" : undefined}
@@ -137,6 +146,13 @@ export function TranslationDetail(props: {
         })}
       </div>
 
+      {stalePublish && (
+        <p className="mt-3 flex items-center gap-1.5 rounded-lg bg-amber-soft px-3 py-2 text-[12px] text-amber-ink">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-ink" />
+          발행된 파일이 현재 승인 상태와 다릅니다 — <span className="font-medium">발행을 다시 눌러</span> 파일을 갱신하세요.
+        </p>
+      )}
+
       <section className="mt-8 border-t border-line pt-5">
         <div className="eyebrow mb-2.5">발행 상태</div>
         {props.publishRows.length === 0 ? (
@@ -152,6 +168,11 @@ export function TranslationDetail(props: {
                 >
                   <span className="font-mono text-[11px] text-faint uppercase">{r.target}</span>
                   <span className="text-muted">{r.status}</span>
+                  {r.status !== props.item.status && (
+                    <span className="rounded bg-amber-soft px-1.5 py-0.5 text-[10px] font-medium text-amber-ink">
+                      재발행 필요
+                    </span>
+                  )}
                   <span className="ml-auto flex items-center gap-3">
                     {r.target === "local" ? (
                       r.remoteId ? (
