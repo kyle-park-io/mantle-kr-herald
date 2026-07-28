@@ -54,6 +54,18 @@ describe("renderReview", () => {
   });
 });
 
+describe("renderReview header annotation", () => {
+  it("adds reply marker + link when present", () => {
+    const doc = renderReview(tr({ itemId: "x:1", sourceText: "src", isReply: true, refUrl: "https://x.com/a/status/1" }));
+    expect(doc.split("\n")[0]).toBe("# x:1 (댓글·옵셔널) · [원문](https://x.com/a/status/1)");
+    expect(doc).toContain("## 원문 (source)\n\nsrc"); // body unchanged
+  });
+
+  it("is today's header when neither field is present", () => {
+    expect(renderReview(tr({ itemId: "x:1" })).split("\n")[0]).toBe("# x:1");
+  });
+});
+
 describe("renderApproved", () => {
   it("contains only the Korean text (no source)", () => {
     const out = renderApproved(tr({ status: "approved", koreanText: "승인된 한글" }));

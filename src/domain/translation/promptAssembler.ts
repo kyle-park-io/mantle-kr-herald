@@ -47,13 +47,23 @@ export function assembleSharedContext(ctx: SharedContext): string {
   ].join("\n");
 }
 
+/** Review-header suffix: an optional reply marker and a source link. Empty when neither field is
+ *  present, so a header without them (a Lark item, or an item predating this field) is unchanged.
+ *  Shared by the worksheet header here and the review doc (`renderReview`). */
+export function replyAndLinkSuffix(isReply?: boolean, refUrl?: string): string {
+  let suffix = "";
+  if (isReply) suffix += " (댓글·옵셔널)";
+  if (refUrl) suffix += ` · [원문](${refUrl})`;
+  return suffix;
+}
+
 /** Per-item block: content (+ optional ⑥ grounding). No shared context here. */
 export function assembleItemBlock(item: ContentItem, grounding?: string): string {
   // Nothing parses the worksheet back, so this label is free-form — it exists only so a reviewer
   // scanning the sheet can tell an Article (thousands of characters) from an ordinary post before
   // opening it. See ContentItem.kind.
   const marker = item.kind === "article" ? " [article]" : "";
-  const lines = [`### ${item.id}${marker}`, "원문:", item.text];
+  const lines = [`### ${item.id}${marker}${replyAndLinkSuffix(item.isReply, item.refUrl)}`, "원문:", item.text];
   if (grounding && grounding.length > 0) {
     lines.push("⑥ 근거(grounding):", grounding);
   }

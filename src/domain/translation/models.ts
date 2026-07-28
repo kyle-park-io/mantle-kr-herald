@@ -37,6 +37,8 @@ export interface Translation {
   status: TranslationStatus;
   translatedAt: string;
   approvedAt?: string;
+  isReply?: boolean;
+  refUrl?: string;
 }
 
 export interface SharedContext {
