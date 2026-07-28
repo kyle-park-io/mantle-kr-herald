@@ -98,6 +98,24 @@ describe("RecordPublish", () => {
     ]);
   });
 
+  it("matches a pre-outlet row by channel too, so an item on two channels isn't ambiguous", async () => {
+    // Reproduces the reviewer's simulated pre-upgrade sheet: both a telegram row and an x row for
+    // the same (itemId, type), both with blank outletId (legacy). Recording for channel "x" with no
+    // --outlet must land on the x row, not fall through to whichever blank-J row comes first.
+    const telegramRow = ["x:1", "announcement", "telegram", "m1", "https://t.me/c/111/1", "posted", "t1", "", "", ""];
+    const xRow = ["x:1", "announcement", "x", "999", "https://x.com/…/999", "posted", "t1", "5000", "ti", ""];
+    const h = harness([telegramRow, xRow], [HISTORY_HEADER]);
+    await new RecordPublish(h.sheet).record(
+      rec({ type: "announcement", channel: "x", outletId: undefined, postId: "1000", publishedAt: "t2" }),
+    );
+    expect(h.calls.appended).toHaveLength(0);
+    expect(h.calls.updated).toEqual([
+      { range: "history!A3:G3", rows: [["x:1", "announcement", "x", "1000", "", "posted", "t2"]] },
+    ]);
+    // The telegram row (row 2) must be left byte-identical — never targeted for update.
+    expect(h.calls.updated.some((u) => u.range.startsWith("history!A2:"))).toBe(false);
+  });
+
   it("ensures the tab only once across many records on the same instance", async () => {
     const h = harness([], [HISTORY_HEADER]);
     const rp = new RecordPublish(h.sheet);

@@ -20,10 +20,18 @@ export class RecordPublish {
     await this.ensureHistoryTab();
 
     const rows = await this.sheet.getValues(DATA_RANGE);
-    // Keyed by room, not channel. 맨틀 한국 커뮤니티 and 맨틀 한국 데브방 are both telegram, so a
+    // Keyed by room, not channel alone. 맨틀 한국 커뮤니티 and 맨틀 한국 데브방 are both telegram, so a
     // channel-keyed upsert made the second room's send overwrite the first's postId and t.me url —
     // one row where two sends happened, and the first room's link gone from the record.
-    const idx = rows.findIndex((r) => r[0] === rec.itemId && r[1] === rec.type && (r[OUTLET_COL] ?? "") === (rec.outletId ?? ""));
+    //
+    // Channel is still required in the predicate: legacy rows (written before the outlet column
+    // existed) all carry a blank J, so without a channel check `--outlet`-less calls (the manual
+    // `history:record` CLI path) would match *any* blank-J row for the item+type — telegram or x —
+    // and clobber whichever one the sheet happened to list first. An outlet maps to exactly one
+    // channel, so this is a no-op on the outlet-keyed path and only tightens the legacy fallback.
+    const idx = rows.findIndex(
+      (r) => r[0] === rec.itemId && r[1] === rec.type && r[2] === rec.channel && (r[OUTLET_COL] ?? "") === (rec.outletId ?? ""),
+    );
     if (idx >= 0) {
       const rowNumber = idx + 2; // data starts at sheet row 2
       // A–G only: H/I are the impression columns, and J already holds this room (it is how the row
