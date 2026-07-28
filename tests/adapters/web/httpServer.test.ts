@@ -21,6 +21,16 @@ function fakeRenderingDeps(): Pick<ApiDeps, "formattingStore" | "conversionStore
   };
 }
 
+/** §8 board deps, likewise irrelevant to transport-level tests. */
+function fakeBoardDeps(): Pick<ApiDeps, "loadBoard" | "saveOutletOverride" | "markDelivery" | "sendToOutlet"> {
+  return {
+    loadBoard: async (itemId: string) => ({ itemId, groups: [], unconverted: [] }),
+    saveOutletOverride: { run: async () => undefined } as unknown as ApiDeps["saveOutletOverride"],
+    markDelivery: { run: async () => {} } as unknown as ApiDeps["markDelivery"],
+    sendToOutlet: async () => ({ sent: 0, failed: 0 }),
+  };
+}
+
 function fakeDeps(): ApiDeps {
   return {
     translationStore: { loadAll: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }], upsert: async () => {}, listTranslatedIds: async () => new Set() },
@@ -28,6 +38,7 @@ function fakeDeps(): ApiDeps {
     publishOne: async () => ({ uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }),
     storageMode: "cloud",
     ...fakeRenderingDeps(),
+    ...fakeBoardDeps(),
     loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [] }),
     loadPublishState: async () => [],
     loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
@@ -80,6 +91,7 @@ describe("startServer", () => {
       publishOne: async () => ({ uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }),
       storageMode: "cloud",
       ...fakeRenderingDeps(),
+      ...fakeBoardDeps(),
       loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [] }),
       loadPublishState: async () => [],
       loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
@@ -116,6 +128,7 @@ describe("startServer", () => {
       publishOne: async () => ({ uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }),
       storageMode: "cloud",
       ...fakeRenderingDeps(),
+      ...fakeBoardDeps(),
       loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [] }),
       loadPublishState: async () => [],
       loadTranslations: async () => {

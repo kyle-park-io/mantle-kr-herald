@@ -11,8 +11,19 @@ import { SaveTranslation } from "../app/SaveTranslation";
 import { PublishTranslations } from "../app/PublishTranslations";
 import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
 import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
+import { JsonOutletOverrideStore } from "../adapters/store/JsonOutletOverrideStore";
+import { JsonDeliveryLedger } from "../adapters/store/JsonDeliveryLedger";
 import { SaveRendering } from "../app/SaveRendering";
 import { ApproveRendering } from "../app/ApproveRendering";
+import { SaveOutletOverride } from "../app/SaveOutletOverride";
+import { MarkDelivery } from "../app/MarkDelivery";
+import { SendChannels } from "../app/SendChannels";
+import { buildBoard, type BoardView } from "../adapters/web/board";
+import { deliveredByChannelSender, outletById, outletsForChannel } from "../domain/outlet/models";
+import { createSenders } from "./channelSenders";
+import { buildRecorder } from "./recorder";
+import { buildArchiver } from "./archiver";
+import type { SendableChannel } from "../domain/send/channels";
 import {
   loadStorageMode,
   loadGoogleAuthConfig,
@@ -46,6 +57,9 @@ const publishStore = new JsonPublishStore(paths.publishDir);
 const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotStore(paths.translationConfigDir), undefined, buildLineage());
 const formattingStore = new JsonFormattingStore(paths.formattedDir);
 const conversionStore = new JsonConversionStore(paths.variantsDir);
+// Same directories the CLI uses, so `send:channels` and the dashboard read one ledger, not two.
+const overrideStore = new JsonOutletOverrideStore(paths.formattedDir);
+const deliveryLedger = new JsonDeliveryLedger(paths.publishDir);
 
 const storageMode = loadStorageMode();
 
@@ -190,6 +204,70 @@ const loadPublishState = async (): Promise<PublishStateRow[]> => {
   });
 };
 
+const loadBoard = async (itemId: string): Promise<BoardView> => {
+  const [renderings, overrides, deliveries] = await Promise.all([
+    formattingStore.loadAll(),
+    overrideStore.loadAll(),
+    deliveryLedger.loadAll(),
+  ]);
+  return buildBoard(itemId, renderings, overrides, deliveries);
+};
+
+const isSendableChannel = (c: string): c is SendableChannel => c === "telegram" || c === "x";
+
+/**
+ * The board's per-row [발송]: one item, one type, one room. `SendChannels` is the same use case the
+ * CLI runs, narrowed on all three axes — the row the operator clicked must not also push the item's
+ * other approved copy, or the same copy into the room next door.
+ *
+ * Every refusal comes back as `error` rather than as a throw: the dashboard has to name the reason,
+ * and "the room has no chat id" is an install state, not a server fault. Naming the room explicitly
+ * also lifts `SendChannels`' first-delivery guard, which is correct here — a human clicked it.
+ */
+const sendToOutlet = async (itemId: string, type: string, outletId: string): Promise<{ sent: number; failed: number; error?: string }> => {
+  const outlet = outletById(outletId);
+  if (!outlet) return { sent: 0, failed: 0, error: `unknown outlet: ${outletId}` };
+  if (!deliveredByChannelSender(outlet) || !isSendableChannel(outlet.channel)) {
+    return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}) is not posted by a bot — copy the text, paste it, and tick 전달함` };
+  }
+  const channel = outlet.channel;
+  const chatIds = loadTelegramChatIds();
+  if (outlet.chatIdEnv && !chatIds[outlet.id]) {
+    return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}): ${outlet.chatIdEnv} is not set` };
+  }
+
+  try {
+    const [record, archive] = await Promise.all([buildRecorder(), buildArchiver()]);
+    const result = await new SendChannels(
+      formattingStore,
+      createSenders([channel]),
+      deliveryLedger,
+      record,
+      archive,
+      undefined,
+      loadXMaxWeighted(),
+      outletsForChannel,
+      chatIds,
+    ).run({ targets: [channel], ids: new Set([itemId]), types: [type], outletIds: [outletId] });
+
+    // `sent 0` on its own tells the reviewer nothing, so every zero-send outcome carries a reason.
+    // Kept in the same English as the `MarkDelivery` / `SaveOutletOverride` refusals, which surface
+    // through the same dashboard error path.
+    if (result.sent === 0) {
+      const reason =
+        result.failed > 0 ? "the send failed — check the server log"
+        : result.skipped > 0 ? "already delivered to this room"
+        : result.unconfigured > 0 ? `${result.unconfiguredEnv.join(", ")} is not set`
+        : result.withheld > 0 ? "withheld by the first-delivery guard"
+        : "no approved copy to send";
+      return { sent: 0, failed: result.failed, error: `${outlet.label} (${outlet.id}): ${reason}` };
+    }
+    return { sent: result.sent, failed: result.failed };
+  } catch (err) {
+    return { sent: 0, failed: 1, error: (err as Error).message };
+  }
+};
+
 const deps: ApiDeps = {
   translationStore,
   saveTranslation,
@@ -203,6 +281,10 @@ const deps: ApiDeps = {
   loadPublishState,
   loadTranslations,
   xMaxWeighted: loadXMaxWeighted(),
+  loadBoard,
+  saveOutletOverride: new SaveOutletOverride(overrideStore),
+  markDelivery: new MarkDelivery(deliveryLedger),
+  sendToOutlet,
 };
 
 startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist"), localPublishDir: paths.publishLocalDir });

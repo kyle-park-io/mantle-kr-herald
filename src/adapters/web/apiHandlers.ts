@@ -12,6 +12,9 @@ import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
 import { emitAll } from "../../domain/formatting/emitters";
 import type { ApiTranslation } from "./attachKind";
+import type { BoardView } from "./board";
+import type { SaveOutletOverride } from "../../app/SaveOutletOverride";
+import type { MarkDelivery } from "../../app/MarkDelivery";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -60,7 +63,14 @@ export interface ApiDeps {
   loadPublishState: () => Promise<PublishStateRow[]>;
   loadTranslations: () => Promise<ApiTranslation[]>;
   xMaxWeighted: number;
+  loadBoard: (itemId: string) => Promise<BoardView>;
+  saveOutletOverride: SaveOutletOverride;
+  markDelivery: MarkDelivery;
+  sendToOutlet: (itemId: string, type: string, outletId: string) => Promise<{ sent: number; failed: number; error?: string }>;
 }
+
+/** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */
+type BoardReply = { board: BoardView } & Record<string, unknown>;
 
 async function findById(store: TranslationStore, id: string): Promise<Translation | undefined> {
   return (await store.loadAll()).find((t) => t.itemId === id);
@@ -161,6 +171,64 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
         );
         if (!existing) return { status: 404, json: { error: "not found" } };
         return { status: 200, json: emitAll(existing.text, channel, deps.xMaxWeighted) };
+      }
+    }
+  }
+
+  if (method === "GET" && segments.length === 4 && segments[1] === "items" && segments[3] === "board") {
+    return { status: 200, json: await deps.loadBoard(decodeURIComponent(segments[2])) };
+  }
+
+  if (segments[1] === "outlets" && segments.length >= 5) {
+    const itemId = decodeURIComponent(segments[2]);
+    const type = segments[3];
+    const outletId = segments[4];
+    // `SaveOutletOverride` and `MarkDelivery` refuse the moves that would corrupt the ledger
+    // (an unknown room, ticking an auto room, unticking a bot's `sent` row). Those refusals are the
+    // operator asking for something impossible, not a server fault — 400 with the reason, so the
+    // dashboard can show it, rather than the 500 an uncaught throw would produce.
+    const reply = async (extra: Record<string, unknown> = {}): Promise<ApiResult> => ({
+      status: 200,
+      json: { ...extra, board: await deps.loadBoard(itemId) } satisfies BoardReply,
+    });
+    const refuse = (err: unknown): ApiResult => ({
+      status: 400,
+      json: { error: err instanceof Error ? err.message : String(err) },
+    });
+
+    if (method === "PUT" && segments.length === 5) {
+      const b = (body ?? {}) as { text?: unknown; approve?: unknown; revert?: unknown };
+      const input =
+        b.revert === true ? { revert: true }
+        : b.approve === true ? { approve: true }
+        : typeof b.text === "string" && b.text.trim() !== "" ? { text: b.text }
+        : undefined;
+      if (!input) return { status: 400, json: { error: "text, approve or revert required" } };
+      try {
+        const override = await deps.saveOutletOverride.run({ itemId, type, outletId, ...input });
+        return await reply({ override: override ?? null });
+      } catch (err) {
+        return refuse(err);
+      }
+    }
+
+    if (method === "POST" && segments.length === 6 && segments[5] === "send") {
+      const result = await deps.sendToOutlet(itemId, type, outletId);
+      // Nothing went out and there is a reason for it (unconfigured room, manual room, sender
+      // error): 400 so the dashboard's `json()` helper raises it. A partial send still answers
+      // 200 with the board — something did reach a live room, and the rows must reflect that.
+      if (result.sent === 0 && result.error) return { status: 400, json: { error: result.error } };
+      return await reply({ ...result });
+    }
+
+    if (method === "POST" && segments.length === 6 && segments[5] === "mark") {
+      const delivered = (body as { delivered?: unknown })?.delivered;
+      if (typeof delivered !== "boolean") return { status: 400, json: { error: "delivered (boolean) required" } };
+      try {
+        await deps.markDelivery.run({ itemId, type, outletId, delivered });
+        return await reply();
+      } catch (err) {
+        return refuse(err);
       }
     }
   }

@@ -16,10 +16,20 @@ function cv(over: Partial<ContentVariant> = {}): ContentVariant {
   return { itemId: "x:1", type: "x", sourceKorean: "s", convertedText: "변환본", status: "approved", createdAt: "c", ...over };
 }
 
+/** Records what each board dep was asked to do, so a route test can assert the forwarded input. */
+interface BoardSpy {
+  overrides: unknown[];
+  marks: unknown[];
+  sends: unknown[];
+  boards: string[];
+}
+
 function makeDeps(
   list: Translation[],
   renderings: ChannelRendering[] = [],
   variants: ContentVariant[] = [],
+  spy: BoardSpy = { overrides: [], marks: [], sends: [], boards: [] },
+  board: Partial<{ override: () => void; mark: () => void; send: () => { sent: number; failed: number; error?: string } }> = {},
 ): ApiDeps {
   const state = { list: [...list] };
   const translationStore = {
@@ -88,6 +98,27 @@ function makeDeps(
     ],
     loadTranslations: async () => state.list,
     xMaxWeighted: 280,
+    loadBoard: async (itemId: string) => {
+      spy.boards.push(itemId);
+      return { itemId, groups: [], unconverted: [] };
+    },
+    saveOutletOverride: {
+      run: async (input: unknown) => {
+        spy.overrides.push(input);
+        board.override?.();
+        return undefined;
+      },
+    } as unknown as ApiDeps["saveOutletOverride"],
+    markDelivery: {
+      run: async (input: unknown) => {
+        spy.marks.push(input);
+        board.mark?.();
+      },
+    } as unknown as ApiDeps["markDelivery"],
+    sendToOutlet: async (itemId: string, type: string, outletId: string) => {
+      spy.sends.push({ itemId, type, outletId });
+      return board.send?.() ?? { sent: 1, failed: 0 };
+    },
   };
 }
 
@@ -260,6 +291,99 @@ describe("GET /api/config", () => {
     const deps = { ...makeDeps([]), storageMode: "local" as const };
     const res = await handleApi(deps, "GET", "/api/config", undefined);
     expect(res.json).toEqual({ storageMode: "local" });
+  });
+});
+
+describe("board routes", () => {
+  const spied = (board: Parameters<typeof makeDeps>[4] = {}) => {
+    const spy: BoardSpy = { overrides: [], marks: [], sends: [], boards: [] };
+    return { spy, d: makeDeps([], [], [], spy, board) };
+  };
+
+  it("GET /api/items/:id/board decodes the colon in the item id", async () => {
+    const { spy, d } = spied();
+    const res = await handleApi(d, "GET", "/api/items/x%3A1/board", undefined);
+    expect(res.status).toBe(200);
+    expect(spy.boards).toEqual(["x:1"]);
+    expect(res.json).toEqual({ itemId: "x:1", groups: [], unconverted: [] });
+  });
+
+  it("PUT /api/outlets/:itemId/:type/:outletId forks a room with the posted text", async () => {
+    const { spy, d } = spied();
+    const res = await handleApi(d, "PUT", "/api/outlets/x%3A1/announcement/tg-dev", { text: "데브방용" });
+    expect(res.status).toBe(200);
+    expect(spy.overrides[0]).toEqual({ itemId: "x:1", type: "announcement", outletId: "tg-dev", text: "데브방용" });
+    // The rebuilt board comes back with the mutation, so the card never shows a stale row.
+    expect((res.json as { board: { itemId: string } }).board.itemId).toBe("x:1");
+  });
+
+  it("PUT forwards approve and revert as their own intents", async () => {
+    const { spy, d } = spied();
+    await handleApi(d, "PUT", "/api/outlets/x%3A1/announcement/tg-dev", { approve: true });
+    await handleApi(d, "PUT", "/api/outlets/x%3A1/announcement/tg-dev", { revert: true });
+    expect(spy.overrides).toEqual([
+      { itemId: "x:1", type: "announcement", outletId: "tg-dev", approve: true },
+      { itemId: "x:1", type: "announcement", outletId: "tg-dev", revert: true },
+    ]);
+  });
+
+  it("PUT with an empty body is 400 and saves nothing", async () => {
+    const { spy, d } = spied();
+    const res = await handleApi(d, "PUT", "/api/outlets/x%3A1/announcement/tg-dev", {});
+    expect(res.status).toBe(400);
+    expect(spy.overrides).toEqual([]);
+  });
+
+  it("PUT reports a refused override as 400 with its reason, not a 500", async () => {
+    const { d } = spied({ override: () => { throw new Error("unknown outlet: nope"); } });
+    const res = await handleApi(d, "PUT", "/api/outlets/x%3A1/announcement/nope", { text: "t" });
+    expect(res.status).toBe(400);
+    expect(res.json).toEqual({ error: "unknown outlet: nope" });
+  });
+
+  it("POST /api/outlets/:itemId/:type/:outletId/mark ticks and unticks 전달함", async () => {
+    const { spy, d } = spied();
+    expect((await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-kol/mark", { delivered: true })).status).toBe(200);
+    await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-kol/mark", { delivered: false });
+    expect(spy.marks).toEqual([
+      { itemId: "x:1", type: "announcement", outletId: "tg-kol", delivered: true },
+      { itemId: "x:1", type: "announcement", outletId: "tg-kol", delivered: false },
+    ]);
+  });
+
+  it("POST mark without a boolean is 400", async () => {
+    const { spy, d } = spied();
+    expect((await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-kol/mark", {})).status).toBe(400);
+    expect(spy.marks).toEqual([]);
+  });
+
+  it("POST mark reports a refusal (auto room, sent row) as 400 with its reason", async () => {
+    const { d } = spied({ mark: () => { throw new Error("tg-dev is an auto room"); } });
+    const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/mark", { delivered: true });
+    expect(res.status).toBe(400);
+    expect(res.json).toEqual({ error: "tg-dev is an auto room" });
+  });
+
+  it("POST /api/outlets/:itemId/:type/:outletId/send sends exactly that one room's copy", async () => {
+    const { spy, d } = spied();
+    const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
+    expect(res.status).toBe(200);
+    expect(spy.sends).toEqual([{ itemId: "x:1", type: "announcement", outletId: "tg-dev" }]);
+    expect(res.json).toMatchObject({ sent: 1, failed: 0 });
+  });
+
+  it("POST send that delivered nothing answers 400 with the reason", async () => {
+    const { d } = spied({ send: () => ({ sent: 0, failed: 0, error: "TELEGRAM_CHAT_ID_DEV is not set" }) });
+    const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
+    expect(res.status).toBe(400);
+    expect(res.json).toEqual({ error: "TELEGRAM_CHAT_ID_DEV is not set" });
+  });
+
+  it("POST send that partly succeeded still answers 200 with the board", async () => {
+    const { d } = spied({ send: () => ({ sent: 1, failed: 1, error: "one room failed" }) });
+    const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({ sent: 1, failed: 1, error: "one room failed" });
   });
 });
 

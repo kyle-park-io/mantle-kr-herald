@@ -20,6 +20,13 @@ export type Archiver = (entry: SentArchiveEntry) => Promise<void>;
 export interface SendChannelsInput {
   targets: SendableChannel[];
   ids?: Set<string>;
+  /**
+   * Restrict delivery to these conversion types. Absent = every approved rendering of the item.
+   * The board's per-row [발송] needs it: one item can hold an approved `announcement` and an
+   * approved `explainer` for the same room, and sending the row the operator clicked must not also
+   * push the other one into a live group.
+   */
+  types?: string[];
   /** Restrict delivery to these outlet ids (`--outlets`). Absent = every auto room on the channel. */
   outletIds?: string[];
 }
@@ -72,6 +79,7 @@ export class SendChannels {
       if (r.status !== "approved") return false;
       if (!isSendable(r.channel) || !wanted.has(r.channel)) return false;
       if (input.ids && !matchesItemId(input.ids, r.itemId)) return false;
+      if (input.types && !input.types.includes(r.type)) return false;
       return this.senders[r.channel] !== undefined;
     });
 

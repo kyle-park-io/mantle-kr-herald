@@ -325,6 +325,23 @@ describe("SendChannels", () => {
     expect([...(await ledger.loadKeys())]).toEqual(["x:1:announcement:tg-dev"]);
   });
 
+  it("restricts to the types named by the selector, leaving the item's other copy unsent", async () => {
+    // The board sends one row at a time. Both of these are approved for the same rooms, so without
+    // a type filter clicking [발송] on 공지 would also push 해설 into the live group.
+    const store = fakeStore([
+      rendering({ itemId: "x:1", type: "announcement", channel: "telegram", text: "공지" }),
+      rendering({ itemId: "x:1", type: "explainer", channel: "telegram", text: "해설" }),
+    ]);
+    const sender: ChannelSender = { name: "telegram-bot", send: async () => ({ postId: "m1" }) };
+    const { ledger } = fakeLedger();
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({
+      targets: ["telegram"], types: ["announcement"], outletIds: ["tg-dev"],
+    });
+
+    expect(res.sent).toBe(1);
+    expect([...(await ledger.loadKeys())]).toEqual(["x:1:announcement:tg-dev"]);
+  });
+
   it("sends an approved x rendering once — the article outlet has its own pipeline", async () => {
     const store = fakeStore([rendering({ itemId: "x:1", type: "x", channel: "x", text: "트윗" })]);
     let sends = 0;
