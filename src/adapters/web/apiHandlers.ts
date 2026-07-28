@@ -11,6 +11,7 @@ import type { SaveRendering } from "../../app/SaveRendering";
 import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
 import { emitAll } from "../../domain/formatting/emitters";
+import type { ApiTranslation } from "./attachKind";
 
 export interface StatusView {
   storageMode: StorageMode;
@@ -46,6 +47,7 @@ export interface ApiDeps {
   approveRendering: ApproveRendering;
   loadStatus: () => Promise<StatusView>;
   loadPublishState: () => Promise<PublishStateRow[]>;
+  loadTranslations: () => Promise<ApiTranslation[]>;
 }
 
 async function findById(store: TranslationStore, id: string): Promise<Translation | undefined> {
@@ -71,7 +73,7 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
   }
 
   if (method === "GET" && segments.length === 2 && segments[1] === "translations") {
-    return { status: 200, json: await deps.translationStore.loadAll() };
+    return { status: 200, json: await deps.loadTranslations() };
   }
 
   if (segments[1] === "translations" && segments.length >= 3) {

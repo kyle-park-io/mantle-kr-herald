@@ -85,6 +85,7 @@ function makeDeps(
       { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
       { itemId: "x:2", status: "approved", target: "local", remoteId: "approved/2026-x2.md", fileName: "2026-x2.md" },
     ],
+    loadTranslations: async () => state.list,
   };
 }
 
@@ -94,6 +95,13 @@ describe("handleApi", () => {
     const res = await handleApi(d, "GET", "/api/translations", undefined);
     expect(res.status).toBe(200);
     expect((res.json as Translation[]).map((t) => t.itemId)).toEqual(["x:1", "x:2"]);
+  });
+
+  it("GET /api/translations returns whatever loadTranslations provides (with kind)", async () => {
+    const d = makeDeps([tr({ itemId: "x:1" })]);
+    d.loadTranslations = async () => [{ ...tr({ itemId: "x:1" }), kind: "article" as const }];
+    const res = await handleApi(d, "GET", "/api/translations", undefined);
+    expect((res.json as any[])[0].kind).toBe("article");
   });
 
   it("PUT edits koreanText and returns the updated (still translated) item", async () => {

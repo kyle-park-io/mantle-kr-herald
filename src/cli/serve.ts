@@ -24,6 +24,7 @@ import { CompositeContentSource } from "../adapters/content/CompositeContentSour
 import { syncSummary } from "../status/sync";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { publishRowLinks, type PublishLinkConfig } from "../adapters/web/publishLinks";
+import { attachKind } from "../adapters/web/attachKind";
 
 const port = Number(process.env.PORT) || 5757;
 const translationStore = new JsonTranslationStore(paths.translationsDir);
@@ -111,6 +112,9 @@ const publishOne = async (itemId: string, target: string): Promise<PublishResult
     publishStore,
   ).run({ itemId });
 
+const loadTranslations = async () =>
+  attachKind(await translationStore.loadAll(), await contentSource.loadPending(new Set()));
+
 const loadPublishState = async (): Promise<PublishStateRow[]> =>
   (await publishStore.listEntries()).map((e) => ({
     itemId: e.itemId,
@@ -133,6 +137,7 @@ const deps: ApiDeps = {
   approveRendering: new ApproveRendering(formattingStore, undefined, buildLineage()),
   loadStatus,
   loadPublishState,
+  loadTranslations,
 };
 
 startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist"), localPublishDir: paths.publishLocalDir });
