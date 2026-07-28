@@ -47,6 +47,7 @@ export function loadLarkConfig(): LarkConfig {
 export interface GoogleDriveConfig {
   reviewFolderId: string;
   approvedFolderId: string;
+  sentFolderId?: string;
 }
 
 export function loadGoogleDriveConfig(): GoogleDriveConfig {
@@ -54,7 +55,7 @@ export function loadGoogleDriveConfig(): GoogleDriveConfig {
   const approvedFolderId = process.env.GDRIVE_APPROVED_FOLDER_ID;
   if (!reviewFolderId) throw new Error("Missing required environment variable: GDRIVE_REVIEW_FOLDER_ID");
   if (!approvedFolderId) throw new Error("Missing required environment variable: GDRIVE_APPROVED_FOLDER_ID");
-  return { reviewFolderId, approvedFolderId };
+  return { reviewFolderId, approvedFolderId, sentFolderId: process.env.GDRIVE_SENT_FOLDER_ID?.trim() || undefined };
 }
 
 export interface GoogleDriveInitConfig {
@@ -105,6 +106,7 @@ export interface LarkDriveConfig {
   baseUrl: string;
   reviewFolderToken: string;
   approvedFolderToken: string;
+  sentFolderToken?: string;
 }
 
 export function loadLarkDriveConfig(): LarkDriveConfig {
@@ -117,7 +119,14 @@ export function loadLarkDriveConfig(): LarkDriveConfig {
   if (!reviewFolderToken) throw new Error("Missing required environment variable: LARK_DRIVE_REVIEW_FOLDER_TOKEN");
   if (!approvedFolderToken) throw new Error("Missing required environment variable: LARK_DRIVE_APPROVED_FOLDER_TOKEN");
   const baseUrl = process.env.LARK_BASE_URL?.trim() || "https://open.larksuite.com";
-  return { appId, appSecret, baseUrl, reviewFolderToken, approvedFolderToken };
+  return {
+    appId,
+    appSecret,
+    baseUrl,
+    reviewFolderToken,
+    approvedFolderToken,
+    sentFolderToken: process.env.LARK_DRIVE_SENT_FOLDER_TOKEN?.trim() || undefined,
+  };
 }
 
 export interface GoogleSheetConfig {
