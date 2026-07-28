@@ -19,6 +19,9 @@ export class JsonXArticleLedger {
   async loadKeys(): Promise<Set<string>> {
     return new Set((await this.load()).map((e) => e.itemId));
   }
+  loadAll(): Promise<XArticleSentEntry[]> {
+    return this.load();
+  }
   async add(entry: XArticleSentEntry): Promise<void> {
     const byId = new Map((await this.load()).map((e) => [e.itemId, e]));
     byId.set(entry.itemId, entry);

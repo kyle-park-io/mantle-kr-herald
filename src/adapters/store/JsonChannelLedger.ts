@@ -14,6 +14,9 @@ export class JsonChannelLedger {
   async loadKeys(): Promise<Set<string>> {
     return new Set((await this.load()).map(sentKey));
   }
+  loadAll(): Promise<ChannelSentEntry[]> {
+    return this.load();
+  }
   async add(entry: ChannelSentEntry): Promise<void> {
     const byKey = new Map((await this.load()).map((e) => [sentKey(e), e]));
     byKey.set(sentKey(entry), entry);
