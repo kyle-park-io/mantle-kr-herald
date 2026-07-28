@@ -19,8 +19,11 @@ const TARGET_RANK: Record<string, number> = { local: 0, google: 1, lark: 2 };
 function OpenLink({ href, active, children }: { href: string; active: boolean; children: string }) {
   if (!active) {
     return (
-      <span className="cursor-not-allowed text-faint" title="재발행하면 열 수 있습니다">
+      <span className="group/tip relative cursor-not-allowed text-faint">
         {children}
+        <span className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 hidden whitespace-nowrap rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-normal text-muted shadow-md group-hover/tip:block">
+          발행을 다시 눌러야 열 수 있어요
+        </span>
       </span>
     );
   }
