@@ -64,4 +64,14 @@ describe("SendXArticle", () => {
     expect(res.sent).toBe(1);
     expect(sent).toHaveLength(1);
   });
+
+  it("--ids accepts a bare id without the x: prefix", async () => {
+    const { d, sent } = deps({
+      rows: [tr({ itemId: "x:1" }), tr({ itemId: "x:2" })],
+      articleMeta: async () => ({ isArticle: true }),
+    });
+    const res = await new SendXArticle(d.translationStore as any, d.articleMeta, d.media, d.sender, d.ledger).run({ ids: new Set(["2"]) });
+    expect(res.sent).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
 });
