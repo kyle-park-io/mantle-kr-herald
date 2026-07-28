@@ -87,9 +87,16 @@ export class PublishTranslations {
           // moves review→approved and un-approval moves it back. Best-effort — a failed delete leaves
           // at most one stale doc (the pre-move behavior) and never fails the publish.
           if (uploader.delete) {
-            const siblings = (await this.publishStore.listEntries()).filter(
-              (e) => e.itemId === t.itemId && e.target === uploader.name && e.status !== t.status,
-            );
+            let siblings: SyncEntry[] = [];
+            try {
+              siblings = (await this.publishStore.listEntries()).filter(
+                (e) => e.itemId === t.itemId && e.target === uploader.name && e.status !== t.status,
+              );
+            } catch (err) {
+              console.warn(
+                `[publish] published ${t.itemId} to ${folder} but could not scan for a prior-status doc on ${uploader.name}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
             for (const sib of siblings) {
               if (!sib.remoteId) continue;
               try {

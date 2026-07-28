@@ -329,4 +329,29 @@ describe("PublishTranslations", () => {
     expect(res.failed).toBe(0);
     expect((await store.listEntries()).map(entryKey)).toContain("x:1:translated:google");
   });
+
+  it("a move-phase listEntries fault warns but does not fail the publish", async () => {
+    // The use-case calls listEntries() once at the top for the byKey snapshot, then again per
+    // item for the move scan. Throw only from the 2nd call onward to simulate a read fault that
+    // hits specifically during the move, after the upload itself already succeeded.
+    const inner = new InMemoryPublishStore();
+    let calls = 0;
+    const store: PublishStore = {
+      listEntries: async () => {
+        calls += 1;
+        if (calls > 1) throw new Error("state.json read fault");
+        return inner.listEntries();
+      },
+      record: async (e) => inner.record(e),
+      remove: async (k) => inner.remove(k),
+    };
+    const g = new DeletingUploader("google");
+
+    const res = await new PublishTranslations(translationStore([tr("x:1", "approved")]), [g], store).run();
+
+    expect(res.failed).toBe(0);
+    expect(res.uploaded).toBe(1);
+    expect(res.byDrive).toEqual({ google: 1 });
+    expect(g.deleted).toEqual([]); // the scan itself failed, so no delete was even attempted
+  });
 });
