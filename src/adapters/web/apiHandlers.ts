@@ -26,6 +26,8 @@ export interface PublishStateRow {
   url?: string;
   remoteId?: string;
   fileName?: string;
+  folderUrl?: string; // NEW — "open folder" for Google/Lark
+  fileUrl?: string; // NEW — "open file" for Google/Lark
 }
 
 export interface ApiResult {

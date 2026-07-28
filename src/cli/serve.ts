@@ -23,6 +23,7 @@ import { LarkContentSource } from "../adapters/content/LarkContentSource";
 import { CompositeContentSource } from "../adapters/content/CompositeContentSource";
 import { syncSummary } from "../status/sync";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
+import { publishRowLinks, type PublishLinkConfig } from "../adapters/web/publishLinks";
 
 const port = Number(process.env.PORT) || 5757;
 const translationStore = new JsonTranslationStore(paths.translationsDir);
@@ -52,6 +53,24 @@ const usableTargets = ((): ("local" | "google" | "lark")[] => {
   }
   return targets;
 })();
+
+const linkCfg: PublishLinkConfig = {};
+if (storageMode === "cloud") {
+  try {
+    const g = loadGoogleDriveConfig();
+    linkCfg.google = { reviewFolderId: g.reviewFolderId, approvedFolderId: g.approvedFolderId };
+  } catch {
+    /* Google not configured — no Google folder links */
+  }
+  try {
+    const l = loadLarkDriveConfig();
+    if (l.workspaceUrl) {
+      linkCfg.lark = { workspaceUrl: l.workspaceUrl, reviewFolderToken: l.reviewFolderToken, approvedFolderToken: l.approvedFolderToken };
+    }
+  } catch {
+    /* Lark not configured — no Lark links */
+  }
+}
 
 const contentSource = new CompositeContentSource([
   new XContentSource(paths.xItems),
@@ -100,6 +119,7 @@ const loadPublishState = async (): Promise<PublishStateRow[]> =>
     url: e.url,
     remoteId: e.remoteId,
     fileName: e.fileName,
+    ...publishRowLinks({ target: e.target, status: e.status, url: e.url, remoteId: e.remoteId }, linkCfg),
   }));
 
 const deps: ApiDeps = {
