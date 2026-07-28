@@ -27,6 +27,7 @@ async function ensureFolder(
 const parent = await ensureFolder(config.parentFolderName, undefined);
 const review = await ensureFolder("review", parent.id);
 const approved = await ensureFolder("approved", parent.id);
+const sent = await ensureFolder("sent", parent.id);
 
 // Ensure the parent is shared with every configured email on EVERY run (idempotent — skip already-shared).
 // This lets you run once with GDRIVE_SHARE_EMAILS empty, then fill it in and re-run to grant access.
@@ -44,6 +45,7 @@ if (config.shareEmails.length > 0) {
 console.log(`parent "${config.parentFolderName}": ${parent.created ? "created" : "already exists (reused)"} → ${parent.id}`);
 console.log(`  review:   ${review.created ? "created" : "already exists"} → ${review.id}`);
 console.log(`  approved: ${approved.created ? "created" : "already exists"} → ${approved.id}`);
+console.log(`  sent:     ${sent.created ? "created" : "already exists"} → ${sent.id}`);
 if (config.shareEmails.length === 0) {
   console.log("WARNING: GDRIVE_SHARE_EMAILS is empty — the parent folder was not shared with anyone.");
 } else {
@@ -53,3 +55,4 @@ console.log("");
 console.log("Put these in your .env:");
 console.log(`GDRIVE_REVIEW_FOLDER_ID=${review.id}`);
 console.log(`GDRIVE_APPROVED_FOLDER_ID=${approved.id}`);
+console.log(`GDRIVE_SENT_FOLDER_ID=${sent.id}`);
