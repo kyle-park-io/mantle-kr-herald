@@ -59,6 +59,7 @@ export interface ApiDeps {
   loadStatus: () => Promise<StatusView>;
   loadPublishState: () => Promise<PublishStateRow[]>;
   loadTranslations: () => Promise<ApiTranslation[]>;
+  xMaxWeighted: number;
 }
 
 async function findById(store: TranslationStore, id: string): Promise<Translation | undefined> {
@@ -159,7 +160,7 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
           (r) => r.itemId === itemId && r.type === type && r.channel === channel,
         );
         if (!existing) return { status: 404, json: { error: "not found" } };
-        return { status: 200, json: emitAll(existing.text, channel) };
+        return { status: 200, json: emitAll(existing.text, channel, deps.xMaxWeighted) };
       }
     }
   }

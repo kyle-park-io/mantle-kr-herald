@@ -69,4 +69,12 @@ describe("FormatVariants", () => {
     const { warnings } = await uc.run({});
     expect(warnings[0].messages).toEqual(["x_paste, x_typefully: 282/280 (2 초과)"]);
   });
+
+  it("does not warn an over-280 x variant when xMaxWeighted is 25000", async () => {
+    const s = stores([variant({ itemId: "x:1", type: "x", convertedText: "가".repeat(150) })]);
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore, undefined, 25000);
+    const { renderings, warnings } = await uc.run({ types: ["x"] });
+    expect(renderings.some((r) => r.channel === "x")).toBe(true);
+    expect(warnings).toEqual([]); // 300 weighted is under 25000 → no 초과 warning
+  });
 });

@@ -87,6 +87,7 @@ function makeDeps(
       { itemId: "x:2", status: "approved", target: "local", remoteId: "approved/2026-x2.md", fileName: "2026-x2.md" },
     ],
     loadTranslations: async () => state.list,
+    xMaxWeighted: 280,
   };
 }
 

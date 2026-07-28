@@ -14,14 +14,6 @@ export interface RefinementDraft {
   draft: string;
 }
 
-/** Generated from the emitters' own constants, so the worksheet can never drift from the code. */
-const CONSTRAINT: Record<Channel, string> = {
-  x: `- x: 트윗당 ${X_MAX_WEIGHTED} 가중치 (**한글·이모지는 2**, 그 외 1, URL은 길이 무관 ${TCO_LENGTH})`,
-  telegram: `- telegram: 메시지당 ${TELEGRAM_MAX}자`,
-  kakao: `- kakao: **${KAKAO_FOLD}자 초과 시 말풍선이 「전체보기」로 접힙니다**`,
-  pr_mail: `- pr_mail: 첫 줄이 제목`,
-};
-
 const HOW_TO = [
   "## 쓰는 법",
   "- 볼드는 `**이렇게**`, 링크는 `[텍스트](URL)`로 씁니다. 목적지별 문법 변환은 코드가 합니다.",
@@ -31,8 +23,8 @@ const HOW_TO = [
 ].join("\n");
 
 /** The primary destination is the one whose numbers the worksheet reports. */
-function report(channel: Channel, draft: string): string {
-  const { segments } = emit(draft, DESTINATIONS_BY_CHANNEL[channel][0]);
+function report(channel: Channel, draft: string, xMaxWeighted: number): string {
+  const { segments } = emit(draft, DESTINATIONS_BY_CHANNEL[channel][0], xMaxWeighted);
   return segments
     .map((s) => {
       const mark = s.overLimit ? "⚠ " : "";
@@ -66,16 +58,22 @@ function glossarySection(glossary: GlossaryEntry[], allDrafts: string): string |
   return ["## 용어집 (초안에 등장하는 것만)", ...used.map(renderGlossaryEntry)].join("\n");
 }
 
-export function assembleRefinementWorksheet(drafts: RefinementDraft[], glossary: GlossaryEntry[]): string {
+/** Static for every channel except x, whose limit depends on the account (see xMaxWeighted). */
+function constraintLine(channel: Channel, xMaxWeighted: number): string {
+  if (channel === "x") return `- x: 트윗당 ${xMaxWeighted} 가중치 (**한글·이모지는 2**, 그 외 1, URL은 길이 무관 ${TCO_LENGTH})`;
+  return { telegram: `- telegram: 메시지당 ${TELEGRAM_MAX}자`, kakao: `- kakao: **${KAKAO_FOLD}자 초과 시 말풍선이 「전체보기」로 접힙니다**`, pr_mail: `- pr_mail: 첫 줄이 제목` }[channel];
+}
+
+export function assembleRefinementWorksheet(drafts: RefinementDraft[], glossary: GlossaryEntry[], xMaxWeighted: number = X_MAX_WEIGHTED): string {
   const present = new Set(drafts.map((d) => d.channel));
   const channels = ALL_CHANNELS.filter((c) => present.has(c));
-  const constraints = ["## 채널 제약", ...channels.map((c) => CONSTRAINT[c])].join("\n");
+  const constraints = ["## 채널 제약", ...channels.map((c) => constraintLine(c, xMaxWeighted))].join("\n");
   const glossaryBlock = glossarySection(glossary, drafts.map((d) => d.draft).join("\n"));
 
   const blocks = drafts.map((d) =>
     [
       `## ${d.itemId} · ${typeLabel(d.type)} · ${d.channel}`,
-      report(d.channel, d.draft),
+      report(d.channel, d.draft, xMaxWeighted),
       "",
       "초안:",
       d.draft,
