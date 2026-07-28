@@ -383,12 +383,23 @@ describe("JsonDeliveryLedger", () => {
     expect(all[0]?.url).toBe("u");
   });
 
-  it("prefers deliveries.json and ignores the legacy file once it exists", async () => {
-    await writeFile(join(dir, "channels.json"), JSON.stringify([{ itemId: "x:9", type: "x", channel: "x", senderName: "s", sentAt: "2026-07-01T00:00:00.000Z" }]), "utf8");
+  it("persists a migrated legacy row on the first write, leaving channels.json untouched", async () => {
+    const legacy = JSON.stringify([{ itemId: "x:9", type: "x", channel: "x", senderName: "s", sentAt: "2026-07-01T00:00:00.000Z" }]);
+    await writeFile(join(dir, "channels.json"), legacy, "utf8");
     const l = new JsonDeliveryLedger(dir);
     await l.add(sent);
-    expect((await l.loadAll()).map((e) => e.itemId)).toEqual(["x:1"]);
-    expect(JSON.parse(await readFile(join(dir, "deliveries.json"), "utf8"))).toHaveLength(1);
+    expect((await l.loadAll()).map((e) => e.itemId).sort()).toEqual(["x:1", "x:9"]);
+    expect(JSON.parse(await readFile(join(dir, "deliveries.json"), "utf8"))).toHaveLength(2);
+    expect(await readFile(join(dir, "channels.json"), "utf8")).toBe(legacy); // migration is read-only
+  });
+
+  it("keeps a legacy sent item visible in loadKeys() after an unrelated add — or it gets re-sent live", async () => {
+    await writeFile(join(dir, "channels.json"), JSON.stringify([{ itemId: "x:100", type: "announcement", channel: "telegram", senderName: "telegram-bot", sentAt: "2026-07-01T00:00:00.000Z" }]), "utf8");
+    const l = new JsonDeliveryLedger(dir);
+    const legacyKey = "x:100:announcement:tg-community";
+    expect((await l.loadKeys()).has(legacyKey)).toBe(true);
+    await l.add({ itemId: "x:200", type: "announcement", outletId: "tg-dev", status: "sent", at: "T", by: "auto" });
+    expect((await l.loadKeys()).has(legacyKey)).toBe(true);
   });
 });
 ```
@@ -482,7 +493,12 @@ export class JsonDeliveryLedger implements DeliveryLedger {
   /**
    * Reads the outlet-keyed file, falling back to the pre-outlet `channels.json` when it is absent.
    * The migration is read-only: the legacy file is never rewritten or deleted, so a rollback loses
-   * nothing. The first `add()` writes `deliveries.json`, after which the legacy file is ignored.
+   * nothing.
+   *
+   * `add()`/`remove()` build their write base from `loadAll()`, NOT from a raw read — so the first
+   * write persists the migrated rows. That is deliberate: reading past them would make an
+   * already-sent item indistinguishable from never-sent the moment any unrelated row is written,
+   * and `SendChannels` gates only on ledger membership, so it would re-post live content.
    */
   async loadAll(): Promise<DeliveryEntry[]> {
     const current = await readJsonFile<DeliveryEntry[] | null>(this.path, null);
