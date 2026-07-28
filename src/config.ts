@@ -1,5 +1,6 @@
 import { parseStorageMode, tryParseStorageMode, type StorageMode } from "./storage/mode";
 import { X_MAX_WEIGHTED, X_PREMIUM_MAX_WEIGHTED } from "./domain/formatting/weightedLength";
+import { ALL_OUTLETS, PRIMARY_OUTLET_BY_CHANNEL } from "./domain/outlet/models";
 
 export interface Config {
   apiKey: string;
@@ -154,6 +155,39 @@ export function loadTelegramConfig(): TelegramConfig {
   if (!botToken) throw new Error("Missing required environment variable: TELEGRAM_BOT_TOKEN");
   if (!chatId) throw new Error("Missing required environment variable: TELEGRAM_CHAT_ID");
   return { botToken, chatId };
+}
+
+/**
+ * Chat id per auto Telegram outlet. Splitting the old single `TELEGRAM_CHAT_ID` would stop sends
+ * dead on `git pull`, so the primary room (`tg-community`) still falls back to it, with a warning.
+ * A room with no id resolved is simply absent from the map — callers skip it.
+ */
+export function loadTelegramChatIds(): Record<string, string> {
+  const out: Record<string, string> = {};
+  const legacy = process.env.TELEGRAM_CHAT_ID;
+  // Literal dot-notation env reads (not a dynamic bracket lookup) so
+  // tests/config/envExample.test.ts — which greps src/ for that literal pattern — recognizes
+  // these as read. Every outlet.chatIdEnv value in ALL_OUTLETS needs an entry here.
+  const perOutletEnv: Record<string, string | undefined> = {
+    TELEGRAM_CHAT_ID_COMMUNITY: process.env.TELEGRAM_CHAT_ID_COMMUNITY,
+    TELEGRAM_CHAT_ID_DEV: process.env.TELEGRAM_CHAT_ID_DEV,
+  };
+  for (const outlet of ALL_OUTLETS) {
+    if (!outlet.chatIdEnv) continue;
+    const own = perOutletEnv[outlet.chatIdEnv];
+    if (own) {
+      out[outlet.id] = own;
+      continue;
+    }
+    if (legacy && outlet.id === PRIMARY_OUTLET_BY_CHANNEL.telegram) {
+      out[outlet.id] = legacy;
+      console.warn(
+        `[config] TELEGRAM_CHAT_ID is deprecated — set ${outlet.chatIdEnv} instead. ` +
+          `Using it for ${outlet.label} only; other rooms stay unconfigured.`,
+      );
+    }
+  }
+  return out;
 }
 
 export interface TypefullyConfig {
