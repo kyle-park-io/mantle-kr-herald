@@ -6,6 +6,7 @@ import type { ChannelSender } from "../../src/ports/ChannelSender";
 import type { DeliveryLedger } from "../../src/ports/DeliveryLedger";
 import type { ChannelRendering } from "../../src/domain/formatting/models";
 import type { DeliveryEntry } from "../../src/domain/delivery/models";
+import type { PublishRecord } from "../../src/domain/sheet/models";
 import { deliveryKey } from "../../src/domain/delivery/models";
 import { outletsForChannel } from "../../src/domain/outlet/models";
 
@@ -288,6 +289,17 @@ describe("SendChannels", () => {
     const devWarnings = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("TELEGRAM_CHAT_ID_DEV"));
     expect(devWarnings).toHaveLength(1);
     expect(devWarnings[0]).toContain("맨틀 한국 데브방");
+  });
+
+  it("records each room's send under its own room, so one room's history cannot overwrite the other's", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: "본문" })]);
+    const sender: ChannelSender = { name: "telegram-bot", send: async (req) => ({ postId: req.chatId === "-100111" ? "m1" : "m2" }) };
+    const { ledger } = fakeLedger();
+    const recorded: PublishRecord[] = [];
+    await new SendChannels(store, { telegram: sender, x: undefined }, ledger, async (r) => { recorded.push(r); }, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+
+    expect(recorded.map((r) => [r.outletId, r.postId])).toEqual([["tg-community", "m1"], ["tg-dev", "m2"]]);
+    expect(recorded.every((r) => r.channel === "telegram")).toBe(true); // channel is still recorded, it is just not the key
   });
 
   it("does not re-send a room already in the ledger, but still sends its sibling room", async () => {

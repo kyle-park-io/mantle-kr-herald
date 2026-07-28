@@ -128,7 +128,7 @@ export class SendChannels {
           }
           if (this.record) {
             try {
-              await this.record({ itemId: r.itemId, type: r.type, channel: r.channel, postId: res.postId, url: res.url, status: "posted", publishedAt: sentAt });
+              await this.record({ itemId: r.itemId, type: r.type, channel: r.channel, outletId: outlet.id, postId: res.postId, url: res.url, status: "posted", publishedAt: sentAt });
             } catch (err) {
               console.warn(`[send] ${key} sent, but history record failed: ${(err as Error).message}`);
             }
