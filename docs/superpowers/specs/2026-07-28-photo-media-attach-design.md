@@ -67,9 +67,11 @@ exact payload.
 
 If `req.photos?.length`:
 - Send the photos as the **first** message: `sendMediaGroup` for 2–10, `sendPhoto` for 1 (photo = the
-  URL). When the whole text (segments joined) is ≤ 1024 chars, pass it as the `caption` on the (first)
-  photo and skip re-sending it; otherwise send the photos caption-less, then the text segments as
-  today (reply-chained to the media message). `firstId`/url reporting unchanged.
+  URL). **A single photo** takes the text as its `caption` when the text is one ≤1024-char segment
+  (then no separate message). **A media group** always sends the text as a separate reply message
+  after the group (a group has no single obvious caption target, and the 공지 case is normally a
+  single image). Long / multi-segment text always goes as separate reply message(s), reply-chained to
+  the media message. `firstId`/url reporting unchanged.
 - `> 10` photos: send the first 10 (Telegram's media-group cap); a post with >10 photos is not a real case.
 
 No photos ⇒ today's exact behavior.
