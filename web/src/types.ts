@@ -25,9 +25,24 @@ export interface PublishResult {
   byDrive: Record<string, number>;
 }
 
-// Mirrors src/domain/conversion/models.ts — keep in sync.
-export type ConversionType = "x" | "announcement" | "kol" | "pr";
-export type Channel = "x" | "telegram" | "kakao" | "pr_mail";
+// Mirrors src/domain/{conversion,formatting}/models.ts. The frontend cannot import the domain
+// (separate tsconfig + Vite root), so this is a hand-kept copy — `tests/web/typeMirror.test.ts`
+// fails if it drifts. Derive the unions from the arrays so every UI list stays exhaustive:
+// a hardcoded `<option>` list is invisible to the compiler and silently loses a new type.
+export const ALL_TYPES = ["x", "announcement", "explainer", "casual", "kol", "pr"] as const;
+export const ALL_CHANNELS = ["x", "telegram", "kakao", "pr_mail"] as const;
+export type ConversionType = (typeof ALL_TYPES)[number];
+export type Channel = (typeof ALL_CHANNELS)[number];
+
+/** Korean display label per type — mirrors `typeLabel()` in the domain. */
+export const TYPE_LABEL: Record<ConversionType, string> = {
+  x: "X",
+  announcement: "공지",
+  explainer: "해설",
+  casual: "소통",
+  kol: "KOL",
+  pr: "PR",
+};
 
 export interface Rendering {
   itemId: string;
