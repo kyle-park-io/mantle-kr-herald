@@ -168,4 +168,22 @@ describe("SendChannels", () => {
     expect(res.sent).toBe(1);
     expect(got[0]).toEqual([]);
   });
+
+  it("fail-fasts an over-280 x rendering at the default (standard) limit", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: "가".repeat(150) })]);
+    const { ledger } = fakeLedger();
+    const sender = okSender("x");
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger).run({ targets: ["x"] });
+    expect(res).toEqual({ sent: 0, skipped: 0, failed: 1 });
+  });
+
+  it("sends an over-280 x rendering when xMaxWeighted is 25000 (Premium)", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: "가".repeat(150) })]);
+    const { ledger } = fakeLedger();
+    const sent: string[][] = [];
+    const sender: ChannelSender = { name: "x", send: async (req) => { sent.push(req.segments); return { postId: "1" }; } };
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, undefined, undefined, undefined, 25000).run({ targets: ["x"] });
+    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(sent[0][0]).toBe("가".repeat(150));
+  });
 });

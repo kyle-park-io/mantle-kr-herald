@@ -1,6 +1,7 @@
 import "./registerErrorHandler";
 import { argValue } from "./args";
 import { paths } from "../paths";
+import { loadXMaxWeighted } from "../config";
 import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
 import { JsonChannelLedger } from "../adapters/store/JsonChannelLedger";
 import { SendChannels } from "../app/SendChannels";
@@ -18,5 +19,5 @@ const ledger = new JsonChannelLedger(paths.publishDir);
 const record = await buildRecorder();
 const archive = await buildArchiver();
 
-const result = await new SendChannels(store, senders, ledger, record, archive).run({ targets, ids });
+const result = await new SendChannels(store, senders, ledger, record, archive, undefined, loadXMaxWeighted()).run({ targets, ids });
 console.log(`sent ${result.sent} · skipped ${result.skipped} (already sent) · failed ${result.failed}`);

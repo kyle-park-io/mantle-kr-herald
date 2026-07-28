@@ -3,6 +3,7 @@ import type { ChannelSender } from "../ports/ChannelSender";
 import type { ChannelSentEntry, SendableChannel, SentArchiveEntry } from "../domain/send/channels";
 import { DELIVERY_DESTINATION, sentKey } from "../domain/send/channels";
 import { emit } from "../domain/formatting/emitters";
+import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { PublishRecord } from "../domain/sheet/models";
 import { extractMedia } from "../domain/media/sourceMedia";
 
@@ -35,6 +36,7 @@ export class SendChannels {
     private readonly record?: Recorder,
     private readonly archive?: Archiver,
     private readonly now: () => string = () => new Date().toISOString(),
+    private readonly xMaxWeighted: number = X_MAX_WEIGHTED,
   ) {}
 
   async run(input: SendChannelsInput): Promise<SendChannelsResult> {
@@ -56,7 +58,7 @@ export class SendChannels {
         skipped += 1;
         continue;
       }
-      const emitResult = emit(r.text, DELIVERY_DESTINATION[r.channel]);
+      const emitResult = emit(r.text, DELIVERY_DESTINATION[r.channel], this.xMaxWeighted);
       if (emitResult.segments.some((s) => s.overLimit)) {
         // Sending would just 400 forever (the emitter refuses to split further) — fail fast
         // instead of hammering the API on every rerun. A human has to edit the rendering.
