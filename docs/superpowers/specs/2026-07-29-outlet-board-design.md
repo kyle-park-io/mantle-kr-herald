@@ -83,6 +83,17 @@ what lets `Record<…>` exhaustiveness, the invariant tests, and the UI labels s
 reasoning that keeps `ALL_TYPES` / `ALL_CHANNELS` in code. Only the Telegram chat ids live in `.env`,
 one per auto Telegram outlet, replacing today's single `TELEGRAM_CHAT_ID`.
 
+**`.env` migration.** Telegram auto-send currently runs off a single `TELEGRAM_CHAT_ID`. Splitting it
+per outlet means send stops working until the new variables are filled, so the change must be
+staged: read the new per-outlet variables, **fall back to `TELEGRAM_CHAT_ID` for the primary outlet**
+(`tg-community`) when they are absent, and warn. Nothing breaks on `git pull`, and `doctor` reports
+which rooms are still unconfigured.
+
+`.env.example` entries go **in the existing Telegram section next to `TELEGRAM_BOT_TOKEN`**, not
+appended at the end, each with a comment naming the room it addresses and how to obtain the id. Keys
+stay empty (`TELEGRAM_CHAT_ID_DEV=`) per the file's placeholder convention — the comment carries the
+default and the explanation, never a fake value.
+
 `suggestedTypes` is a **default, not a constraint** — mirroring `DEFAULT_CHANNELS_BY_TYPE`, which
 `FormatVariants` reads as `selector.channels ?? DEFAULT_CHANNELS_BY_TYPE[v.type]`. The room↔type
 mapping changed twice during design (데브방 gained `explainer`, KOL방 gained `announcement`), which
