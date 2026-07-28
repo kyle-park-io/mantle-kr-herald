@@ -1,4 +1,5 @@
 import type { ChannelSender, SendRequest, SendResult } from "../../ports/ChannelSender";
+import { TypefullyMedia } from "./TypefullyMedia";
 
 const API = "https://api.typefully.com/v2";
 const POLL_ATTEMPTS = 10;
@@ -29,38 +30,9 @@ export class TypefullySender implements ChannelSender {
   }
 
   private async uploadPhotos(photos: string[]): Promise<string[]> {
+    const media = new TypefullyMedia(this.apiKey, this.socialSetId, this.fetchFn, this.sleep);
     const ids: string[] = [];
-    for (const url of photos) {
-      const dl = await this.fetchFn(url);
-      if (!dl.ok) throw new Error(`Typefully media download failed: HTTP ${dl.status} for ${url}`);
-      const bytes = await dl.arrayBuffer();
-      const contentType = dl.headers.get("content-type") ?? "image/jpeg";
-      const fileName = url.split("/").pop()?.split("?")[0] || "media.jpg";
-
-      const up = await this.fetchFn(`${API}/social-sets/${this.socialSetId}/media/upload`, {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify({ file_name: fileName }),
-      });
-      if (!up.ok) throw new Error(`Typefully media/upload failed: HTTP ${up.status}`);
-      const { media_id, upload_url } = (await up.json()) as { media_id: string; upload_url: string };
-
-      const put = await this.fetchFn(upload_url, { method: "PUT", headers: { "Content-Type": contentType }, body: bytes });
-      if (!put.ok) throw new Error(`Typefully media S3 upload failed: HTTP ${put.status}`);
-
-      let ready = false;
-      for (let i = 0; i < POLL_ATTEMPTS; i++) {
-        const st = await this.fetchFn(`${API}/social-sets/${this.socialSetId}/media/${media_id}`, { headers: this.headers() });
-        if (st.ok) {
-          const { status } = (await st.json()) as { status?: string };
-          if (status === "ready") { ready = true; break; }
-          if (status === "failed") throw new Error(`Typefully media processing failed: ${media_id}`);
-        }
-        await this.sleep(POLL_DELAY_MS);
-      }
-      if (!ready) throw new Error(`Typefully media not ready after polling: ${media_id}`);
-      ids.push(media_id);
-    }
+    for (const url of photos) ids.push(await media.upload(url));
     return ids;
   }
 
