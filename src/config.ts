@@ -1,4 +1,5 @@
 import { parseStorageMode, tryParseStorageMode, type StorageMode } from "./storage/mode";
+import { X_MAX_WEIGHTED, X_PREMIUM_MAX_WEIGHTED } from "./domain/formatting/weightedLength";
 
 export interface Config {
   apiKey: string;
@@ -179,4 +180,10 @@ export function loadStorageMode(): StorageMode {
 
 export function tryLoadStorageMode(): StorageMode | undefined {
   return tryParseStorageMode(process.env.HERALD_STORAGE_MODE);
+}
+
+/** The x-channel weighted limit for this run: X Premium (25,000) when X_PREMIUM=true, else the
+ *  standard 280. One flag for the whole pipeline — it serves a single brand account. */
+export function loadXMaxWeighted(): number {
+  return process.env.X_PREMIUM?.trim() === "true" ? X_PREMIUM_MAX_WEIGHTED : X_MAX_WEIGHTED;
 }

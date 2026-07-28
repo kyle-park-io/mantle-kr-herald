@@ -21,6 +21,10 @@ export const TCO_LENGTH = 23;
 /** Weighted units available in one post on a free account. */
 export const X_MAX_WEIGHTED = 280;
 
+/** X Premium long-post ceiling (25,000 chars). Used for the x weighted limit when the posting
+ *  account is Premium; standard accounts stay at X_MAX_WEIGHTED. */
+export const X_PREMIUM_MAX_WEIGHTED = 25000;
+
 const URL_PATTERN = /https?:\/\/\S+/g;
 
 /**
