@@ -1,4 +1,5 @@
 import type { Channel } from "../models";
+import { stripMedia } from "../../media/sourceMedia";
 import { emitKakaoPaste } from "./kakao";
 import { emitPrMail } from "./prMail";
 import { emitTelegramBot, emitTelegramPaste } from "./telegram";
@@ -29,7 +30,7 @@ export const DESTINATIONS_BY_CHANNEL: Record<Channel, Destination[]> = {
 };
 
 export function emit(canonical: string, destination: Destination): EmitResult {
-  return EMITTERS[destination](canonical);
+  return EMITTERS[destination](stripMedia(canonical));
 }
 
 /** Every destination that applies to `channel`, keyed by destination. */
