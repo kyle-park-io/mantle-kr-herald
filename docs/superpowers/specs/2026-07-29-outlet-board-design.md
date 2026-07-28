@@ -17,7 +17,7 @@ The real delivery surface is a list of **rooms**, and the pipeline has no concep
 | --- | --- | --- | --- |
 | @0xMantleKR 포스트 | x | auto (Typefully) | `x` |
 | @0xMantleKR 아티클 | x | auto (Typefully long-form) | — (translation goes direct) |
-| 맨틀 한국 커뮤니티 | telegram | auto (bot) | `announcement` |
+| 맨틀 한국 커뮤니티 | telegram | auto (bot) | `announcement`, `casual` |
 | 맨틀 한국 데브방 | telegram | auto (bot) | `announcement`, `explainer` |
 | 텔레그램 KOL방 | telegram | **manual** | `kol` (paid promo), `announcement` |
 | 한국 블록체인 커뮤니티방 | telegram | **manual** | `announcement` |
@@ -46,7 +46,7 @@ type). The three axes stay distinct:
 
 | Axis | Question | Values |
 | --- | --- | --- |
-| **type** | what kind of copy is this | `x` · `announcement` · `explainer` · `kol` · `pr` |
+| **type** | what kind of copy is this | `x` · `announcement` · `explainer` · `casual` · `kol` · `pr` |
 | **channel** | what format does it take | `x` · `telegram` · `kakao` · `pr_mail` |
 | **outlet** | which room does it go to | the nine rooms above |
 
@@ -152,7 +152,7 @@ review and delivery happen in the same place — there is no separate review pan
 ```
 x:2080608995371597892   [post]   [원문↗]
 ─────────────────────────────────────────────────────────
-수신처 9곳 · 11건 중 3건 완료
+수신처 9곳 · 12건 중 3건 완료
 데브방 1/2 · 커뮤니티 1/1 · 오픈카톡 0/2 · KOL방 0/2
 
 ┌ 공지 · 텔레그램 ─────────────────────── 검수 대기 ┐
@@ -165,7 +165,7 @@ x:2080608995371597892   [post]   [원문↗]
 │  한국 블록체인 커뮤니티방  수동   [전달함] 🔒 ✎따로│
 └───────────────────────────────────────────────────┘
 
-▸ 아직 변환 안 됨 — X · 해설 · KOL · PR      [변환 준비]
+▸ 아직 변환 안 됨 — X · 해설 · 소통 · KOL · PR   [변환 준비]
 ```
 
 - A room appearing in several cards (데브방 receives both `announcement` and `explainer`) shows
@@ -209,10 +209,9 @@ The PR outlet renders but its send button stays disabled: no mail sender exists 
 
 ## Non-goals
 
-- **The `explainer` type itself.** The board reads `ALL_TYPES`, so adding `explainer` is a separate
-  change (enum entry, label, `conversion/explainer.md` guideline, few-shot store) that this board
-  picks up for free. Adding the type without its guideline would produce an unsteered empty shell —
-  the failure mode `doctor`'s steering check was built to catch.
+- **Conversion types.** `explainer`(해설) and `casual`(소통) shipped separately in #78, and the board
+  reads `ALL_TYPES`, so it picks up all six with no work here. Further types are likewise out of
+  scope — and must arrive with their `conversion/<type>.md` guideline, or they convert unsteered.
 - A mail sender for PR.
 - Kakao automation (no API; those rooms are manual by nature).
 - Per-outlet scheduling, editing, or deleting an already-sent post.
