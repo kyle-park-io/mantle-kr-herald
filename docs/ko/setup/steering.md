@@ -18,7 +18,7 @@
 | 파일 | 갱신 방식 |
 | --- | --- |
 | `translation/few-shot.json` | **자동** — `translate:save --approve` 시 예시로 승격 |
-| `conversion/few-shot.{x,announcement,kol,pr}.json` | **자동** — `convert:save --approve` 시 승격 |
+| `conversion/few-shot.{x,announcement,explainer,casual,kol,pr}.json` | **자동** — `convert:save --approve` 시 승격 |
 | `translation/tm.json` | **반자동** — `tm:promote`(사람이 pair를 확인한 뒤) |
 | `translation/glossary.json` | **수기** — `pnpm glossary add …` 또는 직접 편집 |
 | `translation/style-guide.md` · `locale.json` · `conversion/*.md` · `checklist.*.md` | **수기** — 직접 편집만 |
@@ -44,16 +44,21 @@ pnpm config:init
 > "파일이 있다"며 **✓ 를 띄웁니다.** 그 상태로 번역하면 팀 용어집·문체 규칙이 하나도 적용되지
 > 않은 결과가 나오는데, 아무 경고도 나지 않습니다.
 
-팀 담당자에게 **실제 파일 10개를 받으세요.** 압축해서 전달받아 저장소 루트에 그대로 풉니다.
+팀 담당자에게 **실제 파일 19개를 받으세요.** 압축해서 전달받아 저장소 루트에 그대로 풉니다.
 
 ```
 translation/glossary.json          conversion/x.md
 translation/style-guide.md         conversion/announcement.md
-translation/locale.json            conversion/kol.md
-translation/few-shot.json          conversion/pr.md
-                                   conversion/few-shot.{x,announcement,kol,pr}.json
+translation/locale.json            conversion/explainer.md
+translation/few-shot.json          conversion/casual.md
+translation/tm.json                conversion/kol.md
+                                   conversion/pr.md
+                                   conversion/few-shot.{x,announcement,explainer,casual,kol,pr}.json
                                    conversion/checklist.{x,announcement}.md
 ```
+
+정확한 목록은 `pnpm config:push`가 묶는 파일과 같습니다 — `translation/`과 `conversion/`에서
+`*.example.*`를 뺀 전부입니다.
 
 ## 3. 제대로 받았는지 확인
 
