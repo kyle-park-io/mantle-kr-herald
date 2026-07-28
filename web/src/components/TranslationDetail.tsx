@@ -114,7 +114,7 @@ export function TranslationDetail(props: {
         <textarea
           className={`min-h-64 w-full resize-y rounded-xl border border-line p-4 text-[15px] leading-relaxed shadow-sm outline-none transition-colors ${
             approved
-              ? "cursor-not-allowed bg-bg text-muted"
+              ? "bg-bg text-muted"
               : "bg-surface text-ink focus:border-mint focus:ring-4 focus:ring-mint/10"
           }`}
           value={korean}
