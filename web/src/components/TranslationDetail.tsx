@@ -11,6 +11,26 @@ const TARGET_LABEL: Record<"local" | "google" | "lark", string> = {
 
 const TARGET_RANK: Record<string, number> = { local: 0, google: 1, lark: 2 };
 
+/**
+ * An "open" link that is only active when the row is synced. A "재발행 필요" row's files are the
+ * outdated version, so opening them is disabled (greyed) to avoid the review-doc-looks-current
+ * confusion — republish first, then the link activates.
+ */
+function OpenLink({ href, active, children }: { href: string; active: boolean; children: string }) {
+  if (!active) {
+    return (
+      <span className="cursor-not-allowed text-faint" title="재발행하면 열 수 있습니다">
+        {children}
+      </span>
+    );
+  }
+  return (
+    <a className="text-mint underline-offset-2 hover:underline" href={href} target="_blank" rel="noreferrer">
+      {children}
+    </a>
+  );
+}
+
 export function TranslationDetail(props: {
   item: Translation;
   publishRows: PublishStateRow[];
@@ -89,9 +109,14 @@ export function TranslationDetail(props: {
           </span>
         </div>
         <textarea
-          className="min-h-64 w-full resize-y rounded-xl border border-line bg-surface p-4 text-[15px] leading-relaxed text-ink shadow-sm outline-none transition-colors focus:border-mint focus:ring-4 focus:ring-mint/10"
+          className={`min-h-64 w-full resize-y rounded-xl border border-line p-4 text-[15px] leading-relaxed shadow-sm outline-none transition-colors ${
+            approved
+              ? "cursor-not-allowed bg-bg text-muted"
+              : "bg-surface text-ink focus:border-mint focus:ring-4 focus:ring-mint/10"
+          }`}
           value={korean}
           onChange={(e) => setKorean(e.target.value)}
+          readOnly={approved}
           spellCheck={false}
         />
       </section>
@@ -99,9 +124,13 @@ export function TranslationDetail(props: {
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button
           className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:opacity-40"
-          disabled={busy || !dirty}
+          disabled={busy || !dirty || approved}
           onClick={() => run(() => props.onSave(props.item.itemId, korean))}
-          title="편집한 번역을 저장합니다. Drive/로컬 파일은 오른쪽 발행 버튼을 눌러야 갱신됩니다."
+          title={
+            approved
+              ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요."
+              : "편집한 번역을 저장합니다. Drive/로컬 파일은 오른쪽 발행 버튼을 눌러야 갱신됩니다."
+          }
         >
           저장
         </button>
@@ -185,28 +214,26 @@ export function TranslationDetail(props: {
                   <span className="ml-auto flex items-center gap-3">
                     {r.target === "local" ? (
                       r.remoteId ? (
-                        <a
-                          className="text-mint underline decoration-mint/40 underline-offset-2 hover:decoration-mint"
+                        <OpenLink
+                          active={r.synced === true}
                           href={`/api/publish/local/${r.remoteId.split("/").map(encodeURIComponent).join("/")}`}
-                          target="_blank"
-                          rel="noreferrer"
                         >
                           파일 열기 ↗
-                        </a>
+                        </OpenLink>
                       ) : (
                         <span className="text-faint">링크 없음</span>
                       )
                     ) : r.folderUrl || r.fileUrl ? (
                       <>
                         {r.folderUrl && (
-                          <a className="text-mint underline decoration-mint/40 underline-offset-2 hover:decoration-mint" href={r.folderUrl} target="_blank" rel="noreferrer">
+                          <OpenLink active={r.synced === true} href={r.folderUrl}>
                             폴더 열기 ↗
-                          </a>
+                          </OpenLink>
                         )}
                         {r.fileUrl && (
-                          <a className="text-mint underline decoration-mint/40 underline-offset-2 hover:decoration-mint" href={r.fileUrl} target="_blank" rel="noreferrer">
+                          <OpenLink active={r.synced === true} href={r.fileUrl}>
                             파일 열기 ↗
-                          </a>
+                          </OpenLink>
                         )}
                       </>
                     ) : (
