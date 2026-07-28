@@ -54,4 +54,14 @@ describe("SendXArticle", () => {
     const { d } = deps({ rows: [tr({ status: "translated" })] });
     expect((await new SendXArticle(d.translationStore as any, d.articleMeta, d.media, d.sender, d.ledger).run({})).sent).toBe(0);
   });
+
+  it("respects the --ids filter (only the requested item is sent)", async () => {
+    const { d, sent } = deps({
+      rows: [tr({ itemId: "x:1" }), tr({ itemId: "x:2" })],
+      articleMeta: async () => ({ isArticle: true }),
+    });
+    const res = await new SendXArticle(d.translationStore as any, d.articleMeta, d.media, d.sender, d.ledger).run({ ids: new Set(["x:2"]) });
+    expect(res.sent).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
 });
