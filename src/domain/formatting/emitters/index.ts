@@ -1,5 +1,6 @@
 import type { Channel } from "../models";
 import { stripMedia } from "../../media/sourceMedia";
+import { X_MAX_WEIGHTED } from "../weightedLength";
 import { emitKakaoPaste } from "./kakao";
 import { emitPrMail } from "./prMail";
 import { emitTelegramBot, emitTelegramPaste } from "./telegram";
@@ -8,7 +9,7 @@ import { emitXPaste, emitXTypefully } from "./x";
 
 export type { Destination, EmitResult, EmitSegment } from "./types";
 
-const EMITTERS: Record<Destination, (canonical: string) => EmitResult> = {
+const EMITTERS: Record<Destination, (canonical: string, xMaxWeighted?: number) => EmitResult> = {
   x_paste: emitXPaste,
   x_typefully: emitXTypefully,
   telegram_paste: emitTelegramPaste,
@@ -29,15 +30,15 @@ export const DESTINATIONS_BY_CHANNEL: Record<Channel, Destination[]> = {
   pr_mail: ["pr_mail"],
 };
 
-export function emit(canonical: string, destination: Destination): EmitResult {
-  return EMITTERS[destination](stripMedia(canonical));
+export function emit(canonical: string, destination: Destination, xMaxWeighted: number = X_MAX_WEIGHTED): EmitResult {
+  return EMITTERS[destination](stripMedia(canonical), xMaxWeighted);
 }
 
 /** Every destination that applies to `channel`, keyed by destination. */
-export function emitAll(canonical: string, channel: Channel): Partial<Record<Destination, EmitResult>> {
+export function emitAll(canonical: string, channel: Channel, xMaxWeighted: number = X_MAX_WEIGHTED): Partial<Record<Destination, EmitResult>> {
   const out: Partial<Record<Destination, EmitResult>> = {};
   for (const destination of DESTINATIONS_BY_CHANNEL[channel]) {
-    out[destination] = emit(canonical, destination);
+    out[destination] = emit(canonical, destination, xMaxWeighted);
   }
   return out;
 }

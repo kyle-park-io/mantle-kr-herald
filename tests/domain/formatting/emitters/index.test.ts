@@ -63,3 +63,26 @@ describe("DESTINATIONS_BY_CHANNEL", () => {
     expect(Object.keys(DESTINATIONS_BY_CHANNEL)).toEqual(["x", "telegram", "kakao", "pr_mail"]);
   });
 });
+
+describe("x weighted limit is configurable", () => {
+  const longKo = "가".repeat(150); // 300 weighted — over 280, under 25000
+
+  it("flags an over-280 x post at the default limit", () => {
+    const seg = emit(longKo, "x_typefully").segments[0];
+    expect(seg.limit).toBe(280);
+    expect(seg.overLimit).toBe(true);
+  });
+
+  it("does not flag it when xMaxWeighted is 25000 (Premium)", () => {
+    const seg = emit(longKo, "x_typefully", 25000).segments[0];
+    expect(seg.limit).toBe(25000);
+    expect(seg.overLimit).toBe(false);
+  });
+
+  it("a non-x destination ignores xMaxWeighted", () => {
+    // telegram uses its own limit; passing xMaxWeighted must not change its result
+    const a = emit("짧은 공지", "telegram_bot").segments;
+    const b = emit("짧은 공지", "telegram_bot", 25000).segments;
+    expect(b).toEqual(a);
+  });
+});

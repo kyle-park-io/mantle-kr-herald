@@ -10,7 +10,7 @@ import type { EmitResult, EmitSegment } from "./types";
  * This never splits an over-limit post. A machine cut lands badly in Korean prose, and a cut made
  * silently here would never be reviewed by anyone; the writer splits, in `pnpm format --refine`.
  */
-function emitX(canonical: string): EmitResult {
+function emitX(canonical: string, xMaxWeighted: number = X_MAX_WEIGHTED): EmitResult {
   const posts = splitPosts(canonical);
   const warnings: string[] = [];
 
@@ -24,12 +24,12 @@ function emitX(canonical: string): EmitResult {
   const segments: EmitSegment[] = posts.map((post, i) => {
     const text = linksToPlain(stripBold(post));
     const length = weightedLength(text);
-    const overLimit = length > X_MAX_WEIGHTED;
-    const segment: EmitSegment = { text, length, limit: X_MAX_WEIGHTED, overLimit };
+    const overLimit = length > xMaxWeighted;
+    const segment: EmitSegment = { text, length, limit: xMaxWeighted, overLimit };
     if (posts.length > 1) segment.label = `트윗 ${i + 1}/${posts.length}`;
     if (overLimit) {
       const where = posts.length > 1 ? `트윗 ${i + 1}/${posts.length}: ` : "";
-      warnings.push(`${where}${length}/${X_MAX_WEIGHTED} (${length - X_MAX_WEIGHTED} 초과)`);
+      warnings.push(`${where}${length}/${xMaxWeighted} (${length - xMaxWeighted} 초과)`);
     }
     if (text.includes("**")) {
       const where = posts.length > 1 ? `트윗 ${i + 1}/${posts.length}: ` : "";
