@@ -89,6 +89,9 @@ export function App() {
   };
 
   const isCloud = status?.storageMode === "cloud";
+  const availableTargets = status?.availableTargets ?? [];
+  const hasGoogle = availableTargets.includes("google");
+  const hasLark = availableTargets.includes("lark");
   const syncWarn = !!status && (status.sync.needsRepublish > 0 || status.sync.unpublished > 0);
 
   return (
@@ -112,7 +115,7 @@ export function App() {
                 <span className={`h-1.5 w-1.5 rounded-full ${isCloud ? "bg-mint" : "bg-amber-ink"}`} />
                 {status.storageMode}
               </span>
-              <div className="pointer-events-none absolute left-0 top-full z-30 mt-2 hidden w-64 rounded-lg border border-line bg-surface p-3 text-[12px] leading-relaxed text-muted shadow-lg group-hover:block">
+              <div className="pointer-events-none absolute left-0 top-full z-30 mt-2 hidden w-72 rounded-lg border border-line bg-surface p-3 text-[12px] leading-relaxed text-muted shadow-lg group-hover:block">
                 <p className="mb-1 font-semibold text-ink">
                   현재 <span className={isCloud ? "text-mint" : "text-amber-ink"}>{status.storageMode}</span> 모드
                 </p>
@@ -121,11 +124,42 @@ export function App() {
                     ? "발행하면 Google · Lark Drive에 올라갑니다."
                     : "발행하면 로컬 폴더(output/publish/local/)에 저장됩니다."}
                 </p>
-                <p className="mt-1.5 text-faint">
-                  바꾸려면 서버를 끄고 <code className="font-mono">.env</code>의{" "}
+
+                <div className="mt-2 border-t border-line pt-2">
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">발행 대상</div>
+                  <ul className="space-y-1">
+                    <li className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-mint" />
+                      <span className="text-ink">로컬 폴더</span>
+                      <span className="ml-auto text-faint">항상 가능</span>
+                    </li>
+                    {isCloud ? (
+                      ([["Google Drive", hasGoogle], ["Lark Drive", hasLark]] as const).map(([label, ok]) => (
+                        <li key={label} className="flex items-center gap-1.5">
+                          <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-mint" : "bg-amber-ink"}`} />
+                          <span className="text-ink">{label}</span>
+                          <span className={`ml-auto ${ok ? "text-mint" : "text-amber-ink"}`}>
+                            {ok ? "설정됨" : "키 없음 · 발행 불가"}
+                          </span>
+                        </li>
+                      ))
+                    ) : (
+                      <li className="text-faint">Google · Lark는 cloud 모드에서만 발행됩니다.</li>
+                    )}
+                  </ul>
+                </div>
+
+                <p className="mt-2 text-faint">
+                  모드를 바꾸려면 서버를 끄고 <code className="font-mono">.env</code>의{" "}
                   <code className="font-mono">HERALD_STORAGE_MODE</code>를 고친 뒤 다시 실행하세요. 대시보드에서는 바꿀 수
                   없습니다.
                 </p>
+                {isCloud && (!hasGoogle || !hasLark) && (
+                  <p className="mt-1.5 text-faint">
+                    빠진 키는 <code className="font-mono">.env</code>의 <code className="font-mono">GDRIVE_*</code> /{" "}
+                    <code className="font-mono">LARK_*</code>를 채우고 재시작하면 활성화됩니다.
+                  </p>
+                )}
               </div>
             </div>
           )}
