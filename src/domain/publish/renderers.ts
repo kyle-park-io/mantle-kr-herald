@@ -1,5 +1,6 @@
 import type { Translation } from "../translation/models";
 import type { SentArchiveEntry } from "../send/channels";
+import { replyAndLinkSuffix } from "../translation/promptAssembler";
 
 /** Sanitize an itemId ("x:100") into a filename-safe token ("x-100"). */
 export function safeItemId(itemId: string): string {
@@ -36,7 +37,7 @@ export function publishFileName(t: Translation): string {
 
 /** Review doc: source + Korean side by side (for 1차 검수). */
 export function renderReview(t: Translation): string {
-  return `# ${t.itemId}\n\n## 원문 (source)\n\n${t.sourceText}\n\n## 한글 (Korean)\n\n${t.koreanText}\n`;
+  return `# ${t.itemId}${replyAndLinkSuffix(t.isReply, t.refUrl)}\n\n## 원문 (source)\n\n${t.sourceText}\n\n## 한글 (Korean)\n\n${t.koreanText}\n`;
 }
 
 /** Approved doc: Korean text only (final). */

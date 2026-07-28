@@ -61,4 +61,15 @@ describe("SaveTranslation", () => {
     expect(res.promoted).toBe(true);
     expect(s.fewShots).toHaveLength(1);
   });
+
+  it("stores isReply and refUrl on the translation when provided", async () => {
+    const s = stores();
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    await uc.run({
+      itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕",
+      approve: false, isReply: true, refUrl: "https://x.com/a/status/1",
+    });
+    expect(s.saved[0].isReply).toBe(true);
+    expect(s.saved[0].refUrl).toBe("https://x.com/a/status/1");
+  });
 });

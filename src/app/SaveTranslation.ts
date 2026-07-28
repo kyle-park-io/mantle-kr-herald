@@ -22,6 +22,8 @@ export interface SaveInput {
   sourceText: string;
   koreanText: string;
   approve: boolean;
+  isReply?: boolean;
+  refUrl?: string;
 }
 
 export class SaveTranslation {
@@ -42,6 +44,8 @@ export class SaveTranslation {
       status: input.approve ? "approved" : "translated",
       translatedAt: timestamp,
       approvedAt: input.approve ? timestamp : undefined,
+      isReply: input.isReply,
+      refUrl: input.refUrl,
     };
     await this.translationStore.upsert(translation);
 

@@ -25,7 +25,7 @@ if (!item) {
   // can re-save or re-approve an item after pending.json was replaced by a later prepare.
   const saved = (await translationStore.loadAll()).find((t) => t.itemId === id);
   if (saved) {
-    item = { id: saved.itemId, source: saved.source, text: saved.sourceText, createdAt: saved.translatedAt };
+    item = { id: saved.itemId, source: saved.source, text: saved.sourceText, createdAt: saved.translatedAt, refUrl: saved.refUrl, isReply: saved.isReply };
   }
 }
 if (!item) {
@@ -41,6 +41,8 @@ const res = await usecase.run({
   sourceText: item.text,
   koreanText,
   approve,
+  isReply: item.isReply,
+  refUrl: item.refUrl,
 });
 
 // `approve` (the CLI flag), not `res.promoted`, is the approval signal: an oversized source
