@@ -232,10 +232,17 @@ export interface FormatWarning {
  * runtime) — this is the worksheet handoff: `pending === 0` means nothing was written (either
  * already converted, or nothing approved yet for the chosen types), so a caller must check it
  * before telling the operator a worksheet is waiting.
+ *
+ * `archived`, when present, is the path the *previous* unsaved batch was moved to
+ * (`output/variants/pending.json` holds one live batch at a time, and preparing again archives
+ * whatever was there via `rename`). If the agent was still filling that batch's worksheet, this
+ * silently pulls it out from under them — the operator has no terminal to read the CLI's own
+ * warning on, so this is the only place that warning can surface.
  */
 export interface ConvertPrepareReply {
   worksheetPath: string;
   pending: number;
+  archived?: string;
 }
 
 /** `POST /api/items/:id/format`. Unlike conversion this always does real work — see `FormatVariants`. */

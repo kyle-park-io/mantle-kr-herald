@@ -230,7 +230,12 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
 
       let channels: Channel[] | undefined;
       if (b.channels !== undefined) {
-        if (!Array.isArray(b.channels)) return { status: 400, json: { error: "channels must be an array" } };
+        // Same non-empty rule as `types` just above: `FormatVariants` reads `channels` with `??`,
+        // so an empty array is never replaced by its per-type defaults — it would 200 and silently
+        // render nothing, rather than reject like every other malformed request on this route.
+        if (!Array.isArray(b.channels) || b.channels.length === 0) {
+          return { status: 400, json: { error: "channels, if present, must be a non-empty array" } };
+        }
         const invalidChannels = b.channels.filter((c) => typeof c !== "string" || !ALL_CHANNELS.includes(c as Channel));
         if (invalidChannels.length > 0) return { status: 400, json: { error: `invalid channels: ${invalidChannels.join(", ")}` } };
         channels = b.channels as Channel[];

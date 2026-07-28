@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { btnPrimary } from "../buttonStyles";
 import { TYPE_LABEL, itemUrl, type BoardView, type ConversionType, type ConvertPrepareReply } from "../types";
 import { OutletCard } from "./OutletCard";
 
@@ -163,8 +164,9 @@ export function OutletBoard(props: {
             <span className="text-ink">{board.unconverted.map((t) => TYPE_LABEL[t]).join(" · ")}</span>
           </summary>
           <p className="mt-2 text-[12px] leading-relaxed text-faint">
-            대시보드는 변환하지 않습니다 — 여기서는 유형을 골라 워크시트만 준비할 수 있고, 채우는 것은 로컬
-            에이전트의 몫입니다.
+            대시보드는 변환하지 않습니다 — 여기서는 유형을 골라 워크시트만 준비할 수 있습니다. 에이전트가
+            채운 뒤 <code className="font-mono">pnpm convert:save</code> 와{" "}
+            <code className="font-mono">pnpm format</code> 을 실행하면 여기에 카드가 생깁니다.
           </p>
           <div className="mt-2.5 flex flex-wrap items-center gap-3">
             {board.unconverted.map((t) => (
@@ -187,7 +189,7 @@ export function OutletBoard(props: {
           </div>
           <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
             <button
-              className="rounded-md bg-mint px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40"
+              className={btnPrimary}
               disabled={preparing || prepareTypes.size === 0}
               onClick={() => {
                 setPreparing(true);
@@ -204,13 +206,23 @@ export function OutletBoard(props: {
             </button>
             {prepareResult &&
               (prepareResult.pending > 0 ? (
-                <p className="text-[12px] font-medium text-mint">
-                  워크시트 준비됨 — 에이전트에게 변환을 요청하세요:{" "}
-                  <code className="font-mono text-ink">{prepareResult.worksheetPath}</code>
-                </p>
+                <div className="flex flex-col gap-1">
+                  <p className="text-[12px] font-medium text-mint">
+                    워크시트 준비됨 — 에이전트에게 변환을 요청하세요:{" "}
+                    <code className="font-mono text-ink">{prepareResult.worksheetPath}</code>
+                  </p>
+                  {prepareResult.archived && (
+                    <p className="text-[11px] font-medium text-amber-ink">
+                      ⚠ 이전에 준비했던 미저장 배치는 보관되었습니다 —{" "}
+                      <code className="font-mono">{prepareResult.archived}</code>. 에이전트가 그 배치를 채우던
+                      중이었다면 다시 변환 준비가 필요합니다.
+                    </p>
+                  )}
+                </div>
               ) : (
                 <p className="text-[12px] text-faint">
-                  대기 중인 항목이 없습니다 — 승인된 원문이 없거나 이미 변환된 상태입니다.
+                  대기 중인 항목이 없습니다 — 승인된 원문이 없거나 이미 변환된 상태입니다. 이미 변환됐다면{" "}
+                  <code className="font-mono">pnpm format</code> 을 실행하면 여기에 카드가 생깁니다.
                 </p>
               ))}
           </div>

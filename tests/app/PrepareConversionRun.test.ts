@@ -48,7 +48,7 @@ describe("PrepareConversionRun", () => {
     const saved: unknown[] = [];
     const pending = [{ itemId: "x:1", type: "announcement", sourceKorean: "s" }];
     const prepare = { run: async () => ({ worksheet: "w", pending }) };
-    const uc = new PrepareConversionRun(prepare as never, async () => {}, "/ws", () => "S", async (p) => { saved.push(p); });
+    const uc = new PrepareConversionRun(prepare as never, async () => {}, "/ws", () => "S", async (p) => { saved.push(p); return undefined; });
 
     await uc.run({ itemId: "x:1", types: ["announcement"] });
 
@@ -58,10 +58,43 @@ describe("PrepareConversionRun", () => {
   it("does not persist a pending batch when nothing is pending", async () => {
     const saved: unknown[] = [];
     const prepare = { run: async () => ({ worksheet: "", pending: [] }) };
-    const uc = new PrepareConversionRun(prepare as never, async () => {}, "/ws", () => "S", async (p) => { saved.push(p); });
+    const uc = new PrepareConversionRun(prepare as never, async () => {}, "/ws", () => "S", async (p) => { saved.push(p); return undefined; });
 
     await uc.run({ itemId: "x:1", types: ["announcement"] });
 
     expect(saved).toEqual([]);
+  });
+
+  /**
+   * `savePending` uses `archiveFile` (a `rename`) under the hood: preparing item B while the agent
+   * is still filling item A's worksheet moves A's pending batch out from under it, and the CLI's own
+   * `console.log` for this never reaches a dashboard operator. `archived` is the only channel that
+   * can carry the warning to the UI — dropping it here means the operator finds out only when
+   * `convert:save` throws "run convert:prepare first" for every item in the batch that just vanished.
+   */
+  it("forwards the archived-previous-batch path when savePending reports one", async () => {
+    const pending = [{ itemId: "x:1", type: "casual", sourceKorean: "s" }];
+    const prepare = { run: async () => ({ worksheet: "w", pending }) };
+    const uc = new PrepareConversionRun(
+      prepare as never,
+      async () => {},
+      "/ws",
+      () => "S",
+      async () => "/archive/2026-07-29/pending-variants-x.json",
+    );
+
+    const res = await uc.run({ itemId: "x:1", types: ["casual"] });
+
+    expect(res.archived).toBe("/archive/2026-07-29/pending-variants-x.json");
+  });
+
+  it("omits archived when savePending reports nothing to archive", async () => {
+    const pending = [{ itemId: "x:1", type: "casual", sourceKorean: "s" }];
+    const prepare = { run: async () => ({ worksheet: "w", pending }) };
+    const uc = new PrepareConversionRun(prepare as never, async () => {}, "/ws", () => "S", async () => undefined);
+
+    const res = await uc.run({ itemId: "x:1", types: ["casual"] });
+
+    expect(res.archived).toBeUndefined();
   });
 });

@@ -292,11 +292,18 @@ const prepareConversions = new PrepareConversions(
   conversionStore,
 );
 
-/** Persists the pending batch exactly like the CLI does — archive-then-overwrite, one batch live at a time. */
-const savePendingVariants = async (pending: PendingVariant[]): Promise<void> => {
+/**
+ * Persists the pending batch exactly like the CLI does — archive-then-overwrite, one batch live at
+ * a time — and reports back the archived path. `archiveFile` is a `rename`: if the agent is midway
+ * through filling a previous batch's worksheet, this move strands it (the ledger backing that
+ * worksheet is gone). The CLI prints that as a warning in the operator's own terminal; the returned
+ * path is how the same warning reaches a dashboard operator, who has no terminal to read.
+ */
+const savePendingVariants = async (pending: PendingVariant[]): Promise<string | undefined> => {
   const archived = await archiveFile(paths.variantsPending, paths.archiveDir, "pending-variants");
   if (archived) console.log(`  archived the previous unsaved batch → ${archived}`);
   await writeJsonFileAtomic(paths.variantsDir, paths.variantsPending, pending);
+  return archived ?? undefined;
 };
 
 const prepareConversionRun = new PrepareConversionRun(

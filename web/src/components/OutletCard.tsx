@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { btn, btnDanger, btnPrimary } from "../buttonStyles";
+import { reformatMessage } from "../reformatMessage";
 import {
   CHANNEL_LABEL,
   DESTINATION_LABEL,
@@ -44,13 +46,6 @@ const stampFull = (iso?: string): string | undefined => {
 };
 
 const SAVE_FIRST = "편집 내용을 먼저 저장하세요";
-
-const btn =
-  "rounded-md border border-line-strong bg-surface px-2.5 py-1 text-[12px] font-medium text-ink transition-colors hover:bg-bg disabled:cursor-default disabled:opacity-40";
-const btnPrimary =
-  "rounded-md bg-mint px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40";
-const btnDanger =
-  "rounded-md border border-red-200 bg-surface px-2.5 py-1 text-[12px] font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-default disabled:opacity-40";
 
 /** The `_paste` segments of an emission set, or `null` when they have not loaded. */
 const pasteSegments = (em: Emissions | undefined, channel: BoardGroup["channel"]): string[] | null =>
@@ -231,19 +226,24 @@ export function OutletCard(props: {
         )}
         <button
           className={btnDanger}
-          disabled={busy}
-          title="변환본에서 이 카드를 다시 생성합니다 — 지금 문구와 승인 상태가 사라집니다"
+          // Gated on `groupDirty` like every other action that reads or replaces the group's text
+          // (저장/승인/복사): `onGroupChanged()` below reloads the board, `group.text` changes, and
+          // the effect at the top of this component overwrites the textarea from it — an unsaved
+          // draft would be discarded with no more warning than the confirm's "지금 저장된 문구는
+          // 사라지고", which only promises to describe what is already *stored*, not what is
+          // sitting unsaved in the box.
+          disabled={busy || groupDirty}
+          title={groupDirty ? SAVE_FIRST : "변환본에서 이 카드를 다시 생성합니다 — 지금 문구와 승인 상태가 사라집니다"}
           onClick={() => {
             if (!confirmReformat()) return;
             void run(async () => {
               const result = await api.formatItem(itemId, [type], [channel]);
               await props.onGroupChanged();
-              // A successful reformat can still produce a card the operator should look at (e.g.
-              // over the X limit) — surface it the same way a partial send does, since there is no
-              // other message channel on this card besides the shared error banner.
-              if (result.warnings.length > 0) {
-                onError(`⚠ 포맷 경고 ${result.warnings.length}건: ${result.warnings.flatMap((w) => w.messages).join("; ")}`);
-              }
+              // `rendered === 0` (variant not approved) and "regenerated with no warnings" both
+              // return `{warnings: []}` — reformatMessage tells them apart so the operator is never
+              // left assuming a silent success when nothing actually happened.
+              const message = reformatMessage(result, TYPE_LABEL[type]);
+              if (message) onError(message);
             });
           }}
         >

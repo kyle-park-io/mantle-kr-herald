@@ -525,6 +525,22 @@ describe("POST /api/items/:id/convert-prepare", () => {
     expect(res.status).toBe(400);
     expect(spy.prepares).toEqual([]);
   });
+
+  /**
+   * `archived` is the operator's only warning that a previous unsaved batch was just moved out from
+   * under the agent filling it (`output/variants/pending.json` holds one batch at a time). The route
+   * must not drop it just because it is optional.
+   */
+  it("passes archived through when PrepareConversionRun reports a previous batch was moved", async () => {
+    const { d } = spied();
+    d.prepareConversionRun = {
+      run: async () => ({ worksheetPath: "/ws/batch-2.md", pending: 1, archived: "/archive/2026-07-29/pending-variants-x.json" }),
+    } as unknown as ApiDeps["prepareConversionRun"];
+
+    const res = await handleApi(d, "POST", "/api/items/x%3A1/convert-prepare", { types: ["announcement"] });
+
+    expect(res.json).toEqual({ worksheetPath: "/ws/batch-2.md", pending: 1, archived: "/archive/2026-07-29/pending-variants-x.json" });
+  });
 });
 
 describe("POST /api/items/:id/format", () => {
@@ -580,6 +596,19 @@ describe("POST /api/items/:id/format", () => {
     expect((await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["nope"] })).status).toBe(400);
     expect((await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"], channels: ["nope"] })).status).toBe(400);
     expect((await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"], channels: "telegram" })).status).toBe(400);
+    expect(spy.formats).toEqual([]);
+  });
+
+  /**
+   * `FormatVariants.run` reads `selector.channels ?? DEFAULT_CHANNELS_BY_TYPE[...]` — an empty array
+   * is not `undefined`, so it would survive that `??` and the use-case would run with zero channels,
+   * 200 with `{rendered: 0, warnings: []}`, and silently format nothing. `types: []` is already
+   * rejected two lines above this in the handler; `channels: []` must be rejected the same way.
+   */
+  it("400s on an empty channels array, without running the use-case", async () => {
+    const { spy, d } = spied();
+    const res = await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"], channels: [] });
+    expect(res.status).toBe(400);
     expect(spy.formats).toEqual([]);
   });
 });
