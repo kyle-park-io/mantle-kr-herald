@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { DESTINATION_LABEL, renderingKey, type Destination, type Emissions, type Rendering } from "../types";
-
-const badgeClass = (status: Rendering["status"]) =>
-  status === "approved" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800";
+import { RenderingChip } from "./RenderingList";
 
 export function RenderingDetail(props: {
   item: Rendering;
@@ -73,23 +71,44 @@ export function RenderingDetail(props: {
   };
 
   return (
-    <div>
-      <div className="flex items-center gap-2.5 mb-3">
-        <code className="text-sm">{props.item.itemId} · {props.item.type} · {props.item.channel}</code>
-        <span className={`text-xs px-1.5 py-0.5 rounded ${badgeClass(props.item.status)}`}>{props.item.status}</span>
-        {props.item.refined && <span className="text-xs text-neutral-400">refined</span>}
+    <div className="mx-auto max-w-3xl p-6 sm:p-8">
+      <div className="mb-6 flex flex-wrap items-center gap-2.5">
+        <span className="rounded-md border border-line bg-surface px-2 py-0.5 text-[12px] font-medium text-ink">
+          {props.item.type} · {props.item.channel}
+        </span>
+        <RenderingChip status={props.item.status} />
+        {props.item.refined && <span className="text-[11px] text-faint">refined</span>}
+        <code className="ml-auto font-mono text-[11px] text-faint">{props.item.itemId}</code>
       </div>
-      <h3 className="text-lg font-semibold text-neutral-700 mb-1">변환 원문 (converted)</h3>
-      <div className="whitespace-pre-wrap text-base mb-6 text-neutral-600">{props.item.convertedText}</div>
-      <h3 className="text-lg font-semibold text-neutral-700 mb-1">채널 텍스트 ({props.item.channel}){dirty ? " • 편집중" : ""}</h3>
-      <textarea
-        className="w-full min-h-56 text-base p-2 border border-neutral-300 rounded"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <div className="flex gap-2.5 mt-3">
+
+      <section className="mb-6">
+        <div className="eyebrow mb-2">변환 원문 · converted</div>
+        <div className="rounded-xl border border-line bg-surface p-4 text-[14px] leading-relaxed whitespace-pre-wrap text-muted shadow-sm">
+          {props.item.convertedText}
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-2 flex items-center gap-2">
+          <span className="eyebrow">채널 텍스트 · {props.item.channel}</span>
+          {dirty && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-ink">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-ink" />
+              편집 중
+            </span>
+          )}
+        </div>
+        <textarea
+          className="min-h-64 w-full resize-y rounded-xl border border-line bg-surface p-4 text-[15px] leading-relaxed text-ink shadow-sm outline-none transition-colors focus:border-mint focus:ring-4 focus:ring-mint/10"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          spellCheck={false}
+        />
+      </section>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <button
-          className="px-3.5 py-1.5 border border-neutral-300 rounded-md bg-white disabled:opacity-50"
+          className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:opacity-40"
           disabled={busy || !dirty}
           onClick={() =>
             run(async () => {
@@ -103,62 +122,87 @@ export function RenderingDetail(props: {
         >
           저장
         </button>
-        <button
-          className="px-3.5 py-1.5 rounded-md bg-indigo-600 text-white disabled:opacity-50"
-          disabled={busy || dirty}
-          onClick={() => run(() => props.onApprove(props.item))}
-        >
-          승인 ✓
-        </button>
+        {props.item.status === "approved" ? (
+          <span className="inline-flex items-center rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint">
+            승인됨 ✓
+          </span>
+        ) : (
+          <button
+            className="rounded-lg bg-mint px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40"
+            disabled={busy || dirty}
+            onClick={() => run(() => props.onApprove(props.item))}
+            title={dirty ? "편집 내용을 먼저 저장하세요" : undefined}
+          >
+            승인하기
+          </button>
+        )}
       </div>
+
       {emissionsError && (
-        <p className="mt-6 text-sm text-red-600">
+        <p className="mt-6 text-[13px] text-red-600">
           목적지별 출력을 불러오지 못했습니다. 항목을 다시 선택하면 다시 시도합니다.
         </p>
       )}
+
       {tab && (
-        <div className="mt-6">
-          <h3 className="text-lg font-semibold text-neutral-700 mb-2">목적지별 출력</h3>
-          <div className="flex gap-1.5 mb-3 flex-wrap">
+        <section className="mt-8 border-t border-line pt-5">
+          <div className="eyebrow mb-2.5">목적지별 출력</div>
+          <div className="mb-3 inline-flex flex-wrap gap-0.5 rounded-lg border border-line bg-bg p-0.5">
             {(Object.keys(emissions) as Destination[]).map((d) => (
               <button
                 key={d}
-                className={`px-3 py-1 text-sm rounded-md border ${
-                  d === tab ? "bg-indigo-600 text-white border-indigo-600" : "bg-white border-neutral-300"
-                }`}
                 onClick={() => setTab(d)}
+                className={`rounded-[7px] px-3 py-1 text-[12px] font-medium transition-colors ${
+                  d === tab ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
+                }`}
               >
                 {DESTINATION_LABEL[d]}
               </button>
             ))}
           </div>
-          {emissions[tab]?.segments.map((s, i) => (
-            <div key={i} className="mb-2 border border-neutral-200 rounded p-2">
-              <div className="flex items-center gap-2 mb-1 text-sm">
-                {s.label && <span className="text-neutral-500">{s.label}</span>}
-                <span className={s.overLimit ? "text-red-600 font-semibold" : "text-neutral-500"}>
-                  {s.length}/{s.limit}
-                  {s.overLimit ? " ⚠" : ""}
-                </span>
-                <button
-                  className="ml-auto px-2.5 py-0.5 border border-neutral-300 rounded bg-white text-sm"
-                  onClick={() => copy(`${tab}:${i}`, s.text)}
-                >
-                  {copiedKey === `${tab}:${i}` ? "복사됨 ✓" : "복사"}
-                </button>
-              </div>
-              <div className="whitespace-pre-wrap text-sm text-neutral-700">{s.text}</div>
-            </div>
-          ))}
+
+          <div className="flex flex-col gap-2.5">
+            {emissions[tab]?.segments.map((s, i) => {
+              const pct = s.limit > 0 ? Math.min(100, Math.round((s.length / s.limit) * 100)) : 0;
+              return (
+                <div key={i} className="rounded-xl border border-line bg-surface p-3 shadow-sm">
+                  <div className="mb-2 flex items-center gap-2.5 text-[12px]">
+                    {s.label && <span className="font-medium text-muted">{s.label}</span>}
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`font-mono tabular-nums ${s.overLimit ? "font-semibold text-red-600" : "text-faint"}`}
+                      >
+                        {s.length}/{s.limit}
+                      </span>
+                      <span className="h-1 w-14 overflow-hidden rounded-full bg-line">
+                        <span
+                          className={`block h-full rounded-full ${s.overLimit ? "bg-red-500" : "bg-mint"}`}
+                          style={{ width: `${s.overLimit ? 100 : pct}%` }}
+                        />
+                      </span>
+                    </div>
+                    <button
+                      className="ml-auto rounded-md border border-line bg-surface px-2.5 py-0.5 text-[12px] font-medium text-ink transition-colors hover:bg-bg"
+                      onClick={() => copy(`${tab}:${i}`, s.text)}
+                    >
+                      {copiedKey === `${tab}:${i}` ? "복사됨 ✓" : "복사"}
+                    </button>
+                  </div>
+                  <div className="whitespace-pre-wrap text-[14px] leading-relaxed text-ink/80">{s.text}</div>
+                </div>
+              );
+            })}
+          </div>
+
           {(emissions[tab]?.segments.length ?? 0) > 1 && (
             <button
-              className="px-3.5 py-1.5 border border-neutral-300 rounded-md bg-white"
+              className="mt-3 rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg"
               onClick={() => copy(`${tab}:all`, emissions[tab]!.segments.map((s) => s.text).join("\n\n"))}
             >
               {copiedKey === `${tab}:all` ? "전체 복사됨 ✓" : "전체 복사"}
             </button>
           )}
-        </div>
+        </section>
       )}
     </div>
   );

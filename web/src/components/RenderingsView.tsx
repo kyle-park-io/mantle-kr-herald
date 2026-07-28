@@ -48,18 +48,28 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
 
   return (
     <>
-      {error && <div className="bg-red-100 text-red-800 px-4 py-2 text-sm">{error}</div>}
-      <div className="flex flex-1 min-h-0">
-        <aside className="w-72 border-r border-neutral-200 overflow-y-auto [scrollbar-gutter:stable]">
+      {error && (
+        <div className="shrink-0 border-b border-red-200 bg-red-50 px-5 py-2 text-sm text-red-700">{error}</div>
+      )}
+      <div className="flex min-h-0 flex-1">
+        <aside className="w-80 shrink-0 overflow-y-auto border-r border-line bg-surface [scrollbar-gutter:stable]">
           <RenderingList items={items} selectedKey={selectedKey} onSelect={handleSelect} />
         </aside>
-        <section className="flex-1 p-6 overflow-y-auto [scrollbar-gutter:stable]">
+        <section className="min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
           {selected ? (
             <RenderingDetail item={selected} onSave={onSave} onApprove={onApprove} onDirtyChange={setDirty} />
           ) : (
-            <p className="text-neutral-400">
-              항목을 선택하세요. (렌더링이 없으면 먼저 <code>pnpm format</code> 실행)
-            </p>
+            <div className="flex h-full items-center justify-center p-10">
+              <div className="max-w-sm text-center">
+                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-surface text-faint">
+                  ☰
+                </div>
+                <p className="text-sm font-medium text-ink">검수할 렌더링을 선택하세요</p>
+                <p className="mt-1 text-[13px] leading-relaxed text-faint">
+                  목록이 비어 있으면 먼저 <code className="font-mono">pnpm format</code> 을 실행하세요.
+                </p>
+              </div>
+            </div>
           )}
         </section>
       </div>
