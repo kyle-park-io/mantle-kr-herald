@@ -48,11 +48,19 @@ export const renderingKey = (r: Pick<Rendering, "itemId" | "type" | "channel">) 
 // Mirrors src/storage/mode.ts — keep in sync.
 export type StorageMode = "local" | "cloud";
 
+export interface IntegrationStatus {
+  key: string;
+  label: string;
+  group: "collect" | "publish" | "send" | "data";
+  configured: boolean;
+}
+
 export interface AppStatus {
   storageMode: StorageMode;
   availableTargets: ("local" | "google" | "lark")[];
   funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
   sync: { synced: number; needsRepublish: number; unpublished: number };
+  integrations: IntegrationStatus[];
 }
 
 export interface PublishStateRow {

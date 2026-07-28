@@ -15,6 +15,13 @@ const FUNNEL_STEPS = [
   ["발행", "published"],
 ] as const;
 
+const GROUP_LABEL: Record<"collect" | "publish" | "send" | "data", string> = {
+  collect: "수집",
+  publish: "발행",
+  send: "전송",
+  data: "데이터",
+};
+
 export function App() {
   const [mode, setMode] = useState<Mode>("translations");
   const [items, setItems] = useState<Translation[]>([]);
@@ -89,9 +96,6 @@ export function App() {
   };
 
   const isCloud = status?.storageMode === "cloud";
-  const availableTargets = status?.availableTargets ?? [];
-  const hasGoogle = availableTargets.includes("google");
-  const hasLark = availableTargets.includes("lark");
   const syncWarn = !!status && (status.sync.needsRepublish > 0 || status.sync.unpublished > 0);
 
   return (
@@ -125,28 +129,31 @@ export function App() {
                     : "발행하면 로컬 폴더(output/publish/local/)에 저장됩니다."}
                 </p>
 
-                <div className="mt-2 border-t border-line pt-2">
-                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">발행 대상</div>
-                  <ul className="space-y-1">
-                    <li className="flex items-center gap-1.5">
-                      <span className="h-1.5 w-1.5 rounded-full bg-mint" />
-                      <span className="text-ink">로컬 폴더</span>
-                      <span className="ml-auto text-faint">항상 가능</span>
-                    </li>
-                    {isCloud ? (
-                      ([["Google Drive", hasGoogle], ["Lark Drive", hasLark]] as const).map(([label, ok]) => (
-                        <li key={label} className="flex items-center gap-1.5">
-                          <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-mint" : "bg-amber-ink"}`} />
-                          <span className="text-ink">{label}</span>
-                          <span className={`ml-auto ${ok ? "text-mint" : "text-amber-ink"}`}>
-                            {ok ? "설정됨" : "키 없음 · 발행 불가"}
-                          </span>
-                        </li>
-                      ))
-                    ) : (
-                      <li className="text-faint">Google · Lark는 cloud 모드에서만 발행됩니다.</li>
-                    )}
-                  </ul>
+                <div className="mt-2 space-y-2 border-t border-line pt-2">
+                  {(["collect", "publish", "send", "data"] as const).map((g) => {
+                    const rows = status.integrations.filter((i) => i.group === g);
+                    if (rows.length === 0) return null;
+                    return (
+                      <div key={g}>
+                        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">
+                          {GROUP_LABEL[g]}
+                        </div>
+                        <ul className="space-y-0.5">
+                          {rows.map((i) => (
+                            <li key={i.key} className="flex items-center gap-1.5">
+                              <span
+                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${i.configured ? "bg-mint" : "bg-amber-ink"}`}
+                              />
+                              <span className="text-ink">{i.label}</span>
+                              <span className={`ml-auto ${i.configured ? "text-mint" : "text-amber-ink"}`}>
+                                {i.configured ? "설정됨" : "키 없음"}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 <p className="mt-2 text-faint">
@@ -154,10 +161,10 @@ export function App() {
                   <code className="font-mono">HERALD_STORAGE_MODE</code>를 고친 뒤 다시 실행하세요. 대시보드에서는 바꿀 수
                   없습니다.
                 </p>
-                {isCloud && (!hasGoogle || !hasLark) && (
+                {status.integrations.some((i) => !i.configured) && (
                   <p className="mt-1.5 text-faint">
-                    빠진 키는 <code className="font-mono">.env</code>의 <code className="font-mono">GDRIVE_*</code> /{" "}
-                    <code className="font-mono">LARK_*</code>를 채우고 재시작하면 활성화됩니다.
+                    <span className="text-amber-ink">키 없음</span> 항목은 <code className="font-mono">.env</code>에 해당 키를
+                    채우고 서버를 다시 실행하면 활성화됩니다.
                   </p>
                 )}
               </div>

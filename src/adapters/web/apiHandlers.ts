@@ -13,11 +13,20 @@ import type { StorageMode } from "../../storage/mode";
 import { emitAll } from "../../domain/formatting/emitters";
 import type { ApiTranslation } from "./attachKind";
 
+/** Whether a given integration's credentials are present in the env (independent of storage mode). */
+export interface IntegrationStatus {
+  key: string;
+  label: string;
+  group: "collect" | "publish" | "send" | "data";
+  configured: boolean;
+}
+
 export interface StatusView {
   storageMode: StorageMode;
   funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
   sync: { synced: number; needsRepublish: number; unpublished: number };
   availableTargets: ("local" | "google" | "lark")[];
+  integrations: IntegrationStatus[];
 }
 
 export interface PublishStateRow {
