@@ -20,6 +20,14 @@ export interface Outlet {
   suggestedTypes: ConversionType[];
   /** Name of the env var holding the chat id. Only auto Telegram rooms have one. */
   chatIdEnv?: string;
+  /**
+   * Which pipeline delivers an `auto` outlet. `"channel"` (the default) = `send:channels` posts it
+   * through the channel's `ChannelSender`. `"x-article"` = `send:x-article` posts it from the
+   * translation rather than from a `ChannelRendering`, against its own ledger — so `send:channels`
+   * must skip it, or one approved `x` rendering goes out on the account twice. Ignored when
+   * `delivery` is `manual`.
+   */
+  autoPipeline?: "channel" | "x-article";
 }
 
 /**
@@ -29,7 +37,7 @@ export interface Outlet {
  */
 export const ALL_OUTLETS: Outlet[] = [
   { id: "x-post", label: "@0xMantleKR 포스트", channel: "x", delivery: "auto", suggestedTypes: ["x"] },
-  { id: "x-article", label: "@0xMantleKR 아티클", channel: "x", delivery: "auto", suggestedTypes: [] },
+  { id: "x-article", label: "@0xMantleKR 아티클", channel: "x", delivery: "auto", suggestedTypes: [], autoPipeline: "x-article" },
   { id: "tg-community", label: "맨틀 한국 커뮤니티", channel: "telegram", delivery: "auto", suggestedTypes: ["announcement", "casual"], chatIdEnv: "TELEGRAM_CHAT_ID_COMMUNITY" },
   { id: "tg-dev", label: "맨틀 한국 데브방", channel: "telegram", delivery: "auto", suggestedTypes: ["announcement", "explainer"], chatIdEnv: "TELEGRAM_CHAT_ID_DEV" },
   { id: "tg-kol", label: "텔레그램 KOL방", channel: "telegram", delivery: "manual", suggestedTypes: ["kol", "announcement"] },
@@ -57,4 +65,13 @@ export function outletById(id: string): Outlet | undefined {
 
 export function outletsForChannel(channel: Channel): Outlet[] {
   return ALL_OUTLETS.filter((o) => o.channel === channel);
+}
+
+/**
+ * Whether `send:channels` delivers this outlet, i.e. an auto room posted through the channel's
+ * `ChannelSender`. Manual rooms are pasted by a human, and `x-article` is posted by `send:x-article`
+ * from the translation against its own ledger — sending it here too would post the copy twice.
+ */
+export function deliveredByChannelSender(o: Outlet): boolean {
+  return o.delivery === "auto" && (o.autoPipeline ?? "channel") === "channel";
 }

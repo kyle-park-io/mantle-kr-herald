@@ -1,6 +1,6 @@
 // tests/domain/outlet/models.test.ts
 import { describe, expect, it } from "vitest";
-import { ALL_OUTLETS, PRIMARY_OUTLET_BY_CHANNEL, outletById, outletsForChannel } from "../../../src/domain/outlet/models";
+import { ALL_OUTLETS, PRIMARY_OUTLET_BY_CHANNEL, deliveredByChannelSender, outletById, outletsForChannel } from "../../../src/domain/outlet/models";
 import { ALL_CHANNELS } from "../../../src/domain/formatting/models";
 import { ALL_TYPES } from "../../../src/domain/conversion/models";
 
@@ -40,5 +40,14 @@ describe("outlet model", () => {
 
   it("gives the article outlet no suggested types — the translation goes direct", () => {
     expect(outletById("x-article")?.suggestedTypes).toEqual([]);
+  });
+
+  it("leaves the article outlet to its own pipeline — send:channels must not also post it", () => {
+    // Both x rooms are `auto`, so `delivery` alone cannot tell them apart: x-article is posted by
+    // `send:x-article` from the translation, and delivering it from send:channels too would put the
+    // same copy on the account twice.
+    expect(deliveredByChannelSender(outletById("x-post")!)).toBe(true);
+    expect(deliveredByChannelSender(outletById("x-article")!)).toBe(false);
+    expect(ALL_OUTLETS.filter(deliveredByChannelSender).map((o) => o.id)).toEqual(["x-post", "tg-community", "tg-dev", "pr-mail"]);
   });
 });
