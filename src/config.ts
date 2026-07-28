@@ -165,16 +165,9 @@ export function loadTelegramConfig(): TelegramConfig {
 export function loadTelegramChatIds(): Record<string, string> {
   const out: Record<string, string> = {};
   const legacy = process.env.TELEGRAM_CHAT_ID;
-  // Literal dot-notation env reads (not a dynamic bracket lookup) so
-  // tests/config/envExample.test.ts — which greps src/ for that literal pattern — recognizes
-  // these as read. Every outlet.chatIdEnv value in ALL_OUTLETS needs an entry here.
-  const perOutletEnv: Record<string, string | undefined> = {
-    TELEGRAM_CHAT_ID_COMMUNITY: process.env.TELEGRAM_CHAT_ID_COMMUNITY,
-    TELEGRAM_CHAT_ID_DEV: process.env.TELEGRAM_CHAT_ID_DEV,
-  };
   for (const outlet of ALL_OUTLETS) {
     if (!outlet.chatIdEnv) continue;
-    const own = perOutletEnv[outlet.chatIdEnv];
+    const own = process.env[outlet.chatIdEnv];
     if (own) {
       out[outlet.id] = own;
       continue;
