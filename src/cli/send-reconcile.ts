@@ -1,14 +1,14 @@
 import "./registerErrorHandler";
 import { paths } from "../paths";
 import { loadTypefullyConfig } from "../config";
-import { JsonChannelLedger } from "../adapters/store/JsonChannelLedger";
+import { JsonDeliveryLedger } from "../adapters/store/JsonDeliveryLedger";
 import { JsonXArticleLedger } from "../adapters/store/JsonXArticleLedger";
 import { TypefullyDraftLookup } from "../adapters/send/TypefullyDraftLookup";
 import { ReconcilePublished } from "../app/ReconcilePublished";
 
 const c = loadTypefullyConfig();
 const result = await new ReconcilePublished(
-  new JsonChannelLedger(paths.publishDir),
+  new JsonDeliveryLedger(paths.publishDir),
   new JsonXArticleLedger(paths.publishDir),
   new TypefullyDraftLookup(c.apiKey, c.socialSetId),
 ).run();

@@ -120,7 +120,7 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
   연결되어 있지 않습니다.
 - **임프레션(§9b ③)은 X만 지원합니다.** `pnpm impressions:record`가 `history` 탭의 `channel=x`
   행을 트윗 조회해 `impressions`(viewCount)/`impressionsAt` 두 컬럼(H·I)을 채웁니다 —
-  `pnpm history:record`는 A~G만 쓰고 이 두 컬럼은 §9b 몫으로 비워두기 때문입니다. 텔레그램/카카오
+  발송 기록은 A~G(그리고 방 id는 J)만 쓰고 이 두 컬럼은 §9b 몫으로 비워두기 때문입니다. 텔레그램/카카오
   등 다른 채널은 임프레션 소스가 없어 빈 채로 남고, 아직 라이브 미검증입니다(`spreadsheets` 스코프
   필요 — §9a와 동일).
 
@@ -244,9 +244,11 @@ KOL list 읽기 → X 계정 조회 → 월간 집계 → x-performance 탭에 u
   쓰지 않는 이유는 공식 계정이 자동화 탐지로 정지(ban)될 위험을 피하기 위해서입니다 —
   twitterapi.io는 이 프로젝트 전체에서 읽기(수집·조회)로만 쓰이고, X에 무언가를 쓰는 경로는
   Typefully 하나뿐입니다.
-- **멱등(idempotent) — 로컬 원장 `output/publish/channels.json`.** 발송에 성공한
-  `(itemId, type, channel)` 조합은 원장에 한 행으로 남고, 다음 실행에서는 건너뜁니다(`skipped`).
-  실패한 항목은 원장에 남지 않으므로 다음 실행에서 그대로 재시도됩니다 — 재실행은 항상 안전합니다.
+- **멱등(idempotent) — 로컬 원장 `output/publish/deliveries.json`.** 발송에 성공한
+  `(itemId, type, outletId)` 조합은 원장에 한 행으로 남고, 다음 실행에서는 건너뜁니다(`skipped`).
+  **채널이 아니라 방 단위**라 한 채널에 방이 둘이면 각각 한 행이 남습니다. 실패한 항목은 원장에 남지
+  않으므로 다음 실행에서 그대로 재시도됩니다 — 재실행은 항상 안전합니다. 예전 `channels.json`은 읽기
+  전용으로 이관됩니다(채널 → 그 채널의 대표 방).
 - **어느 저장 모드에서도 동작합니다.** 이 명령은 `HERALD_STORAGE_MODE`를 아예 읽지 않습니다 —
   텔레그램 봇 토큰과 Typefully API 키만 있으면 `local`/`cloud` 구분 없이 그대로 발송됩니다
   ([`artifacts.md`](artifacts.md) §2).
@@ -261,7 +263,8 @@ KOL list 읽기 → X 계정 조회 → 월간 집계 → x-performance 탭에 u
 - **범위 밖.** 카카오·메일(`pr_mail`) 채널의 자동 전송, 이미지·미디어 첨부, 예약 발행, 대시보드의
   "발송" 버튼은 아직 없습니다 — 이 명령은 CLI 전용이며 텔레그램·X 텍스트만 다룹니다.
 
-**사전 조건** — 텔레그램은 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, X(Typefully)는
+**사전 조건** — 텔레그램은 `TELEGRAM_BOT_TOKEN` + 방별 `TELEGRAM_CHAT_ID_COMMUNITY`/
+`TELEGRAM_CHAT_ID_DEV`(레거시 `TELEGRAM_CHAT_ID`는 커뮤니티방 폴백), X(Typefully)는
 `TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID` 환경변수가 필요합니다(`--target`으로 요청한 채널의
 것만 있으면 됩니다). 값은 이 문서에 적지 않습니다 — `.env`에서 관리하세요.
 

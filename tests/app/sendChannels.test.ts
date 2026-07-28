@@ -1,10 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { SendChannels } from "../../src/app/SendChannels";
+import type { SendChannelsResult } from "../../src/app/SendChannels";
 import type { FormattingStore } from "../../src/ports/FormattingStore";
 import type { ChannelSender } from "../../src/ports/ChannelSender";
+import type { DeliveryLedger } from "../../src/ports/DeliveryLedger";
 import type { ChannelRendering } from "../../src/domain/formatting/models";
-import type { ChannelSentEntry } from "../../src/domain/send/channels";
-import { sentKey } from "../../src/domain/send/channels";
+import type { DeliveryEntry } from "../../src/domain/delivery/models";
+import type { PublishRecord } from "../../src/domain/sheet/models";
+import { deliveryKey } from "../../src/domain/delivery/models";
+import { outletsForChannel } from "../../src/domain/outlet/models";
 
 const rendering = (o: Partial<ChannelRendering>): ChannelRendering => ({
   itemId: "x:1", type: "announcement", channel: "telegram", text: "**hi** everyone", refined: false,
@@ -14,12 +18,43 @@ const rendering = (o: Partial<ChannelRendering>): ChannelRendering => ({
 function fakeStore(rows: ChannelRendering[]): FormattingStore {
   return { loadAll: async () => rows, upsert: async () => {}, listRenderedKeys: async () => new Set() };
 }
-function fakeLedger() {
-  const keys = new Set<string>();
-  const added: ChannelSentEntry[] = [];
-  return { ledger: { loadKeys: async () => new Set(keys), add: async (e: ChannelSentEntry) => { keys.add(sentKey(e)); added.push(e); } }, added, keys };
+function fakeLedger(seed: DeliveryEntry[] = []) {
+  let rows = [...seed];
+  const added: DeliveryEntry[] = [];
+  const ledger: DeliveryLedger = {
+    loadAll: async () => rows,
+    loadKeys: async () => new Set(rows.map(deliveryKey)),
+    add: async (e: DeliveryEntry) => {
+      rows = [...rows.filter((r) => deliveryKey(r) !== deliveryKey(e)), e];
+      added.push(e);
+    },
+    remove: async (key: string) => {
+      rows = rows.filter((r) => deliveryKey(r) !== key);
+    },
+  };
+  return { ledger, added };
 }
 const okSender = (name: "telegram" | "x"): ChannelSender => ({ name, send: async () => ({ postId: "p", url: "u" }) });
+
+/** A full result with everything at zero, so a test states only what it is about. */
+const result = (o: Partial<SendChannelsResult> = {}): SendChannelsResult => ({
+  sent: 0, skipped: 0, failed: 0, unconfigured: 0, unconfiguredEnv: [], withheld: 0, ...o,
+});
+
+/**
+ * Telegram now fans out to two auto rooms (맨틀 한국 커뮤니티 + 맨틀 한국 데브방), and a room with no
+ * chat id resolved is skipped — so every Telegram test has to supply both ids or it would measure
+ * the skip path instead of the send path.
+ */
+const TG_CHAT_IDS = { "tg-community": "-100111", "tg-dev": "-100222" };
+const sentEntry = (o: Partial<DeliveryEntry>): DeliveryEntry => ({
+  itemId: "x:1", type: "announcement", outletId: "tg-community", status: "sent", at: "t", by: "auto", ...o,
+});
+/** Both auto Telegram rooms already delivered — the pre-outlet "already in the ledger" state. */
+const bothTelegramRooms = (itemId = "x:1") => [
+  sentEntry({ itemId, outletId: "tg-community" }),
+  sentEntry({ itemId, outletId: "tg-dev" }),
+];
 
 describe("SendChannels", () => {
   it("sends only approved renderings for the requested channels, and ledgers each", async () => {
@@ -29,19 +64,22 @@ describe("SendChannels", () => {
       rendering({ itemId: "x:3", channel: "kakao", status: "approved" }),    // not a sendable channel → skip
     ]);
     const { ledger, added } = fakeLedger();
-    const res = await new SendChannels(store, { telegram: okSender("telegram"), x: undefined }, ledger).run({ targets: ["telegram"] });
-    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
-    expect(added.map((e) => e.itemId)).toEqual(["x:1"]);
+    const res = await new SendChannels(store, { telegram: okSender("telegram"), x: undefined }, ledger, undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    // Two sends for one rendering: telegram carries two auto rooms, and each is ledgered separately.
+    expect(res).toEqual(result({ sent: 2 }));
+    expect(added.map((e) => e.itemId)).toEqual(["x:1", "x:1"]);
+    expect(added.map((e) => e.outletId)).toEqual(["tg-community", "tg-dev"]);
   });
 
   it("skips a rendering already in the ledger (no second send)", async () => {
     const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram" })]);
-    const { ledger } = fakeLedger();
-    await ledger.add({ itemId: "x:1", type: "announcement", channel: "telegram", senderName: "telegram", sentAt: "t" });
+    // Both rooms seeded — the old channel-keyed ledger had one row for "telegram"; per outlet that
+    // same "nothing left to do" state is one row per room.
+    const { ledger } = fakeLedger(bothTelegramRooms());
     let sends = 0;
     const sender: ChannelSender = { name: "telegram", send: async () => { sends++; return {}; } };
-    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger).run({ targets: ["telegram"] });
-    expect(res).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    expect(res).toEqual(result({ skipped: 2 }));
     expect(sends).toBe(0);
   });
 
@@ -50,25 +88,34 @@ describe("SendChannels", () => {
       rendering({ itemId: "x:1", channel: "telegram" }),
       rendering({ itemId: "x:2", channel: "telegram" }),
     ]);
-    const { ledger, added } = fakeLedger();
+    // Seeded with an older delivery to both rooms: neither is a first delivery, so the
+    // first-delivery guard stays out of the way and this measures failure isolation alone.
+    const { ledger, added } = fakeLedger([
+      sentEntry({ itemId: "x:0", outletId: "tg-community" }),
+      sentEntry({ itemId: "x:0", outletId: "tg-dev" }),
+    ]);
     const sender: ChannelSender = { name: "telegram", send: async (r) => { if (r.itemId === "x:1") throw new Error("boom"); return { postId: "p" }; } };
     const recorder = async () => { throw new Error("no sheet"); };
-    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, recorder).run({ targets: ["telegram"] });
-    expect(res).toEqual({ sent: 1, skipped: 0, failed: 1 });
-    expect(added.map((e) => e.itemId)).toEqual(["x:2"]); // failed one is NOT ledgered → retryable
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, recorder, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    // Doubled from 1/1: each rendering is now attempted once per auto room.
+    expect(res).toEqual(result({ sent: 2, failed: 2 }));
+    expect(added.map((e) => e.itemId)).toEqual(["x:2", "x:2"]); // failed one is NOT ledgered → retryable
   });
 
   it("counts a post-send ledger-write failure as sent, not failed — never re-sends a live post", async () => {
     const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram" })]);
-    const ledger = {
+    const ledger: DeliveryLedger = {
+      loadAll: async () => [],
       loadKeys: async () => new Set<string>(),
       add: async () => { throw new Error("disk full"); },
+      remove: async () => {},
     };
     let sends = 0;
     const sender: ChannelSender = { name: "telegram", send: async () => { sends++; return { postId: "p" }; } };
-    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger).run({ targets: ["telegram"] });
-    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
-    expect(sends).toBe(1);
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    // 2, not 1, because both rooms are delivered — the point is that neither is counted as failed.
+    expect(res).toEqual(result({ sent: 2 }));
+    expect(sends).toBe(2);
   });
 
   it("sends only the item(s) named by the ids filter", async () => {
@@ -78,12 +125,12 @@ describe("SendChannels", () => {
     ]);
     const { ledger, added } = fakeLedger();
     const sender = okSender("telegram");
-    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger).run({
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({
       targets: ["telegram"],
       ids: new Set(["x:2"]),
     });
-    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
-    expect(added.map((e) => e.itemId)).toEqual(["x:2"]);
+    expect(res).toEqual(result({ sent: 2 })); // one item × two rooms
+    expect(added.map((e) => e.itemId)).toEqual(["x:2", "x:2"]);
   });
 
   it("fails fast on an over-limit segment instead of calling the sender (no 400→retry loop)", async () => {
@@ -94,13 +141,17 @@ describe("SendChannels", () => {
     const { ledger, added } = fakeLedger();
     let sends = 0;
     const sender: ChannelSender = { name: "telegram", send: async () => { sends++; return { postId: "p" }; } };
-    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger).run({ targets: ["telegram"] });
-    expect(res).toEqual({ sent: 0, skipped: 0, failed: 1 });
+    // Chat ids supplied on purpose. Without them the rooms would drop out on the missing-id path
+    // instead of the guard, and `expect(sends).toBe(0)` would hold for the wrong reason — the
+    // sender is only proven untouched *by the guard* when the rooms are otherwise deliverable.
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    // Still 1: the limit is a property of the rendering, so it is counted once, not once per room.
+    expect(res).toEqual(result({ failed: 1 }));
     expect(sends).toBe(0);
     expect(added).toEqual([]);
   });
 
-  it("archives each successful send once, with the rendering's text and send metadata", async () => {
+  it("archives every successful send, with the rendering's text and send metadata", async () => {
     const store = fakeStore([
       rendering({ itemId: "x:1", channel: "telegram", text: "공지1" }),
       rendering({ itemId: "x:2", channel: "telegram", status: "rendered" }), // not approved → not archived
@@ -110,22 +161,26 @@ describe("SendChannels", () => {
     const sender: ChannelSender = { name: "telegram", send: async () => ({ postId: "p9", url: "u9" }) };
     const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, async (e) => {
       archived.push(e);
-    }).run({ targets: ["telegram"] });
-    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    }, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    expect(res).toEqual(result({ sent: 2 }));
+    // One archive entry per send, each naming its own room. The archivers `upload()` rather than
+    // `update()`, so two entries that differ only in message id would otherwise land in the Drive
+    // `sent/` folder under one name — see sentFileName.
+    const entry = { itemId: "x:1", type: "announcement", channel: "telegram", text: "공지1", postId: "p9", url: "u9", sentAt: expect.any(String) };
     expect(archived).toEqual([
-      { itemId: "x:1", type: "announcement", channel: "telegram", text: "공지1", postId: "p9", url: "u9", sentAt: expect.any(String) },
+      { ...entry, outletId: "tg-community" },
+      { ...entry, outletId: "tg-dev" },
     ]);
   });
 
   it("does not archive a skipped (already-sent) rendering", async () => {
     const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram" })]);
-    const { ledger } = fakeLedger();
-    await ledger.add({ itemId: "x:1", type: "announcement", channel: "telegram", senderName: "telegram", sentAt: "t" });
+    const { ledger } = fakeLedger(bothTelegramRooms());
     let archives = 0;
     const res = await new SendChannels(store, { telegram: okSender("telegram"), x: undefined }, ledger, undefined, async () => {
       archives++;
-    }).run({ targets: ["telegram"] });
-    expect(res).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    }, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    expect(res).toEqual(result({ skipped: 2 }));
     expect(archives).toBe(0);
   });
 
@@ -134,9 +189,9 @@ describe("SendChannels", () => {
     const { ledger, added } = fakeLedger();
     const res = await new SendChannels(store, { telegram: okSender("telegram"), x: undefined }, ledger, undefined, async () => {
       throw new Error("disk full");
-    }).run({ targets: ["telegram"] });
-    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
-    expect(added.map((e) => e.itemId)).toEqual(["x:1"]); // send + ledger stood; only the archive failed
+    }, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    expect(res).toEqual(result({ sent: 2 }));
+    expect(added.map((e) => e.itemId)).toEqual(["x:1", "x:1"]); // send + ledger stood; only the archive failed
   });
 
   it("reads photos from the rendering text and passes them to the sender", async () => {
@@ -145,6 +200,7 @@ describe("SendChannels", () => {
     const got: { photos?: string[]; segments: string[] }[] = [];
     const sender: ChannelSender = { name: "x", send: async (req) => { got.push({ photos: req.photos, segments: req.segments }); return { postId: "1" }; } };
     await new SendChannels(store, { telegram: undefined, x: sender }, ledger).run({ targets: ["x"] });
+    expect(got).toHaveLength(1); // x-post only — x-article has its own pipeline
     expect(got[0].photos).toEqual(["https://pbs.twimg.com/media/a.jpg"]);
     expect(got[0].segments.join("")).not.toContain("![("); // marker stripped from delivered text
     expect(got[0].segments.join("")).toContain("본문");
@@ -155,8 +211,8 @@ describe("SendChannels", () => {
     const { ledger } = fakeLedger();
     const got: (string[] | undefined)[] = [];
     const sender: ChannelSender = { name: "telegram", send: async (req) => { got.push(req.photos); return { postId: "p" }; } };
-    await new SendChannels(store, { telegram: sender, x: undefined }, ledger).run({ targets: ["telegram"] });
-    expect(got[0]).toEqual([]);
+    await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    expect(got).toEqual([[], []]); // one per auto Telegram room
   });
 
   it("a [영상]-only rendering sends text-only (photos: []) and does not throw", async () => {
@@ -174,7 +230,7 @@ describe("SendChannels", () => {
     const { ledger } = fakeLedger();
     const sender = okSender("x");
     const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger).run({ targets: ["x"] });
-    expect(res).toEqual({ sent: 0, skipped: 0, failed: 1 });
+    expect(res).toEqual(result({ failed: 1 }));
   });
 
   it("sends an over-280 x rendering when xMaxWeighted is 25000 (Premium)", async () => {
@@ -183,7 +239,168 @@ describe("SendChannels", () => {
     const sent: string[][] = [];
     const sender: ChannelSender = { name: "x", send: async (req) => { sent.push(req.segments); return { postId: "1" }; } };
     const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, undefined, undefined, undefined, 25000).run({ targets: ["x"] });
-    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(res).toEqual(result({ sent: 1 }));
     expect(sent[0][0]).toBe("가".repeat(150));
+  });
+
+  it("sends one message per auto outlet on the channel, and skips manual ones", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: "본문" })]);
+    const sent: { chatId?: string }[] = [];
+    const sender: ChannelSender = { name: "telegram-bot", send: async (req) => { sent.push({ chatId: req.chatId }); return { postId: "m1", url: "u" }; } };
+    const { ledger } = fakeLedger();
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+
+    expect(res.sent).toBe(2); // tg-community + tg-dev; tg-kol and tg-blockchain are manual
+    expect(sent.map((s) => s.chatId).sort()).toEqual(["-100111", "-100222"]);
+    expect((await ledger.loadKeys()).size).toBe(2);
+  });
+
+  it("reports an auto outlet with no chat id as unconfigured — not failed — and still sends to the others", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: "본문" })]);
+    const sender: ChannelSender = { name: "telegram-bot", send: async () => ({ postId: "m1" }) };
+    const { ledger } = fakeLedger();
+    // Day one of Task 2's staged .env migration: only the legacy TELEGRAM_CHAT_ID is set, so the map
+    // holds 커뮤니티 alone and 데브방 has no id.
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, { "tg-community": "-100111" }).run({ targets: ["telegram"] });
+
+    // Still counted and named — a room that received nothing must show up in the totals — but not
+    // as `failed`: this install is on the documented legacy-only .env and is behaving exactly as
+    // intended, and `failed N` growing with the backlog on every run reads as breakage.
+    expect(res).toEqual(result({ sent: 1, unconfigured: 1, unconfiguredEnv: ["TELEGRAM_CHAT_ID_DEV"] }));
+    // Nothing ledgered for the unconfigured room, so a rerun after fixing .env delivers only it.
+    expect([...(await ledger.loadKeys())]).toEqual(["x:1:announcement:tg-community"]);
+  });
+
+  it("warns once per unconfigured room, not once per rendering", async () => {
+    const store = fakeStore([
+      rendering({ itemId: "x:1", channel: "telegram", text: "본문" }),
+      rendering({ itemId: "x:2", channel: "telegram", text: "본문" }),
+    ]);
+    const sender: ChannelSender = { name: "telegram-bot", send: async () => ({ postId: "m1" }) };
+    // 커뮤니티 has history (so the first-delivery guard is not what is being measured here);
+    // 데브방 has no chat id at all.
+    const { ledger } = fakeLedger([sentEntry({ itemId: "x:0", outletId: "tg-community" })]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, { "tg-community": "-100111" }).run({ targets: ["telegram"] });
+
+    expect(res).toEqual(result({ sent: 2, unconfigured: 1, unconfiguredEnv: ["TELEGRAM_CHAT_ID_DEV"] }));
+    // One line for the room, however many renderings were waiting for it. An unconfigured room is
+    // also a never-delivered room, so it must be reported as unconfigured rather than withheld.
+    const devWarnings = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("TELEGRAM_CHAT_ID_DEV"));
+    expect(devWarnings).toHaveLength(1);
+    expect(devWarnings[0]).toContain("맨틀 한국 데브방");
+  });
+
+  it("records each room's send under its own room, so one room's history cannot overwrite the other's", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: "본문" })]);
+    const sender: ChannelSender = { name: "telegram-bot", send: async (req) => ({ postId: req.chatId === "-100111" ? "m1" : "m2" }) };
+    const { ledger } = fakeLedger();
+    const recorded: PublishRecord[] = [];
+    await new SendChannels(store, { telegram: sender, x: undefined }, ledger, async (r) => { recorded.push(r); }, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+
+    expect(recorded.map((r) => [r.outletId, r.postId])).toEqual([["tg-community", "m1"], ["tg-dev", "m2"]]);
+    expect(recorded.every((r) => r.channel === "telegram")).toBe(true); // channel is still recorded, it is just not the key
+  });
+
+  it("does not re-send a room already in the ledger, but still sends its sibling room", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: "본문" })]);
+    const sent: (string | undefined)[] = [];
+    const sender: ChannelSender = { name: "telegram-bot", send: async (req) => { sent.push(req.chatId); return { postId: "m1" }; } };
+    const { ledger } = fakeLedger([sentEntry({ itemId: "x:1", outletId: "tg-community", at: "T" })]);
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+
+    expect(res.sent).toBe(1);
+    expect(res.skipped).toBe(1);
+    expect(sent).toEqual(["-100222"]); // only 데브방; 커뮤니티 was already delivered
+    expect([...(await ledger.loadKeys())].sort()).toEqual(["x:1:announcement:tg-community", "x:1:announcement:tg-dev"]);
+  });
+
+  it("restricts to the rooms named by --outlets", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: "본문" })]);
+    const sender: ChannelSender = { name: "telegram-bot", send: async () => ({ postId: "m1" }) };
+    const { ledger } = fakeLedger();
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"], outletIds: ["tg-dev"] });
+
+    expect(res.sent).toBe(1);
+    expect([...(await ledger.loadKeys())]).toEqual(["x:1:announcement:tg-dev"]);
+  });
+
+  it("sends an approved x rendering once — the article outlet has its own pipeline", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", type: "x", channel: "x", text: "트윗" })]);
+    let sends = 0;
+    const sender: ChannelSender = { name: "typefully", send: async () => { sends++; return { postId: "1" }; } };
+    const { ledger, added } = fakeLedger();
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger).run({ targets: ["x"] });
+
+    // x-post and x-article are both auto on the x channel, but x-article is delivered by
+    // `send:x-article` from the translation — sending it here too would post the same copy twice.
+    expect(sends).toBe(1);
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(added.map((e) => e.outletId)).toEqual(["x-post"]);
+  });
+});
+
+/**
+ * `renderings.json` is never pruned and a rendering stays `approved` after it is sent, so the whole
+ * approved history is permanently "pending" for a room that has no ledger rows. Configuring a room
+ * after weeks of operation would therefore post the entire backlog into a live group in one go —
+ * silently, on an ordinary `pnpm send:channels`.
+ */
+describe("SendChannels first-delivery guard", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const backlog = () => fakeStore([
+    rendering({ itemId: "x:1", channel: "telegram", text: "본문1" }),
+    rendering({ itemId: "x:2", channel: "telegram", text: "본문2" }),
+    rendering({ itemId: "x:3", channel: "telegram", text: "본문3" }),
+  ]);
+  /** 커뮤니티 has been receiving all along; 데브방's chat id was only just added to `.env`. */
+  const communityOnlyHistory = () => fakeLedger([
+    sentEntry({ itemId: "x:1", outletId: "tg-community" }),
+    sentEntry({ itemId: "x:2", outletId: "tg-community" }),
+    sentEntry({ itemId: "x:3", outletId: "tg-community" }),
+  ]);
+
+  it("withholds the whole backlog from a never-delivered room, and says how to proceed", async () => {
+    const sent: (string | undefined)[] = [];
+    const sender: ChannelSender = { name: "telegram-bot", send: async (req) => { sent.push(req.chatId); return { postId: "m1" }; } };
+    const { ledger } = communityOnlyHistory();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await new SendChannels(backlog(), { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+
+    expect(sent).toEqual([]); // 데브방 received nothing; 커뮤니티 had already had all three
+    expect(res).toEqual(result({ skipped: 3, withheld: 3 }));
+    expect([...(await ledger.loadKeys())]).toHaveLength(3); // nothing new ledgered
+    const withheldWarnings = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("tg-dev"));
+    expect(withheldWarnings).toHaveLength(1); // once for the room, not once per rendering
+    expect(withheldWarnings[0]).toContain("맨틀 한국 데브방");
+    expect(withheldWarnings[0]).toContain("3"); // the count, so the operator sees the size of it
+    expect(withheldWarnings[0]).toContain("--outlets tg-dev");
+  });
+
+  it("delivers that backlog once the room is named with --outlets", async () => {
+    const sent: (string | undefined)[] = [];
+    const sender: ChannelSender = { name: "telegram-bot", send: async (req) => { sent.push(req.chatId); return { postId: "m1" }; } };
+    const { ledger } = communityOnlyHistory();
+    const res = await new SendChannels(backlog(), { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"], outletIds: ["tg-dev"] });
+
+    expect(res).toEqual(result({ sent: 3 }));
+    expect(sent).toEqual(["-100222", "-100222", "-100222"]);
+  });
+
+  it("does not withhold a single pending rendering — one message is not a backlog", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: "본문" })]);
+    const { ledger } = fakeLedger();
+    const res = await new SendChannels(store, { telegram: okSender("telegram"), x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    expect(res).toEqual(result({ sent: 2 }));
+  });
+
+  it("does not withhold a room that has delivered before, however long the backlog", async () => {
+    const { ledger } = fakeLedger([
+      sentEntry({ itemId: "x:0", outletId: "tg-community" }),
+      sentEntry({ itemId: "x:0", outletId: "tg-dev" }),
+    ]);
+    const res = await new SendChannels(backlog(), { telegram: okSender("telegram"), x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+    expect(res).toEqual(result({ sent: 6 })); // 3 renderings × 2 rooms
   });
 });

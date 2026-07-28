@@ -27,6 +27,12 @@ export interface SentArchiveEntry {
   itemId: string;
   type: ConversionType;
   channel: SendableChannel;
+  /**
+   * The room this copy actually went to. Required, and part of `sentFileName`: two auto rooms share
+   * a channel, and `upload()` creates rather than replaces, so a channel-named archive would put two
+   * same-named files in the Drive `sent/` folder carrying different message ids.
+   */
+  outletId: string;
   text: string;
   postId?: string;
   url?: string;

@@ -33,13 +33,21 @@
 - **채널(브로드캐스트):** 봇을 **관리자(Administrators) 추가** → **"메시지 게시(Post messages)" 권한**을
   켜야 발송됩니다.
 - **처음엔 테스트 채팅** 권장 — 이름 예: **`Mantle KR Herald — 발송 테스트`**. 검증이 끝나면 실제 대상으로
-  바꾸면 됩니다(`TELEGRAM_CHAT_ID`만 교체).
+  바꾸면 됩니다(그 방의 `TELEGRAM_CHAT_ID_*` 값만 교체).
 
-### T-3. `chat_id` 확인 → `TELEGRAM_CHAT_ID`
+### T-3. 방마다 `chat_id` 확인 → `TELEGRAM_CHAT_ID_*`
+
+발송 단위는 **채널이 아니라 방(room)** 입니다. 텔레그램 자동 발송 방은 두 곳이고, 각자 자기 환경변수를
+가집니다(봇을 **두 방 모두**에 넣어야 합니다):
+
+| 방                  | 환경변수                     | 기본 대상 타입          |
+| ------------------- | ---------------------------- | ----------------------- |
+| 맨틀 한국 커뮤니티  | `TELEGRAM_CHAT_ID_COMMUNITY` | 공지(announcement) · 소통(casual) |
+| 맨틀 한국 데브방    | `TELEGRAM_CHAT_ID_DEV`       | 공지(announcement) · 해설(explainer) |
 
 숫자 id가 필요합니다(그룹은 음수 `-123456789`, **슈퍼그룹·채널은 `-100`으로 시작**).
 
-1. 봇을 대상에 넣은 뒤, 거기에 메시지를 하나 보냅니다.
+1. 봇을 대상 방에 넣은 뒤, **그 방에서** 메시지를 하나 보냅니다.
    - **그룹은 봇이 privacy mode**라 일반 메시지가 봇에 안 보일 수 있으니, **봇을 멘션
      (`@mantle_kr_herald_bot …`)** 하거나 슬래시 명령을 그룹에 한 번 보내세요(또는 봇을 그룹 관리자로 잠깐
      올리면 전부 보입니다).
@@ -49,19 +57,40 @@
    ```
    응답에서 chat id를 확인합니다 — **그룹은 `message.chat.id`**, **채널은 `channel_post.chat.id`**
    (예: `-1001234567890`).
+   - **방마다 반복하세요.** 커뮤니티방에서 한 번, 데브방에서 한 번 메시지를 보내고 `getUpdates`를 다시
+     열면 방마다 다른 chat id가 보입니다 — 어느 id가 어느 방인지는 같은 응답의 `chat.title`로 확인합니다.
    - 안 보이면: 그 채팅의 메시지를 **@userinfobot**(또는 @getidsbot)으로 **전달(forward)** 하면 id를 알려줍니다.
 3. `.env`에:
    ```bash
-   TELEGRAM_CHAT_ID=-1001234567890
+   TELEGRAM_CHAT_ID_COMMUNITY=-1001234567890
+   TELEGRAM_CHAT_ID_DEV=-1009876543210
    ```
+
+**비워두면 그 방으로는 발송하지 않습니다.** 준비된 방부터 먼저 열어도 됩니다 — 값이 없는 방은 `sent`에도
+`failed`에도 들어가지 않고, 요약 줄 끝에 `· 미설정 1 (TELEGRAM_CHAT_ID_DEV)`로 따로 표시됩니다(=
+"보낼 곳이 아직 설정되지 않았다", 고장이 아닙니다).
+
+**`TELEGRAM_CHAT_ID`(레거시).** 방이 하나뿐이던 시절의 단일 변수입니다. 지금은 **`TELEGRAM_CHAT_ID_COMMUNITY`가
+비어 있을 때 맨틀 한국 커뮤니티에만** 폴백으로 쓰이고(경고가 함께 출력됨), 데브방에는 적용되지 않습니다.
+`git pull` 직후에도 발송이 멈추지 않게 하려고 남겨둔 것이므로, 확인했다면 방별 변수로 옮기고 비워두세요.
+
+**방을 나중에 추가할 때.** `renderings.json`은 지워지지 않고 승인 상태도 그대로라, 새로 설정한 방에는
+**그동안 승인된 렌더링 전부**가 미발송으로 남아 있습니다. 그대로 두면 첫 실행에서 그 백로그가 한꺼번에
+실제 방으로 나가므로, 한 번도 발송한 적 없는 방에 2건 이상이 대기 중이면 **보류하고 경고만 남깁니다**
+(방 이름 + 건수). 확인한 뒤 방을 명시해야 실제로 나갑니다:
+
+```bash
+pnpm send:channels --target telegram --outlets tg-dev
+```
 
 ### T-4. 검증
 
 ```bash
-pnpm send:channels --target telegram
+pnpm send:channels --target telegram                    # 설정된 모든 방
+pnpm send:channels --target telegram --outlets tg-dev   # 특정 방만
 ```
 
-승인된 `telegram` 렌더링이 그 채팅(채널/그룹)에 뜨면 성공. (보낼 게 없으면 `sent 0` — §"보낼 게 없을 때" 참고.)
+승인된 `telegram` 렌더링이 각 방에 뜨면 성공. (보낼 게 없으면 `sent 0` — §"보낼 게 없을 때" 참고.)
 
 ---
 
@@ -113,15 +142,20 @@ pnpm send:channels --target x
 ## 함께 검증 / 참고
 
 ```bash
-pnpm send:channels                    # 기본: 모든 채널
-pnpm send:channels --target both      # telegram + x
-pnpm send:channels --target telegram  # 텔레그램만
-pnpm send:channels --ids x:123,x:456  # 특정 아이템만
+pnpm send:channels                     # 기본: 모든 채널
+pnpm send:channels --target both       # telegram + x
+pnpm send:channels --target telegram   # 텔레그램만
+pnpm send:channels --ids x:123,x:456   # 특정 아이템만
+pnpm send:channels --outlets tg-dev    # 특정 방만
 ```
 
-- **멱등(중복 발송 방지):** `output/publish/channels.json`이 `(아이템:타입:채널)`별 발송 이력을 기록 —
-  재실행은 **이미 보낸 건 건너뛰고**, 실패한 건만 다시 시도합니다. 발송 성공 후 기록에 실패하면 그 아이템은
-  `sent`로 세되 "기록 실패, 수동 확인 필요" 경고가 뜹니다.
+- **멱등(중복 발송 방지):** `output/publish/deliveries.json`이 `(아이템:타입:방)`별 발송 이력을 기록 —
+  재실행은 **이미 보낸 건 건너뛰고**, 실패한 건만 다시 시도합니다. 한 채널에 방이 둘이면 **방마다 한 행**이
+  남으므로, 커뮤니티방에 보냈다고 데브방이 보낸 것으로 처리되지 않습니다. 발송 성공 후 기록에 실패하면 그
+  아이템은 `sent`로 세되 "기록 실패, 수동 확인 필요" 경고가 뜹니다.
+  - 예전 원장 `output/publish/channels.json`이 남아 있으면 **읽기 전용으로 자동 이관**됩니다(채널 → 그
+    채널의 대표 방: `telegram` → 맨틀 한국 커뮤니티). 원본 파일은 고치지도 지우지도 않으므로 되돌려도
+    잃는 게 없습니다.
 - **어느 모드에서도 동작.** `cloud` + `GSHEET_ID`가 있으면 Google Sheet `history` 탭에도 best-effort로
   기록돼 §9b 노출수 집계로 이어집니다(없어도 발송은 정상).
 
@@ -134,7 +168,9 @@ pnpm send:channels --ids x:123,x:456  # 특정 아이템만
 
 | 증상                                    | 원인 / 해결                                                                   |
 | --------------------------------------- | ----------------------------------------------------------------------------- |
-| Telegram `400 chat not found`           | 봇이 그 채팅에 없거나 `TELEGRAM_CHAT_ID` 오타 → 봇을 그 채팅에 추가, id 재확인 |
+| Telegram `400 chat not found`           | 봇이 그 방에 없거나 그 방의 `TELEGRAM_CHAT_ID_*` 오타 → 봇을 그 방에 추가, id 재확인 |
+| 요약 줄에 `미설정 1 (TELEGRAM_CHAT_ID_DEV)` | 그 방의 chat id가 비어 있음(고장 아님) → 쓸 방이면 T-3으로 값 채우기 |
+| 요약 줄에 `보류 N (첫 발송 …)`          | 한 번도 발송한 적 없는 방에 백로그가 쌓여 있음 → 내용 확인 후 `--outlets <방 id>`로 실행 |
 | Telegram `403 ... not enough rights`    | (채널) "메시지 게시" 권한 없음 → 관리자 설정에서 켜기 / (그룹) "관리자만 발송"이면 봇을 관리자로 |
 | Typefully `401`                         | API 키가 v1이거나 오타 → Settings → API에서 **v2** 키                         |
 | `social_set_id`를 모름                  | `GET /v2/social-sets`로 목록 조회(Y-3)                                        |

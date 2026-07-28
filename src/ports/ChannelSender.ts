@@ -8,6 +8,8 @@ export interface SendRequest {
   segments: string[];
   /** Photo URLs to attach to the lead post (undefined/empty = text only). */
   photos?: string[];
+  /** Overrides the sender's configured chat id. Set per outlet; absent = the configured one. */
+  chatId?: string;
 }
 
 export interface SendResult {

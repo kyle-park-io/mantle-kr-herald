@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { REPO_ROOT } from "../../src/paths";
+import { ALL_OUTLETS } from "../../src/domain/outlet/models";
 
 /**
  * Standard runtime variables that are never ours to document — the app does not define them and a
@@ -34,6 +35,13 @@ async function readCodeVars(): Promise<Set<string>> {
     for (const m of text.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) {
       if (!NOT_OURS.has(m[1])) used.add(m[1]);
     }
+  }
+  // src/config.ts resolves each outlet's chat id via a dynamic `process.env[outlet.chatIdEnv]`
+  // lookup, which the static regex above cannot see. ALL_OUTLETS is the single source of truth
+  // for which env var each outlet reads (src/domain/outlet/models.ts), so pull the names
+  // straight from there instead of hand-maintaining a second list in this test.
+  for (const outlet of ALL_OUTLETS) {
+    if (outlet.chatIdEnv) used.add(outlet.chatIdEnv);
   }
   return used;
 }

@@ -6,7 +6,12 @@ export class TelegramBotSender implements ChannelSender {
   readonly name = "telegram";
   constructor(
     private readonly token: string,
-    private readonly chatId: string,
+    /**
+     * Fallback chat id, used only when a request carries none. `SendChannels` always passes the
+     * room's own id, so this stays undefined on a per-room `.env` — which is why construction must
+     * not require it.
+     */
+    private readonly chatId: string | undefined,
     private readonly fetchFn: typeof fetch = fetch,
   ) {}
 
@@ -22,6 +27,10 @@ export class TelegramBotSender implements ChannelSender {
   }
 
   async send(req: SendRequest): Promise<SendResult> {
+    const chatId = req.chatId ?? this.chatId;
+    // Refused here rather than at construction: a room's id is a property of the send, and a
+    // missing one must not stop the other rooms' sends from being built and delivered.
+    if (!chatId) throw new Error("No Telegram chat id for this send: set the room's TELEGRAM_CHAT_ID_* variable");
     const photos = (req.photos ?? []).slice(0, 10); // Telegram media-group cap
     let firstId: number | undefined;
     let textSegments = req.segments;
@@ -35,18 +44,18 @@ export class TelegramBotSender implements ChannelSender {
           ? req.segments[0]
           : undefined;
       if (photos.length === 1) {
-        const r = await this.post("sendPhoto", { chat_id: this.chatId, photo: photos[0], ...(asCaption ? { caption: asCaption, parse_mode: "HTML" } : {}) });
+        const r = await this.post("sendPhoto", { chat_id: chatId, photo: photos[0], ...(asCaption ? { caption: asCaption, parse_mode: "HTML" } : {}) });
         firstId = (r as { message_id?: number })?.message_id;
       } else {
         const media = photos.map((url) => ({ type: "photo", media: url }));
-        const r = await this.post("sendMediaGroup", { chat_id: this.chatId, media });
+        const r = await this.post("sendMediaGroup", { chat_id: chatId, media });
         firstId = (r as { message_id?: number }[])?.[0]?.message_id;
       }
       if (asCaption) textSegments = []; // already delivered as the caption
     }
 
     for (const text of textSegments) {
-      const body: Record<string, unknown> = { chat_id: this.chatId, text, parse_mode: "HTML" };
+      const body: Record<string, unknown> = { chat_id: chatId, text, parse_mode: "HTML" };
       if (firstId !== undefined) body.reply_to_message_id = firstId;
       const r = await this.post("sendMessage", body);
       const id = (r as { message_id?: number })?.message_id;
@@ -54,8 +63,8 @@ export class TelegramBotSender implements ChannelSender {
     }
 
     // A channel chat_id is "-100<internal>"; its post link is t.me/c/<internal>/<message_id>.
-    const url = firstId !== undefined && this.chatId.startsWith("-100")
-      ? `https://t.me/c/${this.chatId.slice(4)}/${firstId}` : undefined;
+    const url = firstId !== undefined && chatId.startsWith("-100")
+      ? `https://t.me/c/${chatId.slice(4)}/${firstId}` : undefined;
     return { postId: firstId !== undefined ? String(firstId) : undefined, url };
   }
 }

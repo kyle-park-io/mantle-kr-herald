@@ -11,7 +11,7 @@
   Drive 스코프·폴더 token (`LARK_DRIVE_REVIEW_FOLDER_TOKEN`, `LARK_DRIVE_APPROVED_FOLDER_TOKEN`).
   Lark 앱·자격증명은 같은 문서(§0–§9)에서 이미 다룹니다.
 - **[채널 발송 셋업 가이드 (§8)](./channels.md)** — `pnpm send:channels`용 Telegram 봇
-  (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)과 Typefully(X 발행: `TYPEFULLY_API_KEY`,
+  (`TELEGRAM_BOT_TOKEN`, 방별 `TELEGRAM_CHAT_ID_*`)과 Typefully(X 발행: `TYPEFULLY_API_KEY`,
   `TYPEFULLY_SOCIAL_SET_ID`). 드라이브 발행과 무관하게, 승인된 렌더링을 실제 채널로 보낼 때 필요합니다.
 
 ## 실행

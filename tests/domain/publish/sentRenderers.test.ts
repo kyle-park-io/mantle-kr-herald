@@ -3,7 +3,7 @@ import { renderSent, sentFileName } from "../../../src/domain/publish/renderers"
 import type { SentArchiveEntry } from "../../../src/domain/send/channels";
 
 const base: SentArchiveEntry = {
-  itemId: "x:2080608995371597892", type: "announcement", channel: "telegram",
+  itemId: "x:2080608995371597892", type: "announcement", channel: "telegram", outletId: "tg-community",
   text: "📢 **맨틀 Q2**\n\n본문", postId: "10", url: undefined, sentAt: "2026-07-28T01:34:42.000Z",
 };
 
@@ -12,6 +12,7 @@ describe("renderSent", () => {
     expect(renderSent(base)).toBe(
       "# x:2080608995371597892 · telegram (announcement)\n\n" +
         "- sent: 2026-07-28T01:34:42.000Z\n" +
+        "- outlet: tg-community\n" +
         "- postId: 10\n" +
         "- url: —\n\n" +
         "---\n\n" +
@@ -27,7 +28,13 @@ describe("renderSent", () => {
 });
 
 describe("sentFileName", () => {
-  it("is <sentDate>-<safeItemId>-<channel>.md with the id sanitized", () => {
-    expect(sentFileName(base)).toBe("2026-07-28-x-2080608995371597892-telegram.md");
+  it("is <sentDate>-<safeItemId>-<outletId>.md with the id sanitized", () => {
+    expect(sentFileName(base)).toBe("2026-07-28-x-2080608995371597892-tg-community.md");
+  });
+
+  it("names the two auto telegram rooms apart — the archivers upload rather than replace", () => {
+    // Same item, same channel, same day: a channel-named archive would put both in the Drive
+    // `sent/` folder under one name, carrying different message ids and impossible to tell apart.
+    expect(sentFileName({ ...base, outletId: "tg-dev" })).not.toBe(sentFileName(base));
   });
 });

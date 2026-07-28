@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **발송처(outlet) — `type`·`channel`과 나란한 세 번째 축.** 지금까지 "어디로 보냈는가"는 채널로만
+  구분됐지만, **맨틀 한국 커뮤니티와 맨틀 한국 데브방은 둘 다 `telegram`**입니다. 이제 방(room)
+  아홉 곳이 `src/domain/outlet/models.ts`의 `ALL_OUTLETS` 상수로 정의됩니다 — X 포스트·아티클,
+  텔레그램 4곳(커뮤니티·데브방·KOL방·블록체인 커뮤니티방), 오픈카톡 2곳, PR 메일. 각 방은 자동
+  (`auto`, 봇/API가 발송)인지 수동(`manual`, 사람이 붙여넣기)인지, 어떤 타입을 기본으로 받는지,
+  (자동 텔레그램 방이면) 어떤 chat id 환경변수를 쓰는지를 함께 들고 있습니다. `type`은 **무슨 성격의
+  글인지**, `channel`은 **어떤 형식으로 쓰는지**, `outlet`은 **어느 방으로 가는지**입니다.
+  `pnpm send:channels`는 채널이 아니라 방마다 한 번씩 발송하고, `--outlets <방 id[,방 id]>`로 방을
+  좁힐 수 있습니다. (대시보드 보드 UI는 이번 슬라이스에 포함되지 않습니다.) 설계는
+  `docs/superpowers/specs/2026-07-29-outlet-board-design.md`.
+- **수동 방 전달 기록(`전달함`).** 봇이 닿을 수 없는 방(오픈카톡 2곳, 텔레그램 KOL방·블록체인
+  커뮤니티방, PR 메일)의 전달 여부도 이제 원장에 남습니다. `MarkDelivery`가 `(아이템, 타입, 방)`에
+  `delivered` 행을 쓰고, 잘못 찍었으면 되돌릴 수 있습니다 — 사람이 "보냈다"고 **주장**한 기록이라
+  취소 가능합니다. 반면 봇이 실제로 보낸 `sent` 행은 되돌릴 수 없습니다(되돌리면 다음 실행이 살아 있는
+  방으로 같은 글을 다시 보냅니다). 자동 방에 `delivered`를 찍는 것도 거부됩니다 — 봇이 그 행을 보고
+  "이미 보냈다"고 판단해 조용히 건너뛰기 때문입니다.
 - **두 개의 새 변환 타입 — `explainer`(해설)과 `casual`(소통).** 지금까지 텔레그램으로 나가는 글은
   `announcement`(공지) 하나뿐이라, 같은 소식을 데브방과 커뮤니티방에 성격을 달리해 보낼 방법이
   없었습니다. `explainer`는 무슨 일이 있었는지에서 멈추지 않고 **왜 중요하고 어떻게 동작하는지**를
@@ -136,6 +152,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **발송 원장이 채널이 아니라 방 단위로 다시 매겨졌습니다 — `output/publish/deliveries.json`.**
+  예전 원장 `output/publish/channels.json`은 `(itemId, type, channel)`로 한 행이었는데, 커뮤니티방과
+  데브방은 **둘 다 `telegram`**입니다. 그래서 커뮤니티방으로 한 번 나가면 그 행이 채널 전체를 "보냄"으로
+  덮어버려, **데브방은 아무것도 받지 못한 채 다음 실행에서 조용히 건너뛰어졌습니다** — 이 재키잉은 그
+  버그 때문에 존재합니다. 새 원장은 `(itemId, type, outletId)`로 방마다 한 행을 남깁니다. 예전
+  `channels.json`이 있으면 **읽기 전용으로 이관**해 읽습니다(채널 → 그 채널의 대표 방: `telegram` →
+  커뮤니티, `x` → 포스트, `kakao` → 블록체인 커뮤니티방, `pr_mail` → PR 메일). 원본 파일은 고치지도
+  지우지도 않으므로 되돌려도 잃는 게 없습니다.
+- **Sheet `history` 탭도 같은 이유로 방 단위가 됐습니다 — 기존 시트는 한 번 수동 작업이 필요합니다.**
+  `history` 행의 식별자가 `(itemId, type, channel)`에서 `(itemId, type, outletId)`로 바뀌었습니다.
+  이전에는 두 방의 발송이 **같은 행을 공유해, 나중에 나간 데브방이 커뮤니티방의 `postId`와 `t.me`
+  링크를 덮어썼습니다** — 텔레그램으로 보낼 때마다 한 방의 기록이 사라졌습니다. 방 id는 **새 J 컬럼
+  (`outletId`)** 에 들어갑니다.
+  - **기존 시트에 해야 할 일:** `history` 탭의 **J1 셀에 `outletId`** 라고 직접 적어주세요.
+    헤더는 탭이 비어 있을 때만 자동으로 쓰이므로(`ensureHistoryTab`), 이미 쓰던 시트에는 라벨이
+    생기지 않습니다. 값 자체는 라벨이 없어도 J 컬럼에 정상적으로 쌓입니다 — 라벨은 사람이 읽기 위한
+    것입니다.
+  - **임프레션 컬럼 H·I는 건드리지 않았습니다.** `outletId`를 `channel` 옆이 아니라 맨 뒤(J)에 둔 이유가
+    이것입니다 — 중간에 컬럼을 끼우면 아직 손대지 않은 시트에서 기존 행의 임프레션 값이 한 칸씩
+    밀려 발송 값과 섞입니다. `impressions:record`는 그대로 H·I만 씁니다.
+  - 방 칸이 빈 **예전 행은 그대로 남습니다.** 업그레이드 후 같은 아이템을 다시 보내면 예전 행을 고치는
+    대신 방별 새 행이 추가됩니다.
+- **`TELEGRAM_CHAT_ID`는 방별 `TELEGRAM_CHAT_ID_COMMUNITY`/`TELEGRAM_CHAT_ID_DEV`로 대체됐습니다(deprecated).**
+  발송이 방 단위가 되면서 방마다 chat id가 필요합니다. `git pull` 직후 발송이 멈추지 않도록 폴백을
+  남겼습니다 — `TELEGRAM_CHAT_ID_COMMUNITY`가 비어 있으면 **맨틀 한국 커뮤니티 한 방에만** 레거시
+  `TELEGRAM_CHAT_ID`가 쓰이고 경고가 출력됩니다(데브방은 폴백 대상이 아닙니다). 값이 비어 있는 방으로는
+  발송하지 않으며, 그 방은 `failed`가 아니라 요약 줄의 `· 미설정 N (TELEGRAM_CHAT_ID_DEV)`로 따로
+  표시됩니다 — 레거시 설정 그대로 쓰는 설치본은 고장난 게 아니기 때문입니다. 설정 방법은
+  [`docs/ko/setup/channels.md`](docs/ko/setup/channels.md) T-3.
+- **한 번도 발송한 적 없는 방에는 백로그를 자동으로 내보내지 않습니다.** `renderings.json`은 지워지지
+  않고 승인 상태도 그대로라, 방을 새로 설정하면 **그동안 승인된 렌더링 전부**가 그 방으로 미발송
+  상태입니다. 그대로 두면 다음 `pnpm send:channels` 한 번에 살아 있는 방으로 백로그가 통째로
+  쏟아집니다. 이제 원장이 빈 방에 2건 이상이 대기 중이면 방 이름과 건수를 경고로 남기고 **보류**하며,
+  `--outlets <방 id>`로 그 방을 직접 지정해야 나갑니다.
+- **`pr-mail`은 수동(`manual`) 방이 됐습니다.** 메일 발송기가 아직 없어 `send:channels`가 닿을 수 없는데
+  `auto`라는 이유로 `전달함` 체크까지 거부돼, **보낼 수도 없고 보냈다고 기록할 수도 없는** 방이었습니다.
+  메일 발송기가 생기면 다시 `auto`로 돌립니다.
 - **`history` auto-creates its tab, so one workbook can hold every machine tab.** `RecordPublish`
   (behind `history:record` and `send:channels`) now ensures the `history` tab + header before
   writing, mirroring how `metrics:record` handles `x-performance`. You can point `GSHEET_ID` at your

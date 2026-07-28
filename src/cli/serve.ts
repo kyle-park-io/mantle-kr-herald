@@ -22,6 +22,7 @@ import {
   loadLarkAppConfig,
   loadGoogleSheetConfig,
   loadTelegramConfig,
+  loadTelegramChatIds,
   loadTypefullyConfig,
   loadXMaxWeighted,
 } from "../config";
@@ -92,7 +93,17 @@ const integrations: IntegrationStatus[] = ((): IntegrationStatus[] => {
       }),
     },
     { key: "lark_drive", label: "Lark Drive", group: "publish", configured: probe(loadLarkDriveConfig) },
-    { key: "telegram", label: "Telegram", group: "send", configured: probe(loadTelegramConfig) },
+    {
+      key: "telegram",
+      label: "Telegram",
+      group: "send",
+      // A bot token alone delivers nothing: `send:channels` posts per room, so at least one room's
+      // chat id has to resolve (a per-room `TELEGRAM_CHAT_ID_*`, or the legacy fallback).
+      configured: probe(() => {
+        loadTelegramConfig();
+        if (Object.keys(loadTelegramChatIds()).length === 0) throw new Error("no Telegram room chat id configured");
+      }),
+    },
     { key: "typefully", label: "Typefully", group: "send", configured: probe(loadTypefullyConfig) },
     { key: "google_sheets", label: "Google Sheets", group: "data", configured: probe(loadGoogleSheetConfig) },
   ];
