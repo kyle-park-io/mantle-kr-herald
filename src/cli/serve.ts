@@ -248,6 +248,9 @@ const sendToOutlet = async (itemId: string, type: string, outletId: string): Pro
       loadXMaxWeighted(),
       outletsForChannel,
       chatIds,
+      // Without this a forked room receives the *group* text — the wrong copy, irreversibly, since
+      // the ledger then records the room as `sent` and a `sent` row can never be unmarked.
+      overrideStore,
     ).run({ targets: [channel], ids: new Set([itemId]), types: [type], outletIds: [outletId] });
 
     // `sent 0` on its own tells the reviewer nothing, so every zero-send outcome carries a reason.

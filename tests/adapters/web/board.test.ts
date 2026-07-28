@@ -86,6 +86,16 @@ describe("buildBoard", () => {
     expect(group?.addableOutletIds).toEqual(["tg-community", "tg-dev", "tg-kol", "tg-blockchain"]);
   });
 
+  it("leaves out a room that can be neither sent nor ticked", () => {
+    // x-article is `auto` but has its own pipeline: the send route refuses it and tells the
+    // operator to tick 전달함, which MarkDelivery then refuses because the room is auto. Offering
+    // it at all would produce a row with no way out of it.
+    const board = buildBoard("x:1", [r("x", "x", "트윗")], [], []);
+    const group = board.groups[0]!;
+    expect(group.rows.map((row) => row.outletId)).toEqual(["x-post"]);
+    expect(group.addableOutletIds).toEqual([]);
+  });
+
   it("ignores a delivery or override naming a room that no longer exists", () => {
     const board = buildBoard("x:1", [r("kol", "telegram", "브리프")], [
       { itemId: "x:1", type: "kol", outletId: "tg-retired", text: "옛 방", status: "rendered", createdAt: "T" },

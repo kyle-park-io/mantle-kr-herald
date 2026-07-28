@@ -1,7 +1,7 @@
 // src/adapters/web/board.ts
 import { ALL_TYPES, type ConversionType } from "../../domain/conversion/models";
 import { ALL_CHANNELS, type Channel, type ChannelRendering } from "../../domain/formatting/models";
-import { outletsForChannel, type Outlet } from "../../domain/outlet/models";
+import { deliveredByChannelSender, outletsForChannel, type Outlet } from "../../domain/outlet/models";
 import { overrideKey, textFor, type OutletOverride } from "../../domain/outlet/override";
 import { deliveryKey, type DeliveryEntry } from "../../domain/delivery/models";
 
@@ -49,6 +49,17 @@ const rank = (list: readonly string[], value: string): number => {
 };
 
 /**
+ * Rooms a reviewer can actually finish with — bot-delivered, or pasted by hand.
+ *
+ * A room that is neither can never leave the board: the send route refuses it ("paste it and tick
+ * 전달함") and `MarkDelivery` then refuses the tick *because* the room is `auto`, so the server
+ * would be instructing an action it rejects. `x-article` is the one such room — `send:x-article`
+ * posts it from the translation against its own ledger, so nothing it does can ever surface in
+ * `deliveries.json` either. Rowing it, or offering it as addable, produces a card with no exit.
+ */
+const reachable = (o: Outlet): boolean => deliveredByChannelSender(o) || o.delivery === "manual";
+
+/**
  * The board for one item: one card per `(type, channel)` rendering, each listing the rooms that
  * receive it.
  *
@@ -85,7 +96,7 @@ export function buildBoard(
   );
 
   const groups = ordered.map((r) => {
-    const outlets = outletsForChannel(r.channel);
+    const outlets = outletsForChannel(r.channel).filter(reachable);
     const keyOf = (o: Outlet) => overrideKey({ itemId, type: r.type, outletId: o.id });
     const touched = (o: Outlet) =>
       overrideByKey.has(keyOf(o)) || deliveryByKey.has(deliveryKey({ itemId, type: r.type, outletId: o.id }));

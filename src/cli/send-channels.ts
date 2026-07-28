@@ -4,6 +4,7 @@ import { paths } from "../paths";
 import { loadTelegramChatIds, loadXMaxWeighted } from "../config";
 import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
 import { JsonDeliveryLedger } from "../adapters/store/JsonDeliveryLedger";
+import { JsonOutletOverrideStore } from "../adapters/store/JsonOutletOverrideStore";
 import { ALL_OUTLETS, deliveredByChannelSender, outletById, outletsForChannel } from "../domain/outlet/models";
 import { SendChannels } from "../app/SendChannels";
 import { resolveChannelTargets, createSenders } from "./channelSenders";
@@ -36,6 +37,9 @@ const ids = idsArg ? new Set(idsArg.split(",").map((s) => s.trim()).filter((s) =
 
 const store = new JsonFormattingStore(paths.formattedDir);
 const ledger = new JsonDeliveryLedger(paths.publishDir);
+// The CLI has to honour forks too: a room that received its own copy from the dashboard must not
+// receive the group copy from here, or the two disagree about what that room was sent.
+const overrides = new JsonOutletOverrideStore(paths.formattedDir);
 const record = await buildRecorder();
 const archive = await buildArchiver();
 
@@ -49,6 +53,7 @@ const result = await new SendChannels(
   loadXMaxWeighted(),
   outletsForChannel,
   loadTelegramChatIds(),
+  overrides,
 ).run({ targets, ids, outletIds });
 // The extra segments appear only when they happened, so an ordinary run prints the line it always
 // printed. Both are kept out of `failed`: neither is a send that went wrong.

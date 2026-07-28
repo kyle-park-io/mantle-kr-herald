@@ -9,6 +9,9 @@ import type { DeliveryEntry } from "../../src/domain/delivery/models";
 import type { PublishRecord } from "../../src/domain/sheet/models";
 import { deliveryKey } from "../../src/domain/delivery/models";
 import { outletsForChannel } from "../../src/domain/outlet/models";
+import type { OutletOverride } from "../../src/domain/outlet/override";
+import { overrideKey } from "../../src/domain/outlet/override";
+import type { OutletOverrideStore } from "../../src/ports/OutletOverrideStore";
 
 const rendering = (o: Partial<ChannelRendering>): ChannelRendering => ({
   itemId: "x:1", type: "announcement", channel: "telegram", text: "**hi** everyone", refined: false,
@@ -35,6 +38,17 @@ function fakeLedger(seed: DeliveryEntry[] = []) {
   return { ledger, added };
 }
 const okSender = (name: "telegram" | "x"): ChannelSender => ({ name, send: async () => ({ postId: "p", url: "u" }) });
+function fakeOverrides(rows: OutletOverride[] = []): OutletOverrideStore {
+  return {
+    loadAll: async () => rows,
+    upsert: async () => {},
+    remove: async (key: string) => { rows = rows.filter((o) => overrideKey(o) !== key); },
+  };
+}
+const fork = (o: Partial<OutletOverride>): OutletOverride => ({
+  itemId: "x:1", type: "announcement", outletId: "tg-dev", text: "데브방 전용 공지",
+  status: "approved", createdAt: "T", ...o,
+});
 
 /** A full result with everything at zero, so a test states only what it is about. */
 const result = (o: Partial<SendChannelsResult> = {}): SendChannelsResult => ({
@@ -419,5 +433,93 @@ describe("SendChannels first-delivery guard", () => {
     ]);
     const res = await new SendChannels(backlog(), { telegram: okSender("telegram"), x: undefined }, ledger, undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
     expect(res).toEqual(result({ sent: 6 })); // 3 renderings × 2 rooms
+  });
+});
+
+/**
+ * A forked room is the whole point of the outlet layer: the reviewer edited that room's copy, so
+ * that room must receive *its* copy and carry *its own* approval. Sending the group text to a room
+ * that has its own is unrecoverable — the ledger records the room as `sent`, and a `sent` row can
+ * never be unmarked.
+ */
+describe("SendChannels — per-room overrides", () => {
+  function capture() {
+    const posts: { chatId?: string; text: string }[] = [];
+    const sender: ChannelSender = {
+      name: "telegram-bot",
+      send: async (req) => {
+        posts.push({ chatId: req.chatId, text: req.segments.join("\n") });
+        return { postId: "p" };
+      },
+    };
+    return { posts, sender };
+  }
+  /** chatId → text, so a test names the room rather than a send index. */
+  const byRoom = (posts: { chatId?: string; text: string }[]) =>
+    Object.fromEntries(posts.map((p) => [p.chatId === "-100111" ? "tg-community" : "tg-dev", p.text]));
+
+  const groupText = "공통 공지";
+  const approvedGroup = () => fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: groupText, status: "approved" })]);
+
+  it("sends the fork's own text to the forked room, and the group text to the rest", async () => {
+    const { posts, sender } = capture();
+    const { ledger } = fakeLedger();
+    const archived: string[] = [];
+    const res = await new SendChannels(
+      approvedGroup(), { telegram: sender, x: undefined }, ledger, undefined,
+      async (e) => { archived.push(e.text); }, () => "T", undefined, outletsForChannel, TG_CHAT_IDS,
+      fakeOverrides([fork({ outletId: "tg-dev", text: "데브방 전용 공지", status: "approved" })]),
+    ).run({ targets: ["telegram"] });
+
+    expect(res.sent).toBe(2);
+    expect(byRoom(posts)).toEqual({ "tg-community": groupText, "tg-dev": "데브방 전용 공지" });
+    // The archive records what the room received, not what the group said.
+    expect(archived.sort()).toEqual([groupText, "데브방 전용 공지"].sort());
+  });
+
+  it("withholds a room whose fork is still rendered, even under an approved group", async () => {
+    const { posts, sender } = capture();
+    const { ledger } = fakeLedger();
+    const res = await new SendChannels(
+      approvedGroup(), { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T",
+      undefined, outletsForChannel, TG_CHAT_IDS,
+      fakeOverrides([fork({ outletId: "tg-dev", text: "아직 검수 전", status: "rendered" })]),
+    ).run({ targets: ["telegram"] });
+
+    // The group's approval does not cover a fork made after it — that text was never reviewed.
+    expect(res.sent).toBe(1);
+    expect(byRoom(posts)).toEqual({ "tg-community": groupText });
+    expect([...(await ledger.loadKeys())]).toEqual(["x:1:announcement:tg-community"]);
+  });
+
+  it("sends an approved fork even when the group itself is still rendered", async () => {
+    const { posts, sender } = capture();
+    const { ledger } = fakeLedger();
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: groupText, status: "rendered" })]);
+    const res = await new SendChannels(
+      store, { telegram: sender, x: undefined }, ledger, undefined, undefined, () => "T",
+      undefined, outletsForChannel, TG_CHAT_IDS,
+      fakeOverrides([fork({ outletId: "tg-dev", text: "데브방 전용 공지", status: "approved" })]),
+    ).run({ targets: ["telegram"] });
+
+    // A forked room carries its own review, so an unreviewed group cannot hold it back.
+    expect(res.sent).toBe(1);
+    expect(byRoom(posts)).toEqual({ "tg-dev": "데브방 전용 공지" });
+  });
+
+  it("leaves an unforked room byte-identical to the no-override run", async () => {
+    const withStore = capture();
+    const withoutStore = capture();
+    await new SendChannels(
+      approvedGroup(), { telegram: withStore.sender, x: undefined }, fakeLedger().ledger, undefined, undefined,
+      () => "T", undefined, outletsForChannel, TG_CHAT_IDS, fakeOverrides([]),
+    ).run({ targets: ["telegram"] });
+    await new SendChannels(
+      approvedGroup(), { telegram: withoutStore.sender, x: undefined }, fakeLedger().ledger, undefined, undefined,
+      () => "T", undefined, outletsForChannel, TG_CHAT_IDS,
+    ).run({ targets: ["telegram"] });
+
+    expect(withStore.posts).toEqual(withoutStore.posts);
+    expect(byRoom(withStore.posts)).toEqual({ "tg-community": groupText, "tg-dev": groupText });
   });
 });
