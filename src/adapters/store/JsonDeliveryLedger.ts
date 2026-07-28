@@ -13,18 +13,21 @@ export class JsonDeliveryLedger implements DeliveryLedger {
     this.legacyPath = join(dir, "channels.json");
   }
 
-  /** Raw read of `deliveries.json` only — `null` when it does not exist yet. No legacy fallback. */
-  private loadCurrent(): Promise<DeliveryEntry[] | null> {
-    return readJsonFile<DeliveryEntry[] | null>(this.path, null);
-  }
-
   /**
    * Reads the outlet-keyed file, falling back to the pre-outlet `channels.json` when it is absent.
    * The migration is read-only: the legacy file is never rewritten or deleted, so a rollback loses
-   * nothing. The first `add()` writes `deliveries.json`, after which the legacy file is ignored.
+   * nothing.
+   *
+   * `add()`/`remove()` use this same method as their read-modify-write base (not a raw read of
+   * `deliveries.json` alone). That is deliberate: a migrated legacy row records a real send — often
+   * to a live Telegram room or X account — and once any unrelated write persists it into
+   * `deliveries.json`, it must keep appearing in `loadKeys()` afterwards. Basing writes on a
+   * legacy-blind read would let an already-sent item silently become indistinguishable from
+   * never-sent the moment any unrelated entry is added, and `SendChannels.run()` gates re-sending
+   * solely on `loadKeys()` — so that gap becomes a duplicate live post, not just a stale label.
    */
   async loadAll(): Promise<DeliveryEntry[]> {
-    const current = await this.loadCurrent();
+    const current = await readJsonFile<DeliveryEntry[] | null>(this.path, null);
     if (current) return current;
     const legacy = await readJsonFile<ChannelSentEntry[]>(this.legacyPath, []);
     return legacy.map(migrateLegacyEntry);
@@ -34,21 +37,14 @@ export class JsonDeliveryLedger implements DeliveryLedger {
     return new Set((await this.loadAll()).map(deliveryKey));
   }
 
-  /**
-   * Writes are based on `deliveries.json` alone, never on the migrated legacy fallback — otherwise
-   * the first `add()` while only `channels.json` exists would bake every migrated legacy row into
-   * the new file as a side effect of adding one entry.
-   */
   async add(entry: DeliveryEntry): Promise<void> {
-    const current = (await this.loadCurrent()) ?? [];
-    const byKey = new Map(current.map((e) => [deliveryKey(e), e]));
+    const byKey = new Map((await this.loadAll()).map((e) => [deliveryKey(e), e]));
     byKey.set(deliveryKey(entry), entry);
     await writeJsonFileAtomic(this.dir, this.path, [...byKey.values()]);
   }
 
   async remove(key: string): Promise<void> {
-    const current = (await this.loadCurrent()) ?? [];
-    const kept = current.filter((e) => deliveryKey(e) !== key);
+    const kept = (await this.loadAll()).filter((e) => deliveryKey(e) !== key);
     await writeJsonFileAtomic(this.dir, this.path, kept);
   }
 }

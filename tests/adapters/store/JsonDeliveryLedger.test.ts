@@ -62,11 +62,33 @@ describe("JsonDeliveryLedger", () => {
     expect(all[0]?.url).toBe("u");
   });
 
-  it("prefers deliveries.json and ignores the legacy file once it exists", async () => {
-    await writeFile(join(dir, "channels.json"), JSON.stringify([{ itemId: "x:9", type: "x", channel: "x", senderName: "s", sentAt: "2026-07-01T00:00:00.000Z" }]), "utf8");
+  it("persists a migrated legacy row into deliveries.json once any entry is added, and never touches channels.json", async () => {
+    const legacyRaw = JSON.stringify([{ itemId: "x:9", type: "x", channel: "x", senderName: "s", sentAt: "2026-07-01T00:00:00.000Z" }]);
+    await writeFile(join(dir, "channels.json"), legacyRaw, "utf8");
     const l = new JsonDeliveryLedger(dir);
     await l.add(sent);
-    expect((await l.loadAll()).map((e) => e.itemId)).toEqual(["x:1"]);
-    expect(JSON.parse(await readFile(join(dir, "deliveries.json"), "utf8"))).toHaveLength(1);
+    // The pre-existing legacy row (x:9) must survive the unrelated add() — it is a real past send,
+    // not a value to be dropped just because deliveries.json now exists.
+    expect((await l.loadAll()).map((e) => e.itemId).sort()).toEqual(["x:1", "x:9"]);
+    expect(JSON.parse(await readFile(join(dir, "deliveries.json"), "utf8"))).toHaveLength(2);
+    // Read-only migration: the legacy file itself is never rewritten or deleted.
+    expect(await readFile(join(dir, "channels.json"), "utf8")).toBe(legacyRaw);
+  });
+
+  it("keeps a legacy sent item visible in loadKeys() after an unrelated add() — the live-resend regression", async () => {
+    await writeFile(
+      join(dir, "channels.json"),
+      JSON.stringify([{ itemId: "x:100", type: "announcement", channel: "telegram", senderName: "telegram-bot", sentAt: "2026-07-01T00:00:00.000Z" }]),
+      "utf8",
+    );
+    const l = new JsonDeliveryLedger(dir);
+    const legacyKey = deliveryKey({ itemId: "x:100", type: "announcement", outletId: "tg-community" });
+    expect((await l.loadKeys()).has(legacyKey)).toBe(true);
+
+    await l.add({ itemId: "x:200", type: "announcement", outletId: "tg-dev", status: "sent", at: "2026-07-29T00:00:00.000Z", by: "auto" });
+
+    // If this flips to false, an already-sent item became indistinguishable from never-sent, and
+    // SendChannels.run() would re-post it live on the next send:channels run.
+    expect((await l.loadKeys()).has(legacyKey)).toBe(true);
   });
 });
