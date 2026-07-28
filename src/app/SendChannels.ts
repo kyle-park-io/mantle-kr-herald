@@ -3,6 +3,7 @@ import type { ChannelSender } from "../ports/ChannelSender";
 import type { ChannelSentEntry, SendableChannel, SentArchiveEntry } from "../domain/send/channels";
 import { DELIVERY_DESTINATION, sentKey } from "../domain/send/channels";
 import { emit } from "../domain/formatting/emitters";
+import { matchesItemId } from "../domain/itemId";
 import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { PublishRecord } from "../domain/sheet/models";
 import { extractMedia } from "../domain/media/sourceMedia";
@@ -50,7 +51,7 @@ export class SendChannels {
     for (const r of rows) {
       if (r.status !== "approved") continue;
       if (!isSendable(r.channel) || !wanted.has(r.channel)) continue;
-      if (input.ids && !input.ids.has(r.itemId)) continue;
+      if (input.ids && !matchesItemId(input.ids, r.itemId)) continue;
       const sender = this.senders[r.channel];
       if (!sender) continue;
       const key = sentKey({ itemId: r.itemId, type: r.type, channel: r.channel });

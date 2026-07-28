@@ -1,5 +1,6 @@
 import type { TranslationStore } from "../ports/TranslationStore";
 import { toXArticleMarkdown } from "../domain/publish/articleMarkdown";
+import { matchesItemId } from "../domain/itemId";
 
 type ArticleMeta = (itemId: string) => Promise<{ isArticle: boolean; coverImageUrl?: string }>;
 interface Media { upload(url: string): Promise<string> }
@@ -24,7 +25,7 @@ export class SendXArticle {
     let sent = 0, skipped = 0, failed = 0;
     for (const t of all) {
       if (t.status !== "approved") continue;
-      if (input.ids && !input.ids.has(t.itemId)) continue;
+      if (input.ids && !matchesItemId(input.ids, t.itemId)) continue;
       const meta = await this.articleMeta(t.itemId);
       if (!meta.isArticle) continue;
       if (already.has(t.itemId)) { skipped += 1; continue; }

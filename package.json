@@ -29,6 +29,7 @@
     "metrics:record": "tsx --env-file-if-exists=.env src/cli/metrics-record.ts",
     "send:channels": "tsx --env-file-if-exists=.env src/cli/send-channels.ts",
     "send:x-article": "tsx --env-file-if-exists=.env src/cli/send-x-article.ts",
+    "send:reconcile": "tsx --env-file-if-exists=.env src/cli/send-reconcile.ts",
     "sheet:init": "tsx --env-file-if-exists=.env src/cli/sheet-init.ts",
     "doctor": "tsx --env-file-if-exists=.env src/cli/doctor.ts",
     "status": "tsx --env-file-if-exists=.env src/cli/status.ts",
