@@ -172,6 +172,19 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
         if (!existing) return { status: 404, json: { error: "not found" } };
         return { status: 200, json: emitAll(existing.text, channel, deps.xMaxWeighted) };
       }
+
+      // `…/emissions/:outletId` — the spelling *that room* receives. A forked room's copy is its
+      // own, so emitting the group rendering would hand a human the wrong text to paste into a
+      // live room. The resolved text is read off the board rather than re-resolved here, so this
+      // route and the row on screen can never disagree about what the room's copy is.
+      if (method === "GET" && segments.length === 7 && segments[5] === "emissions") {
+        const board = await deps.loadBoard(itemId);
+        const row = board.groups
+          .find((g) => g.type === type && g.channel === channel)
+          ?.rows.find((r) => r.outletId === segments[6]);
+        if (!row) return { status: 404, json: { error: "not found" } };
+        return { status: 200, json: emitAll(row.text, channel, deps.xMaxWeighted) };
+      }
     }
   }
 

@@ -24,19 +24,43 @@ import { RenderingChip } from "./RenderingList";
  */
 type ViewRow = BoardRow & { pending?: boolean };
 
-/** ISO → `07-29 14:03`. Long enough to tell two sends apart, short enough to sit inside a row. */
-const stamp = (iso?: string): string => (iso && iso.length >= 16 ? iso.slice(5, 16).replace("T", " ") : "");
+/**
+ * ISO (UTC) → `07. 29. 06:20` in the reviewer's own zone. Slicing the ISO string instead would
+ * print UTC as if it were local — nine hours and one calendar day off in KST, on a ledger whose
+ * entire job is "did this go out, and when".
+ */
+const stamp = (iso?: string): string => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+};
+/** The same instant, spelled out — the row is narrow, the tooltip does not have to be. */
+const stampFull = (iso?: string): string | undefined => {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? undefined : d.toLocaleString("ko-KR");
+};
+
+const SAVE_FIRST = "편집 내용을 먼저 저장하세요";
 
 const btn =
   "rounded-md border border-line-strong bg-surface px-2.5 py-1 text-[12px] font-medium text-ink transition-colors hover:bg-bg disabled:cursor-default disabled:opacity-40";
 const btnPrimary =
   "rounded-md bg-mint px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40";
 const btnDanger =
-  "rounded-md border border-red-200 bg-surface px-2.5 py-1 text-[12px] font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-40";
+  "rounded-md border border-red-200 bg-surface px-2.5 py-1 text-[12px] font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-default disabled:opacity-40";
+
+/** The `_paste` segments of an emission set, or `null` when they have not loaded. */
+const pasteSegments = (em: Emissions | undefined, channel: BoardGroup["channel"]): string[] | null =>
+  em?.[PASTE_DESTINATION[channel]]?.segments.map((s) => s.text) ?? null;
 
 export function OutletCard(props: {
   itemId: string;
   group: BoardGroup;
+  /** The joined source context for this (itemId, type) — `변환 원문`; "" when there is none. */
+  convertedText: string;
   /** The room the pointer is over, board-wide — a room in two cards highlights in both. */
   hovered: string | null;
   onHover: (outletId: string | null) => void;
@@ -53,7 +77,8 @@ export function OutletCard(props: {
 
   const [text, setText] = useState(group.text);
   const [busy, setBusy] = useState(false);
-  const [emissions, setEmissions] = useState<Emissions>({});
+  /** Keyed by outletId; `""` is the group's own text. A fork gets its own entry. */
+  const [emissions, setEmissions] = useState<Record<string, Emissions>>({});
   const [copied, setCopied] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -62,28 +87,39 @@ export function OutletCard(props: {
 
   useEffect(() => setText(group.text), [group.text]);
 
-  // The paste spelling and the over-limit warnings both come from here. RenderingDetail's tab strip
-  // is not on the board — a reviewer about to post to a live room needs the warning, not the tabs.
+  // One signature over every text this card can emit, so a fork's spelling is refetched when the
+  // fork is edited and not otherwise.
+  const forkSig = group.rows.filter((r) => r.forked).map((r) => `${r.outletId}\u0000${r.text}`).join("\u0001");
   useEffect(() => {
     let live = true;
-    api
-      .emissions(itemId, type, channel)
-      .then((e) => live && setEmissions(e))
-      .catch(() => live && setEmissions({}));
+    const ids = ["", ...group.rows.filter((r) => r.forked).map((r) => r.outletId)];
+    Promise.all(
+      ids.map(async (id) => [id, await api.emissions(itemId, type, channel, id || undefined).catch(() => ({}))] as const),
+    ).then((entries) => {
+      if (live) setEmissions(Object.fromEntries(entries));
+    });
     return () => {
       live = false;
     };
-  }, [itemId, type, channel, group.text]);
-
-  const dirty = text !== group.text || Object.entries(drafts).some(([id, d]) => d !== undefined && d !== rowText(id));
-  useEffect(() => {
-    onDirty(cardKey, dirty);
-  }, [cardKey, dirty, onDirty]);
-  useEffect(() => () => onDirty(cardKey, false), [cardKey, onDirty]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- forkSig stands in for the fork texts
+  }, [itemId, type, channel, group.text, forkSig]);
 
   function rowText(outletId: string): string {
     return group.rows.find((r) => r.outletId === outletId)?.text ?? group.text;
   }
+  const draftDirty = (id: string) => drafts[id] !== undefined && drafts[id] !== rowText(id);
+  const groupDirty = text !== group.text;
+  /**
+   * Card-wide, and every irreversible or copy action is gated on it. An unsaved textarea is not
+   * what `SendChannels` reads: it reads the store. Without this gate, fixing a wrong figure and
+   * pressing 발송 without 저장 posts the *pre-edit* copy to a live room and ledgers it `sent`,
+   * which `MarkDelivery` then refuses to reverse.
+   */
+  const dirty = groupDirty || Object.keys(drafts).some(draftDirty);
+  useEffect(() => {
+    onDirty(cardKey, dirty);
+  }, [cardKey, dirty, onDirty]);
+  useEffect(() => () => onDirty(cardKey, false), [cardKey, onDirty]);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -97,26 +133,30 @@ export function OutletCard(props: {
     }
   };
 
-  /** Drop the row's local draft so the next render re-reads the text the server just stored. */
-  const settle = (outletId: string) =>
+  /** Drop a row's local editor state so the next render re-reads what the server just stored. */
+  const settle = (outletId: string, collapse = false) => {
     setDrafts((prev) => {
       const next = { ...prev };
       delete next[outletId];
       return next;
     });
-
-  const pasteText = (): string => {
-    const e = emissions[PASTE_DESTINATION[channel]];
-    return e ? e.segments.map((s) => s.text).join("\n\n") : group.text;
+    if (collapse)
+      setOpen((prev) => {
+        const next = { ...prev };
+        delete next[outletId];
+        return next;
+      });
   };
+
   const copy = async (key: string, value: string) => {
     await navigator.clipboard.writeText(value);
     setCopied(key);
     setTimeout(() => setCopied(null), 1500);
   };
 
-  const warnings = (Object.keys(emissions) as Destination[]).flatMap((d) =>
-    (emissions[d]?.warnings ?? []).map((w) => `${DESTINATION_LABEL[d]} — ${w}`),
+  const groupPaste = pasteSegments(emissions[""], channel);
+  const warnings = (Object.keys(emissions[""] ?? {}) as Destination[]).flatMap((d) =>
+    (emissions[""]?.[d]?.warnings ?? []).map((w) => `${DESTINATION_LABEL[d]} — ${w}`),
   );
 
   const pending: ViewRow[] = added
@@ -147,7 +187,7 @@ export function OutletCard(props: {
         {dirty && (
           <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-ink">
             <span className="h-1.5 w-1.5 rounded-full bg-amber-ink" />
-            편집 중
+            편집 중 · 저장 전
           </span>
         )}
         <span className="ml-auto text-[11px] text-faint">
@@ -166,10 +206,15 @@ export function OutletCard(props: {
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           <button
             className={btn}
-            disabled={busy || text === group.text}
+            disabled={busy || !groupDirty}
             onClick={() =>
               run(async () => {
-                await api.editRendering(itemId, type, channel, text);
+                // Adopt what the server actually stored. `toCanonical` trims and collapses blank
+                // lines, so a save can legitimately return the string that was already there —
+                // and waiting for `group.text` to change would then leave the card `편집 중`
+                // forever, with 저장 inert and 승인 greyed until a reload.
+                const saved = await api.editRendering(itemId, type, channel, text);
+                setText(saved.text);
                 await props.onGroupChanged();
               })
             }
@@ -183,8 +228,8 @@ export function OutletCard(props: {
           ) : (
             <button
               className={btnPrimary}
-              disabled={busy || text !== group.text}
-              title={text !== group.text ? "편집 내용을 먼저 저장하세요" : undefined}
+              disabled={busy || groupDirty}
+              title={groupDirty ? SAVE_FIRST : undefined}
               onClick={() =>
                 run(async () => {
                   await api.approveRendering(itemId, type, channel);
@@ -195,10 +240,21 @@ export function OutletCard(props: {
               승인 ✓
             </button>
           )}
-          <button className={btn} onClick={() => copy("group", pasteText())} title="붙여넣기용 텍스트를 복사합니다">
-            {copied === "group" ? "복사됨 ✓" : "복사"}
-          </button>
+          <CopyButton
+            id="group"
+            copied={copied}
+            segments={groupPaste}
+            disabledReason={dirty ? SAVE_FIRST : undefined}
+            onCopy={(v) => copy("group", v)}
+          />
         </div>
+
+        {groupPaste && groupPaste.length > 1 && (
+          <p className="mt-2 text-[11px] leading-relaxed text-muted">
+            이 글은 {groupPaste.length}개로 나뉘어 올라갑니다. 한 덩어리로 붙여넣지 말고 아래 <b>목적지별 출력</b>에서
+            조각별로 복사하세요.
+          </p>
+        )}
 
         {warnings.length > 0 && (
           <ul className="mt-2.5 space-y-1 rounded-lg border border-amber-ink/20 bg-amber-soft px-3 py-2 text-[12px] leading-relaxed text-amber-ink">
@@ -207,6 +263,16 @@ export function OutletCard(props: {
             ))}
           </ul>
         )}
+
+        <Source convertedText={props.convertedText} />
+        <DestinationPreview
+          label="목적지별 출력 — 실제로 나가는 바이트"
+          emissions={emissions[""] ?? {}}
+          copiedPrefix="group"
+          copied={copied}
+          disabledReason={dirty ? SAVE_FIRST : undefined}
+          onCopy={copy}
+        />
       </div>
 
       <ul className="border-t border-line">
@@ -217,6 +283,7 @@ export function OutletCard(props: {
             group={group}
             itemId={itemId}
             busy={busy}
+            dirty={dirty}
             hovered={props.hovered}
             onHover={props.onHover}
             open={!!open[row.outletId] || (row.forked && open[row.outletId] !== false)}
@@ -226,12 +293,16 @@ export function OutletCard(props: {
             draft={drafts[row.outletId] ?? row.text}
             onDraft={(v) => setDrafts((p) => ({ ...p, [row.outletId]: v }))}
             copied={copied}
-            // A fork has no emitted spelling of its own — the emissions route reads the stored
-            // group rendering — so its own text is copied verbatim.
-            onCopy={() => copy(row.outletId, row.forked ? row.text : pasteText())}
+            // A forked room has its own `_paste` spelling, fetched per room; an unforked one shares
+            // the group's. Never the canonical text — KakaoTalk parses no markup, so `**굵게**`
+            // would land verbatim in a live room.
+            segments={pasteSegments(row.forked ? emissions[row.outletId] : emissions[""], channel)}
+            emissions={(row.forked ? emissions[row.outletId] : emissions[""]) ?? {}}
+            onCopy={copy}
             onDrop={() => setAdded((p) => p.filter((id) => id !== row.outletId))}
-            onSettle={() => settle(row.outletId)}
+            onSettle={(collapse) => settle(row.outletId, collapse)}
             onBoard={props.onBoard}
+            onError={onError}
             run={run}
           />
         ))}
@@ -275,11 +346,138 @@ export function OutletCard(props: {
   );
 }
 
+/**
+ * [복사] for one piece of copy. Disabled rather than silently falling back to the canonical text
+ * when the spelling has not loaded — the fallback is what puts `**굵게**` in a live room.
+ */
+function CopyButton(props: {
+  id: string;
+  copied: string | null;
+  segments: string[] | null;
+  disabledReason?: string;
+  onCopy: (value: string) => void;
+}) {
+  const many = (props.segments?.length ?? 0) > 1;
+  const reason = props.disabledReason ?? (props.segments ? undefined : "붙여넣기용 텍스트를 아직 불러오지 못했습니다");
+  return (
+    <button
+      className={btn}
+      disabled={!!reason}
+      title={reason ?? "붙여넣기용 텍스트를 복사합니다"}
+      onClick={() => props.segments && props.onCopy(props.segments.join("\n\n"))}
+    >
+      {props.copied === props.id ? "복사됨 ✓" : many ? `전체 복사 (${props.segments!.length})` : "복사"}
+    </button>
+  );
+}
+
+/** `변환 원문` — what the copy was written from. Collapsed, because the board is a delivery screen. */
+function Source({ convertedText }: { convertedText: string }) {
+  return (
+    <details className="mt-3 rounded-lg border border-line bg-bg px-3 py-2">
+      <summary className="cursor-pointer text-[12px] font-medium text-muted marker:text-faint">
+        변환 원문 · converted
+      </summary>
+      {convertedText ? (
+        <div className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-muted">
+          {convertedText}
+        </div>
+      ) : (
+        <p className="mt-2 text-[12px] leading-relaxed text-faint">
+          이 타입의 변환 원문이 없습니다. <code className="font-mono">pnpm convert:save</code> 로 저장된 변환본이 있어야
+          여기에 표시됩니다.
+        </p>
+      )}
+    </details>
+  );
+}
+
+/**
+ * The bytes each destination actually receives — `telegram_bot`'s HTML, Typefully's thread — with
+ * per-segment lengths and per-segment copy. The board is the last screen before an irreversible
+ * post, so this cannot live only on a screen the reviewer no longer visits.
+ */
+function DestinationPreview(props: {
+  label: string;
+  emissions: Emissions;
+  copiedPrefix: string;
+  copied: string | null;
+  disabledReason?: string;
+  onCopy: (key: string, value: string) => void;
+}) {
+  const keys = Object.keys(props.emissions) as Destination[];
+  const [tab, setTab] = useState<Destination | null>(null);
+  const active = tab && props.emissions[tab] ? tab : (keys[0] ?? null);
+  if (!active) return null;
+  const result = props.emissions[active]!;
+
+  return (
+    <details className="mt-2 rounded-lg border border-line bg-bg px-3 py-2">
+      <summary className="cursor-pointer text-[12px] font-medium text-muted marker:text-faint">{props.label}</summary>
+      <div className="mt-2">
+        <div className="mb-2 inline-flex flex-wrap gap-0.5 rounded-lg border border-line bg-surface p-0.5">
+          {keys.map((d) => (
+            <button
+              key={d}
+              onClick={() => setTab(d)}
+              className={`rounded-[7px] px-2.5 py-1 text-[12px] font-medium transition-colors ${
+                d === active ? "bg-bg text-ink shadow-sm" : "text-muted hover:text-ink"
+              }`}
+            >
+              {DESTINATION_LABEL[d]}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-col gap-2">
+          {result.segments.map((s, i) => {
+            const pct = s.limit > 0 ? Math.min(100, Math.round((s.length / s.limit) * 100)) : 0;
+            const key = `${props.copiedPrefix}:${active}:${i}`;
+            return (
+              <div key={i} className="rounded-lg border border-line bg-surface p-2.5">
+                <div className="mb-1.5 flex items-center gap-2.5 text-[12px]">
+                  {result.segments.length > 1 && (
+                    <span className="font-medium text-muted">
+                      {s.label ?? `${i + 1}/${result.segments.length}`}
+                    </span>
+                  )}
+                  <div className="flex items-center gap-1.5">
+                    <span className={`font-mono tabular-nums ${s.overLimit ? "font-semibold text-red-600" : "text-faint"}`}>
+                      {s.length}/{s.limit}
+                    </span>
+                    <span className="h-1 w-14 overflow-hidden rounded-full bg-line">
+                      <span
+                        className={`block h-full rounded-full ${s.overLimit ? "bg-red-500" : "bg-mint"}`}
+                        style={{ width: `${s.overLimit ? 100 : pct}%` }}
+                      />
+                    </span>
+                  </div>
+                  <button
+                    className={`ml-auto ${btn}`}
+                    disabled={!!props.disabledReason}
+                    title={props.disabledReason}
+                    onClick={() => props.onCopy(key, s.text)}
+                  >
+                    {props.copied === key ? "복사됨 ✓" : "복사"}
+                  </button>
+                </div>
+                <div className="max-h-56 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[12px] leading-relaxed text-ink/80">
+                  {s.text}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function Row(props: {
   row: ViewRow;
   group: BoardGroup;
   itemId: string;
   busy: boolean;
+  dirty: boolean;
   hovered: string | null;
   onHover: (outletId: string | null) => void;
   open: boolean;
@@ -287,26 +485,37 @@ function Row(props: {
   draft: string;
   onDraft: (value: string) => void;
   copied: string | null;
-  onCopy: () => void;
+  segments: string[] | null;
+  emissions: Emissions;
+  onCopy: (key: string, value: string) => void;
   onDrop: () => void;
-  onSettle: () => void;
+  onSettle: (collapse?: boolean) => void;
   onBoard: (board: BoardView) => void;
+  onError: (message: string | null) => void;
   run: (fn: () => Promise<void>) => Promise<void>;
 }) {
-  const { row, group, itemId, busy, run } = props;
+  const { row, group, itemId, busy, dirty, run } = props;
   const { type } = group;
   // The row's own resolved status, never the group's: a fork left at `rendered` under an approved
   // group is exactly the row that would silently sit out a send it looks eligible for.
   const locked = row.status !== "approved";
   const sent = row.deliveryStatus === "sent";
   const delivered = row.deliveryStatus === "delivered";
-  const sibling = row.siblingCount > 1;
-  const highlighted = sibling && props.hovered === row.outletId;
+  const highlighted = props.hovered === row.outletId;
   const strandedFork = row.forked && locked && group.status === "approved";
+  const blocked = busy || dirty;
 
-  const apply = (reply: { board: BoardView }) => {
-    props.onSettle();
+  const apply = (reply: { board: BoardView }, collapse = false) => {
+    props.onSettle(collapse);
     props.onBoard(reply.board);
+  };
+
+  const confirmSend = (): boolean => {
+    const preview = row.text.replace(/\s+/g, " ").trim();
+    const shown = preview.length > 140 ? `${preview.slice(0, 140)}…` : preview;
+    return window.confirm(
+      `${row.label}에 실제로 발송합니다. 되돌릴 수 없습니다.\n\n보낼 글:\n${shown}\n\n계속할까요?`,
+    );
   };
 
   return (
@@ -319,7 +528,7 @@ function Row(props: {
     >
       <div className="flex flex-wrap items-center gap-2 px-4 py-2">
         <span className="text-[13px] font-medium text-ink">{row.label}</span>
-        {sibling && (
+        {row.siblingCount > 1 && (
           <span
             className="rounded bg-bg px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted"
             title={`이 방은 이 항목에서 ${row.siblingCount}건을 받습니다`}
@@ -345,7 +554,10 @@ function Row(props: {
         <span className="ml-auto flex flex-wrap items-center gap-2">
           {sent ? (
             <>
-              <span className="inline-flex items-center gap-1 rounded-md bg-mint-soft px-2 py-1 text-[12px] font-medium text-mint">
+              <span
+                className="inline-flex items-center gap-1 rounded-md bg-mint-soft px-2 py-1 text-[12px] font-medium text-mint"
+                title={stampFull(row.at)}
+              >
                 발송됨 {stamp(row.at)}
               </span>
               {row.url && (
@@ -363,7 +575,7 @@ function Row(props: {
             <button
               className="rounded-md bg-mint-soft px-2.5 py-1 text-[12px] font-medium text-mint transition-colors hover:bg-mint-soft/70 disabled:opacity-40"
               disabled={busy}
-              title="체크를 해제하면 전달 기록이 지워집니다"
+              title={`${stampFull(row.at) ?? ""} — 체크를 해제하면 전달 기록이 지워집니다`}
               onClick={() => run(async () => apply(await api.markOutlet(itemId, type, row.outletId, false)))}
             >
               전달함 ☑ {stamp(row.at)}
@@ -378,27 +590,40 @@ function Row(props: {
                   : "먼저 글을 승인하세요"
               }
             >
-              {row.delivery === "auto" ? "발송" : "전달함"} 🔒
+              {row.delivery === "auto" ? "발송" : "전달함"} · 잠김
             </button>
           ) : row.delivery === "auto" ? (
             <button
               className={btnDanger}
-              disabled={busy}
+              disabled={blocked}
+              title={dirty ? SAVE_FIRST : "실제 채널에 올립니다 — 되돌릴 수 없습니다"}
               onClick={() => {
-                if (!window.confirm(`${row.label}에 실제로 발송합니다.\n되돌릴 수 없습니다. 계속할까요?`)) return;
-                void run(async () => apply(await api.sendOutlet(itemId, type, row.outletId)));
+                if (!confirmSend()) return;
+                void run(async () => {
+                  const reply = await api.sendOutlet(itemId, type, row.outletId);
+                  apply(reply);
+                  // 200 can still carry a partial failure: something reached a live room and
+                  // something did not. Saying nothing would read as a clean send.
+                  if (reply.failed > 0 || reply.error)
+                    props.onError(reply.error ?? `${row.label}: ${reply.failed}건 실패 — 서버 로그를 확인하세요`);
+                });
               }}
             >
               발송
             </button>
           ) : (
             <>
-              <button className={btn} onClick={() => props.onCopy()}>
-                {props.copied === row.outletId ? "복사됨 ✓" : "복사"}
-              </button>
+              <CopyButton
+                id={row.outletId}
+                copied={props.copied}
+                segments={props.segments}
+                disabledReason={dirty ? SAVE_FIRST : undefined}
+                onCopy={(v) => props.onCopy(row.outletId, v)}
+              />
               <button
                 className={btn}
-                disabled={busy}
+                disabled={blocked}
+                title={dirty ? SAVE_FIRST : undefined}
                 onClick={() => run(async () => apply(await api.markOutlet(itemId, type, row.outletId, true)))}
               >
                 전달함 ☐
@@ -406,7 +631,11 @@ function Row(props: {
             </>
           )}
           {row.pending && !row.deliveryStatus && (
-            <button className="text-[12px] text-faint transition-colors hover:text-ink" onClick={props.onDrop} title="이 행을 목록에서 뺍니다">
+            <button
+              className="text-[12px] text-faint transition-colors hover:text-ink"
+              onClick={props.onDrop}
+              title="이 행을 목록에서 뺍니다"
+            >
               ✕
             </button>
           )}
@@ -445,7 +674,7 @@ function Row(props: {
                 <button
                   className={btnPrimary}
                   disabled={busy || props.draft !== row.text}
-                  title={props.draft !== row.text ? "편집 내용을 먼저 저장하세요" : undefined}
+                  title={props.draft !== row.text ? SAVE_FIRST : undefined}
                   onClick={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId)))}
                 >
                   승인 ✓
@@ -456,13 +685,27 @@ function Row(props: {
                 className={btn}
                 disabled={busy}
                 title="이 방만의 글을 지우고 그룹 글과 그룹 승인을 따릅니다"
-                onClick={() => run(async () => apply(await api.revertOutlet(itemId, type, row.outletId)))}
+                onClick={() =>
+                  // Collapse on the way out: the row is no longer forked, so leaving the editor
+                  // open would show the group text under a row that no longer has its own.
+                  run(async () => apply(await api.revertOutlet(itemId, type, row.outletId), true))
+                }
               >
                 그룹 글로 되돌리기
               </button>
             )}
             {!row.forked && <span className="text-[11px] text-faint">저장하면 이 방만 따로 검수·발송합니다.</span>}
           </div>
+          {row.forked && (
+            <DestinationPreview
+              label={`${row.label}에 실제로 나가는 바이트`}
+              emissions={props.emissions}
+              copiedPrefix={row.outletId}
+              copied={props.copied}
+              disabledReason={dirty ? SAVE_FIRST : undefined}
+              onCopy={props.onCopy}
+            />
+          )}
         </div>
       )}
     </li>

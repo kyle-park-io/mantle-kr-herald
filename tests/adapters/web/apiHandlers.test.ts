@@ -1,6 +1,7 @@
 // tests/adapters/web/apiHandlers.test.ts
 import { describe, it, expect } from "vitest";
 import { handleApi, type ApiDeps } from "../../../src/adapters/web/apiHandlers";
+import type { BoardView } from "../../../src/adapters/web/board";
 import type { Translation } from "../../../src/domain/translation/models";
 import type { ChannelRendering } from "../../../src/domain/formatting/models";
 import type { ContentVariant } from "../../../src/domain/conversion/models";
@@ -277,6 +278,67 @@ describe("GET /api/renderings/:id/:type/:channel/emissions", () => {
     const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
     const json = res.json as Record<string, { segments: { text: string }[] }>;
     expect(json.telegram_paste.segments[0].text).toBe("  중요  ");
+  });
+});
+
+describe("GET /api/renderings/:id/:type/:channel/emissions/:outletId", () => {
+  /** A board whose forked room carries different copy from the group it hangs under. */
+  const boardWithFork = (): BoardView => ({
+    itemId: "x:1",
+    unconverted: [],
+    groups: [
+      {
+        type: "announcement",
+        channel: "telegram",
+        text: "**그룹**",
+        status: "approved",
+        addableOutletIds: [],
+        rows: [
+          { outletId: "tg-community", label: "커뮤니티", delivery: "auto", forked: false, status: "approved", text: "**그룹**", siblingIndex: 1, siblingCount: 1 },
+          { outletId: "tg-kol", label: "KOL방", delivery: "manual", forked: true, status: "approved", text: "**KOL방 전용**", siblingIndex: 1, siblingCount: 1 },
+        ],
+      },
+    ],
+  });
+
+  /**
+   * The whole point of the route: without it the dashboard's [복사] on a forked row can only offer
+   * the group's spelling, so a human pastes the wrong copy into a live room.
+   */
+  it("emits the forked room's own text, not the group's", async () => {
+    const deps = makeDeps([]);
+    deps.loadBoard = async () => boardWithFork();
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions/tg-kol", undefined);
+    expect(res.status).toBe(200);
+    const json = res.json as Record<string, { segments: { text: string }[] }>;
+    expect(json.telegram_paste.segments[0].text).toBe("KOL방 전용");
+    expect(json.telegram_bot.segments[0].text).toBe("<b>KOL방 전용</b>");
+  });
+
+  it("emits the group text for an unforked room", async () => {
+    const deps = makeDeps([]);
+    deps.loadBoard = async () => boardWithFork();
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions/tg-community", undefined);
+    const json = res.json as Record<string, { segments: { text: string }[] }>;
+    expect(json.telegram_paste.segments[0].text).toBe("그룹");
+  });
+
+  it("404s for a room the board does not row, and for an unknown group", async () => {
+    const deps = makeDeps([]);
+    deps.loadBoard = async () => boardWithFork();
+    expect((await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions/tg-dev", undefined)).status).toBe(404);
+    expect((await handleApi(deps, "GET", "/api/renderings/x%3A1/casual/telegram/emissions/tg-kol", undefined)).status).toBe(404);
+  });
+
+  it("decodes the itemId the same way every other route does", async () => {
+    const seen: string[] = [];
+    const deps = makeDeps([]);
+    deps.loadBoard = async (id: string) => {
+      seen.push(id);
+      return boardWithFork();
+    };
+    await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions/tg-kol", undefined);
+    expect(seen).toEqual(["x:1"]);
   });
 });
 

@@ -10,6 +10,13 @@ import { OutletCard } from "./OutletCard";
  */
 export function OutletBoard(props: {
   itemId: string;
+  /**
+   * `변환 원문` per conversion type. The board API carries only what is delivered; the source the
+   * copy was written from comes from the rendering list, which already has it. Without it a
+   * `lark:` item has no source context at all on this screen — `원문 ↗` is a different artifact
+   * and `itemUrl` returns null for anything that is not an `x:` item.
+   */
+  convertedByType: Record<string, string>;
   /** The rendering list on the left carries status chips the card can change. */
   onGroupChanged: () => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
@@ -126,6 +133,7 @@ export function OutletBoard(props: {
               key={`${g.type}:${g.channel}`}
               itemId={board.itemId}
               group={g}
+              convertedText={props.convertedByType[g.type] ?? ""}
               hovered={hovered}
               onHover={setHovered}
               onBoard={setBoard}

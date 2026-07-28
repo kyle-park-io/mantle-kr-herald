@@ -3,6 +3,7 @@ import { ALL_TYPES, typeLabel } from "../../src/domain/conversion/models";
 import { ALL_CHANNELS } from "../../src/domain/formatting/models";
 import { DESTINATIONS_BY_CHANNEL } from "../../src/domain/formatting/emitters";
 import { ALL_OUTLETS } from "../../src/domain/outlet/models";
+import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
 import {
   ALL_TYPES as WEB_TYPES,
   ALL_CHANNELS as WEB_CHANNELS,
@@ -10,6 +11,9 @@ import {
   OUTLET_LABEL as WEB_OUTLET_LABEL,
   OUTLET_DELIVERY as WEB_OUTLET_DELIVERY,
   PASTE_DESTINATION as WEB_PASTE_DESTINATION,
+  type BoardView as WebBoardView,
+  type BoardGroup as WebBoardGroup,
+  type BoardRow as WebBoardRow,
 } from "../../web/src/types";
 
 /**
@@ -19,6 +23,10 @@ import {
  * the dashboard silently loses the new type from its filter. (That is exactly what happened when
  * `explainer` and `casual` landed.) These tests are the only thing that catches it.
  */
+/** `true` when A and B carry exactly the same keys; otherwise a tuple naming the ones that drifted. */
+type Drift<A, B> = Exclude<keyof A, keyof B> | Exclude<keyof B, keyof A>;
+type SameKeys<A, B> = [Drift<A, B>] extends [never] ? true : ["board mirror drifted on", Drift<A, B>];
+
 describe("web type mirror", () => {
   it("mirrors ALL_TYPES from the domain, in the same order", () => {
     expect([...WEB_TYPES]).toEqual(ALL_TYPES);
@@ -52,6 +60,39 @@ describe("web type mirror", () => {
       expect(WEB_OUTLET_DELIVERY[outlet.id], `delivery for ${outlet.id}`).toBe(outlet.delivery);
     }
     expect(Object.keys(WEB_OUTLET_DELIVERY).sort()).toEqual(ALL_OUTLETS.map((o) => o.id).sort());
+  });
+
+  /**
+   * The board *payload* mirror, checked by `tsc` rather than at runtime.
+   *
+   * Nothing else catches drift here. Renaming `deliveryStatus` to `state` in `board.ts` (and in
+   * its own tests) leaves every typecheck and all 900-odd tests green while the dashboard reads
+   * `undefined` for it — so an already-`sent` room paints `[발송]` again and the reviewer confirms
+   * a duplicate live post. The checks live in a test file because the root tsconfig includes
+   * `tests`, which is what lets one file import both sides.
+   *
+   * Two checks, because either alone has a hole:
+   *
+   * - **assignability, both ways** catches a *type* change (`status: string`) and a required field
+   *   going missing, but not a renamed *optional* field — an extra property is legal on a
+   *   non-fresh object type, and an absent optional one is legal too, so `deliveryStatus` → `state`
+   *   passes it in both directions.
+   * - **`SameKeys`** closes exactly that hole by comparing the key sets, and fails with a message
+   *   naming the keys that drifted.
+   */
+  it("mirrors the board payload field-for-field, in both directions", () => {
+    const rowFromDomain: WebBoardRow = {} as BoardRow;
+    const rowToDomain: BoardRow = {} as WebBoardRow;
+    const groupFromDomain: WebBoardGroup = {} as BoardGroup;
+    const groupToDomain: BoardGroup = {} as WebBoardGroup;
+    const viewFromDomain: WebBoardView = {} as BoardView;
+    const viewToDomain: BoardView = {} as WebBoardView;
+    const rowKeys: SameKeys<WebBoardRow, BoardRow> = true;
+    const groupKeys: SameKeys<WebBoardGroup, BoardGroup> = true;
+    const viewKeys: SameKeys<WebBoardView, BoardView> = true;
+    // The assertion is the compile above; this only keeps the bindings live.
+    expect([rowFromDomain, rowToDomain, groupFromDomain, groupToDomain, viewFromDomain, viewToDomain]).toHaveLength(6);
+    expect([rowKeys, groupKeys, viewKeys]).toEqual([true, true, true]);
   });
 
   /** [복사] hands a human the `_paste` spelling; the canonical text would paste raw markdown. */

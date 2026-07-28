@@ -51,8 +51,13 @@ export const api = {
     }).then((r) => json<Omit<Rendering, "convertedText">>(r)),
   approveRendering: (itemId: string, type: ConversionType, channel: Channel) =>
     fetch(`${rPath(itemId, type, channel)}/approve`, { method: "POST" }).then((r) => json<Omit<Rendering, "convertedText">>(r)),
-  emissions: (itemId: string, type: ConversionType, channel: Channel) =>
-    fetch(`${rPath(itemId, type, channel)}/emissions`).then((r) => json<Emissions>(r)),
+  /**
+   * The destination spellings of a rendering. With `outletId`, the spellings of *that room's*
+   * copy — which differs from the group's the moment the room is forked, and is what a human
+   * actually pastes or a bot actually posts.
+   */
+  emissions: (itemId: string, type: ConversionType, channel: Channel, outletId?: string) =>
+    fetch(`${rPath(itemId, type, channel)}/emissions${outletId ? `/${outletId}` : ""}`).then((r) => json<Emissions>(r)),
   status: () => fetch("/api/status").then((r) => json<AppStatus>(r)),
   publishState: () => fetch("/api/publish/state").then((r) => json<PublishStateRow[]>(r)),
 

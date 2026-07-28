@@ -43,7 +43,14 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
             // The board is per *item*, not per rendering: picking any of an item's renderings opens
             // every group that item has, because delivery is decided across them (a room receiving
             // both 공지 and 해설 has to be seen as one room).
-            <OutletBoard itemId={selected.itemId} onGroupChanged={refresh} onDirtyChange={setDirty} />
+            <OutletBoard
+              itemId={selected.itemId}
+              convertedByType={Object.fromEntries(
+                items.filter((r) => r.itemId === selected.itemId).map((r) => [r.type, r.convertedText]),
+              )}
+              onGroupChanged={refresh}
+              onDirtyChange={setDirty}
+            />
           ) : (
             <div className="flex h-full items-center justify-center p-10">
               <div className="max-w-sm text-center">
