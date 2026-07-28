@@ -82,6 +82,26 @@ export class PublishTranslations {
           if (isUpdate) updated += 1;
           else uploaded += 1;
           byDrive[uploader.name] = (byDrive[uploader.name] ?? 0) + 1;
+
+          // Move, don't copy: drop this item's doc at any OTHER status on this drive, so approval
+          // moves review→approved and un-approval moves it back. Best-effort — a failed delete leaves
+          // at most one stale doc (the pre-move behavior) and never fails the publish.
+          if (uploader.delete) {
+            const siblings = (await this.publishStore.listEntries()).filter(
+              (e) => e.itemId === t.itemId && e.target === uploader.name && e.status !== t.status,
+            );
+            for (const sib of siblings) {
+              if (!sib.remoteId) continue;
+              try {
+                await uploader.delete(sib.remoteId);
+                await this.publishStore.remove(entryKey(sib));
+              } catch (err) {
+                console.warn(
+                  `[publish] moved ${t.itemId} to ${folder} but could not remove its ${sib.status} doc on ${uploader.name}: ${err instanceof Error ? err.message : String(err)} — delete it by hand`,
+                );
+              }
+            }
+          }
         } catch (err) {
           failed += 1;
           failures.push({ key, error: err instanceof Error ? err.message : String(err) });
