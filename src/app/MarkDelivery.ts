@@ -10,9 +10,12 @@ export interface MarkDeliveryInput {
 }
 
 /**
- * Ticks or unticks 전달함 for a manual room. Only `delivered` rows are reversible — a `sent` row
- * records that a bot actually posted, and unticking it would invite a duplicate live post on the
- * next run.
+ * Ticks or unticks 전달함. Ticking (`delivered: true`) is only accepted for a `delivery: "manual"`
+ * outlet — an auto room is delivered by `send:channels`, which gates purely on ledger membership,
+ * so a `delivered` row planted on an auto outlet would make it look already-sent and the bot would
+ * silently skip it. Unticking (`delivered: false`) is allowed on any outlet, manual or auto, so a
+ * bad `delivered` row can always be cleaned up — except a `sent` row is never reversible, since it
+ * records that a bot actually posted and unticking it would invite a duplicate live post.
  */
 export class MarkDelivery {
   constructor(
@@ -32,6 +35,10 @@ export class MarkDelivery {
       }
       await this.ledger.remove(key);
       return;
+    }
+
+    if (outlet.delivery !== "manual") {
+      throw new Error(`${outlet.label} (${outlet.id}) is an auto room — it is delivered by send:channels, not marked manually`);
     }
 
     await this.ledger.add({

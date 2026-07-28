@@ -38,4 +38,18 @@ describe("MarkDelivery", () => {
     const l = fakeLedger();
     await expect(new MarkDelivery(l, () => "T").run({ ...args, outletId: "nope", delivered: true })).rejects.toThrow(/unknown outlet/i);
   });
+
+  it("refuses to tick an auto outlet — it is delivered by send:channels, not marked manually", async () => {
+    const l = fakeLedger();
+    await expect(
+      new MarkDelivery(l, () => "T").run({ itemId: "x:1", type: "announcement", outletId: "tg-community", delivered: true }),
+    ).rejects.toThrow(/auto room/i);
+    expect(l.rows()).toEqual([]);
+  });
+
+  it("allows unticking a delivered row on an auto outlet — repairs a bad row even though ticking one is refused", async () => {
+    const l = fakeLedger([{ itemId: "x:1", type: "announcement", outletId: "tg-community", status: "delivered", by: "manual", at: "T" }]);
+    await new MarkDelivery(l, () => "T2").run({ itemId: "x:1", type: "announcement", outletId: "tg-community", delivered: false });
+    expect(l.rows()).toEqual([]);
+  });
 });
