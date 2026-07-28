@@ -23,6 +23,7 @@ import {
   loadGoogleSheetConfig,
   loadTelegramConfig,
   loadTypefullyConfig,
+  loadXMaxWeighted,
 } from "../config";
 import { createUploaders, resolveTargets } from "./uploaders";
 import type { PublishResult } from "../app/PublishTranslations";
@@ -190,6 +191,7 @@ const deps: ApiDeps = {
   loadStatus,
   loadPublishState,
   loadTranslations,
+  xMaxWeighted: loadXMaxWeighted(),
 };
 
 startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist"), localPublishDir: paths.publishLocalDir });

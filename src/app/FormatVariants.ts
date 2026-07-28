@@ -2,6 +2,7 @@ import { ALL_TYPES, type ConversionType, type ContentVariant } from "../domain/c
 import { toCanonical } from "../domain/formatting/canonical";
 import { emitAll, type Destination, type EmitResult } from "../domain/formatting/emitters";
 import { DEFAULT_CHANNELS_BY_TYPE, type Channel, type ChannelRendering } from "../domain/formatting/models";
+import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { ConversionStore } from "../ports/ConversionStore";
 import type { FormattingStore } from "../ports/FormattingStore";
 
@@ -32,6 +33,7 @@ export class FormatVariants {
     private readonly conversionStore: ConversionStore,
     private readonly formattingStore: FormattingStore,
     private readonly now: () => string = () => new Date().toISOString(),
+    private readonly xMaxWeighted: number = X_MAX_WEIGHTED,
   ) {}
 
   async run(selector: FormatSelector): Promise<{ renderings: ChannelRendering[]; warnings: FormatWarning[] }> {
@@ -54,7 +56,7 @@ export class FormatVariants {
         // collapse to one line, while destinations that legitimately disagree (paste counts
         // markup, bot counts visible length) stay distinguishable by name.
         const byMessage = new Map<string, Destination[]>();
-        for (const [destination, result] of Object.entries(emitAll(text, channel)) as [Destination, EmitResult][]) {
+        for (const [destination, result] of Object.entries(emitAll(text, channel, this.xMaxWeighted)) as [Destination, EmitResult][]) {
           for (const warning of result.warnings) {
             byMessage.set(warning, [...(byMessage.get(warning) ?? []), destination]);
           }

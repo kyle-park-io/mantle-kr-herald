@@ -2,6 +2,7 @@ import type { ConversionType } from "../domain/conversion/models";
 import { toCanonical } from "../domain/formatting/canonical";
 import { DEFAULT_CHANNELS_BY_TYPE, type Channel } from "../domain/formatting/models";
 import { assembleRefinementWorksheet, type RefinementDraft } from "../domain/formatting/refinementWorksheet";
+import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { ConversionStore } from "../ports/ConversionStore";
 import type { GlossaryStore } from "../ports/GlossaryStore";
 import { selectApprovedVariants, type FormatSelector } from "./FormatVariants";
@@ -16,6 +17,7 @@ export class PrepareRefinements {
   constructor(
     private readonly conversionStore: ConversionStore,
     private readonly glossaryStore: GlossaryStore,
+    private readonly xMaxWeighted: number = X_MAX_WEIGHTED,
   ) {}
 
   async run(selector: FormatSelector): Promise<{ worksheet: string; pending: PendingRendering[] }> {
@@ -31,7 +33,7 @@ export class PrepareRefinements {
     }
 
     const glossary = await this.glossaryStore.load();
-    const worksheet = assembleRefinementWorksheet(drafts, glossary);
+    const worksheet = assembleRefinementWorksheet(drafts, glossary, this.xMaxWeighted);
     const pending = drafts.map((d) => ({ itemId: d.itemId, type: d.type, channel: d.channel }));
     return { worksheet, pending };
   }
