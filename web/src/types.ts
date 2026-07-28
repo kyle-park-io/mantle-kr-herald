@@ -2,6 +2,10 @@
 export const itemUrl = (itemId: string): string | null =>
   itemId.startsWith("x:") ? `https://x.com/i/status/${itemId.slice(2)}` : null;
 
+/** An ISO date → a compact `[YYMMDD]` prefix (the original post date); "" when absent. */
+export const datePrefix = (iso?: string): string =>
+  iso && iso.length >= 10 ? `[${iso.slice(2, 10).replace(/-/g, "")}]` : "";
+
 export interface Translation {
   itemId: string;
   source: "x" | "lark";
@@ -10,6 +14,8 @@ export interface Translation {
   status: "translated" | "approved";
   translatedAt: string;
   approvedAt?: string;
+  kind?: "post" | "article";
+  postedAt?: string; // source post date (ISO), for the [YYMMDD] prefix
 }
 export interface PublishResult {
   uploaded: number;
@@ -46,7 +52,7 @@ export interface AppStatus {
   storageMode: StorageMode;
   availableTargets: ("local" | "google" | "lark")[];
   funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
-  sync: { published: number; unsynced: number; stale: number };
+  sync: { synced: number; needsRepublish: number; unpublished: number };
 }
 
 export interface PublishStateRow {
@@ -56,6 +62,9 @@ export interface PublishStateRow {
   url?: string;
   remoteId?: string;
   fileName?: string;
+  folderUrl?: string;
+  fileUrl?: string;
+  synced?: boolean; // false = published but outdated (needs republish)
 }
 
 // Mirrors src/domain/formatting/emitters/types.ts — keep in sync.

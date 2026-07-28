@@ -107,6 +107,9 @@ export interface LarkDriveConfig {
   reviewFolderToken: string;
   approvedFolderToken: string;
   sentFolderToken?: string;
+  /** Lark workspace (tenant) origin, e.g. https://<tenant>.larksuite.com — for building
+   *  "open in Lark" folder/file links in the review dashboard. Undefined = no Lark links. */
+  workspaceUrl?: string;
 }
 
 export function loadLarkDriveConfig(): LarkDriveConfig {
@@ -126,6 +129,7 @@ export function loadLarkDriveConfig(): LarkDriveConfig {
     reviewFolderToken,
     approvedFolderToken,
     sentFolderToken: process.env.LARK_DRIVE_SENT_FOLDER_TOKEN?.trim() || undefined,
+    workspaceUrl: process.env.LARK_WORKSPACE_URL?.trim()?.replace(/\/+$/, "") || undefined,
   };
 }
 

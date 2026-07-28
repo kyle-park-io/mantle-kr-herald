@@ -23,6 +23,10 @@ import { LarkContentSource } from "../adapters/content/LarkContentSource";
 import { CompositeContentSource } from "../adapters/content/CompositeContentSource";
 import { syncSummary } from "../status/sync";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
+import { contentHash, isStale } from "../domain/publish/syncLedger";
+import type { Translation } from "../domain/translation/models";
+import { publishRowLinks, type PublishLinkConfig } from "../adapters/web/publishLinks";
+import { attachKind } from "../adapters/web/attachKind";
 
 const port = Number(process.env.PORT) || 5757;
 const translationStore = new JsonTranslationStore(paths.translationsDir);
@@ -53,10 +57,31 @@ const usableTargets = ((): ("local" | "google" | "lark")[] => {
   return targets;
 })();
 
+const linkCfg: PublishLinkConfig = {};
+if (storageMode === "cloud") {
+  try {
+    const g = loadGoogleDriveConfig();
+    linkCfg.google = { reviewFolderId: g.reviewFolderId, approvedFolderId: g.approvedFolderId };
+  } catch {
+    /* Google not configured — no Google folder links */
+  }
+  try {
+    const l = loadLarkDriveConfig();
+    if (l.workspaceUrl) {
+      linkCfg.lark = { workspaceUrl: l.workspaceUrl, reviewFolderToken: l.reviewFolderToken, approvedFolderToken: l.approvedFolderToken };
+    }
+  } catch {
+    /* Lark not configured — no Lark links */
+  }
+}
+
 const contentSource = new CompositeContentSource([
   new XContentSource(paths.xItems),
   new LarkContentSource(paths.larkItems),
 ]);
+
+/** The exact bytes an uploader would send for a translation at its current status. */
+const renderFor = (t: Translation): string => (t.status === "approved" ? renderApproved(t) : renderReview(t));
 
 const loadStatus = async (): Promise<StatusView> => {
   const [collected, translations, variants, renderings, entries] = await Promise.all([
@@ -66,11 +91,7 @@ const loadStatus = async (): Promise<StatusView> => {
     formattingStore.loadAll(),
     publishStore.listEntries(),
   ]);
-  const sync = syncSummary({
-    translations,
-    entries,
-    render: (t) => (t.status === "approved" ? renderApproved(t) : renderReview(t)),
-  });
+  const sync = syncSummary({ translations, entries, render: renderFor });
   return {
     storageMode,
     funnel: {
@@ -92,15 +113,29 @@ const publishOne = async (itemId: string, target: string): Promise<PublishResult
     publishStore,
   ).run({ itemId });
 
-const loadPublishState = async (): Promise<PublishStateRow[]> =>
-  (await publishStore.listEntries()).map((e) => ({
-    itemId: e.itemId,
-    status: e.status,
-    target: e.target,
-    url: e.url,
-    remoteId: e.remoteId,
-    fileName: e.fileName,
-  }));
+const loadTranslations = async () =>
+  attachKind(await translationStore.loadAll(), await contentSource.loadPending(new Set()));
+
+const loadPublishState = async (): Promise<PublishStateRow[]> => {
+  const [entries, translations] = await Promise.all([publishStore.listEntries(), translationStore.loadAll()]);
+  const byId = new Map(translations.map((t) => [t.itemId, t] as const));
+  return entries.map((e) => {
+    // A row is synced when it matches the item's CURRENT status and current render; a status change
+    // (review doc after approval) or an edit since upload flips it to "needs republish".
+    const t = byId.get(e.itemId);
+    const synced = t ? e.status === t.status && !isStale(e, contentHash(renderFor(t))) : undefined;
+    return {
+      itemId: e.itemId,
+      status: e.status,
+      target: e.target,
+      url: e.url,
+      remoteId: e.remoteId,
+      fileName: e.fileName,
+      synced,
+      ...publishRowLinks({ target: e.target, status: e.status, url: e.url, remoteId: e.remoteId }, linkCfg),
+    };
+  });
+};
 
 const deps: ApiDeps = {
   translationStore,
@@ -113,6 +148,7 @@ const deps: ApiDeps = {
   approveRendering: new ApproveRendering(formattingStore, undefined, buildLineage()),
   loadStatus,
   loadPublishState,
+  loadTranslations,
 };
 
 startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist"), localPublishDir: paths.publishLocalDir });

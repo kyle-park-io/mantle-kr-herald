@@ -11,11 +11,12 @@ import type { SaveRendering } from "../../app/SaveRendering";
 import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
 import { emitAll } from "../../domain/formatting/emitters";
+import type { ApiTranslation } from "./attachKind";
 
 export interface StatusView {
   storageMode: StorageMode;
   funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
-  sync: { published: number; unsynced: number; stale: number };
+  sync: { synced: number; needsRepublish: number; unpublished: number };
   availableTargets: ("local" | "google" | "lark")[];
 }
 
@@ -26,6 +27,10 @@ export interface PublishStateRow {
   url?: string;
   remoteId?: string;
   fileName?: string;
+  folderUrl?: string; // NEW — "open folder" for Google/Lark
+  fileUrl?: string; // NEW — "open file" for Google/Lark
+  /** Whether this row is up to date with the item's current status + content (else: needs republish). */
+  synced?: boolean;
 }
 
 export interface ApiResult {
@@ -44,6 +49,7 @@ export interface ApiDeps {
   approveRendering: ApproveRendering;
   loadStatus: () => Promise<StatusView>;
   loadPublishState: () => Promise<PublishStateRow[]>;
+  loadTranslations: () => Promise<ApiTranslation[]>;
 }
 
 async function findById(store: TranslationStore, id: string): Promise<Translation | undefined> {
@@ -69,7 +75,7 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
   }
 
   if (method === "GET" && segments.length === 2 && segments[1] === "translations") {
-    return { status: 200, json: await deps.translationStore.loadAll() };
+    return { status: 200, json: await deps.loadTranslations() };
   }
 
   if (segments[1] === "translations" && segments.length >= 3) {
@@ -82,13 +88,13 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
         return { status: 400, json: { error: "koreanText required" } };
       }
       if (!existing) return { status: 404, json: { error: "not found" } };
-      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText, approve: false });
+      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText, approve: false, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
 
     if (method === "POST" && segments.length === 4 && segments[3] === "approve") {
       if (!existing) return { status: 404, json: { error: "not found" } };
-      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: true });
+      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: true, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
 
@@ -101,7 +107,7 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
 
     if (method === "POST" && segments.length === 4 && segments[3] === "unapprove") {
       if (!existing) return { status: 404, json: { error: "not found" } };
-      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: false });
+      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: false, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
   }

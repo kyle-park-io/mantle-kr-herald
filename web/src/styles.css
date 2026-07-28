@@ -2,13 +2,68 @@
 @import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 
 @theme {
-  --default-font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --default-font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
+    "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+
+  /* Modern-minimal light palette — one restrained Mantle-mint accent over cool neutrals. */
+  --color-bg: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-line: #ececf0;
+  --color-line-strong: #dfe1e6;
+  --color-ink: #17181b;
+  --color-muted: #6b7280;
+  --color-faint: #a1a5ad;
+
+  --color-mint: #0ca678;
+  --color-mint-hover: #099268;
+  --color-mint-soft: #e6f6f0;
+
+  --color-amber-ink: #a45b0b;
+  --color-amber-soft: #fdf3e3;
 }
 
-/* Tailwind v4's preflight resets buttons to cursor:default; restore the
-   pointer for enabled buttons so hover shows the finger cursor. */
 @layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* Tailwind v4 preflight resets buttons to cursor:default; restore the pointer. */
   button:not(:disabled) {
     cursor: pointer;
+  }
+  /* Quiet, thin scrollbars so panels feel light. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #d3d5da transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: #d3d5da;
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* Eyebrow label above sections. */
+  .eyebrow {
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-faint);
   }
 }

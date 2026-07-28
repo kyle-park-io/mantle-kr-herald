@@ -78,13 +78,14 @@ function makeDeps(
     loadStatus: async () => ({
       storageMode: "cloud" as const,
       funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
-      sync: { published: 1, unsynced: 2, stale: 0 },
+      sync: { synced: 1, needsRepublish: 2, unpublished: 0 },
       availableTargets: ["local"],
     }),
     loadPublishState: async () => [
       { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
       { itemId: "x:2", status: "approved", target: "local", remoteId: "approved/2026-x2.md", fileName: "2026-x2.md" },
     ],
+    loadTranslations: async () => state.list,
   };
 }
 
@@ -94,6 +95,13 @@ describe("handleApi", () => {
     const res = await handleApi(d, "GET", "/api/translations", undefined);
     expect(res.status).toBe(200);
     expect((res.json as Translation[]).map((t) => t.itemId)).toEqual(["x:1", "x:2"]);
+  });
+
+  it("GET /api/translations returns whatever loadTranslations provides (with kind)", async () => {
+    const d = makeDeps([tr({ itemId: "x:1" })]);
+    d.loadTranslations = async () => [{ ...tr({ itemId: "x:1" }), kind: "article" as const }];
+    const res = await handleApi(d, "GET", "/api/translations", undefined);
+    expect((res.json as any[])[0].kind).toBe("article");
   });
 
   it("PUT edits koreanText and returns the updated (still translated) item", async () => {
@@ -193,7 +201,7 @@ describe("handleApi", () => {
     expect(res.json).toEqual({
       storageMode: "cloud",
       funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
-      sync: { published: 1, unsynced: 2, stale: 0 },
+      sync: { synced: 1, needsRepublish: 2, unpublished: 0 },
       availableTargets: ["local"],
     });
   });
@@ -249,5 +257,34 @@ describe("GET /api/config", () => {
     const deps = { ...makeDeps([]), storageMode: "local" as const };
     const res = await handleApi(deps, "GET", "/api/config", undefined);
     expect(res.json).toEqual({ storageMode: "local" });
+  });
+});
+
+describe("dashboard save preserves review annotations (isReply/refUrl)", () => {
+  function recordingDeps(over: Partial<Translation> = {}) {
+    const calls: any[] = [];
+    const d = makeDeps([tr({ itemId: "x:1", isReply: true, refUrl: "https://x.com/i/status/1", ...over })]);
+    d.saveTranslation = {
+      run: async (input: any) => { calls.push(input); return { itemId: input.itemId, promoted: false }; },
+    } as unknown as ApiDeps["saveTranslation"];
+    return { d, calls };
+  }
+
+  it("PUT edit forwards isReply/refUrl from the existing translation", async () => {
+    const { d, calls } = recordingDeps();
+    await handleApi(d, "PUT", "/api/translations/x%3A1", { koreanText: "새 번역" });
+    expect(calls[0]).toMatchObject({ koreanText: "새 번역", approve: false, isReply: true, refUrl: "https://x.com/i/status/1" });
+  });
+
+  it("POST approve forwards isReply/refUrl from the existing translation", async () => {
+    const { d, calls } = recordingDeps();
+    await handleApi(d, "POST", "/api/translations/x%3A1/approve", undefined);
+    expect(calls[0]).toMatchObject({ approve: true, isReply: true, refUrl: "https://x.com/i/status/1" });
+  });
+
+  it("POST unapprove forwards isReply/refUrl from the existing translation", async () => {
+    const { d, calls } = recordingDeps({ status: "approved", approvedAt: "a" });
+    await handleApi(d, "POST", "/api/translations/x%3A1/unapprove", undefined);
+    expect(calls[0]).toMatchObject({ approve: false, isReply: true, refUrl: "https://x.com/i/status/1" });
   });
 });
