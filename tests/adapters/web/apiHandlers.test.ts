@@ -251,3 +251,32 @@ describe("GET /api/config", () => {
     expect(res.json).toEqual({ storageMode: "local" });
   });
 });
+
+describe("dashboard save preserves review annotations (isReply/refUrl)", () => {
+  function recordingDeps(over: Partial<Translation> = {}) {
+    const calls: any[] = [];
+    const d = makeDeps([tr({ itemId: "x:1", isReply: true, refUrl: "https://x.com/i/status/1", ...over })]);
+    d.saveTranslation = {
+      run: async (input: any) => { calls.push(input); return { itemId: input.itemId, promoted: false }; },
+    } as unknown as ApiDeps["saveTranslation"];
+    return { d, calls };
+  }
+
+  it("PUT edit forwards isReply/refUrl from the existing translation", async () => {
+    const { d, calls } = recordingDeps();
+    await handleApi(d, "PUT", "/api/translations/x%3A1", { koreanText: "새 번역" });
+    expect(calls[0]).toMatchObject({ koreanText: "새 번역", approve: false, isReply: true, refUrl: "https://x.com/i/status/1" });
+  });
+
+  it("POST approve forwards isReply/refUrl from the existing translation", async () => {
+    const { d, calls } = recordingDeps();
+    await handleApi(d, "POST", "/api/translations/x%3A1/approve", undefined);
+    expect(calls[0]).toMatchObject({ approve: true, isReply: true, refUrl: "https://x.com/i/status/1" });
+  });
+
+  it("POST unapprove forwards isReply/refUrl from the existing translation", async () => {
+    const { d, calls } = recordingDeps({ status: "approved", approvedAt: "a" });
+    await handleApi(d, "POST", "/api/translations/x%3A1/unapprove", undefined);
+    expect(calls[0]).toMatchObject({ approve: false, isReply: true, refUrl: "https://x.com/i/status/1" });
+  });
+});

@@ -82,13 +82,13 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
         return { status: 400, json: { error: "koreanText required" } };
       }
       if (!existing) return { status: 404, json: { error: "not found" } };
-      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText, approve: false });
+      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText, approve: false, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
 
     if (method === "POST" && segments.length === 4 && segments[3] === "approve") {
       if (!existing) return { status: 404, json: { error: "not found" } };
-      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: true });
+      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: true, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
 
@@ -101,7 +101,7 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
 
     if (method === "POST" && segments.length === 4 && segments[3] === "unapprove") {
       if (!existing) return { status: 404, json: { error: "not found" } };
-      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: false });
+      await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: false, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
   }
