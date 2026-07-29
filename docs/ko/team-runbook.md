@@ -70,11 +70,14 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
     `GDRIVE_SENT_FOLDER_ID`/`LARK_DRIVE_SENT_FOLDER_TOKEN` 설정 시)에 best-effort로
     아카이브된다 — 미설정이어도 발송은 그대로 진행됩니다.
     **X 발행에는 월간 쿼터가 있습니다.** 대시보드 2차 검수(발송판)에 이번 달 남은 발행 건수가 배너로
-    뜨고(`X 발행 잔여 N건 / 15건 · MM/DD 리셋`), 이 배치가 필요로 하는 건수가 그보다 많으면 X 발송은
-    시도조차 되지 않습니다 — 화면이나 CLI 요약에 `Typefully 월간 발행 쿼터가 부족합니다 — 필요 N건,
-    잔여 M건 (MM/DD 리셋)`이 뜨면 **아무것도 게시되지 않았다**는 뜻이지 일부 실패가 아닙니다. 같은
-    실행의 텔레그램 발송에는 영향이 없고, 리셋일(매월 1일 KST) 이후 그대로 다시 실행하면 나갑니다.
-    자세한 내용은 [`setup/channels.md`](setup/channels.md) Y-5 참고.
+    뜨고(`X 발행 잔여 N건 / 15건 · MM/DD 리셋`), 카드의 발송 버튼으로 개별 발송할 때 필요한 건수가
+    남은 쿼터보다 많으면 그 카드에 `Typefully 월간 발행 쿼터가 부족합니다 — 필요 N건, 잔여 M건
+    (YYYY-MM-DD 리셋)` 오류가 뜹니다 — **아무것도 게시되지 않았다**는 뜻이지 일부 실패가 아닙니다.
+    이 명령(`pnpm send:channels`)으로 배치 발송할 때는 같은 상황에서 이 한국어 메시지 대신 CLI
+    요약에 영어 경고(`⚠ X was not sent: this batch needs N publish(es) and the account has M left
+    until <리셋 시각>.`)가 뜨는데, 표시 언어와 화면만 다를 뿐 X가 전량 보류된다는 결과는 같습니다.
+    같은 실행의 텔레그램 발송에는 영향이 없고, 리셋일(매월 1일 KST) 이후 그대로 다시 실행하면
+    나갑니다. 자세한 내용은 [`setup/channels.md`](setup/channels.md) Y-5 참고.
     **X 아티클은 이 명령으로 나가지 않습니다.** 아티클(`@0xMantleKR 아티클`)은 채널 렌더링이 아니라
     승인된 번역 본문에서 곧바로 나가고 원장도 따로 쓰기 때문에, 운영자가
     `pnpm send:x-article [--ids <id>[,<id>]]`를 별도로 실행해야 합니다. 대시보드 발송판에도
