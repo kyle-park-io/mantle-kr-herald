@@ -13,7 +13,18 @@ export interface LineageEntry {
   // "forked" entry — "type/outletId" ("announcement/tg-blockchain"), the same shape one axis over.
   variant?: string;
   content: string; // the meaningful text produced at this stage
-  status?: string; // the record's status at this point
+  /**
+   * Normally the record's own status at this point ("translated", "rendered", "approved"). One
+   * value is an *event* rather than a status: **`"reverted"`** means this entry records a removal
+   * and its `content` is the text that was discarded — the record itself no longer exists.
+   *
+   * That string is a contract between `SaveOutletOverride` (the only producer today) and
+   * `render.ts`, which branches on it to print the discarded text in full instead of a diff. It has
+   * to be an event, because a reverted fork's text is normally byte-identical to the entry before
+   * it: carried as the record's status, the one moment a text was destroyed would render as
+   * "(내용 동일)". Any future producer of a removal should use the same string.
+   */
+  status?: string;
   sourceText?: string; // only on a "translated" entry: the English 원문
   at: string; // ISO timestamp
 }

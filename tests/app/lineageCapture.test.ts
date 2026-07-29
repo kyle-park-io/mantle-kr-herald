@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { SaveTranslation } from "../../src/app/SaveTranslation";
 import { SaveConversion } from "../../src/app/SaveConversion";
 import { SaveRendering } from "../../src/app/SaveRendering";
@@ -166,19 +166,47 @@ describe("lineage capture — outlet forks", () => {
     expect(l.appended).toHaveLength(0);
   });
 
-  it("a throwing lineage store leaves a revert's outcome and the override store unchanged", async () => {
+  /**
+   * The revert is the one capture site that is NOT best-effort, and this is the assertion that says
+   * so. Swallowing here would destroy an unregenerable text on a full disk and report success, with
+   * the only trace a `console.warn` on a server console nobody reads. Failing loudly costs the
+   * operator a retry; swallowing costs them the text.
+   */
+  it("a lineage append failure aborts the revert — the fork survives instead of vanishing", async () => {
     const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [] };
-    const s = fakeOverrideStore([forked()]);
-    await expect(new SaveOutletOverride(s, () => "T", throwing).run({ ...fork, revert: true })).resolves.toBeUndefined();
-    expect(s.rows()).toEqual([]);
+    const s = fakeOverrideStore([forked({ text: "지켜져야 할 글" })]);
+    await expect(new SaveOutletOverride(s, () => "T", throwing).run({ ...fork, revert: true })).rejects.toThrow(/disk full/);
+    expect(s.rows()).toEqual([forked({ text: "지켜져야 할 글" })]); // still there — nothing was lost
   });
 
+  it("an unreadable override store aborts the revert rather than deleting a text it could not copy", async () => {
+    const l = fakeLineage();
+    let removed: string | undefined;
+    const unreadable = {
+      loadAll: async (): Promise<OutletOverride[]> => { throw new Error("EIO"); },
+      upsert: async () => {},
+      remove: async (k: string) => { removed = k; },
+    };
+    await expect(new SaveOutletOverride(unreadable, () => "T", l.store).run({ ...fork, revert: true })).rejects.toThrow(/EIO/);
+    expect(removed).toBeUndefined();
+    expect(l.appended).toHaveLength(0);
+  });
+
+  /** The other two sites stay best-effort: the override survives them, so a lost append costs only history. */
   it("a throwing lineage store leaves a text save's outcome and the override store unchanged", async () => {
     const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [] };
     const s = fakeOverrideStore();
     const saved = await new SaveOutletOverride(s, () => "T", throwing).run({ ...fork, text: "이 방 전용" });
     expect(saved).toMatchObject({ text: "이 방 전용", status: "rendered", createdAt: "T" });
     expect(s.rows()).toHaveLength(1);
+  });
+
+  it("a throwing lineage store leaves an approve's outcome and the override store unchanged", async () => {
+    const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [] };
+    const s = fakeOverrideStore([forked()]);
+    const res = await new SaveOutletOverride(s, () => "T2", throwing).run({ ...fork, approve: true });
+    expect(res).toMatchObject({ status: "approved", approvedAt: "T2" });
+    expect(s.rows()[0]).toMatchObject({ status: "approved" });
   });
 
   it("no lineage store injected = the override store is never read before a revert", async () => {
@@ -191,20 +219,19 @@ describe("lineage capture — outlet forks", () => {
   });
 
   /**
-   * The read-before-revert is new work on a branch that previously read nothing, so it has to be
-   * behind the same guard as the append: a store that cannot be read must still be revertible,
-   * exactly as it was before this capture existed.
+   * With no lineage wired there is nothing to write and nothing to warn about. Without the guard in
+   * `writeFork` the missing store surfaces as a TypeError that `appendFork` catches and logs — a
+   * silent behaviour change that no outcome assertion can see, so the log is what pins it.
    */
-  it("a revert still succeeds when the override store cannot be read", async () => {
-    const l = fakeLineage();
-    let removed: string | undefined;
-    const unreadable = {
-      loadAll: async (): Promise<OutletOverride[]> => { throw new Error("EIO"); },
-      upsert: async () => {},
-      remove: async (k: string) => { removed = k; },
-    };
-    await expect(new SaveOutletOverride(unreadable, () => "T", l.store).run({ ...fork, revert: true })).resolves.toBeUndefined();
-    expect(removed).toBe("x:1:announcement:tg-blockchain");
-    expect(l.appended).toHaveLength(0);
+  it("logs nothing when no lineage store is wired", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const s = fakeOverrideStore();
+      await new SaveOutletOverride(s, () => "T").run({ ...fork, text: "이 방 전용" });
+      await new SaveOutletOverride(s, () => "T2").run({ ...fork, approve: true });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

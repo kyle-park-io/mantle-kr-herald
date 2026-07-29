@@ -39,13 +39,20 @@ export class SaveOutletOverride {
       /**
        * The one moment a fork can vanish. This branch used to call `remove` having read nothing, so
        * `그룹 글로 되돌리기` destroyed the only copy of the text from a single click, with no
-       * confirmation and no error — the read below exists entirely to keep that copy.
+       * confirmation and no error — the capture below exists entirely to keep that copy.
        *
-       * It runs *before* the remove, which is where this deviates from the other capture sites
-       * (they append after their upsert). Everywhere else a swallowed append costs only history,
-       * because the text survives in the store either way; here it would cost the text itself. The
-       * trade is an entry describing a revert that a failing `remove` then did not perform —
-       * readable and harmless next to losing the copy.
+       * **This is the one capture site in the codebase that is not best-effort, and the difference
+       * is deliberate — do not "fix" the inconsistency.** Best-effort exists so that lineage cannot
+       * break a save; it is the right rule everywhere the record survives the save, because a lost
+       * append there costs only history. Here the record does *not* survive: a swallowed failure
+       * followed by an unconditional `remove` would destroy a text that cannot be regenerated,
+       * leaving a `console.warn` on a server console nobody is reading while the board reports
+       * success. So a failure to record propagates and `remove` never runs — `apiHandlers`' PUT
+       * branch turns the throw into a readable 400, and the fork is still there. A revert the
+       * operator can retry is worth far more than a fork nobody can get back.
+       *
+       * Running before the remove also makes the pair crash-safe in the write-ahead sense: a crash
+       * between the two loses nothing, because the text is recorded first and still in the store.
        */
       await this.captureRevert(input, key);
       await this.store.remove(key);
@@ -89,30 +96,39 @@ export class SaveOutletOverride {
   }
 
   /**
-   * Best-effort, exactly like the other capture sites: an absent store is a no-op and a failure is
-   * swallowed, so lineage can never change a save's outcome or throw.
+   * Writes one `forked` entry. An absent store is a no-op; a failure **propagates**, leaving the
+   * caller to decide whether it can be lived with. Only the revert path cannot.
+   */
+  private async writeFork(input: SaveOutletOverrideInput, content: string, status: string, at: string): Promise<void> {
+    if (!this.lineage) return;
+    // `<type>/<outletId>` — the group's `<type>/<channel>` shape, one axis over. A room's history
+    // then diffs against its own previous version, not against the group it diverged from.
+    await this.lineage.append({ itemId: input.itemId, stage: "forked", variant: `${input.type}/${input.outletId}`, content, status, at });
+  }
+
+  /**
+   * Best-effort, exactly like the other capture sites (`SaveRendering`, `ApproveRendering`): the
+   * failure is swallowed, so lineage can never change a save's outcome or throw. Correct here
+   * because the override survives either way — a lost append costs history, not text. The revert
+   * path deliberately does **not** use this; see the comment in `run`.
    */
   private async appendFork(input: SaveOutletOverrideInput, content: string, status: string, at: string): Promise<void> {
-    if (!this.lineage) return;
     try {
-      // `<type>/<outletId>` — the group's `<type>/<channel>` shape, one axis over. A room's history
-      // then diffs against its own previous version, not against the group it diverged from.
-      await this.lineage.append({ itemId: input.itemId, stage: "forked", variant: `${input.type}/${input.outletId}`, content, status, at });
+      await this.writeFork(input, content, status, at);
     } catch (err) {
       console.warn(`[lineage] append failed for ${input.itemId}: ${(err as Error).message}`);
     }
   }
 
-  /** Reads the fork about to be discarded. Wrapped like the append: before this, revert read nothing at all, so a failing read must not turn a working revert into an error. */
+  /**
+   * Reads the fork about to be discarded and records it. Nothing here is swallowed: a store that
+   * cannot be read and a lineage that cannot be written both mean "no copy exists", and the caller
+   * must not go on to delete the only one. The real `JsonOutletOverrideStore.remove` re-reads the
+   * same file anyway, so a read that throws was never going to produce a successful revert.
+   */
   private async captureRevert(input: SaveOutletOverrideInput, key: string): Promise<void> {
     if (!this.lineage) return;
-    let discarded: OutletOverride | undefined;
-    try {
-      discarded = (await this.store.loadAll()).find((o) => overrideKey(o) === key);
-    } catch (err) {
-      console.warn(`[lineage] read before revert failed for ${input.itemId}: ${(err as Error).message}`);
-      return;
-    }
+    const discarded = (await this.store.loadAll()).find((o) => overrideKey(o) === key);
     if (!discarded) return; // The room was never forked: nothing is removed, so nothing is recorded.
     /**
      * `"reverted"`, not the record's own status. The discarded text is usually identical to the last
@@ -120,6 +136,6 @@ export class SaveOutletOverride {
      * would make the single entry that matters most read as a no-op. This makes the viewer's own
      * `상태:` line say what happened, without touching the viewer.
      */
-    await this.appendFork(input, discarded.text, "reverted", this.now());
+    await this.writeFork(input, discarded.text, "reverted", this.now());
   }
 }

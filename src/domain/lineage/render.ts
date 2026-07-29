@@ -22,7 +22,9 @@ export function renderLineage(entries: LineageEntry[]): string {
     out.push(`── ${e.at} · ${e.stage}${variant}${status}`);
     if (e.stage === "translated" && !prev && e.sourceText) out.push("원문:", e.sourceText);
     /**
-     * A `reverted` entry records a *removal*, so its content is the text that was thrown away — and
+     * A `reverted` entry records a *removal* (the convention is documented on `LineageEntry.status`,
+     * and this branch is the half of it that lives in the viewer), so its content is the text that
+     * was thrown away — and
      * that text is normally byte-identical to the entry before it, which a diff renders as
      * `(내용 동일)`: the one moment a text was destroyed, shown as a no-op. Print it in full instead.
      * Recovering a reverted room's copy is meant to be a copy-paste out of this output, and after a
