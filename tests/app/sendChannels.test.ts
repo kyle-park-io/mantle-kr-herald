@@ -429,9 +429,9 @@ describe("SendChannels — publishing quota gate", () => {
   });
 
   /** One X rendering, approved for the one auto X room (x-post), plus the headroom reader as the 12th argument. */
-  function sendChannelsWithQuota(headroom: () => Promise<Headroom>, opts: { ledgerSeed?: DeliveryEntry[] } = {}) {
+  function sendChannelsWithQuota(headroom: () => Promise<Headroom>) {
     const store = fakeStore([rendering({ itemId: "x:1", type: "x", channel: "x", status: "approved" })]);
-    const { ledger } = fakeLedger(opts.ledgerSeed ?? []);
+    const { ledger } = fakeLedger();
     return new SendChannels(
       store, { telegram: undefined, x: okSender("x") }, ledger, fakeTranslations(),
       undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS, undefined, headroom,
