@@ -14,7 +14,8 @@ import { overrideKey } from "../../src/domain/outlet/override";
 import type { OutletOverrideStore } from "../../src/ports/OutletOverrideStore";
 import type { TranslationStore } from "../../src/ports/TranslationStore";
 import type { Translation } from "../../src/domain/translation/models";
-import type { PublishingQuota } from "../../src/adapters/send/TypefullyQuota";
+import { makeReadHeadroom } from "../../src/cli/publishHeadroom";
+import type { Headroom } from "../../src/domain/send/headroom";
 
 const rendering = (o: Partial<ChannelRendering>): ChannelRendering => ({
   itemId: "x:1", type: "announcement", channel: "telegram", text: "**hi** everyone", refined: false,
@@ -422,20 +423,23 @@ describe("SendChannels", () => {
  * account at its plan's ceiling is behaving as sold, not broken).
  */
 describe("SendChannels — publishing quota gate", () => {
-  const quotaOf = (remaining: number) => async () => ({ used: 15 - remaining, remaining, resetsAt: "2026-08-01T00:00:00+09:00" });
+  /** A fully-shaped Headroom for tests that don't care about in-flight rows. */
+  const headroomOf = (remaining: number): Headroom => ({
+    used: 15 - remaining, remaining, inFlight: 0, available: remaining, resetsAt: "2026-08-01T00:00:00+09:00",
+  });
 
-  /** One X rendering, approved for the one auto X room (x-post), plus the quota reader as the 12th argument. */
-  function sendChannelsWithQuota(quota: () => Promise<PublishingQuota>, opts: { ledgerSeed?: DeliveryEntry[] } = {}) {
+  /** One X rendering, approved for the one auto X room (x-post), plus the headroom reader as the 12th argument. */
+  function sendChannelsWithQuota(headroom: () => Promise<Headroom>) {
     const store = fakeStore([rendering({ itemId: "x:1", type: "x", channel: "x", status: "approved" })]);
-    const { ledger } = fakeLedger(opts.ledgerSeed ?? []);
+    const { ledger } = fakeLedger();
     return new SendChannels(
       store, { telegram: undefined, x: okSender("x") }, ledger, fakeTranslations(),
-      undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS, undefined, quota,
+      undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS, undefined, headroom,
     ).run({ targets: ["x"] });
   }
 
   /** One X rendering and one Telegram rendering, with only tg-community configured so a telegram send counts as 1. */
-  function sendChannelsWithBothChannels(quota: () => Promise<PublishingQuota>) {
+  function sendChannelsWithBothChannels(headroom: () => Promise<Headroom>) {
     const store = fakeStore([
       rendering({ itemId: "x:1", type: "x", channel: "x", status: "approved" }),
       rendering({ itemId: "x:2", channel: "telegram", status: "approved" }),
@@ -443,22 +447,22 @@ describe("SendChannels — publishing quota gate", () => {
     const { ledger } = fakeLedger();
     return new SendChannels(
       store, { telegram: okSender("telegram"), x: okSender("x") }, ledger, fakeTranslations(),
-      undefined, undefined, undefined, undefined, outletsForChannel, { "tg-community": "-100111" }, undefined, quota,
+      undefined, undefined, undefined, undefined, outletsForChannel, { "tg-community": "-100111" }, undefined, headroom,
     ).run({ targets: ["telegram", "x"] });
   }
 
   /** No X rendering at all, so the batch never needs an X send and the gate must stay silent. */
-  function sendChannelsTelegramOnly(quota: () => Promise<PublishingQuota>) {
+  function sendChannelsTelegramOnly(headroom: () => Promise<Headroom>) {
     const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", status: "approved" })]);
     const { ledger } = fakeLedger();
     return new SendChannels(
       store, { telegram: okSender("telegram"), x: undefined }, ledger, fakeTranslations(),
-      undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS, undefined, quota,
+      undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS, undefined, headroom,
     ).run({ targets: ["telegram"] });
   }
 
   it("blocks every X room when the batch needs more than the quota allows", async () => {
-    const result = await sendChannelsWithQuota(quotaOf(0));
+    const result = await sendChannelsWithQuota(async () => headroomOf(0));
     expect(result.sent).toBe(0);
     // A quota refusal is an account state, not a fault — `failed` must stay clean.
     expect(result.failed).toBe(0);
@@ -467,7 +471,15 @@ describe("SendChannels — publishing quota gate", () => {
   });
 
   it("sends normally when the quota covers the batch", async () => {
-    const result = await sendChannelsWithQuota(quotaOf(6));
+    const result = await sendChannelsWithQuota(async () => headroomOf(6));
+    expect(result.sent).toBe(1);
+    expect(result.quotaBlocked).toBeUndefined();
+  });
+
+  // The gate compares `needed > available`, not `>=` — a batch that exactly exhausts the remaining
+  // headroom must still send. This run needs exactly 1 (one X rendering, one auto X room).
+  it("sends when the batch needs exactly the headroom available (boundary)", async () => {
+    const result = await sendChannelsWithQuota(async () => headroomOf(1));
     expect(result.sent).toBe(1);
     expect(result.quotaBlocked).toBeUndefined();
   });
@@ -476,17 +488,28 @@ describe("SendChannels — publishing quota gate", () => {
    * A draft created two minutes ago has not published yet, so it is in neither `used` nor a lower
    * `remaining`. Without this term two runs inside the scheduling window each see the same headroom
    * and together overshoot the account's monthly ceiling.
+   *
+   * Wired through the real `makeReadHeadroom` (not a hand-computed `available`) so this proves the
+   * in-flight arithmetic through the same reader production uses — the gate itself no longer computes
+   * `inFlight` at all, so a hand-rolled `Headroom` here would prove nothing about that arithmetic.
    */
   it("counts rows still awaiting publish against the remaining quota", async () => {
-    const result = await sendChannelsWithQuota(quotaOf(1), {
-      ledgerSeed: [sentEntry({ itemId: "x:9", outletId: "x-post", postId: "10104901" })],
+    const { ledger } = fakeLedger([sentEntry({ itemId: "x:9", outletId: "x-post", postId: "10104901" })]);
+    const headroom = makeReadHeadroom(ledger, { loadAll: async () => [] }, {
+      readQuota: async () => ({ used: 14, remaining: 1, resetsAt: "2026-08-01T00:00:00+09:00" }),
+      loadConfig: () => ({ apiKey: "K", socialSetId: "42" }),
     });
+    const store = fakeStore([rendering({ itemId: "x:1", type: "x", channel: "x", status: "approved" })]);
+    const result = await new SendChannels(
+      store, { telegram: undefined, x: okSender("x") }, ledger, fakeTranslations(),
+      undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS, undefined, headroom,
+    ).run({ targets: ["x"] });
     expect(result.sent).toBe(0);
     expect(result.quotaBlocked).toEqual({ needed: 1, available: 0, resetsAt: "2026-08-01T00:00:00+09:00" });
   });
 
   it("leaves telegram rooms alone when X is over quota", async () => {
-    const result = await sendChannelsWithBothChannels(quotaOf(0));
+    const result = await sendChannelsWithBothChannels(async () => headroomOf(0));
     expect(result.quotaBlocked).toBeDefined();
     expect(result.sent).toBe(1); // the telegram room
   });
@@ -500,7 +523,7 @@ describe("SendChannels — publishing quota gate", () => {
 
   it("never calls the quota reader when the batch has no X rooms", async () => {
     let called = 0;
-    await sendChannelsTelegramOnly(async () => { called += 1; return { used: 0, remaining: 15, resetsAt: "" }; });
+    await sendChannelsTelegramOnly(async () => { called += 1; return headroomOf(15); });
     expect(called).toBe(0);
   });
 });

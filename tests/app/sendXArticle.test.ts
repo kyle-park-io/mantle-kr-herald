@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { SendXArticle } from "../../src/app/SendXArticle";
 import type { Translation } from "../../src/domain/translation/models";
+import type { Headroom } from "../../src/domain/send/headroom";
 
 const tr = (over: Partial<Translation> = {}): Translation =>
   ({ itemId: "x:1", source: "x", sourceText: "s", koreanText: "# 제목\n\n![](https://img/a.jpg)", status: "approved", translatedAt: "t", ...over });
@@ -73,5 +74,59 @@ describe("SendXArticle", () => {
     const res = await new SendXArticle(d.translationStore as any, d.articleMeta, d.media, d.sender, d.ledger).run({ ids: new Set(["2"]) });
     expect(res.sent).toBe(1);
     expect(sent).toHaveLength(1);
+  });
+});
+
+const headroomOf = (available: number) => async () => ({ remaining: available, used: 15 - available, inFlight: 0, available, resetsAt: "2026-08-01T00:00:00+09:00" });
+
+function runWith(headroom: (() => Promise<Headroom>) | undefined, opts: { items: number; alreadySent?: string[] }) {
+  const rows = Array.from({ length: opts.items }, (_, i) => tr({ itemId: `x:${i + 1}` }));
+  const { d, ledgerKeys } = deps({ rows, articleMeta: async () => ({ isArticle: true }) });
+  for (const id of opts.alreadySent ?? []) ledgerKeys.add(id);
+  return new SendXArticle(d.translationStore as any, d.articleMeta, d.media, d.sender, d.ledger, undefined, headroom).run({});
+}
+
+describe("SendXArticle — publishing quota gate", () => {
+  it("sends nothing when the run needs more than the headroom allows", async () => {
+    // two approved article items, headroom 1
+    const result = await runWith(headroomOf(1), { items: 2 });
+    expect(result.sent).toBe(0);
+    // A refusal is an account state, not a fault.
+    expect(result.failed).toBe(0);
+    expect(result.quotaBlocked).toEqual({ needed: 2, available: 1, resetsAt: "2026-08-01T00:00:00+09:00" });
+  });
+
+  it("sends normally when the headroom covers the run", async () => {
+    const result = await runWith(headroomOf(6), { items: 2 });
+    expect(result.sent).toBe(2);
+    expect(result.quotaBlocked).toBeUndefined();
+  });
+
+  // The gate compares `needed > available`, not `>=` — a run that exactly exhausts the remaining
+  // headroom must still send.
+  it("sends when the run needs exactly the headroom available (boundary)", async () => {
+    const result = await runWith(headroomOf(2), { items: 2 });
+    expect(result.sent).toBe(2);
+    expect(result.quotaBlocked).toBeUndefined();
+  });
+
+  // Counting must exclude what would be skipped anyway, or the gate refuses runs that would have sent nothing.
+  it("counts only the items this run would actually send", async () => {
+    const result = await runWith(headroomOf(1), { items: 2, alreadySent: ["x:1"] });
+    expect(result.sent).toBe(1);
+    expect(result.quotaBlocked).toBeUndefined();
+  });
+
+  it("never calls the reader when the run has no articles to send", async () => {
+    let called = 0;
+    await runWith(async () => { called += 1; return headroomOf(6)(); }, { items: 0 });
+    expect(called).toBe(0);
+  });
+
+  // A monitoring call must not become a new way for delivery to fail.
+  it("sends anyway when the reader throws", async () => {
+    const result = await runWith(async () => { throw new Error("network down"); }, { items: 1 });
+    expect(result.sent).toBe(1);
+    expect(result.quotaBlocked).toBeUndefined();
   });
 });

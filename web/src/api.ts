@@ -1,6 +1,6 @@
 import type {
   Translation, PublishResult, Rendering, ConversionType, Channel, AppStatus, PublishStateRow, Emissions,
-  BoardView, BoardReply, SendReply, ConvertPrepareReply, FormatReply, QuotaView,
+  BoardView, BoardReply, SendReply, ConvertPrepareReply, FormatReply, HeadroomView,
 } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
@@ -82,13 +82,13 @@ export const api = {
   publishState: () => fetch("/api/publish/state").then((r) => json<PublishStateRow[]>(r)),
 
   /**
-   * The account-wide Typefully publishing quota, for the board banner. Always resolves — the
-   * server answers 200 either way, since an unreadable quota is information for the banner, not a
-   * client error — so this never throws; a missing `quota` means "show nothing".
+   * How much Typefully publishing headroom is left, for the board banner. Always resolves — the
+   * server answers 200 either way, since an unreadable headroom is information for the banner, not a
+   * client error — so this never throws; a missing `headroom` means "show nothing".
    */
-  typefullyQuota: async (): Promise<QuotaView> => {
+  typefullyQuota: async (): Promise<HeadroomView> => {
     const res = await fetch("/api/typefully/quota");
-    return (await res.json().catch(() => ({}))) as QuotaView;
+    return (await res.json().catch(() => ({}))) as HeadroomView;
   },
 
   /** Ask Typefully whether the scheduled X drafts have published, and pull their real urls in. */

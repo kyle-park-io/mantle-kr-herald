@@ -26,3 +26,17 @@ export function awaitingPublish<T extends { outletId: string; status: string; ur
     !!row.postId
   );
 }
+
+/**
+ * An article ledger row holds a scheduled Typefully draft id and no `x.com` url: it is still waiting
+ * to be published.
+ *
+ * Used by `ReconcilePublished` (to fetch and store the published url) and the headroom count
+ * (to estimate how many articles are in flight).
+ */
+/** A type predicate, so a caller that reconciles the row does not have to re-assert its `postId`. */
+export function awaitingArticlePublish<T extends { url?: string; postId?: string }>(
+  row: T,
+): row is T & { postId: string } {
+  return !isXUrl(row.url) && !!row.postId;
+}

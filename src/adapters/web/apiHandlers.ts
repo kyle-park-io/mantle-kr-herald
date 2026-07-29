@@ -18,7 +18,7 @@ import type { SaveOutletOverride } from "../../app/SaveOutletOverride";
 import type { MarkDelivery } from "../../app/MarkDelivery";
 import type { PrepareConversionRun } from "../../app/PrepareConversionRun";
 import type { FormatVariants } from "../../app/FormatVariants";
-import type { PublishingQuota } from "../send/TypefullyQuota";
+import type { HeadroomView } from "../../domain/send/headroom";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -79,12 +79,14 @@ export interface ApiDeps {
   /** Pure code — unlike conversion, the dashboard can run this one itself. */
   formatVariants: FormatVariants;
   /**
-   * The Typefully publishing quota for the banner, plus `inFlight` — rooms already sent to but not
-   * yet confirmed published, the same count the send gate (`SendChannels`) subtracts from
-   * `quota.remaining`. The banner needs both so it can show the number the gate actually enforces
-   * rather than the raw account total. `error` when the quota itself could not be read.
+   * How much Typefully publishing headroom is left, for the banner — the same reader
+   * (`publishHeadroom.ts`) the send gate (`SendChannels`) reads, so the banner and the gate can never
+   * use different arithmetic to compute it. The banner's number can still lag the gate's by up to a
+   * minute after an out-of-band publish: the banner's read is cached so it can poll cheaply, the
+   * gate's is not. `error` when the headroom itself could not be read; the name `loadQuota` and the
+   * always-200 `{ …, error? }` contract stay as they were, only the payload widens.
    */
-  loadQuota: () => Promise<{ quota?: PublishingQuota; inFlight?: number; error?: string }>;
+  loadQuota: () => Promise<HeadroomView>;
 }
 
 /** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */

@@ -4,10 +4,12 @@ import type { DeliveryEntry } from "../../domain/delivery/models";
 import { deliveryKey, migrateLegacyEntry } from "../../domain/delivery/models";
 import type { DeliveryLedger } from "../../ports/DeliveryLedger";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
+import { createSerializer } from "../../shared/store/serialWrites";
 
 export class JsonDeliveryLedger implements DeliveryLedger {
   private readonly path: string;
   private readonly legacyPath: string;
+  private readonly serial = createSerializer();
   constructor(private readonly dir: string) {
     this.path = join(dir, "deliveries.json");
     this.legacyPath = join(dir, "channels.json");
@@ -35,22 +37,6 @@ export class JsonDeliveryLedger implements DeliveryLedger {
 
   async loadKeys(): Promise<Set<string>> {
     return new Set((await this.loadAll()).map(deliveryKey));
-  }
-
-  private queue: Promise<void> = Promise.resolve();
-  /**
-   * Serializes writes on this instance. `writeJsonFileAtomic` makes each write all-or-nothing, but
-   * add/remove are read-modify-write: two overlapping calls both read the same file and the second
-   * rename silently discards the first one's row. The dashboard runs a reconcile pass every two
-   * minutes against the same instance the send path uses, so that overlap is now routine — and a
-   * dropped `sent` row means a live scheduled post the ledger cannot see, which the next run re-sends.
-   */
-  private serial<T>(fn: () => Promise<T>): Promise<T> {
-    // The second `fn` is deliberate: a rejected predecessor must not prevent the next write from
-    // running, or one failed write would wedge every write on this instance after it.
-    const next = this.queue.then(fn, fn);
-    this.queue = next.then(() => {}, () => {});
-    return next;
   }
 
   async add(entry: DeliveryEntry): Promise<void> {

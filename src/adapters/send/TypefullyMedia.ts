@@ -1,4 +1,4 @@
-import { createTypefullyFetch, type TypefullyFetch } from "./typefullyFetch";
+import { createTypefullyFetch, MEDIA_TIMEOUT_MS, type TypefullyFetch } from "./typefullyFetch";
 
 const API = "https://api.typefully.com/v2";
 const POLL_ATTEMPTS = 10;
@@ -21,7 +21,10 @@ export class TypefullyMedia {
   }
 
   async upload(url: string): Promise<string> {
-    const dl = await this.http(url);
+    // Source download and S3 PUT move real bytes over arbitrary hosts, so they get the long
+    // budget. media/upload and the status poll below are small JSON calls to Typefully and stay
+    // on the API default — a hung poll must not tie up the retry cycle for minutes.
+    const dl = await this.http(url, undefined, { timeoutMs: MEDIA_TIMEOUT_MS });
     if (!dl.ok) throw new Error(`Typefully media download failed: HTTP ${dl.status} for ${url}`);
     const bytes = await dl.arrayBuffer();
     const fileName = url.split("/").pop()?.split("?")[0] || "media.jpg";
@@ -34,7 +37,7 @@ export class TypefullyMedia {
     if (!up.ok) throw new Error(`Typefully media/upload failed: HTTP ${up.status}`);
     const { media_id, upload_url } = (await up.json()) as { media_id: string; upload_url: string };
 
-    const put = await this.http(upload_url, { method: "PUT", body: bytes });
+    const put = await this.http(upload_url, { method: "PUT", body: bytes }, { timeoutMs: MEDIA_TIMEOUT_MS });
     if (!put.ok) throw new Error(`Typefully media S3 upload failed: HTTP ${put.status}`);
 
     for (let i = 0; i < POLL_ATTEMPTS; i++) {

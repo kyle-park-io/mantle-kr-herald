@@ -632,19 +632,19 @@ describe("POST /api/items/:id/format", () => {
 });
 
 describe("GET /api/typefully/quota", () => {
-  const QUOTA = { used: 9, remaining: 6, resetsAt: "2026-08-01T00:00:00+09:00" };
+  const HEADROOM = { used: 9, remaining: 6, inFlight: 1, available: 5, resetsAt: "2026-08-01T00:00:00+09:00" };
 
-  it("returns the quota", async () => {
+  it("returns the headroom", async () => {
     const d = makeDeps([]);
-    d.loadQuota = async () => ({ quota: QUOTA });
+    d.loadQuota = async () => ({ headroom: HEADROOM });
     const res = await handleApi(d, "GET", "/api/typefully/quota", undefined);
     expect(res.status).toBe(200);
-    expect(res.json).toEqual({ quota: QUOTA });
+    expect(res.json).toEqual({ headroom: HEADROOM });
   });
 
   // The banner must be able to tell "unknown" from "exhausted" — rendering an error as 0 would
   // paint a healthy account as blocked.
-  it("returns the error rather than a zero quota", async () => {
+  it("returns the error rather than a zero headroom", async () => {
     const d = makeDeps([]);
     d.loadQuota = async () => ({ error: "HTTP 401" });
     const res = await handleApi(d, "GET", "/api/typefully/quota", undefined);
