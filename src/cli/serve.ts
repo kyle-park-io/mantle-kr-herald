@@ -33,6 +33,7 @@ import { deliveredByChannelSender, outletById, outletsForChannel } from "../doma
 import { createSenders } from "./channelSenders";
 import { buildRecorder } from "./recorder";
 import { buildArchiver } from "./archiver";
+import { quotaReader } from "./typefullyQuotaReader";
 import type { SendableChannel } from "../domain/send/channels";
 import {
   loadStorageMode,
@@ -316,7 +317,16 @@ const sendToOutlet = async (itemId: string, type: string, outletId: string, rese
       // Without this a forked room receives the *group* text — the wrong copy, irreversibly, since
       // the ledger then records the room as `sent` and a `sent` row can never be unmarked.
       overrideStore,
+      quotaReader([channel]),
     ).run({ targets: [channel], ids: new Set([itemId]), types: [type], outletIds: [outletId] });
+
+    // A quota refusal is not a plain zero-send: the operator needs to know the account is at its
+    // ceiling, not that this row failed to send for some ordinary reason.
+    if (result.quotaBlocked) {
+      const { needed, available, resetsAt } = result.quotaBlocked;
+      const when = resetsAt ? ` (${resetsAt.slice(0, 10)} 리셋)` : "";
+      return { sent: 0, failed: 0, error: `Typefully 월간 발행 쿼터가 부족합니다 — 필요 ${needed}건, 잔여 ${available}건${when}` };
+    }
 
     // `sent 0` on its own tells the reviewer nothing, so every zero-send outcome carries a reason.
     // Kept in the same English as the `MarkDelivery` / `SaveOutletOverride` refusals, which surface

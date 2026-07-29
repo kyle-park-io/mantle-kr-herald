@@ -11,6 +11,7 @@ import { SendChannels } from "../app/SendChannels";
 import { resolveChannelTargets, createSenders } from "./channelSenders";
 import { buildRecorder } from "./recorder";
 import { buildArchiver } from "./archiver";
+import { quotaReader } from "./typefullyQuotaReader";
 
 /** Usage/error text is interpolated from ALL_OUTLETS: a hardcoded list goes stale invisibly. */
 const OUTLETS_USAGE = ALL_OUTLETS.map((o) => o.id).join("|");
@@ -59,6 +60,7 @@ const result = await new SendChannels(
   outletsForChannel,
   loadTelegramChatIds(),
   overrides,
+  quotaReader(targets),
 ).run({ targets, ids, outletIds });
 // The extra segments appear only when they happened, so an ordinary run prints the line it always
 // printed. Both are kept out of `failed`: neither is a send that went wrong.
@@ -66,3 +68,7 @@ const parts = [`sent ${result.sent}`, `skipped ${result.skipped} (already sent)`
 if (result.unconfigured > 0) parts.push(`미설정 ${result.unconfigured} (${result.unconfiguredEnv.join(", ")})`);
 if (result.withheld > 0) parts.push(`보류 ${result.withheld} (첫 발송 — --outlets 로 방을 지정하세요)`);
 console.log(parts.join(" · "));
+if (result.quotaBlocked) {
+  const { needed, available, resetsAt } = result.quotaBlocked;
+  console.warn(`⚠ X was not sent: this batch needs ${needed} publish(es) and the account has ${available} left${resetsAt ? ` until ${resetsAt}` : ""}.`);
+}
