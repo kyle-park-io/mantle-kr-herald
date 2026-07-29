@@ -14,7 +14,8 @@ import { overrideKey } from "../../src/domain/outlet/override";
 import type { OutletOverrideStore } from "../../src/ports/OutletOverrideStore";
 import type { TranslationStore } from "../../src/ports/TranslationStore";
 import type { Translation } from "../../src/domain/translation/models";
-import { makeReadHeadroom, type Headroom } from "../../src/cli/publishHeadroom";
+import { makeReadHeadroom } from "../../src/cli/publishHeadroom";
+import type { Headroom } from "../../src/domain/send/headroom";
 
 const rendering = (o: Partial<ChannelRendering>): ChannelRendering => ({
   itemId: "x:1", type: "announcement", channel: "telegram", text: "**hi** everyone", refined: false,

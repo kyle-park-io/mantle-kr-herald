@@ -3,6 +3,7 @@ import { loadTypefullyConfig } from "../config";
 import type { DeliveryLedger } from "../ports/DeliveryLedger";
 import type { SendableChannel } from "../domain/send/channels";
 import { awaitingPublish, awaitingArticlePublish } from "../domain/send/awaitingPublish";
+import type { Headroom, HeadroomView } from "../domain/send/headroom";
 
 /** A minute is long enough to spare the smallest rate-limit bucket, short enough to stay true. */
 const QUOTA_TTL_MS = 60_000;
@@ -17,28 +18,6 @@ interface ReadHeadroomDeps {
   readQuota?: (apiKey: string, socialSetId: string) => Promise<PublishingQuota>;
   now?: () => number;
   ttlMs?: number;
-}
-
-export interface Headroom {
-  /** The account's raw remaining publishes, for display. */
-  remaining: number;
-  /** Publishes already spent — the banner's denominator is `used + remaining`. */
-  used: number;
-  /** Scheduled but unconfirmed sends, across BOTH ledgers (x-post rooms and x-article). */
-  inFlight: number;
-  /**
-   * `remaining − inFlight`. Deliberately NOT clamped at zero: a stale in-flight row can overcount and
-   * drive this negative, and clamping here would silently turn "we are over-committed" into "we are
-   * exactly at zero" for the gate that compares against it. Callers clamp only when they *display*
-   * the number.
-   */
-  available: number;
-  resetsAt: string;
-}
-
-export interface HeadroomView {
-  headroom?: Headroom;
-  error?: string;
 }
 
 /**

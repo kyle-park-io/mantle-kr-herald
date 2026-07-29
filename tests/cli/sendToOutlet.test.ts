@@ -10,7 +10,7 @@ import type { DeliveryEntry } from "../../src/domain/delivery/models";
 import { deliveryKey } from "../../src/domain/delivery/models";
 import type { Translation } from "../../src/domain/translation/models";
 import type { SendableChannel } from "../../src/domain/send/channels";
-import type { Headroom } from "../../src/cli/publishHeadroom";
+import type { Headroom } from "../../src/domain/send/headroom";
 import { outletById } from "../../src/domain/outlet/models";
 
 // ---------------------------------------------------------------------------------------------

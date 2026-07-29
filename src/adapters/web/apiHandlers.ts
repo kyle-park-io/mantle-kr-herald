@@ -18,7 +18,7 @@ import type { SaveOutletOverride } from "../../app/SaveOutletOverride";
 import type { MarkDelivery } from "../../app/MarkDelivery";
 import type { PrepareConversionRun } from "../../app/PrepareConversionRun";
 import type { FormatVariants } from "../../app/FormatVariants";
-import type { HeadroomView } from "../../cli/publishHeadroom";
+import type { HeadroomView } from "../../domain/send/headroom";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { SendXArticle } from "../../src/app/SendXArticle";
 import type { Translation } from "../../src/domain/translation/models";
-import type { Headroom } from "../../src/cli/publishHeadroom";
+import type { Headroom } from "../../src/domain/send/headroom";
 
 const tr = (over: Partial<Translation> = {}): Translation =>
   ({ itemId: "x:1", source: "x", sourceText: "s", koreanText: "# 제목\n\n![](https://img/a.jpg)", status: "approved", translatedAt: "t", ...over });
