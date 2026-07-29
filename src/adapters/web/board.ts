@@ -5,6 +5,7 @@ import { deliveredByChannelSender, outletsForChannel, type Outlet } from "../../
 import { overrideKey, textFor, type OutletOverride } from "../../domain/outlet/override";
 import { deliveryKey, type DeliveryEntry } from "../../domain/delivery/models";
 import { sendBlock, type SendBlock, type SourceApproval } from "../../domain/send/sendBlock";
+import { awaitingPublish } from "../../domain/send/awaitingPublish";
 
 /** One room under a group card: what it will send, and whether it already went out. */
 export interface BoardRow {
@@ -22,6 +23,12 @@ export interface BoardRow {
    */
   block?: SendBlock;
   deliveryStatus?: "sent" | "delivered";
+  /**
+   * Sent, but the post is a scheduled Typefully draft that has not been looked up yet — so `at` is
+   * when it was queued, `url` is missing, and the row must not claim to be live. See
+   * `awaitingPublish`.
+   */
+  awaitingPublish?: boolean;
   at?: string;
   url?: string;
   /** How many rows on this board address this same room, and which of them this is (1-based). */
@@ -129,6 +136,7 @@ export function buildBoard(
         text: resolved.text,
         ...(block ? { block } : {}),
         ...(entry ? { deliveryStatus: entry.status, at: entry.at, url: entry.url } : {}),
+        ...(entry && awaitingPublish(entry) ? { awaitingPublish: true } : {}),
       };
     });
 

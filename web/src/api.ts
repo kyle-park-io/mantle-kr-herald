@@ -81,6 +81,13 @@ export const api = {
   status: () => fetch("/api/status").then((r) => json<AppStatus>(r)),
   publishState: () => fetch("/api/publish/state").then((r) => json<PublishStateRow[]>(r)),
 
+  /** Ask Typefully whether the scheduled X drafts have published, and pull their real urls in. */
+  reconcile: async (itemId: string) => {
+    const res = await fetch(`/api/items/${encodeURIComponent(itemId)}/reconcile`, { method: "POST" });
+    const body = (await res.json().catch(() => ({}))) as { reconciled?: number; pending?: number; error?: string; board?: BoardView };
+    if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, body.board);
+    return body as { reconciled: number; pending: number; board: BoardView };
+  },
   board: (itemId: string) => fetch(`/api/items/${encodeURIComponent(itemId)}/board`).then((r) => json<BoardView>(r)),
   /** Gives one room its own text — that is what forking is; there is no separate fork call. */
   editOutlet: (itemId: string, type: ConversionType, outletId: string, text: string) =>
@@ -90,8 +97,12 @@ export const api = {
   /** Deletes the override: the room falls back to the group text *and* the group's approval. */
   revertOutlet: (itemId: string, type: ConversionType, outletId: string) =>
     putOutlet(itemId, type, outletId, { revert: true }),
-  sendOutlet: async (itemId: string, type: ConversionType, outletId: string) => {
-    const res = await fetch(`${oPath(itemId, type, outletId)}/send`, { method: "POST" });
+  sendOutlet: async (itemId: string, type: ConversionType, outletId: string, resend = false) => {
+    const res = await fetch(`${oPath(itemId, type, outletId)}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resend }),
+    });
     const body = (await res.json().catch(() => ({}))) as Partial<SendReply> & { error?: string };
     if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, body.board);
     return body as SendReply;
@@ -117,6 +128,11 @@ export const api = {
    * Unlike conversion, `FormatVariants` is pure code, so this button really does the work — and
    * overwrites whatever was stored for the given (type, channel) pairs, discarding any edit or
    * approval. The caller is expected to confirm that loss with the operator first.
+   */
+  /**
+   * Re-render a rendering from its variant — `pnpm format` narrowed to one (item, type, channel).
+   * Parked with no caller: the board's [포맷 다시] button was removed pending a different flow, and
+   * the route (and its tests) stay live for whatever replaces it.
    */
   formatItem: (itemId: string, types: ConversionType[], channels?: Channel[]) =>
     fetch(`/api/items/${encodeURIComponent(itemId)}/format`, {

@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
-import { btn, btnApproved, btnApprovedHover, btnApprovedRest, btnDanger, btnPrimary } from "../buttonStyles";
-import { reformatMessage } from "../reformatMessage";
+import { btn, btnApprove, btnApproved, btnApprovedHover, btnApprovedRest, btnDanger, btnPrimary } from "../buttonStyles";
 import { rowEditorGate } from "../rowEditor";
+import { fromEditor, toEditor } from "../canonicalEditor";
+import { Tip, type ConfirmRequest } from "./ConfirmDialog";
 import {
   CHANNEL_FORMAT_NOTE,
   CHANNEL_LABEL,
+  CHANNEL_PIECE,
   CHANNEL_RENDERS_BOLD,
   DESTINATION_LABEL,
   OUTLET_DELIVERY,
@@ -20,7 +22,6 @@ import {
   type Emissions,
   type SendReply,
 } from "../types";
-import { RenderingChip } from "./RenderingList";
 
 /**
  * A room the reviewer added from "+ 다른 방 추가". It is a row on screen and nothing on the server:
@@ -71,13 +72,15 @@ export function OutletCard(props: {
   onGroupChanged: () => Promise<void>;
   onError: (message: string | null) => void;
   onDirty: (key: string, dirty: boolean) => void;
+  /** Opens the board's confirm dialog — the rows raise every irreversible action through it. */
+  onConfirm: (request: ConfirmRequest) => void;
 }) {
   const { itemId, group, onDirty, onError } = props;
   const { type, channel } = group;
   const cardKey = `${type}:${channel}`;
   const groupApproved = group.status === "approved";
 
-  const [text, setText] = useState(group.text);
+  const [text, setText] = useState(() => toEditor(group.text));
   const [busy, setBusy] = useState(false);
   /**
    * Spellings keyed by outletId (`""` is the group's own text), stamped with the `emitSig` they
@@ -95,7 +98,7 @@ export function OutletCard(props: {
   const [added, setAdded] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
 
-  useEffect(() => setText(group.text), [group.text]);
+  useEffect(() => setText(toEditor(group.text)), [group.text]);
 
   /**
    * Every text this card can emit, as one string: the group’s, plus each fork’s. It is both the
@@ -123,14 +126,14 @@ export function OutletCard(props: {
   function rowText(outletId: string): string {
     return group.rows.find((r) => r.outletId === outletId)?.text ?? group.text;
   }
-  const draftDirty = (id: string) => drafts[id] !== undefined && drafts[id] !== rowText(id);
+  const draftDirty = (id: string) => drafts[id] !== undefined && fromEditor(drafts[id]) !== rowText(id);
   /**
    * The group textarea differs from what is stored. An unsaved textarea is not what `SendChannels`
    * reads — it reads the store — so fixing a wrong figure and pressing 발송 without 저장 would post
    * the *pre-edit* copy to a live room and ledger it `sent`, which `MarkDelivery` refuses to
    * reverse. Every action that copies or delivers the group's text is gated on this.
    */
-  const groupDirty = text !== group.text;
+  const groupDirty = fromEditor(text) !== group.text;
   /**
    * Card-wide, for the header badge and the navigation guard only. Row actions are gated on
    * `groupDirty || draftDirty(that row)` instead: a stray keystroke in one room's editor must not
@@ -157,22 +160,6 @@ export function OutletCard(props: {
   };
 
   /**
-   * [포맷 다시] overwrites whatever `FormatVariants` last stored for this (type, channel): the
-   * group's own text goes back to the plain converted text, and — unlike a text edit — the group's
-   * approval is lost too, since a freshly rendered copy is never approved. Say both plainly before
-   * doing it; a button that silently reverts a reviewer's approved copy is worse than no button.
-   */
-  const confirmReformat = (): boolean => {
-    const bits = [
-      `${TYPE_LABEL[type]} · ${CHANNEL_LABEL[channel]} 카드를 변환본에서 다시 생성합니다.`,
-      "지금 저장된 문구는 사라지고, 새로 만든 문구로 바뀝니다.",
-    ];
-    if (group.status === "approved") bits.push("승인 상태도 취소됩니다 — 다시 승인해야 발송할 수 있습니다.");
-    bits.push("✎ 따로 쓰기로 갈라진 방의 글은 영향받지 않습니다.", "되돌릴 수 없습니다. 계속할까요?");
-    return window.confirm(bits.join("\n"));
-  };
-
-  /**
    * Drop a row's draft so the next render re-reads what the server stored. `collapse` closes the
    * editor with an explicit `false` rather than by deleting the key — a forked row defaults to
    * open, so deleting it would spring the editor straight back open.
@@ -196,6 +183,8 @@ export function OutletCard(props: {
   // disables [복사] for the round trip rather than handing over yesterday's bytes.
   const spellings = emissions.sig === emitSig ? emissions.byOutlet : {};
   const groupPaste = pasteSegments(spellings[""], channel);
+  /** The pieces this card actually goes out as — what makes a thread boundary visible. */
+  const groupPieces = spellings[""]?.[PASTE_DESTINATION[channel]]?.segments ?? null;
   const warnings = (Object.keys(spellings[""] ?? {}) as Destination[]).flatMap((d) =>
     (spellings[""]?.[d]?.warnings ?? []).map((w) => `${DESTINATION_LABEL[d]} — ${w}`),
   );
@@ -219,43 +208,40 @@ export function OutletCard(props: {
   const addable = group.addableOutletIds.filter((id) => !added.includes(id));
 
   return (
-    <article className="rounded-xl border border-line bg-surface shadow-sm">
-      <header className="flex flex-wrap items-center gap-2.5 border-b border-line px-4 py-2.5">
-        <span className="rounded-md border border-line bg-bg px-2 py-0.5 text-[13px] font-medium text-ink">
+    <article className="relative rounded-xl border border-line bg-surface shadow-sm">
+      {/*
+        A tab hanging from the card's top edge, coloured by approval. The board is a column of
+        near-identical cards, and the one thing a reviewer scans for is which of them still need
+        them — a chip inline in the header reads at the same weight as everything beside it.
+      */}
+      <span
+        className={`absolute right-5 top-0 rounded-b-md px-2.5 py-1 text-[11px] font-semibold shadow-sm ${
+          groupApproved ? "bg-mint text-white" : "bg-amber-ink text-white"
+        }`}
+      >
+        {groupApproved ? "승인" : "검수 대기"}
+      </span>
+
+      <header className="flex flex-wrap items-center gap-2.5 border-b border-line px-4 py-2.5 pr-24">
+        <span className="inline-flex shrink-0 items-center rounded-md border border-line bg-bg px-2 py-1 text-[12px] font-medium text-ink">
           {TYPE_LABEL[type]} · {CHANNEL_LABEL[channel]}
         </span>
-        <RenderingChip status={group.status} />
+        {/*
+          The KR account's own post, as opposed to copy pushed into a room. It carries the brand in
+          public and the rooms take their cue from it, so it is the one card on the board that is not
+          interchangeable with its neighbours.
+        */}
+        {channel === "x" && (
+          <span className="inline-flex shrink-0 items-center rounded-md bg-ink px-2 py-1 text-[12px] font-medium text-white">
+            공식 계정
+          </span>
+        )}
         {dirty && (
-          <span className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-ink">
+          <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-amber-ink">
             <span className="h-1.5 w-1.5 rounded-full bg-amber-ink" />
             편집 중 · 저장 전
           </span>
         )}
-        <button
-          className={btnDanger}
-          // Gated on `groupDirty` like every other action that reads or replaces the group's text
-          // (저장/승인/복사): `onGroupChanged()` below reloads the board, `group.text` changes, and
-          // the effect at the top of this component overwrites the textarea from it — an unsaved
-          // draft would be discarded with no more warning than the confirm's "지금 저장된 문구는
-          // 사라지고", which only promises to describe what is already *stored*, not what is
-          // sitting unsaved in the box.
-          disabled={busy || groupDirty}
-          title={groupDirty ? SAVE_FIRST : "변환본에서 이 카드를 다시 생성합니다 — 지금 문구와 승인 상태가 사라집니다"}
-          onClick={() => {
-            if (!confirmReformat()) return;
-            void run(async () => {
-              const result = await api.formatItem(itemId, [type], [channel]);
-              await props.onGroupChanged();
-              // `rendered === 0` (variant not approved) and "regenerated with no warnings" both
-              // return `{warnings: []}` — reformatMessage tells them apart so the operator is never
-              // left assuming a silent success when nothing actually happened.
-              const message = reformatMessage(result, TYPE_LABEL[type]);
-              if (message) onError(message);
-            });
-          }}
-        >
-          포맷 다시
-        </button>
         <span className="ml-auto text-[12px] text-faint">
           {rows.filter((r) => r.deliveryStatus).length}/{rows.length}곳 완료
         </span>
@@ -282,10 +268,48 @@ export function OutletCard(props: {
           stripped before delivery. Saying so here — beside the box, not in a doc — is the only
           place it lands before the copy is approved and sent.
         */}
-        <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
-          {CHANNEL_RENDERS_BOLD[channel] ? "✓ " : "· "}
-          {CHANNEL_FORMAT_NOTE[channel]}
-        </p>
+        {/*
+          Two facts about the box above, at the one place they can still be acted on. The split is
+          the load-bearing one: a boundary is *two blank lines*, which look like nothing in a
+          textarea — a reviewer cannot otherwise tell a thread from one long post, or see that they
+          deleted a boundary while editing.
+        */}
+        <div className="mt-1.5 space-y-1 text-[12px] leading-relaxed text-faint">
+          {groupPieces && groupPieces.length > 1 ? (
+            /*
+              The boundary is *two blank lines*, which is nearly invisible next to the one blank
+              line between paragraphs — so the split is named by where it actually lands. Reading
+              the opening words is how a reviewer confirms the break is where they meant it, and
+              how they notice one they deleted while editing.
+            */
+            <div className="text-ink">
+              <p className="font-medium">
+                {CHANNEL_PIECE[channel]} {groupPieces.length}개로 나뉘어 나갑니다 — 경계는 빈 줄 두 개입니다.
+              </p>
+              <ol className="mt-1 space-y-0.5">
+                {groupPieces.map((piece, i) => (
+                  <li key={i} className="flex gap-1.5 text-muted">
+                    <span className="shrink-0 font-mono tabular-nums text-faint">
+                      {i + 1}. {piece.length}자
+                    </span>
+                    <span className="truncate">{piece.text.replace(/\s+/g, " ").trim()}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : (
+            groupPieces && (
+              <p>
+                {CHANNEL_PIECE[channel]} 1개로 나갑니다 — {groupPieces[0]?.length ?? 0}자. 나누려면 빈 줄 두 개를
+                넣으세요.
+              </p>
+            )
+          )}
+          <p>
+            {CHANNEL_RENDERS_BOLD[channel] ? "✓ " : "· "}
+            {CHANNEL_FORMAT_NOTE[channel]}
+          </p>
+        </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           <button
             className={btn}
@@ -298,7 +322,7 @@ export function OutletCard(props: {
                 // and waiting for `group.text` to change would then leave the card `편집 중`
                 // forever, with 저장 inert and 승인 greyed until a reload.
                 const saved = await api.editRendering(itemId, type, channel, text);
-                setText(saved.text);
+                setText(toEditor(saved.text));
                 await props.onGroupChanged();
               })
             }
@@ -329,7 +353,7 @@ export function OutletCard(props: {
             </button>
           ) : (
             <button
-              className={btnPrimary}
+              className={btnApprove}
               disabled={busy || groupDirty}
               title={groupDirty ? SAVE_FIRST : undefined}
               onClick={() =>
@@ -353,8 +377,7 @@ export function OutletCard(props: {
 
         {groupPaste && groupPaste.length > 1 && (
           <p className="mt-2 text-[12px] leading-relaxed text-muted">
-            이 글은 {groupPaste.length}개로 나뉘어 올라갑니다. 한 덩어리로 붙여넣지 말고 아래 <b>목적지별 출력</b>에서
-            조각별로 복사하세요.
+            한 덩어리로 붙여넣지 말고 아래 <b>목적지별 출력</b>에서 조각별로 복사하세요.
           </p>
         )}
 
@@ -399,7 +422,7 @@ export function OutletCard(props: {
               onToggle={() =>
                 isOpen ? settle(row.outletId, true) : setOpen((p) => ({ ...p, [row.outletId]: true }))
               }
-              draft={drafts[row.outletId] ?? row.text}
+              draft={drafts[row.outletId] ?? toEditor(row.text)}
               onDraft={(v) => setDrafts((p) => ({ ...p, [row.outletId]: v }))}
               onCancel={() => settle(row.outletId)}
               copied={copied}
@@ -413,6 +436,7 @@ export function OutletCard(props: {
               onSettle={(collapse) => settle(row.outletId, collapse)}
               onBoard={props.onBoard}
               onError={onError}
+              onConfirm={props.onConfirm}
               run={run}
             />
           );
@@ -605,6 +629,7 @@ function Row(props: {
   onSettle: (collapse?: boolean) => void;
   onBoard: (board: BoardView) => void;
   onError: (message: string | null) => void;
+  onConfirm: (request: ConfirmRequest) => void;
   run: (fn: () => Promise<void>) => Promise<void>;
 }) {
   const { row, group, itemId, busy, dirty, run } = props;
@@ -620,20 +645,62 @@ function Row(props: {
   const strandedFork = row.forked && row.block === "unapproved" && group.status === "approved";
   const blocked = busy || dirty;
   // What this room's editor may still do. A `sent` row is read-only: see `rowEditorGate`.
-  const gate = rowEditorGate(row, { busy, draft: props.draft });
+  const gate = rowEditorGate(row, { busy, draft: fromEditor(props.draft) });
+  /**
+   * What this room actually receives, piece by piece — the confirm shows these rather than the
+   * canonical text, so the operator approves the split as well as the words.
+   */
+  const rowPieces = props.segments ?? [row.text];
 
   const apply = (reply: { board: BoardView }, collapse = false) => {
     props.onSettle(collapse);
     props.onBoard(reply.board);
   };
 
-  const confirmSend = (): boolean => {
-    const preview = row.text.replace(/\s+/g, " ").trim();
-    const shown = preview.length > 140 ? `${preview.slice(0, 140)}…` : preview;
-    return window.confirm(
-      `${row.label}에 실제로 발송합니다. 되돌릴 수 없습니다.\n\n보낼 글:\n${shown}\n\n계속할까요?`,
-    );
-  };
+  const post = (resend: boolean) =>
+    run(async () => {
+      let reply: SendReply;
+      try {
+        reply = await api.sendOutlet(itemId, type, row.outletId, resend);
+      } catch (e) {
+        // A refusal usually means the server already knows something this screen does not
+        // ("already delivered to this room" — someone ran `send:channels` in a terminal). Repaint
+        // from the board it sent back, or the row goes on offering 발송 for a room that has it.
+        if (e instanceof ApiError && e.board) props.onBoard(e.board);
+        throw e;
+      }
+      apply(reply);
+      // 200 can still carry a partial failure: something reached a live room and something did not.
+      // Saying nothing would read as a clean send.
+      if (reply.failed > 0 || reply.error)
+        props.onError(reply.error ?? `${row.label}: ${reply.failed}건 실패했습니다`);
+    });
+
+  const askSend = () =>
+    props.onConfirm({
+      title: `${row.label}에 발송합니다`,
+      lines: ["실제 채널에 올라갑니다. 되돌릴 수 없습니다."],
+      pieces: rowPieces,
+      confirmLabel: "발송",
+      onConfirm: () => void post(false),
+    });
+
+  /**
+   * A room that already has a post. The first one is not touched by any of this — the room ends up
+   * with two — and the record is replaced, so the link to the first disappears from this screen.
+   * Both facts go in the dialog, because neither is recoverable afterwards.
+   */
+  const askResend = () =>
+    props.onConfirm({
+      title: `${row.label}에 다시 발송합니다`,
+      lines: [
+        `이 방에는 ${stampFull(row.at) ?? "이미"} 나간 글이 있습니다. 그 글은 지워지지 않고, 이 방에 글이 하나 더 올라갑니다.`,
+        "발송 기록은 새 발송으로 덮어써집니다. 먼저 보낸 글의 링크는 이 화면에서 사라집니다.",
+      ],
+      pieces: rowPieces,
+      confirmLabel: "다시 발송",
+      onConfirm: () => void post(true),
+    });
 
   return (
     <li
@@ -681,12 +748,40 @@ function Row(props: {
         <span className="ml-auto flex flex-wrap items-center gap-2">
           {sent ? (
             <>
-              <span
-                className="inline-flex items-center gap-1 rounded-md bg-mint-soft px-2 py-1 text-[13px] font-medium text-mint"
-                title={stampFull(row.at)}
-              >
-                발송됨 {stamp(row.at)}
-              </span>
+              {/*
+                An X send is queued with Typefully a couple of minutes out, so until the draft is
+                looked up the row has no x.com link and its stamp is when it was *queued*. Calling
+                that 발송됨 with a time beside it asserts something that has not happened yet.
+              */}
+              {row.awaitingPublish ? (
+                <Tip text={`${stampFull(row.at) ?? ""}에 예약했습니다. X는 링크가 있는 글을 즉시 게시하지 않아 2분 뒤 큐를 통해 올라갑니다. [게시 확인]을 누르면 실제 주소를 가져옵니다.`}>
+                  <span className="inline-flex items-center gap-1 rounded-lg bg-amber-soft px-3.5 py-1.5 text-[13px] font-medium text-amber-ink">
+                    예약됨 {stamp(row.at)}
+                  </span>
+                </Tip>
+              ) : (
+                <span
+                  className="inline-flex items-center gap-1 rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint"
+                  title={stampFull(row.at)}
+                >
+                  발송됨 {stamp(row.at)}
+                </span>
+              )}
+              {row.awaitingPublish && (
+                <button
+                  className={btn}
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      const res = await api.reconcile(itemId);
+                      props.onBoard(res.board);
+                      if (res.reconciled === 0) props.onError("아직 게시되지 않았습니다 — 잠시 뒤 다시 눌러보세요.");
+                    })
+                  }
+                >
+                  게시 확인
+                </button>
+              )}
               {row.url && (
                 <a
                   href={row.url}
@@ -697,55 +792,56 @@ function Row(props: {
                   보기 ↗
                 </a>
               )}
+              {/* Only where a send would be allowed at all. Red where 발송 is mint: this one adds
+                  another live post to a room that already has one, and replaces the record. */}
+              {gate.showResend && (
+                <Tip
+                  text={
+                    gate.resendDisabled ? SEND_BLOCK_REASON[row.block!]
+                    : dirty ? SAVE_FIRST
+                    : "이 방에 한 번 더 보냅니다. 먼저 보낸 글은 지워지지 않습니다."
+                  }
+                >
+                  <button
+                    className={btnDanger}
+                    disabled={busy || dirty || gate.resendDisabled}
+                    onClick={askResend}
+                  >
+                    재발송
+                  </button>
+                </Tip>
+              )}
             </>
           ) : delivered ? (
-            <button
-              className="rounded-md bg-mint-soft px-2.5 py-1 text-[13px] font-medium text-mint transition-colors hover:bg-mint-soft/70 disabled:opacity-40"
-              disabled={busy}
-              title={`${stampFull(row.at) ?? ""} — 체크를 해제하면 전달 기록이 지워집니다`}
-              onClick={() => run(async () => apply(await api.markOutlet(itemId, type, row.outletId, false)))}
-            >
-              전달함 ☑ {stamp(row.at)}
-            </button>
+            <Tip text={`${stampFull(row.at) ?? ""} — 누르면 전달 기록이 지워집니다. 방에 붙여넣은 글은 그대로 남습니다.`}>
+              <button
+                className="rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint transition-colors hover:bg-mint-soft/70 disabled:opacity-40"
+                disabled={busy}
+                onClick={() => run(async () => apply(await api.markOutlet(itemId, type, row.outletId, false)))}
+              >
+                전달함 ☑ {stamp(row.at)}
+              </button>
+            </Tip>
           ) : locked ? (
-            <button
-              className={btn}
-              disabled
-              title={
+            // The reason lives in a hover card, not a native `title`: a disabled button does not
+            // reliably fire hover in every browser, so the wrapper carries it — and the styled
+            // panel can hold a full sentence, which `title` renders as an OS tooltip nobody reads.
+            <Tip
+              text={
                 strandedFork
-                  ? "이 방은 따로 쓴 글이 아직 승인 전입니다 — 그룹을 승인해도 발송되지 않습니다"
+                  ? "이 방은 따로 쓴 글이 아직 승인 전입니다 — 그룹을 승인해도 이 방은 빠집니다."
                   : SEND_BLOCK_REASON[row.block!]
               }
             >
-              {row.delivery === "auto" ? "발송" : "전달함"} · 잠김
-            </button>
+              <button className={btn} disabled>
+                {row.delivery === "auto" ? "발송" : "전달함"} · 잠김
+              </button>
+            </Tip>
           ) : row.delivery === "auto" ? (
-            <button
-              className={btnDanger}
-              disabled={blocked}
-              title={dirty ? SAVE_FIRST : "실제 채널에 올립니다 — 되돌릴 수 없습니다"}
-              onClick={() => {
-                if (!confirmSend()) return;
-                void run(async () => {
-                  let reply: SendReply;
-                  try {
-                    reply = await api.sendOutlet(itemId, type, row.outletId);
-                  } catch (e) {
-                    // A refusal usually means the server already knows something this screen does
-                    // not ("already delivered to this room" — someone ran `send:channels` in a
-                    // terminal). Repaint from the board it sent back, or the row goes on offering
-                    // 발송 for a room that has already received it.
-                    if (e instanceof ApiError && e.board) props.onBoard(e.board);
-                    throw e;
-                  }
-                  apply(reply);
-                  // 200 can still carry a partial failure: something reached a live room and
-                  // something did not. Saying nothing would read as a clean send.
-                  if (reply.failed > 0 || reply.error)
-                    props.onError(reply.error ?? `${row.label}: ${reply.failed}건 실패했습니다`);
-                });
-              }}
-            >
+            // Mint, not red: this is the row's ordinary next step, and every action on this board
+            // is irreversible in the same way — colouring the expected one as a hazard just makes
+            // the palette meaningless. The confirm carries the warning. 재발송 keeps the red.
+            <button className={btnPrimary} disabled={blocked} title={dirty ? SAVE_FIRST : undefined} onClick={askSend}>
               발송
             </button>
           ) : (
@@ -807,7 +903,7 @@ function Row(props: {
             // outside this tab (e.g. `pnpm send:channels`) while an unsaved draft sat in this
             // editor, `props.draft` would repaint as "what the room received" and nothing short
             // of collapsing the editor could clear it.
-            value={gate.readOnly ? row.text : props.draft}
+            value={gate.readOnly ? toEditor(row.text) : props.draft}
             onChange={(e) => props.onDraft(e.target.value)}
             readOnly={gate.readOnly}
             spellCheck={false}
@@ -858,7 +954,7 @@ function Row(props: {
             )}
             {gate.showApprove && (
               <button
-                className={btnPrimary}
+                className={btnApprove}
                 disabled={gate.approveDisabled}
                 title={props.draft !== row.text ? SAVE_FIRST : undefined}
                 onClick={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId)))}

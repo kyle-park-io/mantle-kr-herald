@@ -1,3 +1,4 @@
+import { toCanonical } from "../domain/formatting/canonical";
 import { overrideKey, type OutletOverride } from "../domain/outlet/override";
 import { outletById } from "../domain/outlet/models";
 import type { OutletOverrideStore } from "../ports/OutletOverrideStore";
@@ -46,9 +47,17 @@ export class SaveOutletOverride {
     }
 
     if (input.text === undefined) throw new Error(`${key}: nothing to save`);
+    /**
+     * Canonicalised exactly like the group's text in `SaveRendering`.
+     *
+     * Without this a fork was the one text on the board stored raw, and the emitters read it as
+     * literally as it was typed: a `---` a reviewer wrote to split a thread stayed in the tweet and
+     * the split never happened — one long post carrying a stray separator into a live room, while
+     * the identical edit on the group card came out as two.
+     */
     const saved: OutletOverride = {
       itemId: input.itemId, type: input.type, outletId: input.outletId,
-      text: input.text, status: "rendered", createdAt: existing?.createdAt ?? at,
+      text: toCanonical(input.text), status: "rendered", createdAt: existing?.createdAt ?? at,
     };
     await this.store.upsert(saved);
     return saved;

@@ -22,11 +22,12 @@ function fakeRenderingDeps(): Pick<ApiDeps, "formattingStore" | "conversionStore
 }
 
 /** §8 board deps, likewise irrelevant to transport-level tests. */
-function fakeBoardDeps(): Pick<ApiDeps, "loadBoard" | "saveOutletOverride" | "markDelivery" | "sendToOutlet"> {
+function fakeBoardDeps(): Pick<ApiDeps, "loadBoard" | "saveOutletOverride" | "markDelivery" | "sendToOutlet" | "reconcilePublished"> {
   return {
     loadBoard: async (itemId: string) => ({ itemId, groups: [], unconverted: [] }),
     saveOutletOverride: { run: async () => undefined } as unknown as ApiDeps["saveOutletOverride"],
     markDelivery: { run: async () => {} } as unknown as ApiDeps["markDelivery"],
+    reconcilePublished: async () => ({ reconciled: 0, pending: 0 }),
     sendToOutlet: async () => ({ sent: 0, failed: 0 }),
   };
 }

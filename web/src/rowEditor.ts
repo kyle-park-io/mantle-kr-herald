@@ -18,6 +18,15 @@ export interface RowEditorGate {
    * nothing here to withdraw and the editor says where the button actually is.
    */
   showGroupApprovalHint: boolean;
+  /** The room already has a post, so it can be sent to again. */
+  showResend: boolean;
+  /**
+   * …but not right now — the copy is blocked, and the server would refuse. Locked rather than
+   * hidden, the same way the first send is: a button that appears and disappears as approval is
+   * withdrawn and restored resizes the row under the pointer, and a control that vanishes reads as
+   * a fault rather than as a rule. The reason rides along in the hover card.
+   */
+  resendDisabled: boolean;
   showRevert: boolean;
   /** "saving forks this room" — only worth saying while saving is still possible. */
   showForkHint: boolean;
@@ -47,7 +56,7 @@ export interface RowEditorGate {
  * editable — the copy may not have been pasted yet.
  */
 export function rowEditorGate(
-  row: Pick<BoardRow, "deliveryStatus" | "forked" | "status" | "text">,
+  row: Pick<BoardRow, "deliveryStatus" | "forked" | "status" | "text" | "block">,
   ctx: { busy: boolean; draft: string },
 ): RowEditorGate {
   const sent = row.deliveryStatus === "sent";
@@ -72,6 +81,8 @@ export function rowEditorGate(
     showApproved: row.forked && approved,
     showUnapprove: !sent && row.forked && approved,
     showGroupApprovalHint: !sent && !row.forked && approved,
+    showResend: sent,
+    resendDisabled: row.block !== undefined,
     showRevert: !sent && row.forked,
     showForkHint: !locked && !row.forked,
     showReadOnlyLocked: sent && row.forked,

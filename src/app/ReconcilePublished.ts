@@ -1,5 +1,5 @@
 import type { DeliveryLedger } from "../ports/DeliveryLedger";
-import { outletById } from "../domain/outlet/models";
+import { awaitingPublish, isXUrl } from "../domain/send/awaitingPublish";
 
 /** Published X url(s) + parsed ids for a Typefully draft, as returned by `TypefullyDraftLookup`. */
 interface Published {
@@ -21,9 +21,6 @@ interface ArticleLedger {
   loadAll(): Promise<ArticleRow[]>;
   add(entry: ArticleRow): Promise<void>;
 }
-
-/** A row already carries its final x.com url once reconciled — those are skipped. */
-const isXUrl = (url?: string): boolean => !!url && url.includes("x.com");
 
 /**
  * After PR #76 an X send is *scheduled*, so at send time the ledger row holds the Typefully draft id
@@ -49,9 +46,9 @@ export class ReconcilePublished {
     let pending = 0;
 
     for (const row of await this.delivery.loadAll()) {
-      // Resolved through the outlet, since the row records a room rather than a channel. Telegram
-      // rooms publish immediately and carry a t.me url already, so only X rooms are ever scheduled.
-      if (outletById(row.outletId)?.channel !== "x" || isXUrl(row.url) || !row.postId) continue;
+      // The same predicate the board paints `예약됨` from, so the screen and this pass cannot
+      // disagree about which rows are still waiting on Typefully's queue.
+      if (!awaitingPublish(row)) continue;
       let u: Published;
       try {
         u = await this.lookup.published(row.postId);

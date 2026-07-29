@@ -125,7 +125,8 @@ function makeDeps(
         board.mark?.();
       },
     } as unknown as ApiDeps["markDelivery"],
-    sendToOutlet: async (itemId: string, type: string, outletId: string) => {
+    reconcilePublished: async () => ({ reconciled: 0, pending: 0 }),
+  sendToOutlet: async (itemId: string, type: string, outletId: string) => {
       spy.sends.push({ itemId, type, outletId });
       return board.send?.() ?? { sent: 1, failed: 0 };
     },
