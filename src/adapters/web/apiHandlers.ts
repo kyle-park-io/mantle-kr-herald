@@ -78,8 +78,13 @@ export interface ApiDeps {
   prepareConversionRun: PrepareConversionRun;
   /** Pure code — unlike conversion, the dashboard can run this one itself. */
   formatVariants: FormatVariants;
-  /** The Typefully publishing quota for the banner. `error` when it could not be read. */
-  loadQuota: () => Promise<{ quota?: PublishingQuota; error?: string }>;
+  /**
+   * The Typefully publishing quota for the banner, plus `inFlight` — rooms already sent to but not
+   * yet confirmed published, the same count the send gate (`SendChannels`) subtracts from
+   * `quota.remaining`. The banner needs both so it can show the number the gate actually enforces
+   * rather than the raw account total. `error` when the quota itself could not be read.
+   */
+  loadQuota: () => Promise<{ quota?: PublishingQuota; inFlight?: number; error?: string }>;
 }
 
 /** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */

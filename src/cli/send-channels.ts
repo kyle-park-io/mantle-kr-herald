@@ -70,5 +70,7 @@ if (result.withheld > 0) parts.push(`보류 ${result.withheld} (첫 발송 — -
 console.log(parts.join(" · "));
 if (result.quotaBlocked) {
   const { needed, available, resetsAt } = result.quotaBlocked;
-  console.warn(`⚠ X was not sent: this batch needs ${needed} publish(es) and the account has ${available} left${resetsAt ? ` until ${resetsAt}` : ""}.`);
+  // `available` (remaining − inFlight) can be negative when a stale in-flight row overcounts —
+  // clamp only the displayed number; the refusal itself already happened on the raw comparison.
+  console.warn(`⚠ X was not sent: this batch needs ${needed} publish(es) and the account has ${Math.max(0, available)} left${resetsAt ? ` until ${resetsAt}` : ""}.`);
 }

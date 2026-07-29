@@ -320,11 +320,23 @@ export interface FormatReply {
   warnings: FormatWarning[];
 }
 
-// Mirrors src/adapters/send/TypefullyQuota.ts — the GET /api/typefully/quota payload.
+// Mirrors src/adapters/send/TypefullyQuota.ts.
 export interface PublishingQuota {
   used: number;
   remaining: number;
   resetsAt: string;
+}
+
+/**
+ * Mirrors `QuotaView` in src/cli/loadQuota.ts — the GET /api/typefully/quota payload. `inFlight` is
+ * rooms already sent to but not yet confirmed published — the same count the send gate
+ * (`SendChannels`) subtracts from `quota.remaining` — so the banner can show the number the gate
+ * actually enforces rather than the raw account total.
+ */
+export interface QuotaView {
+  quota?: PublishingQuota;
+  inFlight?: number;
+  error?: string;
 }
 
 /** Mirrors `LOW_PUBLISHING_QUOTA` in src/doctor/checks.ts — the CLI and the board agree on "low". */

@@ -97,6 +97,12 @@ export const LOW_PUBLISHING_QUOTA = 3;
 /**
  * The social set's monthly publishing quota. Never `fail`: an account at its plan's ceiling is
  * working exactly as sold, and doctor exiting non-zero over it would be wrong.
+ *
+ * This answers "is the integration healthy", not "can I send right now" — it is the raw account
+ * total, not corrected for drafts scheduled minutes ago that have not yet been confirmed published
+ * (the board's banner does that correction; reading the delivery ledger from doctor would be a new
+ * dependency for little gain here). "on the account" says so, rather than implying this is what a
+ * send would be gated against.
  */
 export function quotaResult(
   name: string,
@@ -106,6 +112,6 @@ export function quotaResult(
   return {
     name,
     status: q.remaining <= LOW_PUBLISHING_QUOTA ? "warn" : "ok",
-    detail: `publishing quota ${q.remaining} left of ${q.used + q.remaining}${resets}`,
+    detail: `publishing quota ${q.remaining} left of ${q.used + q.remaining} on the account${resets}`,
   };
 }

@@ -10,6 +10,7 @@ import {
   type ConversionType,
   type ConvertPrepareReply,
   type PublishingQuota,
+  type QuotaView,
 } from "../types";
 import { OutletCard } from "./OutletCard";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
@@ -40,6 +41,8 @@ export function OutletBoard(props: {
   const [board, setBoard] = useState<BoardView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [quota, setQuota] = useState<PublishingQuota | null>(null);
+  /** Rooms already sent to but not yet confirmed published — see `loadQuota` below. */
+  const [inFlight, setInFlight] = useState(0);
   const [hovered, setHovered] = useState<string | null>(null);
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
   // §10 [변환 준비]: which not-yet-converted types the operator picked, and the last worksheet
@@ -62,10 +65,15 @@ export function OutletBoard(props: {
   /**
    * The account-wide Typefully quota, for the banner above the group cards. An unreadable quota is
    * not an empty one — show nothing rather than paint a healthy account as blocked at `0건`.
+   *
+   * `inFlight` always lands alongside it (defaulting to 0 rather than being left stale) — the
+   * banner's headline number is `remaining − inFlight`, the same arithmetic the send gate applies,
+   * so the two must be set together or the banner could show a number the gate would refuse.
    */
   const loadQuota = useCallback(async () => {
-    const r = await api.typefullyQuota();
+    const r: QuotaView = await api.typefullyQuota();
     setQuota(r.quota ?? null);
+    setInFlight(r.inFlight ?? 0);
   }, []);
 
   /**
@@ -131,6 +139,9 @@ export function OutletBoard(props: {
   // `n/m` badges were numbered in, so the summary and the cards read the same way.
   const outletIds = [...new Set(rows.map((r) => r.outletId))];
   const url = itemUrl(board.itemId);
+  // The number the send gate (`SendChannels`) actually enforces, not the raw account total —
+  // clamped because a stale `inFlight` count must read as "none left", not as a bug (`잔여 -2건`).
+  const availableQuota = quota ? Math.max(0, quota.remaining - inFlight) : 0;
 
   /**
    * Jump to a room's first row. A DOM query rather than a ref map because the rows live inside
@@ -206,12 +217,13 @@ export function OutletBoard(props: {
       {quota && (
         <div
           className={`mb-4 rounded-lg border px-3 py-2 text-[13px] ${
-            quota.remaining <= LOW_PUBLISHING_QUOTA
+            availableQuota <= LOW_PUBLISHING_QUOTA
               ? "border-amber-ink/20 bg-amber-soft text-amber-ink"
               : "border-line bg-surface text-muted"
           }`}
         >
-          X 발행 잔여 <strong className="font-semibold">{quota.remaining}건</strong> / {quota.used + quota.remaining}건
+          X 발행 잔여 <strong className="font-semibold">{availableQuota}건</strong>
+          {inFlight > 0 ? ` (예약 ${inFlight}건 대기)` : ""} / {quota.used + quota.remaining}건
           {quota.resetsAt ? ` · ${quota.resetsAt.slice(5, 10).replace("-", "/")} 리셋` : ""}
         </div>
       )}

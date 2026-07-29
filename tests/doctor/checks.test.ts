@@ -155,6 +155,13 @@ describe("quotaResult", () => {
     expect(r.detail).toContain("2026-08-01");
   });
 
+  // "on the account" — doctor answers "is the integration healthy", not "can I send right now", and
+  // this line must not be read as the latter (see the banner, which does correct for in-flight drafts).
+  it("says the total is on the account, not corrected for in-flight drafts", () => {
+    const r = quotaResult("t", { used: 9, remaining: 6, resetsAt: "" });
+    expect(r.detail).toContain("6 left of 15 on the account");
+  });
+
   it("warns at the low-quota threshold", () => {
     expect(quotaResult("t", { used: 12, remaining: 3, resetsAt: "" }).status).toBe("warn");
     expect(quotaResult("t", { used: 11, remaining: 4, resetsAt: "" }).status).toBe("ok");
