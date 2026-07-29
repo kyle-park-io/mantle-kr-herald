@@ -5,6 +5,7 @@ import { CHANNEL_RENDERS_BOLD, DESTINATIONS_BY_CHANNEL } from "../../src/domain/
 import type { Destination } from "../../src/domain/formatting/emitters/types";
 import { ALL_OUTLETS } from "../../src/domain/outlet/models";
 import { SEND_BLOCK_REASON, type SendBlock } from "../../src/domain/send/sendBlock";
+import { ALL_DELIVERY_STATUSES, deliveredToRoom } from "../../src/domain/delivery/models";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
 import type { FormatWarning } from "../../src/app/FormatVariants";
 import {
@@ -18,6 +19,7 @@ import {
   SEND_BLOCK_REASON as WEB_SEND_BLOCK_REASON,
   CHANNEL_RENDERS_BOLD as WEB_CHANNEL_RENDERS_BOLD,
   CHANNEL_FORMAT_NOTE as WEB_CHANNEL_FORMAT_NOTE,
+  deliveredToRoom as WEB_DELIVERED_TO_ROOM,
   type SendBlock as WebSendBlock,
   type Destination as WebDestination,
   type BoardView as WebBoardView,
@@ -186,6 +188,38 @@ describe("web type mirror", () => {
     type Check = SameUnion<NonNullable<BoardRow["deliveryStatus"]>, NonNullable<WebBoardRow["deliveryStatus"]>>;
     const ok: Check = true;
     expect(ok).toBe(true);
+  });
+
+  /**
+   * The union check above only pins *membership* — it says nothing about what a member means. The
+   * domain's `deliveredToRoom` (a denylist: everything counts as delivered except `dropped`, over a
+   * `status` that is never undefined on a real ledger row) and the dashboard's own copy (an
+   * allowlist: only `sent`/`delivered` count, over a `deliveryStatus` that is also `undefined` for a
+   * room nothing has gone out to) are two independent implementations of the same question, on
+   * purpose — see the doc comment on the web copy for why the shapes differ. Opposite polarity means
+   * nothing forces them to agree on a status neither has seen yet: add a fourth `DeliveryStatus`
+   * without deciding whether it counts, and the domain's denylist defaults to "yes" while the web's
+   * allowlist defaults to "no" — silently, unless this test walks every member and catches the split.
+   */
+  it("classifies every delivery status identically on both sides of the boundary", () => {
+    for (const status of ALL_DELIVERY_STATUSES) {
+      const domainAnswer = deliveredToRoom({ status });
+      const webAnswer = WEB_DELIVERED_TO_ROOM({ deliveryStatus: status });
+      expect(webAnswer, `deliveryStatus "${status}"`).toBe(domainAnswer);
+    }
+  });
+
+  /**
+   * `droppedAt` is the *other* shape `deliveredToRoom` accepts — how `XArticleSentEntry` retires a
+   * row (it carries no `status` field to widen; see the domain function's own docstring). `BoardRow`
+   * has no `droppedAt` field to mirror: the board is built from `DeliveryEntry[]` alone
+   * (`buildBoard(..., deliveries: DeliveryEntry[])` in `src/adapters/web/board.ts`), and `x-article`
+   * — the one outlet that ledger covers — is never rowed on the board at all (`reachable()` in
+   * `board.ts` excludes it, since its own send/mark routes would both refuse it). So there is nothing
+   * for the web mirror to agree or disagree with here; this pins the domain side alone, on purpose.
+   */
+  it("excludes a row retired via droppedAt too — a shape the web mirror never receives", () => {
+    expect(deliveredToRoom({ status: "sent", droppedAt: "2026-01-01T00:00:00.000Z" })).toBe(false);
   });
 
   /** [복사] hands a human the `_paste` spelling; the canonical text would paste raw markdown. */

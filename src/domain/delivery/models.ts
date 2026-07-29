@@ -11,17 +11,32 @@ import { PRIMARY_OUTLET_BY_CHANNEL } from "../outlet/models";
  * `loadAll()` — the board still explains what happened — but it must stop meaning "this room
  * already has this copy", or the room is stranded forever.
  */
+export type DeliveryStatus = "sent" | "delivered" | "dropped";
+
 export interface DeliveryEntry {
   itemId: string;
   type: string;
   outletId: string;
-  status: "sent" | "delivered" | "dropped";
+  status: DeliveryStatus;
   at: string; // ISO
   by: "auto" | "manual";
   postId?: string;
   url?: string;
   senderName?: string;
 }
+
+/**
+ * Every `DeliveryStatus`, with TypeScript enforcing the list stays exhaustive: `satisfies
+ * Record<DeliveryStatus, true>` fails to compile if a member is added to the union without a
+ * matching key here. The one consumer is `tests/web/typeMirror.test.ts`, which walks this to prove
+ * `deliveredToRoom` below and the dashboard's own copy of it (`web/src/types.ts`) classify *every*
+ * member the same way — not just today's three — since nothing else ties the two together.
+ */
+export const ALL_DELIVERY_STATUSES: readonly DeliveryStatus[] = Object.keys({
+  sent: true,
+  delivered: true,
+  dropped: true,
+} satisfies Record<DeliveryStatus, true>) as DeliveryStatus[];
 
 export function deliveryKey(e: Pick<DeliveryEntry, "itemId" | "type" | "outletId">): string {
   return `${e.itemId}:${e.type}:${e.outletId}`;

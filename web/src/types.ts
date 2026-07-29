@@ -271,12 +271,21 @@ export interface BoardRow {
 }
 
 /**
- * Whether a room's `deliveryStatus` means the room already has this copy — the dashboard's
- * counterpart to `deliveredToRoom` in `src/domain/delivery/models.ts`. `OutletCard` and
- * `OutletBoard` both count a room toward `{n}/{total}곳 완료` through this one predicate rather than
- * each re-deriving it, so the two tallies cannot silently disagree — and so a `dropped` row (a
- * truthy string, same as `sent`/`delivered`) does not accidentally count as done just because
- * `deliveryStatus` is no longer `undefined`.
+ * Whether a room's `deliveryStatus` means the room already has this copy — mirrors `deliveredToRoom`
+ * in `src/domain/delivery/models.ts` (the frontend cannot import it; see the mirror note above
+ * `BoardRow`). `OutletCard` and `OutletBoard` both count a room toward `{n}/{total}곳 완료` through
+ * this one predicate rather than each re-deriving it, so the two tallies cannot silently disagree —
+ * and so a `dropped` row (a truthy string, same as `sent`/`delivered`) does not accidentally count as
+ * done just because `deliveryStatus` is no longer `undefined`.
+ *
+ * This copy is written as an allowlist (only `sent`/`delivered` count) rather than the domain's
+ * denylist (`status !== "dropped"`), because `deliveryStatus` here is also `undefined` for the common
+ * case of a room nothing has gone out to — the domain's `status` field is never undefined on a real
+ * ledger row, so its denylist has no reason to guard that case, and copying its shape verbatim would
+ * silently flip a never-sent room to "done". Nothing about the two functions' *shapes* forces them to
+ * agree on a delivery status neither has seen yet — that agreement is pinned by
+ * `tests/web/typeMirror.test.ts`, which runs both predicates over every member of the domain's
+ * `DeliveryStatus` union and requires the same verdict.
  */
 export const deliveredToRoom = (row: Pick<BoardRow, "deliveryStatus">): boolean =>
   row.deliveryStatus === "sent" || row.deliveryStatus === "delivered";

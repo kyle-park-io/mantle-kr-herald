@@ -3,7 +3,7 @@ import { ALL_TYPES, type ConversionType } from "../../domain/conversion/models";
 import { ALL_CHANNELS, type Channel, type ChannelRendering } from "../../domain/formatting/models";
 import { deliveredByChannelSender, outletsForChannel, type Outlet } from "../../domain/outlet/models";
 import { overrideKey, textFor, type OutletOverride } from "../../domain/outlet/override";
-import { deliveryKey, type DeliveryEntry } from "../../domain/delivery/models";
+import { deliveryKey, type DeliveryEntry, type DeliveryStatus } from "../../domain/delivery/models";
 import { sendBlock, type SendBlock, type SourceApproval } from "../../domain/send/sendBlock";
 import { awaitingPublish } from "../../domain/send/awaitingPublish";
 
@@ -28,7 +28,7 @@ export interface BoardRow {
    * "done" state: `deliveredToRoom` (see `../../domain/delivery/models.ts`) is what excludes it from
    * every "already delivered" question, and the dashboard's own tally must agree.
    */
-  deliveryStatus?: "sent" | "delivered" | "dropped";
+  deliveryStatus?: DeliveryStatus;
   /**
    * Sent, but the post is a scheduled Typefully draft that has not been looked up yet — so `at` is
    * when it was queued, `url` is missing, and the row must not claim to be live. See
