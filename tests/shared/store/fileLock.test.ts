@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { access, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { describe, it, expect, vi } from "vitest";
+import { access, mkdir, mkdtemp, readFile, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { fork } from "node:child_process";
 import { withFileLock } from "../../../src/shared/store/fileLock";
 
@@ -20,34 +21,6 @@ const waitFor = async (cond: () => Promise<boolean>, what = "condition") => {
     await sleep(5);
   }
   throw new Error(`${what} never became true`);
-};
-
-/**
- * Runs an observation again if the wall clock jumped underneath it.
- *
- * Staleness is `Date.now() - mtime`, so a wall clock that jumps *forward* makes every lock look
- * older than it is — including one a heartbeat stamped a moment ago. That is not hypothetical here:
- * the WSL2 machine this was written on moves `Date.now()` by ~22s in bursts, measured at ~1 jump per
- * 8s during a burst and none at all for minutes either side. `performance.now()` is monotonic and
- * does not follow, so the two disagreeing is a reliable detector.
- *
- * Retrying is sound rather than lenient, and only because of the direction: the assertions guarded
- * here are negative ones ("the waiter must be refused"), which a jump can only push to a false
- * failure, never to a false pass. A real regression has no jump to point at and fails on the first
- * attempt.
- */
-const withoutClockJump = async (observe: () => Promise<void>) => {
-  for (let attempt = 1; ; attempt += 1) {
-    const wall = Date.now();
-    const mono = performance.now();
-    try {
-      await observe();
-      return;
-    } catch (err) {
-      const jumped = Math.abs(Date.now() - wall - (performance.now() - mono)) > 1_000;
-      if (!jumped || attempt === 3) throw err;
-    }
-  }
 };
 
 const deferred = () => {
@@ -313,10 +286,15 @@ describe("withFileLock", () => {
      *
      * The stall is applied by backdating rather than by really sleeping for three staleness windows,
      * the same trick the reclaim regression above uses: it puts the lock in exactly the state a
-     * stalled holder leaves it in, in one syscall instead of seconds, and shrinks the window in which
-     * this machine's wall-clock jump could invalidate the reading. A holder with no heartbeat can
-     * never get out of that state; a live one erases it on its next beat, which is what the wait
-     * below is watching for and what fails first if the heartbeat is gone.
+     * stalled holder leaves it in, in one syscall instead of seconds. A holder with no heartbeat can
+     * never get out of that state and the waiter walks in; a live one erases it on its next beat.
+     *
+     * Nothing is asserted between the backdate and the waiter, deliberately. An earlier version
+     * waited for a beat to heal the lock first, which felt tidier and was worse: with the heartbeat
+     * removed *that* wait failed, so the assertion below — the one the test is named for — was never
+     * reached, and its own correctness went unverified. `timeoutMs` likewise has to exceed
+     * `staleMs + RECLAIM_CONFIRM_MS` (1400ms), or the waiter would be refused simply for running out
+     * of time before it could reclaim anything, and would pass without exercising a reclaim at all.
      */
     it("does not let a waiter reclaim the lock of a holder that is still working", async () => {
       const dir = await scratch();
@@ -327,14 +305,9 @@ describe("withFileLock", () => {
       const holder = withFileLock(path, () => mayExit.promise, { staleMs: 400 });
       await waitFor(() => exists(lock));
       await backdate(lock, 60_000);
-      await waitFor(async () => Date.now() - (await mtimeOf(lock)) < 400, "the stall healed");
-      await withoutClockJump(async () => {
-        // timeoutMs above staleMs, so this is the ordinary contended path rather than the
-        // misconfigured-timeout diagnostic.
-        await expect(
-          withFileLock(path, async () => "walked in", { staleMs: 400, timeoutMs: 500 }),
-        ).rejects.toThrow(/Timed out/);
-      });
+      await expect(
+        withFileLock(path, async () => "walked in", { staleMs: 400, timeoutMs: 2_000 }),
+      ).rejects.toThrow(/Timed out/);
       mayExit.resolve();
       await holder;
     }, 15_000);
@@ -416,6 +389,124 @@ describe("withFileLock", () => {
       await stalled;
       // And on the way out it must leave the stranger's lock alone, too.
       expect(await exists(lock)).toBe(true);
+    });
+  });
+
+  describe("reclaim confirmation", () => {
+    // The cost side: a reclaim is not free any more, and it should not be. One stale reading is a
+    // guess; a stale reading that survives a second of monotonic time is a fact. Timed on
+    // `performance.now()` because the wall clock is the thing under suspicion.
+    it("watches a stale lock for a while before removing it", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      await writeFile(`${path}.lock`, "999999:long-dead\n");
+      await backdate(`${path}.lock`, 60_000);
+      const startedAt = performance.now();
+      expect(await withFileLock(path, async () => "ok", { staleMs: 1_000 })).toBe("ok");
+      expect(performance.now() - startedAt).toBeGreaterThanOrEqual(1_000);
+    }, 15_000);
+
+    /**
+     * The purpose side, and the reason this is a duration rather than a count of polls.
+     *
+     * A forward step of the wall clock inflates every lock's apparent age by its own size, including
+     * one a live holder stamped milliseconds ago — so "looks stale" arrives in bursts that end when
+     * the clock is corrected or the next beat re-stamps the mtime. A dead owner's lock is stale and
+     * stays stale. Only the second one may be reclaimed.
+     *
+     * The flicker below re-stamps the lock every 400ms against a 200ms staleness window, so it is
+     * stale roughly half the time but never for the 1s a reclaim requires. Three consecutive polls
+     * (75ms at `RETRY_INTERVAL_MS`) would sit entirely inside one of those runs and reclaim it.
+     */
+    it("does not reclaim a lock whose staleness keeps being interrupted", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const lock = `${path}.lock`;
+      await writeFile(lock, "999999:alive-but-flickering\n");
+      const flicker = setInterval(() => {
+        const now = new Date();
+        void utimes(lock, now, now).catch(() => {});
+      }, 400);
+      try {
+        await expect(
+          withFileLock(path, async () => "walked in", { staleMs: 200, timeoutMs: 2_000 }),
+        ).rejects.toThrow(/Timed out/);
+      } finally {
+        clearInterval(flicker);
+      }
+    }, 15_000);
+
+    /**
+     * The acquisition deadline must be monotonic.
+     *
+     * A wall-clock deadline is steppable by the very clock that inflates lock ages, and in the same
+     * direction: one forward step and the waiter throws `Timed out` immediately, without ever
+     * reaching the reclaim it was waiting to perform — giving up ~22.8s early against a holder it
+     * would otherwise have outlasted, and (worse for a test suite) passing every "must be refused"
+     * assertion vacuously.
+     *
+     * Only `Date` is faked, so `setTimeout` and `performance.now()` stay real: `vi.setSystemTime`
+     * then reproduces a `CLOCK_REALTIME` step of the exact size this machine produces, in-process,
+     * without touching the system clock. `staleMs` is wide enough that no reclaim is in play — this
+     * is about the deadline and nothing else.
+     */
+    it("measures the acquisition timeout on a clock that cannot be stepped", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      await writeFile(`${path}.lock`, "999999:holder\n");
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        const startedAt = performance.now();
+        const waiting = expect(
+          withFileLock(path, async () => "never", { staleMs: 600_000, timeoutMs: 1_000 }),
+        ).rejects.toThrow(/Timed out/);
+        await sleep(100);
+        vi.setSystemTime(Date.now() + 22_808);
+        await waiting;
+        expect(performance.now() - startedAt).toBeGreaterThanOrEqual(900);
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 15_000);
+  });
+
+  describe("release failure", () => {
+    /**
+     * A `throw` from the `finally` replaces whatever the `try` produced. So a release that fails
+     * after a *successful* job turns a ledger row that was written into a reported failure — and
+     * `SendChannels` answers a reported failure by retrying, which is the duplicate live post this
+     * module exists to prevent, caused by the cleanup rather than by the work.
+     *
+     * Turning the lock file into a directory makes the release's `readFile` fail with EISDIR, which
+     * stands in for the ways it fails for real: EACCES under a locked-down directory, EIO on a disk
+     * going bad. What is left behind is a lock with no owner, which is exactly what the staleness
+     * window reclaims.
+     */
+    it("does not turn a completed job into a failure when the release fails", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const lock = `${path}.lock`;
+      const recorded = await withFileLock(path, async () => {
+        await unlink(lock);
+        await mkdir(lock);
+        return "recorded";
+      });
+      expect(recorded).toBe("recorded");
+    });
+
+    // And the same `finally` must not bury the job's own error under the release's. The job's error
+    // is the one that says what went wrong; an EISDIR from the cleanup says nothing useful.
+    it("keeps the job's own error when the release also fails", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const lock = `${path}.lock`;
+      await expect(
+        withFileLock(path, async () => {
+          await unlink(lock);
+          await mkdir(lock);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
     });
   });
 });
