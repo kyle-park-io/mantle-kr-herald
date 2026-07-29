@@ -98,3 +98,46 @@ describe("createTypefullyFetch", () => {
     expect(logged[0]).toContain("socialset-resource=drafts.create");
   });
 });
+
+describe("createTypefullyFetch — request timeouts", () => {
+  /** Captures the `signal` each attempt was given, so the test can assert one exists per attempt. */
+  const capturing = (statuses: number[]) => {
+    const signals: (AbortSignal | undefined)[] = [];
+    const fn = (async (_url: string, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      return { ok: true, status: statuses.shift() ?? 200 } as Response;
+    }) as unknown as typeof fetch;
+    return { fn, signals };
+  };
+
+  it("passes an abort signal on every attempt", async () => {
+    const { fn, signals } = capturing([503, 503, 200]);
+    await createTypefullyFetch(fn, async () => {}, () => {})("https://api.typefully.com/v2/me");
+    expect(signals).toHaveLength(3);
+    // A single signal reused across attempts would already be aborted on attempt 2.
+    expect(new Set(signals).size).toBe(3);
+    for (const s of signals) expect(s).toBeInstanceOf(AbortSignal);
+  });
+
+  it("retries an idempotent call whose attempt timed out", async () => {
+    let calls = 0;
+    const fn = (async () => {
+      calls += 1;
+      if (calls === 1) throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+      return { ok: true, status: 200 } as Response;
+    }) as unknown as typeof fetch;
+    const res = await createTypefullyFetch(fn, async () => {}, () => {})("https://api.typefully.com/v2/me");
+    expect(res.status).toBe(200);
+    expect(calls).toBe(2);
+  });
+
+  // The canonical case for that message: the server may have created the draft and only the
+  // response was lost.
+  it("does NOT retry a timed-out draft create, and says the request may have landed", async () => {
+    let calls = 0;
+    const fn = (async () => { calls += 1; throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }); }) as unknown as typeof fetch;
+    const call = createTypefullyFetch(fn, async () => {}, () => {})("https://x/drafts", { method: "POST" }, { idempotent: false });
+    await expect(call).rejects.toThrow(/may still have been processed/);
+    expect(calls).toBe(1);
+  });
+});

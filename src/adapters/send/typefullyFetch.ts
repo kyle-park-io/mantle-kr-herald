@@ -1,6 +1,11 @@
 export const RETRY_ATTEMPTS = 3;
 export const RETRY_BASE_MS = 1000;
 
+/** Default per-attempt budget for small JSON calls to the Typefully API. */
+export const API_TIMEOUT_MS = 20000;
+/** Per-attempt budget for calls that move real bytes over arbitrary hosts (source media download, S3 PUT). */
+export const MEDIA_TIMEOUT_MS = 120000;
+
 export interface TypefullyCallOptions {
   /**
    * Whether replaying this request is harmless. Defaults to true.
@@ -10,6 +15,13 @@ export interface TypefullyCallOptions {
    * fifteen published posts a month, so a duplicate costs two of them.
    */
   idempotent?: boolean;
+  /**
+   * Per-attempt request timeout in milliseconds. Defaults to `API_TIMEOUT_MS`. A fresh
+   * `AbortSignal.timeout()` is built for each attempt inside the retry loop — a signal that expires
+   * mid-attempt is just another fetch rejection, so it flows through the same idempotency handling
+   * as any other network failure (see below).
+   */
+  timeoutMs?: number;
 }
 
 export type TypefullyFetch = (
@@ -57,11 +69,18 @@ export function createTypefullyFetch(
 ): TypefullyFetch {
   return async (url, init, opts = {}) => {
     const idempotent = opts.idempotent ?? true;
+    const timeoutMs = opts.timeoutMs ?? API_TIMEOUT_MS;
     for (let attempt = 0; ; attempt++) {
       const last = attempt === RETRY_ATTEMPTS - 1;
+      // Built fresh inside the loop, per attempt: a signal created once outside would already be
+      // aborted by the second attempt, turning every retry into an instant failure. Merged with a
+      // caller-supplied signal (if any) rather than replacing it, so an existing cancellation path
+      // still works.
+      const timeoutSignal = AbortSignal.timeout(timeoutMs);
+      const signal = init?.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
       let res: Response;
       try {
-        res = await fetchFn(url, init);
+        res = await fetchFn(url, { ...init, signal });
       } catch (err) {
         // A connection that died mid-flight is not proof the server did nothing. For a call that
         // must not be replayed, say so in the message — the operator, not a retry loop, decides.
