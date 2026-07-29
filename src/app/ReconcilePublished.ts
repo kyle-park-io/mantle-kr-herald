@@ -1,5 +1,5 @@
 import type { DeliveryLedger } from "../ports/DeliveryLedger";
-import { awaitingPublish, isXUrl } from "../domain/send/awaitingPublish";
+import { awaitingPublish, awaitingArticlePublish, isXUrl } from "../domain/send/awaitingPublish";
 
 /** Published X url(s) + parsed ids for a Typefully draft, as returned by `TypefullyDraftLookup`. */
 interface Published {
@@ -65,7 +65,7 @@ export class ReconcilePublished {
     }
 
     for (const row of await this.article.loadAll()) {
-      if (isXUrl(row.url) || !row.postId) continue;
+      if (!awaitingArticlePublish(row)) continue;
       let u: Published;
       try {
         u = await this.lookup.published(row.postId);

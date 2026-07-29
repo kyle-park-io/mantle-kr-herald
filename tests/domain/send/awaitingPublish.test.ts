@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { awaitingPublish, isXUrl } from "../../../src/domain/send/awaitingPublish";
+import { awaitingPublish, awaitingArticlePublish, isXUrl } from "../../../src/domain/send/awaitingPublish";
 
 const xRow = (over: Record<string, unknown> = {}) => ({
   itemId: "x:1", type: "x", outletId: "x-post", status: "sent", postId: "10104646", ...over,
@@ -38,5 +38,22 @@ describe("awaitingPublish", () => {
     expect(isXUrl("https://x.com/i/status/1")).toBe(true);
     expect(isXUrl("https://t.me/c/999/11")).toBe(false);
     expect(isXUrl(undefined)).toBe(false);
+  });
+});
+
+describe("awaitingArticlePublish", () => {
+  const row = (over: Record<string, unknown> = {}) => ({ itemId: "x:1", postId: "10104901", sentAt: "2026-07-29T00:00:00Z", ...over });
+
+  /** What the article ledger holds right after a send: a Typefully draft id and no url. */
+  it("is true for a row still holding a draft id", () => {
+    expect(awaitingArticlePublish(row())).toBe(true);
+  });
+
+  it("is false once the row carries its x.com url", () => {
+    expect(awaitingArticlePublish(row({ url: "https://x.com/bcd_kyle/status/2082141042959401225" }))).toBe(false);
+  });
+
+  it("is false with no postId — nothing was scheduled", () => {
+    expect(awaitingArticlePublish(row({ postId: undefined }))).toBe(false);
   });
 });
