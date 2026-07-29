@@ -8,6 +8,7 @@ import {
   DESTINATION_LABEL,
   OUTLET_DELIVERY,
   PASTE_DESTINATION,
+  SEND_BLOCK_REASON,
   TYPE_LABEL,
   outletLabel,
   type BoardGroup,
@@ -568,13 +569,15 @@ function Row(props: {
 }) {
   const { row, group, itemId, busy, dirty, run } = props;
   const { type } = group;
-  // The row's own resolved status, never the group's: a fork left at `rendered` under an approved
-  // group is exactly the row that would silently sit out a send it looks eligible for.
-  const locked = row.status !== "approved";
+  // Straight from the server's `sendBlock` — the same predicate `SendChannels` enforces, so this
+  // button is locked exactly when a send would refuse. It covers the row's own approval (never the
+  // group's: a fork left at `rendered` under an approved group would otherwise silently sit out a
+  // send it looks eligible for) *and* the state of the 1차 translation it descends from.
+  const locked = row.block !== undefined;
   const sent = row.deliveryStatus === "sent";
   const delivered = row.deliveryStatus === "delivered";
   const highlighted = props.hovered === row.outletId;
-  const strandedFork = row.forked && locked && group.status === "approved";
+  const strandedFork = row.forked && row.block === "unapproved" && group.status === "approved";
   const blocked = busy || dirty;
   // What this room's editor may still do. A `sent` row is read-only: see `rowEditorGate`.
   const gate = rowEditorGate(row, { busy, draft: props.draft });
@@ -667,7 +670,7 @@ function Row(props: {
               title={
                 strandedFork
                   ? "이 방은 따로 쓴 글이 아직 승인 전입니다 — 그룹을 승인해도 발송되지 않습니다"
-                  : "먼저 글을 승인하세요"
+                  : SEND_BLOCK_REASON[row.block!]
               }
             >
               {row.delivery === "auto" ? "발송" : "전달함"} · 잠김
@@ -736,6 +739,16 @@ function Row(props: {
         <p className="px-4 pb-2 text-[11px] font-medium text-amber-ink">
           ⚠ 그룹은 승인됐지만 이 방의 글은 아직 검수 전입니다 — 그룹을 발송해도 이 방은 빠집니다.
         </p>
+      )}
+
+      {/*
+        `unapproved` needs no line — `발송 · 잠김` already says it and `승인 ✓` is on screen. The
+        source-level blocks are different: nothing else on this card mentions the 1차 translation, so
+        a reviewer staring at approved copy under a locked button would have no idea what to fix, and
+        a tooltip on a disabled button is not somewhere anyone thinks to look.
+      */}
+      {row.block !== undefined && row.block !== "unapproved" && !sent && (
+        <p className="px-4 pb-2 text-[11px] font-medium text-amber-ink">⚠ {SEND_BLOCK_REASON[row.block]}</p>
       )}
 
       {props.open && (

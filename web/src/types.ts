@@ -173,6 +173,20 @@ export const outletLabel = (id: string): string => OUTLET_LABEL[id] ?? id;
 // Mirrors src/adapters/web/board.ts — the GET /api/items/:id/board payload.
 
 /** One room under a group card: what it will send, and whether it already went out. */
+/**
+ * Why a room may not send. Mirrors `src/domain/send/sendBlock.ts` — the server computes it with the
+ * same predicate `SendChannels` enforces, so a row that shows no block is a row that will send.
+ */
+export type SendBlock = "source-missing" | "source-unapproved" | "unapproved" | "source-changed";
+
+/** What the reviewer is told, keyed by block. Mirrors `SEND_BLOCK_REASON`. */
+export const SEND_BLOCK_REASON: Record<SendBlock, string> = {
+  "source-missing": "원문 번역을 찾을 수 없습니다",
+  "source-unapproved": "원문이 1차 승인 상태가 아닙니다",
+  unapproved: "아직 승인되지 않았습니다",
+  "source-changed": "원문이 이 문구를 승인한 뒤에 다시 승인됐습니다 — 다시 검수하거나 변환을 새로 하세요",
+};
+
 export interface BoardRow {
   outletId: string;
   label: string;
@@ -182,6 +196,8 @@ export interface BoardRow {
   /** The room's *resolved* status: a fork carries its own, an unforked room the group's. */
   status: "rendered" | "approved";
   text: string;
+  /** Why this room cannot send yet, or absent when it can. Mirrors `SendBlock`. */
+  block?: SendBlock;
   deliveryStatus?: "sent" | "delivered";
   at?: string;
   url?: string;

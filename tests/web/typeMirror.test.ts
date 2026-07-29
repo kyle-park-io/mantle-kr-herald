@@ -4,6 +4,7 @@ import { ALL_CHANNELS } from "../../src/domain/formatting/models";
 import { DESTINATIONS_BY_CHANNEL } from "../../src/domain/formatting/emitters";
 import type { Destination } from "../../src/domain/formatting/emitters/types";
 import { ALL_OUTLETS } from "../../src/domain/outlet/models";
+import { SEND_BLOCK_REASON, type SendBlock } from "../../src/domain/send/sendBlock";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
 import type { FormatWarning } from "../../src/app/FormatVariants";
 import {
@@ -14,6 +15,8 @@ import {
   OUTLET_DELIVERY as WEB_OUTLET_DELIVERY,
   PASTE_DESTINATION as WEB_PASTE_DESTINATION,
   DESTINATION_LABEL as WEB_DESTINATION_LABEL,
+  SEND_BLOCK_REASON as WEB_SEND_BLOCK_REASON,
+  type SendBlock as WebSendBlock,
   type Destination as WebDestination,
   type BoardView as WebBoardView,
   type BoardGroup as WebBoardGroup,
@@ -133,6 +136,19 @@ describe("web type mirror", () => {
     const reachable = [...new Set(ALL_CHANNELS.flatMap((c) => DESTINATIONS_BY_CHANNEL[c]))].sort();
     expect(Object.keys(WEB_DESTINATION_LABEL).sort()).toEqual(reachable);
     expect(Object.values(WEB_DESTINATION_LABEL).filter((label) => label.trim() === "")).toEqual([]);
+    expect(unions).toBe(true);
+  });
+
+  /**
+   * The lock the board paints comes from the server's `sendBlock`, so an unmirrored member would
+   * render a room with **no reason shown** next to a disabled button — or, if the union drifted the
+   * other way, a reason for a state the server can never send. `SEND_BLOCK_REASON` is
+   * `Record<SendBlock, string>` on both sides, so `tsc` checks the keys once the unions agree; the
+   * runtime check is what proves the two texts actually say the same thing.
+   */
+  it("mirrors every send block and words each of them identically", () => {
+    const unions: SameUnion<WebSendBlock, SendBlock> = true;
+    expect(WEB_SEND_BLOCK_REASON).toEqual(SEND_BLOCK_REASON);
     expect(unions).toBe(true);
   });
 

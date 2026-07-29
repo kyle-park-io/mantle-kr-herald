@@ -2,13 +2,20 @@
 import { describe, expect, it } from "vitest";
 import { buildBoard } from "../../../src/adapters/web/board";
 import type { ChannelRendering } from "../../../src/domain/formatting/models";
+import type { SourceApproval } from "../../../src/domain/send/sendBlock";
 
 const r = (type: string, channel: string, text: string, status: "rendered" | "approved" = "approved"): ChannelRendering =>
-  ({ itemId: "x:1", type, channel, text, refined: false, createdAt: "T", status } as ChannelRendering);
+  ({ itemId: "x:1", type, channel, text, refined: false, createdAt: "T", status, approvedAt: "T2" } as ChannelRendering);
+
+/**
+ * The 1차 translation the renderings descend from, approved before them. Every test that is not
+ * about the source gate itself needs one, because `sendBlock` blocks a row it cannot check.
+ */
+const approvedSource: SourceApproval = { status: "approved", approvedAt: "T1" };
 
 describe("buildBoard", () => {
   it("groups by (type, channel) and lists the rooms that receive each group", () => {
-    const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], []);
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [], approvedSource);
     const group = board.groups.find((g) => g.type === "announcement" && g.channel === "telegram");
     expect(group?.text).toBe("공통");
     // Every telegram room suggests `announcement` — 텔레그램 KOL방 included (ALL_OUTLETS gives it
@@ -18,7 +25,7 @@ describe("buildBoard", () => {
   });
 
   it("rows the suggested rooms and offers the channel's remaining rooms as addable", () => {
-    const board = buildBoard("x:1", [r("kol", "telegram", "브리프")], [], []);
+    const board = buildBoard("x:1", [r("kol", "telegram", "브리프")], [], [], approvedSource);
     const group = board.groups.find((g) => g.type === "kol");
     expect(group?.rows.map((row) => row.outletId)).toEqual(["tg-kol"]);
     // suggestedTypes is a default, not a constraint — the rest of the channel stays reachable.
@@ -28,7 +35,7 @@ describe("buildBoard", () => {
   it("rows a non-suggested room once it has a delivery, and drops it from addable", () => {
     const board = buildBoard("x:1", [r("kol", "telegram", "브리프")], [], [
       { itemId: "x:1", type: "kol", outletId: "tg-community", status: "delivered", at: "T", by: "manual" },
-    ]);
+    ], approvedSource);
     const group = board.groups.find((g) => g.type === "kol");
     expect(group?.rows.map((row) => row.outletId)).toEqual(["tg-kol", "tg-community"]);
     expect(group?.addableOutletIds).not.toContain("tg-community");
@@ -37,7 +44,7 @@ describe("buildBoard", () => {
   it("rows a non-suggested room once it has an override", () => {
     const board = buildBoard("x:1", [r("kol", "telegram", "브리프")], [
       { itemId: "x:1", type: "kol", outletId: "tg-dev", text: "데브방용", status: "rendered", createdAt: "T" },
-    ], []);
+    ], [], approvedSource);
     const group = board.groups.find((g) => g.type === "kol");
     expect(group?.rows.map((row) => row.outletId)).toEqual(["tg-kol", "tg-dev"]);
   });
@@ -45,7 +52,7 @@ describe("buildBoard", () => {
   it("marks a forked room and gives it its own text and status", () => {
     const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [
       { itemId: "x:1", type: "announcement", outletId: "tg-blockchain", text: "이 방 전용", status: "rendered", createdAt: "T" },
-    ], []);
+    ], [], approvedSource);
     const rows = board.groups[0]!.rows;
     expect(rows.find((row) => row.outletId === "tg-blockchain")).toMatchObject({ forked: true, text: "이 방 전용", status: "rendered" });
     expect(rows.find((row) => row.outletId === "tg-community")).toMatchObject({ forked: false, text: "공통", status: "approved" });
@@ -54,33 +61,33 @@ describe("buildBoard", () => {
   it("attaches delivery state per room, keeping two rooms on one channel apart", () => {
     const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [
       { itemId: "x:1", type: "announcement", outletId: "tg-community", status: "sent", at: "T", by: "auto", url: "u" },
-    ]);
+    ], approvedSource);
     const rows = board.groups[0]!.rows;
     expect(rows.find((row) => row.outletId === "tg-community")).toMatchObject({ deliveryStatus: "sent", url: "u" });
     expect(rows.find((row) => row.outletId === "tg-dev")?.deliveryStatus).toBeUndefined();
   });
 
   it("numbers a room that appears in several groups", () => {
-    const board = buildBoard("x:1", [r("announcement", "telegram", "공지"), r("explainer", "telegram", "해설")], [], []);
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공지"), r("explainer", "telegram", "해설")], [], [], approvedSource);
     const dev = board.groups.flatMap((g) => g.rows).filter((row) => row.outletId === "tg-dev");
     expect(dev.map((row) => [row.siblingIndex, row.siblingCount])).toEqual([[1, 2], [2, 2]]);
   });
 
   it("numbers a room that receives only one group as 1/1", () => {
-    const board = buildBoard("x:1", [r("announcement", "telegram", "공지"), r("explainer", "telegram", "해설")], [], []);
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공지"), r("explainer", "telegram", "해설")], [], [], approvedSource);
     const community = board.groups.flatMap((g) => g.rows).filter((row) => row.outletId === "tg-community");
     expect(community.map((row) => [row.siblingIndex, row.siblingCount])).toEqual([[1, 1]]);
   });
 
   it("lists the types with no rendering yet", () => {
-    const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], []);
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [], approvedSource);
     expect(board.unconverted).toEqual(["x", "explainer", "casual", "kol", "pr"]);
   });
 
   it("keeps a group no room suggests, offering the whole channel as addable", () => {
     // `pr` is suggested by pr-mail only, so a `pr` rendering formatted for telegram has no default
     // room. The card must still render — otherwise the text a human already wrote is unreachable.
-    const board = buildBoard("x:1", [r("pr", "telegram", "보도자료")], [], []);
+    const board = buildBoard("x:1", [r("pr", "telegram", "보도자료")], [], [], approvedSource);
     const group = board.groups.find((g) => g.type === "pr");
     expect(group?.rows).toEqual([]);
     expect(group?.addableOutletIds).toEqual(["tg-community", "tg-dev", "tg-kol", "tg-blockchain"]);
@@ -90,7 +97,7 @@ describe("buildBoard", () => {
     // x-article is `auto` but has its own pipeline: the send route refuses it and tells the
     // operator to tick 전달함, which MarkDelivery then refuses because the room is auto. Offering
     // it at all would produce a row with no way out of it.
-    const board = buildBoard("x:1", [r("x", "x", "트윗")], [], []);
+    const board = buildBoard("x:1", [r("x", "x", "트윗")], [], [], approvedSource);
     const group = board.groups[0]!;
     expect(group.rows.map((row) => row.outletId)).toEqual(["x-post"]);
     expect(group.addableOutletIds).toEqual([]);
@@ -101,7 +108,7 @@ describe("buildBoard", () => {
       { itemId: "x:1", type: "kol", outletId: "tg-retired", text: "옛 방", status: "rendered", createdAt: "T" },
     ], [
       { itemId: "x:1", type: "kol", outletId: "tg-gone", status: "delivered", at: "T", by: "manual" },
-    ]);
+    ], approvedSource);
     expect(board.groups[0]!.rows.map((row) => row.outletId)).toEqual(["tg-kol"]);
   });
 
@@ -111,13 +118,62 @@ describe("buildBoard", () => {
       { itemId: "x:2", type: "kol", outletId: "tg-dev", text: "남의 수정", status: "rendered", createdAt: "T" },
     ], [
       { itemId: "x:2", type: "kol", outletId: "tg-community", status: "delivered", at: "T", by: "manual" },
-    ]);
+    ], approvedSource);
     expect(board.groups.map((g) => g.type)).toEqual(["kol"]);
     expect(board.groups[0]!.rows.map((row) => row.outletId)).toEqual(["tg-kol"]);
   });
 
   it("orders groups by type so the sibling numbering is stable across loads", () => {
-    const board = buildBoard("x:1", [r("explainer", "telegram", "해설"), r("announcement", "telegram", "공지")], [], []);
+    const board = buildBoard("x:1", [r("explainer", "telegram", "해설"), r("announcement", "telegram", "공지")], [], [], approvedSource);
     expect(board.groups.map((g) => g.type)).toEqual(["announcement", "explainer"]);
+  });
+});
+
+/**
+ * The board's half of the send gate. Both the screen and `SendChannels` call `sendBlock`, so these
+ * assertions are about the *wiring* — that the board passes the room's resolved copy and the item's
+ * own translation, and reports the block rather than swallowing it.
+ */
+describe("buildBoard — the source translation gate", () => {
+  const rows = (board: ReturnType<typeof buildBoard>) => board.groups[0]!.rows;
+
+  it("leaves `block` off every row when the source is approved and older than the copy", () => {
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [], approvedSource);
+    expect(rows(board).map((row) => row.block)).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
+  it("blocks every row when the source's approval was withdrawn", () => {
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [], { status: "translated" });
+    expect(rows(board).every((row) => row.block === "source-unapproved")).toBe(true);
+  });
+
+  /** 승인 취소 → 수정 → 재승인: the copy predates the current Korean, so the rooms stay shut. */
+  it("blocks rows approved before the source was re-approved", () => {
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [], { status: "approved", approvedAt: "T9" });
+    expect(rows(board).every((row) => row.block === "source-changed")).toBe(true);
+  });
+
+  it("blocks every row when the item has no translation at all", () => {
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [], undefined);
+    expect(rows(board).every((row) => row.block === "source-missing")).toBe(true);
+  });
+
+  it("reports an unapproved room as `unapproved`, not as a source problem", () => {
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공통", "rendered")], [], [], approvedSource);
+    expect(rows(board).every((row) => row.block === "unapproved")).toBe(true);
+  });
+
+  /**
+   * The fork case: `[포맷 다시]` regenerates the group from the new Korean and leaves forks alone by
+   * design, so one room can be current while another is not — and both read `approved`.
+   */
+  it("blocks only the stale fork when the group was regenerated after the source changed", () => {
+    const regenerated = { ...r("announcement", "telegram", "새 공통"), approvedAt: "T9" };
+    const board = buildBoard("x:1", [regenerated], [
+      { itemId: "x:1", type: "announcement", outletId: "tg-dev", text: "옛 데브방 글", status: "approved", createdAt: "T", approvedAt: "T2" },
+    ], [], { status: "approved", approvedAt: "T8" });
+    const byRoom = Object.fromEntries(rows(board).map((row) => [row.outletId, row.block]));
+    expect(byRoom["tg-dev"]).toBe("source-changed");
+    expect(byRoom["tg-community"]).toBeUndefined();
   });
 });

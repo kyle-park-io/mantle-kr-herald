@@ -11,6 +11,8 @@ import { deliveredByChannelSender, outletsForChannel } from "../domain/outlet/mo
 import type { ResolvedText } from "../domain/outlet/override";
 import { overrideKey, textFor } from "../domain/outlet/override";
 import type { OutletOverrideStore } from "../ports/OutletOverrideStore";
+import type { TranslationStore } from "../ports/TranslationStore";
+import { sendBlock } from "../domain/send/sendBlock";
 import { emit } from "../domain/formatting/emitters";
 import { matchesItemId } from "../domain/itemId";
 import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
@@ -69,6 +71,16 @@ export class SendChannels {
     private readonly store: FormattingStore,
     private readonly senders: Record<SendableChannel, ChannelSender | undefined>,
     private readonly ledger: DeliveryLedger,
+    /**
+     * The 1차 translations every rendering descends from — `sendBlock` checks each room's approval
+     * against its source's.
+     *
+     * Required, unlike `overrides` below, because there is no safe reading of an absent one: with no
+     * source to check, a room whose translation was withdrawn — or rewritten and re-approved after
+     * this copy was blessed — would send anyway, which is a live post that cannot be recalled. A new
+     * call site must state where its sources come from rather than inherit a silent exemption.
+     */
+    private readonly translations: TranslationStore,
     private readonly record?: Recorder,
     private readonly archive?: Archiver,
     private readonly now: () => string = () => new Date().toISOString(),
@@ -96,6 +108,7 @@ export class SendChannels {
 
     const overrideRows = this.overrides ? await this.overrides.loadAll() : [];
     const overrideByKey = new Map(overrideRows.map((o) => [overrideKey(o), o] as const));
+    const sourceByItem = new Map((await this.translations.loadAll()).map((t) => [t.itemId, t] as const));
     /** What this room actually sends: its own fork when it has one, else the group text. */
     const resolve = (r: ChannelRendering, o: Outlet): ResolvedText =>
       textFor(r, overrideByKey.get(overrideKey({ itemId: r.itemId, type: r.type, outletId: o.id })));
@@ -104,8 +117,9 @@ export class SendChannels {
       if (input.outletIds && !input.outletIds.includes(o.id)) return false;
       // Approval is per room, not per group. A forked room carries its own review: an approved
       // group must not carry an unreviewed fork out, and a `rendered` group must not hold back a
-      // fork that *was* reviewed.
-      return resolve(r, o).status === "approved";
+      // fork that *was* reviewed. `sendBlock` adds the upstream half — the same predicate the board
+      // paints its locks from, so the screen and this loop can never disagree about a room.
+      return sendBlock(resolve(r, o), sourceByItem.get(r.itemId)) === null;
     };
 
     const candidates = rows.filter((r): r is SendableRendering => {

@@ -215,12 +215,13 @@ const loadPublishState = async (): Promise<PublishStateRow[]> => {
 };
 
 const loadBoard = async (itemId: string): Promise<BoardView> => {
-  const [renderings, overrides, deliveries] = await Promise.all([
+  const [renderings, overrides, deliveries, translations] = await Promise.all([
     formattingStore.loadAll(),
     overrideStore.loadAll(),
     deliveryLedger.loadAll(),
+    translationStore.loadAll(),
   ]);
-  return buildBoard(itemId, renderings, overrides, deliveries);
+  return buildBoard(itemId, renderings, overrides, deliveries, translations.find((t) => t.itemId === itemId));
 };
 
 const isSendableChannel = (c: string): c is SendableChannel => c === "telegram" || c === "x";
@@ -252,6 +253,9 @@ const sendToOutlet = async (itemId: string, type: string, outletId: string): Pro
       formattingStore,
       createSenders([channel]),
       deliveryLedger,
+      // The board paints this row's lock from `sendBlock`; the same store makes this call enforce
+      // it, so a row that looks sendable on screen is exactly a row that sends.
+      translationStore,
       record,
       archive,
       undefined,
