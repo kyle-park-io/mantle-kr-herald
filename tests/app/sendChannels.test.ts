@@ -317,13 +317,12 @@ describe("SendChannels", () => {
     const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: "본문" })]);
     const sender: ChannelSender = { name: "telegram-bot", send: async () => ({ postId: "m1" }) };
     const { ledger } = fakeLedger();
-    // Day one of Task 2's staged .env migration: only the legacy TELEGRAM_CHAT_ID is set, so the map
-    // holds 커뮤니티 alone and 데브방 has no id.
+    // A half-configured `.env`: 커뮤니티's id is set and 데브방's is not, so the map holds one room.
     const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, fakeTranslations(), undefined, undefined, () => "T", undefined, outletsForChannel, { "tg-community": "-100111" }).run({ targets: ["telegram"] });
 
     // Still counted and named — a room that received nothing must show up in the totals — but not
-    // as `failed`: this install is on the documented legacy-only .env and is behaving exactly as
-    // intended, and `failed N` growing with the backlog on every run reads as breakage.
+    // as `failed`: an unset room id is a setup step the operator has not taken, not a broken send,
+    // and `failed N` growing with the backlog on every run reads as breakage.
     expect(res).toEqual(result({ sent: 1, unconfigured: 1, unconfiguredEnv: ["TELEGRAM_CHAT_ID_DEV"] }));
     // Nothing ledgered for the unconfigured room, so a rerun after fixing .env delivers only it.
     expect([...(await ledger.loadKeys())]).toEqual(["x:1:announcement:tg-community"]);

@@ -1,6 +1,6 @@
 import { parseStorageMode, tryParseStorageMode, type StorageMode } from "./storage/mode";
 import { X_MAX_WEIGHTED, X_PREMIUM_MAX_WEIGHTED } from "./domain/formatting/weightedLength";
-import { ALL_OUTLETS, PRIMARY_OUTLET_BY_CHANNEL } from "./domain/outlet/models";
+import { ALL_OUTLETS } from "./domain/outlet/models";
 
 export interface Config {
   apiKey: string;
@@ -147,42 +147,27 @@ export function loadGoogleSheetConfig(): GoogleSheetConfig {
 
 export interface TelegramConfig {
   botToken: string;
-  /**
-   * The legacy single-room id. Optional: rooms are configured per outlet (`loadTelegramChatIds`)
-   * and every send passes its room's id explicitly, so this is only a fallback for the primary
-   * room. Requiring it here made a correctly configured per-room `.env` — the one `.env.example`
-   * now documents — fail to build a sender at all, losing every Telegram delivery.
-   */
-  chatId?: string;
 }
 export function loadTelegramConfig(): TelegramConfig {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken) throw new Error("Missing required environment variable: TELEGRAM_BOT_TOKEN");
-  return { botToken, chatId: process.env.TELEGRAM_CHAT_ID || undefined };
+  return { botToken };
 }
 
 /**
- * Chat id per auto Telegram outlet. Splitting the old single `TELEGRAM_CHAT_ID` would stop sends
- * dead on `git pull`, so the primary room (`tg-community`) still falls back to it, with a warning.
- * A room with no id resolved is simply absent from the map — callers skip it.
+ * Chat id per auto Telegram outlet, from that outlet's own `chatIdEnv`. A room with no id set is
+ * simply absent from the map — callers skip it and name the missing variable.
+ *
+ * There is no single-room fallback: every send addresses one room, so a config that cannot name the
+ * room has nothing to fall back *to*. The one that used to exist pointed at 맨틀 한국 커뮤니티, which
+ * meant a half-migrated `.env` silently sent 데브방's copy to the community room.
  */
 export function loadTelegramChatIds(): Record<string, string> {
   const out: Record<string, string> = {};
-  const legacy = process.env.TELEGRAM_CHAT_ID;
   for (const outlet of ALL_OUTLETS) {
     if (!outlet.chatIdEnv) continue;
     const own = process.env[outlet.chatIdEnv];
-    if (own) {
-      out[outlet.id] = own;
-      continue;
-    }
-    if (legacy && outlet.id === PRIMARY_OUTLET_BY_CHANNEL.telegram) {
-      out[outlet.id] = legacy;
-      console.warn(
-        `[config] TELEGRAM_CHAT_ID is deprecated — set ${outlet.chatIdEnv} instead. ` +
-          `Using it for ${outlet.label} only; other rooms stay unconfigured.`,
-      );
-    }
+    if (own) out[outlet.id] = own;
   }
   return out;
 }

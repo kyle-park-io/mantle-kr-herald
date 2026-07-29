@@ -27,10 +27,10 @@ describe("resolveChannelTargets", () => {
 });
 
 /**
- * The `.env` an operator gets from following `.env.example` today: a bot token plus one id per
- * room, and **no** legacy `TELEGRAM_CHAT_ID`. Building the sender used to require the legacy
- * variable, so that exact `.env` made `send:channels --target telegram` abort before reading a
- * single room id — every Telegram delivery lost.
+ * The `.env` an operator gets from following `.env.example`: a bot token plus one id per room.
+ * Building the sender once required a single `TELEGRAM_CHAT_ID` on top, so that exact `.env` made
+ * `send:channels --target telegram` abort before reading a single room id — every Telegram delivery
+ * lost. The token is now the whole of what a sender needs; rooms are named per send.
  */
 describe("createSenders — telegram on a per-room .env", () => {
   const saved = { ...process.env };
@@ -46,7 +46,7 @@ describe("createSenders — telegram on a per-room .env", () => {
     process.env.TELEGRAM_CHAT_ID_DEV = "-100222";
   };
 
-  it("builds the telegram sender with no legacy TELEGRAM_CHAT_ID set", () => {
+  it("builds the telegram sender from the bot token alone", () => {
     perRoomEnv();
     expect(createSenders(["telegram"]).telegram?.name).toBe("telegram");
   });
