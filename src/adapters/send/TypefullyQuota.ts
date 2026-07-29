@@ -38,10 +38,37 @@ export class TypefullyQuota {
       publishing_quota?: { used?: number; remaining?: number; resets_at?: string };
     };
     const q = body.publishing_quota;
-    // "Absent" and "zero" are different answers, and only one of them should stop a send.
-    if (!q || typeof q.remaining !== "number") {
-      throw new Error("Typefully social-set response carried no publishing_quota");
+    /**
+     * "Absent" and "zero" are different answers, and only one of them should stop a send.
+     *
+     * `used` is validated here rather than defaulted (`q.used ?? 0`), and that is not symmetry for
+     * its own sake. The resend guard (`guardQueuedDraft`) proves "the original published while we
+     * were cancelling it" by comparing `used` either side of the cancel; a defaulted `0` makes both
+     * sides equal, so the guard reads a publish as "nothing moved", believes it verified, and sends
+     * the duplicate it exists to prevent — silently, on a field nobody was watching.
+     *
+     * Chosen over the alternative of also treating a DROP in `remaining` as proof: that leaves the
+     * defaulted field in place and compensates for it downstream, so the guard would carry two
+     * comparisons and a reader would have to work out which one fires when. Validating at the edge
+     * fixes it where the field enters the system, and an unusable payload then surfaces the way
+     * every other unusable payload here does — as a thrown read, which each caller already handles
+     * (the guard refuses, the banner shows the error, the send gate logs and proceeds).
+     *
+     * KNOWN TRADE-OFF, recorded rather than implied. That last caller is why this is not free: a
+     * throw is what `SendChannels` catches and then SENDS ANYWAY ("a monitoring call must not become
+     * a new way for delivery to fail"). So a payload carrying `remaining` but no `used` used to
+     * leave the 15/month ceiling enforced on `remaining`, and now leaves it unenforced on every
+     * batch run — a strictly worse failure than the one this fixes, if it ever happens. The strictly
+     * better shape is to keep `used` OPTIONAL on `PublishingQuota`/`Headroom` and let the resend
+     * guard alone treat `undefined` as unreadable-and-refuse, which keeps the ceiling enforceable
+     * while still disarming nothing silently. Not done here because it is conditional on Typefully
+     * omitting a field the live run says it always sends, and it widens two shared types for one
+     * caller. If the send gate ever logs "could not read the Typefully publishing quota" on a
+     * response that HAS a `remaining`, this is the line to revisit.
+     */
+    if (!q || typeof q.remaining !== "number" || typeof q.used !== "number") {
+      throw new Error("Typefully social-set response carried no usable publishing_quota (used/remaining)");
     }
-    return { used: q.used ?? 0, remaining: q.remaining, resetsAt: q.resets_at ?? "" };
+    return { used: q.used, remaining: q.remaining, resetsAt: q.resets_at ?? "" };
   }
 }

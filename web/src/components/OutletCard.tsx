@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { btn, btnApprove, btnApproved, btnApprovedHover, btnApprovedRest, btnDanger, btnPrimary } from "../buttonStyles";
-import { rowEditorGate } from "../rowEditor";
+import { rowEditorGate, resendKind } from "../rowEditor";
 import { fromEditor, toEditor } from "../canonicalEditor";
 import { Tip, type ConfirmRequest } from "./ConfirmDialog";
 import {
@@ -715,23 +715,43 @@ function Row(props: {
    * up, not two), and there is no earlier link to lose because the row has no url. Describing that as
    * "글이 하나 더 올라갑니다" contradicts the row's own badge, immediately before an irreversible click.
    *
-   * The queued wording also names the two ways the server refuses — the original already published,
-   * or the cancel did not take — because both come back as an error *after* the confirm, and an
-   * operator who was promised a send needs to have been told a refusal was possible.
+   * The queued wording also names the ways the server refuses — the original already published, the
+   * cancel did not take, or the cancel could not be told apart from a publish that beat it (Typefully
+   * answers the same 204 to both, so the server compares the publishing quota across the cancel).
+   * All of them come back as an error *after* the confirm, and an operator who was promised a send
+   * needs to have been told a refusal was possible — including the row shape the last two leave
+   * behind, which looks broken and is not: `발송됨` with no link, and 게시 확인 never touching it again.
+   *
+   * That shape gets its OWN branch (`unlinked`), and it is not a nicety. The server's refusal ends by
+   * telling the operator to press 재발송 once more if the post never appeared; the row it leaves is
+   * `sent` and no longer `awaitingPublish`, so without this branch that second click would be met
+   * with "이 방에는 …에 나간 글이 있습니다 … 하나 더 올라갑니다" — every clause of which is unknown or
+   * false for it, over a timestamp that is a *scheduling* time. That is exactly the contradiction PR
+   * #85 removed for `예약됨` rows, on the row shape the resend guard invents.
+   *
+   * The quota comparison is also why the queued click answers a couple of seconds slower than the
+   * others: two quota reads and a settle wait, on top of the two Typefully round trips.
    */
   const askResend = () =>
     props.onConfirm({
       title: `${row.label}에 다시 발송합니다`,
-      lines: row.awaitingPublish
-        ? [
-            `이 방에는 ${stampFull(row.at) ?? "이미"}에 예약한 글이 있고, 아직 올라가지 않았습니다.`,
-            "예약된 원본을 취소하고 새로 보냅니다 — 이 방에는 글이 하나만 올라갑니다.",
-            "확인하는 사이 원본이 이미 게시됐거나 예약 취소가 실패하면, 같은 글이 두 번 올라가지 않도록 발송을 멈추고 알려드립니다.",
-          ]
-        : [
-            `이 방에는 ${stampFull(row.at) ?? "이미"} 나간 글이 있습니다. 그 글은 지워지지 않고, 이 방에 글이 하나 더 올라갑니다.`,
-            "발송 기록은 새 발송으로 덮어써집니다. 먼저 보낸 글의 링크는 이 화면에서 사라집니다.",
-          ],
+      lines: {
+        queued: [
+          `이 방에는 ${stampFull(row.at) ?? "이미"}에 예약한 글이 있고, 아직 올라가지 않았습니다.`,
+          "예약된 원본을 취소하고 새로 보냅니다 — 이 방에는 글이 하나만 올라갑니다. 취소가 제대로 됐는지 확인하느라 몇 초 걸립니다.",
+          "확인하는 사이 원본이 이미 게시됐거나 예약 취소가 실패하면, 같은 글이 두 번 올라가지 않도록 발송을 멈추고 알려드립니다.",
+          "취소하는 사이에 원본이 올라간 정황이 보이거나 그 여부를 확인하지 못한 경우에도 멈춥니다. 그때 이 줄은 링크 없는 발송됨으로 남고 게시 확인도 더는 손대지 않습니다 — 계정을 확인하고 실제로 안 올라갔다면 재발송을 한 번 더 누르면 그대로 나갑니다.",
+        ],
+        unlinked: [
+          "이 방에는 X 발송 기록이 있지만 초안 번호도 링크도 남아 있지 않아, 글이 실제로 올라갔는지 이 화면에서도 서버에서도 확인할 수 없습니다.",
+          "직전 재발송이 예약된 원본을 취소하면서 그 사이 게시됐는지를 가려내지 못하면 이 상태로 남습니다 — 그때 안내한 대로, 계정에 글이 없으면 지금 누르면 됩니다.",
+          "그래서 이 발송은 이 방의 첫 글일 수도, 두 번째 글일 수도 있습니다. 계정을 먼저 확인하세요.",
+        ],
+        posted: [
+          `이 방에는 ${stampFull(row.at) ?? "이미"} 나간 글이 있습니다. 그 글은 지워지지 않고, 이 방에 글이 하나 더 올라갑니다.`,
+          "발송 기록은 새 발송으로 덮어써집니다. 먼저 보낸 글의 링크는 이 화면에서 사라집니다.",
+        ],
+      }[resendKind(row, group.channel)],
       pieces: rowPieces,
       confirmLabel: "다시 발송",
       onConfirm: () => void post(true),

@@ -43,4 +43,16 @@ describe("TypefullyQuota", () => {
     const { fn } = fakeFetch({ id: 283589 });
     await expect(new TypefullyQuota("KEY", "283589", fn, async () => {}).read()).rejects.toThrow(/publishing_quota/);
   });
+
+  /**
+   * `used` used to default to `0`, which is the one shape that fails DANGEROUSLY rather than
+   * loudly. The resend guard proves "the original published while we were cancelling it" by
+   * comparing `used` across the cancel: with both sides defaulted to `0` they agree, the guard
+   * concludes nothing published, and the resend goes out on top of a live post — while the guard
+   * believes it verified. A quota this adapter cannot read must say so.
+   */
+  it("throws when publishing_quota omits `used` — a defaulted 0 would silently disarm the resend guard", async () => {
+    const { fn } = fakeFetch({ id: 283589, publishing_quota: { remaining: 6, resets_at: "2026-08-01T00:00:00+09:00" } });
+    await expect(new TypefullyQuota("KEY", "283589", fn, async () => {}).read()).rejects.toThrow(/publishing_quota/);
+  });
 });

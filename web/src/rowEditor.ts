@@ -1,4 +1,33 @@
-import type { BoardRow } from "./types";
+import type { BoardRow, Channel } from "./types";
+
+/**
+ * Which story the 재발송 confirm dialog has to tell. The three shapes a resendable row can have
+ * differ in what is actually KNOWN about the room, and the dialog is the last screen before an
+ * irreversible click — so it may not describe one shape in another's words.
+ *
+ * - `queued`   — an X row whose Typefully draft has not published yet. `at` is when it was *queued*,
+ *                the server cancels that draft first, and exactly one post goes up.
+ * - `unlinked` — an X row the ledger records as `sent` that carries neither a draft id nor an x.com
+ *                url, so nothing on this screen or on the server can say whether a post exists. The
+ *                server's resend guard writes exactly this shape when it cancels a queued draft and
+ *                then cannot rule out that the original published anyway (see `guardQueuedDraft`):
+ *                it retires the draft id deliberately, and then tells the operator to press 재발송
+ *                once more if the post never appeared. That operator lands HERE, so this branch must
+ *                not greet them with "이 방에는 나간 글이 있습니다".
+ *                (`awaitingPublish` is false with no url exactly when there is no draft id, so this
+ *                needs no extra field from the board.)
+ * - `posted`   — the ordinary case: the room holds a post, and a resend adds a second one.
+ */
+export type ResendKind = "queued" | "unlinked" | "posted";
+
+export function resendKind(
+  row: Pick<BoardRow, "deliveryStatus" | "awaitingPublish" | "url">,
+  channel: Channel,
+): ResendKind {
+  if (row.awaitingPublish) return "queued";
+  if (channel === "x" && row.deliveryStatus === "sent" && !row.url) return "unlinked";
+  return "posted";
+}
 
 /** What a room's own editor may do, and which of its buttons exist at all. */
 export interface RowEditorGate {
