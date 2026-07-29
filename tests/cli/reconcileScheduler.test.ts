@@ -13,7 +13,15 @@ describe("startReconcileScheduler", () => {
     expect(runs).toBe(2);
   });
 
-  /** Typefully is slow sometimes; overlapping passes would double every lookup for no gain. */
+  /**
+   * Typefully is slow sometimes; overlapping passes would double every lookup for no gain.
+   *
+   * This has to rule out not just "no concurrent pass" but also a single-slot queue that
+   * remembers the skipped tick and fires it the instant the blocking pass resolves — that would
+   * also land on `started === 2` eventually, just early. So after releasing the gate we let the
+   * blocked pass's promise chain settle (without advancing virtual time) and assert nothing fired
+   * yet, *then* advance to the next real tick and assert it did.
+   */
   it("skips a tick while the previous pass is still running", async () => {
     vi.useFakeTimers();
     let started = 0;
@@ -23,6 +31,10 @@ describe("startReconcileScheduler", () => {
     await vi.advanceTimersByTimeAsync(3500);
     expect(started).toBe(1);
     release();
+    // Flush the released pass's .then/.catch/.finally chain without moving virtual time forward,
+    // so a genuine skip and a "retry immediately once the slot frees up" queue are told apart.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started).toBe(1);
     await vi.advanceTimersByTimeAsync(1000);
     stop();
     expect(started).toBe(2);
