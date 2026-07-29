@@ -69,6 +69,7 @@ import { ReconcilePublished } from "../app/ReconcilePublished";
 import { JsonXArticleLedger } from "../adapters/store/JsonXArticleLedger";
 import { TypefullyDraftLookup } from "../adapters/send/TypefullyDraftLookup";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
+import { TypefullyQuota, type PublishingQuota } from "../adapters/send/TypefullyQuota";
 
 const port = Number(process.env.PORT) || 5757;
 const translationStore = new JsonTranslationStore(paths.translationsDir);
@@ -238,6 +239,30 @@ const loadBoard = async (itemId: string): Promise<BoardView> => {
 };
 
 const isSendableChannel = (c: string): c is SendableChannel => c === "telegram" || c === "x";
+
+/** A minute is long enough to spare the smallest rate-limit bucket, short enough to stay true. */
+const QUOTA_TTL_MS = 60_000;
+let quotaCache: { at: number; value: PublishingQuota } | undefined;
+
+/**
+ * The account-wide Typefully publishing quota, for the board's banner.
+ *
+ * "Unknown" and "exhausted" are different states and only one of them means the operator should
+ * stop, so a read that fails answers `error` rather than a zero quota — and is never cached, so a
+ * transient blip does not blank the banner for a full minute.
+ */
+const loadQuota = async (): Promise<{ quota?: PublishingQuota; error?: string }> => {
+  if (quotaCache && Date.now() - quotaCache.at < QUOTA_TTL_MS) return { quota: quotaCache.value };
+  try {
+    const t = loadTypefullyConfig();
+    const value = await new TypefullyQuota(t.apiKey, t.socialSetId).read();
+    quotaCache = { at: Date.now(), value };
+    return { quota: value };
+  } catch (err) {
+    // Not cached: a transient failure must not blank the banner for a full minute.
+    return { error: (err as Error).message };
+  }
+};
 
 /**
  * Ask Typefully whether the scheduled drafts have published, and write the real x.com urls back.
@@ -413,6 +438,7 @@ const deps: ApiDeps = {
   formatVariants,
   sendToOutlet,
   reconcilePublished,
+  loadQuota,
 };
 
 startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist"), localPublishDir: paths.publishLocalDir });

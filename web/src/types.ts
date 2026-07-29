@@ -319,3 +319,13 @@ export interface FormatReply {
   rendered: number;
   warnings: FormatWarning[];
 }
+
+// Mirrors src/adapters/send/TypefullyQuota.ts — the GET /api/typefully/quota payload.
+export interface PublishingQuota {
+  used: number;
+  remaining: number;
+  resetsAt: string;
+}
+
+/** Mirrors `LOW_PUBLISHING_QUOTA` in src/doctor/checks.ts — the CLI and the board agree on "low". */
+export const LOW_PUBLISHING_QUOTA = 3;

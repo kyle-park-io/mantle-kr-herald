@@ -142,6 +142,7 @@ function makeDeps(
         return { renderings: [], warnings: [] };
       },
     } as unknown as ApiDeps["formatVariants"],
+    loadQuota: async () => ({ error: "not configured" }),
   };
 }
 
@@ -627,5 +628,27 @@ describe("POST /api/items/:id/format", () => {
     const res = await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"], channels: [] });
     expect(res.status).toBe(400);
     expect(spy.formats).toEqual([]);
+  });
+});
+
+describe("GET /api/typefully/quota", () => {
+  const QUOTA = { used: 9, remaining: 6, resetsAt: "2026-08-01T00:00:00+09:00" };
+
+  it("returns the quota", async () => {
+    const d = makeDeps([]);
+    d.loadQuota = async () => ({ quota: QUOTA });
+    const res = await handleApi(d, "GET", "/api/typefully/quota", undefined);
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ quota: QUOTA });
+  });
+
+  // The banner must be able to tell "unknown" from "exhausted" — rendering an error as 0 would
+  // paint a healthy account as blocked.
+  it("returns the error rather than a zero quota", async () => {
+    const d = makeDeps([]);
+    d.loadQuota = async () => ({ error: "HTTP 401" });
+    const res = await handleApi(d, "GET", "/api/typefully/quota", undefined);
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ error: "HTTP 401" });
   });
 });

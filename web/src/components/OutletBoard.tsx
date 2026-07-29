@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { btnPrimary } from "../buttonStyles";
-import { TYPE_LABEL, datePrefix, itemUrl, type BoardView, type ConversionType, type ConvertPrepareReply } from "../types";
+import {
+  TYPE_LABEL,
+  datePrefix,
+  itemUrl,
+  LOW_PUBLISHING_QUOTA,
+  type BoardView,
+  type ConversionType,
+  type ConvertPrepareReply,
+  type PublishingQuota,
+} from "../types";
 import { OutletCard } from "./OutletCard";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { KindBadge } from "./TranslationList";
@@ -30,6 +39,7 @@ export function OutletBoard(props: {
   const { itemId, onDirtyChange } = props;
   const [board, setBoard] = useState<BoardView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [quota, setQuota] = useState<PublishingQuota | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
   // §10 [변환 준비]: which not-yet-converted types the operator picked, and the last worksheet
@@ -49,6 +59,15 @@ export function OutletBoard(props: {
     }
   }, [itemId]);
 
+  /**
+   * The account-wide Typefully quota, for the banner above the group cards. An unreadable quota is
+   * not an empty one — show nothing rather than paint a healthy account as blocked at `0건`.
+   */
+  const loadQuota = useCallback(async () => {
+    const r = await api.typefullyQuota();
+    setQuota(r.quota ?? null);
+  }, []);
+
   useEffect(() => {
     setBoard(null);
     setError(null);
@@ -57,6 +76,10 @@ export function OutletBoard(props: {
     setPrepareResult(null);
     void reload();
   }, [itemId, reload]);
+
+  useEffect(() => {
+    void loadQuota();
+  }, [loadQuota]);
 
   const onDirty = useCallback((key: string, dirty: boolean) => {
     setDirtyKeys((prev) => {
@@ -74,8 +97,10 @@ export function OutletBoard(props: {
 
   const parentChanged = props.onGroupChanged;
   const onGroupChanged = useCallback(async () => {
-    await Promise.all([parentChanged(), reload()]);
-  }, [parentChanged, reload]);
+    // A send is the one action that can move the quota, so the banner refreshes alongside the
+    // board and the 2차 list rather than waiting for the next mount.
+    await Promise.all([parentChanged(), reload(), loadQuota()]);
+  }, [parentChanged, reload, loadQuota]);
 
   if (!board) {
     return (
@@ -162,6 +187,19 @@ export function OutletBoard(props: {
           </div>
         )}
       </header>
+
+      {quota && (
+        <div
+          className={`mb-4 rounded-lg border px-3 py-2 text-[13px] ${
+            quota.remaining <= LOW_PUBLISHING_QUOTA
+              ? "border-amber-ink/20 bg-amber-soft text-amber-ink"
+              : "border-line bg-surface text-muted"
+          }`}
+        >
+          X 발행 잔여 <strong className="font-semibold">{quota.remaining}건</strong> / {quota.used + quota.remaining}건
+          {quota.resetsAt ? ` · ${quota.resetsAt.slice(5, 10).replace("-", "/")} 리셋` : ""}
+        </div>
+      )}
 
       {board.groups.length === 0 ? (
         <p className="rounded-xl border border-line bg-surface p-5 text-[13px] leading-relaxed text-faint shadow-sm">
