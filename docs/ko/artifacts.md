@@ -139,7 +139,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm status` | `output/x/items.json`, `output/lark/items.json`, `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 없음 | 없음 |
 | `pnpm archive` | `output/translations/worksheets/`, `output/variants/worksheets/`, `output/formatted/worksheets/`의 `.md` 목록 | 대상 파일들을 `output/archive/<YYYY-MM-DD>/`로 이동 | 없음 |
 | `pnpm clean [--older-than <days>] [--yes]` | `output/archive/`의 날짜 폴더 목록; 좌초된 임시 파일 탐지를 위해 `output/` 전체(`output/archive/` 내부는 제외)를 재귀 탐색 | 기본은 드라이런(삭제 대상만 출력). `--yes`일 때: 30일(기본값) 초과 경과한 `output/archive/<YYYY-MM-DD>/` 폴더 + `output/archive/`를 제외한 `output/` 안 어디에 있든 `*.tmp-<pid>-<ms>-<uuid>` 형식의 좌초 파일을 삭제 | 없음 |
-| `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json`; `GET /api/renderings/:itemId/:type/:channel/emissions`는 저장된 canonical 텍스트를 요청 시점에 그 채널의 목적지(destination)별 텍스트로 변환해 돌려줍니다(파일로 저장되지 않고 그때그때 계산됨) | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들; `local` 모드에서 게시하면 `output/publish/local/{review,approved}/*.md`도 포함(§2 참고) | 게시 API 호출 시 모드에 따라 Google Drive API, Lark Drive API(`cloud`), 또는 없음(`local`) |
+| `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json`; `GET /api/renderings/:itemId/:type/:channel/emissions`는 저장된 canonical 텍스트를 요청 시점에 그 채널의 목적지(destination)별 텍스트로 변환해 돌려줍니다(파일로 저장되지 않고 그때그때 계산됨). **2차 검수(발송판) — `GET /api/items/:id/board`** 는 위 `renderings.json`에 더해 `output/formatted/overrides.json`(방별 override)과 `output/publish/deliveries.json`(없으면 예전 `channels.json`을 읽기 전용으로 이관 — `send:channels`와 동일한 이관 규칙)을 합쳐 카드·방 목록을 계산합니다 | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들; `local` 모드에서 게시하면 `output/publish/local/{review,approved}/*.md`도 포함(§2 참고). **발송판의 방별 API**: `PUT /api/outlets/:itemId/:type/:outletId`(글 저장 시 `overrides.json`에 그 방의 override를 쓰고, `승인`/`되돌리기`는 그 행을 갱신·삭제); `POST .../send`(자동 방 발송 — `output/publish/deliveries.json`에 `sent` 행을 씀, `pnpm send:channels`와 같은 원장); `POST .../mark`(수동 방 전달 체크/해제 — 같은 원장에 `delivered` 행); `POST /api/items/:id/convert-prepare`(체크한 유형의 워크시트 + `output/variants/pending.json` — `pnpm convert:prepare`와 동일); `POST /api/items/:id/format`(그 카드의 `output/formatted/renderings.json`을 그 자리에서 다시 씀 — 지금 저장된 문구와 승인 상태를 덮어씀, `✎따로` override는 건드리지 않음) | 게시 API 호출 시 모드에 따라 Google Drive API, Lark Drive API(`cloud`), 또는 없음(`local`); 발송판에서 자동 방에 `발송`을 누르면 CLI의 `pnpm send:channels`와 같은 Telegram Bot API / Typefully API 호출이 브라우저 조작만으로 즉시 일어남 |
 | `pnpm google:auth` | `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`/`GOOGLE_OAUTH_SCOPE`(env) | 로컬 파일 없음 — refresh token을 콘솔에 출력 | Google OAuth 2.0(로컬 루프백 서버로 인가 코드 교환) |
 
 `output/formatted/renderings.json`의 본문은 목적지(destination)별 철자가 아니라 **canonical
@@ -294,6 +294,9 @@ interface SyncEntry {
 - `output/translations/translations.json` — 사람이 손으로 번역한 한글 원문
 - `output/variants/variants.json` — 채널별 변환 결과
 - `output/formatted/renderings.json` — 채널별 최종 포맷 렌더링
+- `output/formatted/overrides.json` — 방별로 따로 검수·승인한 글(override). 그룹 렌더링과는 별개로
+  사람이 그 방만을 위해 고친 텍스트라, 잃으면 그 방은 그룹 글로 조용히 되돌아가고 고친 내용
+  자체는 재생성할 수 없습니다.
 - 실제 스티어링 파일: `translation/glossary.json`, `translation/style-guide.md`,
   `translation/locale.json`, `translation/few-shot.json`, `conversion/{x,announcement,kol,pr}.md`,
   `conversion/few-shot.{x,announcement,kol,pr}.json`

@@ -50,7 +50,11 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
    저장합니다.
 8. **채널 포맷** — 운영자가 `pnpm format`(결정적 포맷터, 즉시 저장)이나
    `pnpm format --refine`(에이전트 다듬기 필요 시) + `pnpm format:save`를 실행합니다.
-9. **2차 검수** — 검수자가 대시보드의 채널 검수 모드에서 채널별 렌더링을 검수·승인합니다.
+9. **2차 검수** — 검수자가 대시보드의 2차 검수(발송판)에서 `타입 · 채널` 카드별로 문구를 검수·
+   승인합니다. 카드마다 그 문구를 받는 방이 나열되고, 승인 후에는 자동 방을 화면의 `발송`으로,
+   수동 방을 `복사`+`전달함`으로 그 자리에서 바로 처리할 수도 있습니다 — 다음 10단계의
+   `pnpm send:channels`는 여러 항목·방을 한 번에 훑는 배치용으로 남아 있습니다. 화면 사용법은
+   [`review.md`](review.md) §4.
 10. **채널 발송** — 운영자가 `pnpm send:channels [--target telegram|x|both] [--outlets <방 id>]`를
     실행해 승인된 텔레그램·X 렌더링을 실제로 발행합니다(텔레그램은 봇 API, X는 Typefully 경유).
     발송은 **채널이 아니라 방 단위**라 텔레그램 한 건이 커뮤니티방·데브방 두 곳으로 나가고,
@@ -65,6 +69,11 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
     공지가 2차 완성본으로 `output/publish/local/sent/`(local) 또는 Drive `sent/` 폴더(cloud,
     `GDRIVE_SENT_FOLDER_ID`/`LARK_DRIVE_SENT_FOLDER_TOKEN` 설정 시)에 best-effort로
     아카이브된다 — 미설정이어도 발송은 그대로 진행됩니다.
+    **X 아티클은 이 명령으로 나가지 않습니다.** 아티클(`@0xMantleKR 아티클`)은 채널 렌더링이 아니라
+    승인된 번역 본문에서 곧바로 나가고 원장도 따로 쓰기 때문에, 운영자가
+    `pnpm send:x-article [--ids <id>[,<id>]]`를 별도로 실행해야 합니다. 대시보드 발송판에도
+    아티클 방은 나오지 않으니, 화면의 `N곳 · M건 중 K건 완료`가 다 찼다고 해서 아티클까지
+    나갔다고 판단하면 안 됩니다([`review.md`](review.md) §4).
 11. **발행** — 운영자가 `pnpm drive:publish`를 실행하거나(또는 대시보드의 발행 버튼) — 우리 팀은
     항상 `cloud` 모드로 운영하므로, 이 순간에 실제로 Drive/Lark Drive에 업로드됩니다.
 12. **기록** — 운영자가 필요 시 `pnpm history:record`로 Google Sheet `history` 탭에 게시

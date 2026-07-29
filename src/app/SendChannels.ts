@@ -8,6 +8,9 @@ import type { Channel, ChannelRendering } from "../domain/formatting/models";
 import type { DeliveryEntry } from "../domain/delivery/models";
 import type { Outlet } from "../domain/outlet/models";
 import { deliveredByChannelSender, outletsForChannel } from "../domain/outlet/models";
+import type { ResolvedText } from "../domain/outlet/override";
+import { overrideKey, textFor } from "../domain/outlet/override";
+import type { OutletOverrideStore } from "../ports/OutletOverrideStore";
 import { emit } from "../domain/formatting/emitters";
 import { matchesItemId } from "../domain/itemId";
 import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
@@ -20,6 +23,13 @@ export type Archiver = (entry: SentArchiveEntry) => Promise<void>;
 export interface SendChannelsInput {
   targets: SendableChannel[];
   ids?: Set<string>;
+  /**
+   * Restrict delivery to these conversion types. Absent = every approved rendering of the item.
+   * The board's per-row [발송] needs it: one item can hold an approved `announcement` and an
+   * approved `explainer` for the same room, and sending the row the operator clicked must not also
+   * push the other one into a live group.
+   */
+  types?: string[];
   /** Restrict delivery to these outlet ids (`--outlets`). Absent = every auto room on the channel. */
   outletIds?: string[];
 }
@@ -37,6 +47,14 @@ export interface SendChannelsResult {
   unconfiguredEnv: string[];
   /** Renderings withheld from a never-delivered room by the first-delivery guard. */
   withheld: number;
+  /**
+   * Why each `failed` happened, in the order it happened — same shape as `PublishResult.failures`.
+   *
+   * Every reason is also warned to the console, which is enough for the CLI operator running this
+   * in their own terminal. A dashboard operator has no terminal: the board's per-row [발송] is this
+   * use case, and "the send failed — check the server log" is not something they can act on.
+   */
+  failures: { key: string; error: string }[];
 }
 
 /** A rendering already narrowed to a channel this use-case can actually send. */
@@ -57,6 +75,13 @@ export class SendChannels {
     private readonly xMaxWeighted: number = X_MAX_WEIGHTED,
     private readonly outletsFor: (channel: Channel) => Outlet[] = outletsForChannel,
     private readonly chatIds: Record<string, string> = {},
+    /**
+     * Per-room text overrides. Optional so every pre-outlet call site stays valid, but the CLI and
+     * the dashboard both pass it: without it a forked room receives the *group* text, which is an
+     * irreversible wrong post — the ledger then records the room as `sent`, and a `sent` row can
+     * never be unmarked.
+     */
+    private readonly overrides?: OutletOverrideStore,
   ) {}
 
   async run(input: SendChannelsInput): Promise<SendChannelsResult> {
@@ -67,16 +92,34 @@ export class SendChannels {
     let sent = 0;
     let skipped = 0;
     let failed = 0;
+    const failures: { key: string; error: string }[] = [];
+
+    const overrideRows = this.overrides ? await this.overrides.loadAll() : [];
+    const overrideByKey = new Map(overrideRows.map((o) => [overrideKey(o), o] as const));
+    /** What this room actually sends: its own fork when it has one, else the group text. */
+    const resolve = (r: ChannelRendering, o: Outlet): ResolvedText =>
+      textFor(r, overrideByKey.get(overrideKey({ itemId: r.itemId, type: r.type, outletId: o.id })));
+    const deliverable = (r: ChannelRendering, o: Outlet): boolean => {
+      if (!deliveredByChannelSender(o)) return false;
+      if (input.outletIds && !input.outletIds.includes(o.id)) return false;
+      // Approval is per room, not per group. A forked room carries its own review: an approved
+      // group must not carry an unreviewed fork out, and a `rendered` group must not hold back a
+      // fork that *was* reviewed.
+      return resolve(r, o).status === "approved";
+    };
 
     const candidates = rows.filter((r): r is SendableRendering => {
-      if (r.status !== "approved") return false;
       if (!isSendable(r.channel) || !wanted.has(r.channel)) return false;
       if (input.ids && !matchesItemId(input.ids, r.itemId)) return false;
-      return this.senders[r.channel] !== undefined;
+      if (input.types && !input.types.includes(r.type)) return false;
+      if (this.senders[r.channel] === undefined) return false;
+      // No group-status gate any more: approval lives on the room. A `rendered` group can carry an
+      // approved fork, and an `approved` group can carry a fork that has not been reviewed yet.
+      return this.outletsFor(r.channel).some((o) => deliverable(r, o));
     });
 
     // Decided once for the whole batch, before anything is sent — see planRooms.
-    const { blocked, unconfiguredEnv, withheld } = this.planRooms(candidates, already, ledgered, input);
+    const { blocked, unconfiguredEnv, withheld } = this.planRooms(candidates, already, ledgered, input, deliverable);
 
     for (const r of candidates) {
       const sender = this.senders[r.channel]!;
@@ -84,70 +127,81 @@ export class SendChannels {
       // One delivery per room, not per channel. 맨틀 한국 커뮤니티 and 맨틀 한국 데브방 are both auto
       // Telegram, so a channel-keyed ledger let the first room's send mark the second as done and
       // that room silently never received anything.
-      const outlets = this.outletsFor(r.channel).filter((o) => {
-        if (!deliveredByChannelSender(o)) return false;
-        if (input.outletIds && !input.outletIds.includes(o.id)) return false;
-        if (blocked.has(o.id)) return false; // unconfigured, or withheld by the first-delivery guard
-        return true;
-      });
+      // `blocked` = unconfigured, or withheld by the first-delivery guard.
+      const outlets = this.outletsFor(r.channel).filter((o) => deliverable(r, o) && !blocked.has(o.id));
       const keyFor = (outlet: Outlet) => deliveryKey({ itemId: r.itemId, type: r.type, outletId: outlet.id });
       const pending = outlets.filter((o) => !already.has(keyFor(o)));
       skipped += outlets.length - pending.length;
       if (pending.length === 0) continue;
 
-      const emitResult = emit(r.text, DELIVERY_DESTINATION[r.channel], this.xMaxWeighted);
-      if (emitResult.segments.some((s) => s.overLimit)) {
-        // Sending would just 400 forever (the emitter refuses to split further) — fail fast
-        // instead of hammering the API on every rerun. A human has to edit the rendering.
-        // The limit is a property of the rendering, not of the room, so this counts once for all
-        // of them rather than once per room. Keyed by the rooms it cost, like every other message
-        // in this loop — `…:telegram` named a channel nobody is looking at.
-        console.warn(`[send] ${r.itemId}:${r.type} skipped for ${pending.map((o) => o.id).join(", ")}: a segment exceeds the channel limit — edit the rendering`);
-        failed += 1;
-        continue;
+      // Rooms that send the same text share one emit and one media parse. Unforked rooms all
+      // resolve to the group copy, so the common case still does that work exactly once — but a
+      // forked room now gets its own, which is the whole point of forking it.
+      const byText = new Map<string, Outlet[]>();
+      for (const o of pending) {
+        const { text } = resolve(r, o);
+        const sharing = byText.get(text);
+        if (sharing) sharing.push(o);
+        else byText.set(text, [o]);
       }
 
-      // Hoisted: the media is a property of the rendering, not of the room, so parsing it once per
-      // room re-did identical work for every outlet on the channel.
-      const { photos, videos } = extractMedia(r.text);
-
-      for (const outlet of pending) {
-        const key = keyFor(outlet);
-        const chatId = outlet.chatIdEnv ? this.chatIds[outlet.id] : undefined;
-        try {
-          const segments = emitResult.segments.map((s) => s.text);
-          const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments, photos, chatId });
-          if (videos.length > 0) console.warn(`[send] ${key}: ${videos.length} video(s) present in the rendering, not attached this cycle`);
-          const sentAt = this.now();
-          // The send already happened — a ledger-write failure from here on must NOT be
-          // reported as a "failed" send (that would make the next run re-send it live).
-          try {
-            await this.ledger.add({ itemId: r.itemId, type: r.type, outletId: outlet.id, status: "sent", at: sentAt, by: "auto", postId: res.postId, url: res.url, senderName: sender.name });
-          } catch (err) {
-            console.warn(`[send] ⚠ ${key} was SENT but could NOT be recorded in the ledger: ${(err as Error).message} — a rerun will re-send it; reconcile manually.`);
-          }
-          if (this.record) {
-            try {
-              await this.record({ itemId: r.itemId, type: r.type, channel: r.channel, outletId: outlet.id, postId: res.postId, url: res.url, status: "posted", publishedAt: sentAt });
-            } catch (err) {
-              console.warn(`[send] ${key} sent, but history record failed: ${(err as Error).message}`);
-            }
-          }
-          if (this.archive) {
-            try {
-              await this.archive({ itemId: r.itemId, type: r.type, channel: r.channel, outletId: outlet.id, text: r.text, postId: res.postId, url: res.url, sentAt });
-            } catch (err) {
-              console.warn(`[send] ${key} sent, but archive failed: ${(err as Error).message}`);
-            }
-          }
-          sent += 1;
-        } catch (err) {
-          console.warn(`[send] ${key} failed: ${(err as Error).message}`);
+      for (const [text, rooms] of byText) {
+        const emitResult = emit(text, DELIVERY_DESTINATION[r.channel], this.xMaxWeighted);
+        if (emitResult.segments.some((s) => s.overLimit)) {
+          // Sending would just 400 forever (the emitter refuses to split further) — fail fast
+          // instead of hammering the API on every rerun. A human has to edit the rendering.
+          // The limit is a property of the text, not of the room, so this counts once for every
+          // room sharing it rather than once per room. Keyed by the rooms it cost, like every other
+          // message in this loop — `…:telegram` named a channel nobody is looking at.
+          const reason = `a segment exceeds the ${r.channel} limit — edit the rendering`;
+          console.warn(`[send] ${r.itemId}:${r.type} skipped for ${rooms.map((o) => o.id).join(", ")}: ${reason}`);
+          failures.push({ key: `${r.itemId}:${r.type}`, error: reason });
           failed += 1;
+          continue;
+        }
+
+        const { photos, videos } = extractMedia(text);
+
+        for (const outlet of rooms) {
+          const key = keyFor(outlet);
+          const chatId = outlet.chatIdEnv ? this.chatIds[outlet.id] : undefined;
+          try {
+            const segments = emitResult.segments.map((s) => s.text);
+            const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments, photos, chatId });
+            if (videos.length > 0) console.warn(`[send] ${key}: ${videos.length} video(s) present in the rendering, not attached this cycle`);
+            const sentAt = this.now();
+            // The send already happened — a ledger-write failure from here on must NOT be
+            // reported as a "failed" send (that would make the next run re-send it live).
+            try {
+              await this.ledger.add({ itemId: r.itemId, type: r.type, outletId: outlet.id, status: "sent", at: sentAt, by: "auto", postId: res.postId, url: res.url, senderName: sender.name });
+            } catch (err) {
+              console.warn(`[send] ⚠ ${key} was SENT but could NOT be recorded in the ledger: ${(err as Error).message} — a rerun will re-send it; reconcile manually.`);
+            }
+            if (this.record) {
+              try {
+                await this.record({ itemId: r.itemId, type: r.type, channel: r.channel, outletId: outlet.id, postId: res.postId, url: res.url, status: "posted", publishedAt: sentAt });
+              } catch (err) {
+                console.warn(`[send] ${key} sent, but history record failed: ${(err as Error).message}`);
+              }
+            }
+            if (this.archive) {
+              try {
+                // The archive records what the room received, so a forked room archives its fork.
+                await this.archive({ itemId: r.itemId, type: r.type, channel: r.channel, outletId: outlet.id, text, postId: res.postId, url: res.url, sentAt });
+              } catch (err) {
+                console.warn(`[send] ${key} sent, but archive failed: ${(err as Error).message}`);
+              }
+            }
+            sent += 1;
+          } catch (err) {
+            console.warn(`[send] ${key} failed: ${(err as Error).message}`);
+            failures.push({ key, error: (err as Error).message });
+            failed += 1;
+          }
         }
       }
     }
-    return { sent, skipped, failed, unconfigured: unconfiguredEnv.length, unconfiguredEnv, withheld };
+    return { sent, skipped, failed, unconfigured: unconfiguredEnv.length, unconfiguredEnv, withheld, failures };
   }
 
   /**
@@ -168,12 +222,13 @@ export class SendChannels {
     already: Set<string>,
     ledgered: DeliveryEntry[],
     input: SendChannelsInput,
+    /** The same per-room gate the send loop applies, so the guard counts only what would go out. */
+    deliverable: (r: ChannelRendering, o: Outlet) => boolean,
   ): { blocked: Set<string>; unconfiguredEnv: string[]; withheld: number } {
     const pending = new Map<string, { outlet: Outlet; count: number }>();
     for (const r of candidates) {
       for (const outlet of this.outletsFor(r.channel)) {
-        if (!deliveredByChannelSender(outlet)) continue;
-        if (input.outletIds && !input.outletIds.includes(outlet.id)) continue;
+        if (!deliverable(r, outlet)) continue;
         if (already.has(deliveryKey({ itemId: r.itemId, type: r.type, outletId: outlet.id }))) continue;
         const seen = pending.get(outlet.id);
         if (seen) seen.count += 1;

@@ -1,5 +1,6 @@
 import "./registerErrorHandler";
 // src/cli/serve.ts
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startServer } from "../adapters/web/HttpServer";
 import type { ApiDeps } from "../adapters/web/apiHandlers";
@@ -7,12 +8,32 @@ import type { StatusView, PublishStateRow, IntegrationStatus } from "../adapters
 import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { JsonPublishStore } from "../adapters/store/JsonPublishStore";
 import { JsonFewShotStore } from "../adapters/store/JsonFewShotStore";
+import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
+import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
+import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
+import { fewShotStoresByType } from "../adapters/store/JsonTypedFewShotStore";
 import { SaveTranslation } from "../app/SaveTranslation";
 import { PublishTranslations } from "../app/PublishTranslations";
 import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
 import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
+import { JsonOutletOverrideStore } from "../adapters/store/JsonOutletOverrideStore";
+import { JsonDeliveryLedger } from "../adapters/store/JsonDeliveryLedger";
 import { SaveRendering } from "../app/SaveRendering";
 import { ApproveRendering } from "../app/ApproveRendering";
+import { SaveOutletOverride } from "../app/SaveOutletOverride";
+import { MarkDelivery } from "../app/MarkDelivery";
+import { SendChannels } from "../app/SendChannels";
+import { PrepareConversions, type PendingVariant } from "../app/PrepareConversions";
+import { PrepareConversionRun } from "../app/PrepareConversionRun";
+import { FormatVariants } from "../app/FormatVariants";
+import { archiveFile } from "../shared/store/archive";
+import { writeJsonFileAtomic } from "../shared/store/jsonFile";
+import { buildBoard, type BoardView } from "../adapters/web/board";
+import { deliveredByChannelSender, outletById, outletsForChannel } from "../domain/outlet/models";
+import { createSenders } from "./channelSenders";
+import { buildRecorder } from "./recorder";
+import { buildArchiver } from "./archiver";
+import type { SendableChannel } from "../domain/send/channels";
 import {
   loadStorageMode,
   loadGoogleAuthConfig,
@@ -46,6 +67,9 @@ const publishStore = new JsonPublishStore(paths.publishDir);
 const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotStore(paths.translationConfigDir), undefined, buildLineage());
 const formattingStore = new JsonFormattingStore(paths.formattedDir);
 const conversionStore = new JsonConversionStore(paths.variantsDir);
+// Same directories the CLI uses, so `send:channels` and the dashboard read one ledger, not two.
+const overrideStore = new JsonOutletOverrideStore(paths.formattedDir);
+const deliveryLedger = new JsonDeliveryLedger(paths.publishDir);
 
 const storageMode = loadStorageMode();
 
@@ -190,6 +214,116 @@ const loadPublishState = async (): Promise<PublishStateRow[]> => {
   });
 };
 
+const loadBoard = async (itemId: string): Promise<BoardView> => {
+  const [renderings, overrides, deliveries] = await Promise.all([
+    formattingStore.loadAll(),
+    overrideStore.loadAll(),
+    deliveryLedger.loadAll(),
+  ]);
+  return buildBoard(itemId, renderings, overrides, deliveries);
+};
+
+const isSendableChannel = (c: string): c is SendableChannel => c === "telegram" || c === "x";
+
+/**
+ * The board's per-row [발송]: one item, one type, one room. `SendChannels` is the same use case the
+ * CLI runs, narrowed on all three axes — the row the operator clicked must not also push the item's
+ * other approved copy, or the same copy into the room next door.
+ *
+ * Every refusal comes back as `error` rather than as a throw: the dashboard has to name the reason,
+ * and "the room has no chat id" is an install state, not a server fault. Naming the room explicitly
+ * also lifts `SendChannels`' first-delivery guard, which is correct here — a human clicked it.
+ */
+const sendToOutlet = async (itemId: string, type: string, outletId: string): Promise<{ sent: number; failed: number; error?: string }> => {
+  const outlet = outletById(outletId);
+  if (!outlet) return { sent: 0, failed: 0, error: `unknown outlet: ${outletId}` };
+  if (!deliveredByChannelSender(outlet) || !isSendableChannel(outlet.channel)) {
+    return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}) is not posted by a bot — copy the text, paste it, and tick 전달함` };
+  }
+  const channel = outlet.channel;
+  const chatIds = loadTelegramChatIds();
+  if (outlet.chatIdEnv && !chatIds[outlet.id]) {
+    return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}): ${outlet.chatIdEnv} is not set` };
+  }
+
+  try {
+    const [record, archive] = await Promise.all([buildRecorder(), buildArchiver()]);
+    const result = await new SendChannels(
+      formattingStore,
+      createSenders([channel]),
+      deliveryLedger,
+      record,
+      archive,
+      undefined,
+      loadXMaxWeighted(),
+      outletsForChannel,
+      chatIds,
+      // Without this a forked room receives the *group* text — the wrong copy, irreversibly, since
+      // the ledger then records the room as `sent` and a `sent` row can never be unmarked.
+      overrideStore,
+    ).run({ targets: [channel], ids: new Set([itemId]), types: [type], outletIds: [outletId] });
+
+    // `sent 0` on its own tells the reviewer nothing, so every zero-send outcome carries a reason.
+    // Kept in the same English as the `MarkDelivery` / `SaveOutletOverride` refusals, which surface
+    // through the same dashboard error path.
+    if (result.sent === 0) {
+      const reason =
+        // Never "check the server log": a dashboard operator has no terminal open. `failures`
+        // carries what the run actually hit (an over-limit segment, a sender's own error), which is
+        // the difference between "edit the rendering" and "try again".
+        result.failed > 0 ? result.failures.map((f) => f.error).join(" · ") || "the send failed"
+        : result.skipped > 0 ? "already delivered to this room"
+        : result.unconfigured > 0 ? `${result.unconfiguredEnv.join(", ")} is not set`
+        : result.withheld > 0 ? "withheld by the first-delivery guard"
+        : "no approved copy to send";
+      return { sent: 0, failed: result.failed, error: `${outlet.label} (${outlet.id}): ${reason}` };
+    }
+    return { sent: result.sent, failed: result.failed };
+  } catch (err) {
+    return { sent: 0, failed: 1, error: (err as Error).message };
+  }
+};
+
+// Same construction as `src/cli/convert-prepare.ts`, so the board and the CLI read and write the
+// same worksheets and the same `output/variants/pending.json` batch.
+const prepareConversions = new PrepareConversions(
+  translationStore,
+  new JsonGlossaryStore(paths.translationConfigDir),
+  new FileTranslationConfig(paths.translationConfigDir),
+  new FileConversionConfig(paths.conversionConfigDir),
+  fewShotStoresByType(paths.conversionConfigDir),
+  conversionStore,
+);
+
+/**
+ * Persists the pending batch exactly like the CLI does — archive-then-overwrite, one batch live at
+ * a time — and reports back the archived path. `archiveFile` is a `rename`: if the agent is midway
+ * through filling a previous batch's worksheet, this move strands it (the ledger backing that
+ * worksheet is gone). The CLI prints that as a warning in the operator's own terminal; the returned
+ * path is how the same warning reaches a dashboard operator, who has no terminal to read.
+ */
+const savePendingVariants = async (pending: PendingVariant[]): Promise<string | undefined> => {
+  const archived = await archiveFile(paths.variantsPending, paths.archiveDir, "pending-variants");
+  if (archived) console.log(`  archived the previous unsaved batch → ${archived}`);
+  await writeJsonFileAtomic(paths.variantsDir, paths.variantsPending, pending);
+  return archived ?? undefined;
+};
+
+const prepareConversionRun = new PrepareConversionRun(
+  prepareConversions,
+  async (path, body) => {
+    await mkdir(paths.variantsWorksheets, { recursive: true });
+    await writeFile(path, body, "utf8");
+  },
+  paths.variantsWorksheets,
+  undefined,
+  savePendingVariants,
+);
+
+// Same stores and xMaxWeighted as `src/cli/format.ts` (non-refine branch), so a board-triggered
+// reformat renders byte-identical output to `pnpm format`.
+const formatVariants = new FormatVariants(conversionStore, formattingStore, undefined, loadXMaxWeighted());
+
 const deps: ApiDeps = {
   translationStore,
   saveTranslation,
@@ -203,6 +337,12 @@ const deps: ApiDeps = {
   loadPublishState,
   loadTranslations,
   xMaxWeighted: loadXMaxWeighted(),
+  loadBoard,
+  saveOutletOverride: new SaveOutletOverride(overrideStore),
+  markDelivery: new MarkDelivery(deliveryLedger),
+  prepareConversionRun,
+  formatVariants,
+  sendToOutlet,
 };
 
 startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist"), localPublishDir: paths.publishLocalDir });

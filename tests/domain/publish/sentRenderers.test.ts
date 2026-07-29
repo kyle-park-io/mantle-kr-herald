@@ -28,13 +28,22 @@ describe("renderSent", () => {
 });
 
 describe("sentFileName", () => {
-  it("is <sentDate>-<safeItemId>-<outletId>.md with the id sanitized", () => {
-    expect(sentFileName(base)).toBe("2026-07-28-x-2080608995371597892-tg-community.md");
+  it("is <sentDate>-<safeItemId>-<type>-<outletId>.md with the id sanitized", () => {
+    expect(sentFileName(base)).toBe("2026-07-28-x-2080608995371597892-announcement-tg-community.md");
   });
 
   it("names the two auto telegram rooms apart — the archivers upload rather than replace", () => {
     // Same item, same channel, same day: a channel-named archive would put both in the Drive
     // `sent/` folder under one name, carrying different message ids and impossible to tell apart.
     expect(sentFileName({ ...base, outletId: "tg-dev" })).not.toBe(sentFileName(base));
+  });
+
+  it("names one room's 공지 and 해설 apart — 데브방 receives both, from the same board", () => {
+    // The board's `n/m` badge exists for exactly this room, and each row is its own [발송]. Without
+    // the type in the name the second archive overwrites the first in local mode, and lands beside
+    // it indistinguishably in Drive — losing the only record of what one of the two rooms received.
+    expect(sentFileName({ ...base, type: "explainer", outletId: "tg-dev" })).not.toBe(
+      sentFileName({ ...base, type: "announcement", outletId: "tg-dev" }),
+    );
   });
 });

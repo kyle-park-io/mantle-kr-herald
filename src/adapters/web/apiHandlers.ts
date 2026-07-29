@@ -3,8 +3,8 @@ import type { Translation } from "../../domain/translation/models";
 import type { TranslationStore } from "../../ports/TranslationStore";
 import type { SaveTranslation } from "../../app/SaveTranslation";
 import type { PublishResult } from "../../app/PublishTranslations";
-import type { ChannelRendering, Channel } from "../../domain/formatting/models";
-import type { ConversionType } from "../../domain/conversion/models";
+import { ALL_CHANNELS, type ChannelRendering, type Channel } from "../../domain/formatting/models";
+import { ALL_TYPES, type ConversionType } from "../../domain/conversion/models";
 import type { FormattingStore } from "../../ports/FormattingStore";
 import type { ConversionStore } from "../../ports/ConversionStore";
 import type { SaveRendering } from "../../app/SaveRendering";
@@ -12,6 +12,11 @@ import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
 import { emitAll } from "../../domain/formatting/emitters";
 import type { ApiTranslation } from "./attachKind";
+import type { BoardView } from "./board";
+import type { SaveOutletOverride } from "../../app/SaveOutletOverride";
+import type { MarkDelivery } from "../../app/MarkDelivery";
+import type { PrepareConversionRun } from "../../app/PrepareConversionRun";
+import type { FormatVariants } from "../../app/FormatVariants";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -60,7 +65,18 @@ export interface ApiDeps {
   loadPublishState: () => Promise<PublishStateRow[]>;
   loadTranslations: () => Promise<ApiTranslation[]>;
   xMaxWeighted: number;
+  loadBoard: (itemId: string) => Promise<BoardView>;
+  saveOutletOverride: SaveOutletOverride;
+  markDelivery: MarkDelivery;
+  sendToOutlet: (itemId: string, type: string, outletId: string) => Promise<{ sent: number; failed: number; error?: string }>;
+  /** Writes a conversion worksheet for the dashboard; the local agent still fills it in. */
+  prepareConversionRun: PrepareConversionRun;
+  /** Pure code — unlike conversion, the dashboard can run this one itself. */
+  formatVariants: FormatVariants;
 }
+
+/** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */
+type BoardReply = { board: BoardView } & Record<string, unknown>;
 
 async function findById(store: TranslationStore, id: string): Promise<Translation | undefined> {
   return (await store.loadAll()).find((t) => t.itemId === id);
@@ -161,6 +177,132 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
         );
         if (!existing) return { status: 404, json: { error: "not found" } };
         return { status: 200, json: emitAll(existing.text, channel, deps.xMaxWeighted) };
+      }
+
+      // `…/emissions/:outletId` — the spelling *that room* receives. A forked room's copy is its
+      // own, so emitting the group rendering would hand a human the wrong text to paste into a
+      // live room. The resolved text is read off the board rather than re-resolved here, so this
+      // route and the row on screen can never disagree about what the room's copy is.
+      if (method === "GET" && segments.length === 7 && segments[5] === "emissions") {
+        const board = await deps.loadBoard(itemId);
+        const row = board.groups
+          .find((g) => g.type === type && g.channel === channel)
+          ?.rows.find((r) => r.outletId === segments[6]);
+        if (!row) return { status: 404, json: { error: "not found" } };
+        return { status: 200, json: emitAll(row.text, channel, deps.xMaxWeighted) };
+      }
+    }
+  }
+
+  if (segments[1] === "items" && segments.length === 4) {
+    const itemId = decodeURIComponent(segments[2]);
+
+    if (method === "GET" && segments[3] === "board") {
+      return { status: 200, json: await deps.loadBoard(itemId) };
+    }
+
+    // The board cannot convert (no Claude API, zod-only runtime) — this runs `convert:prepare` and
+    // hands back where the worksheet landed. Filling it is the local agent's job; the operator asks
+    // for that separately, which is why the reply carries a path rather than converted text.
+    if (method === "POST" && segments[3] === "convert-prepare") {
+      const typesRaw = (body as { types?: unknown })?.types;
+      if (!Array.isArray(typesRaw) || typesRaw.length === 0) {
+        return { status: 400, json: { error: "types (non-empty array) required" } };
+      }
+      const invalid = typesRaw.filter((t) => typeof t !== "string" || !ALL_TYPES.includes(t as ConversionType));
+      if (invalid.length > 0) return { status: 400, json: { error: `invalid types: ${invalid.join(", ")}` } };
+      const result = await deps.prepareConversionRun.run({ itemId, types: typesRaw as ConversionType[] });
+      return { status: 200, json: result };
+    }
+
+    // Unlike conversion, `FormatVariants` is pure code — this button really does the work, and
+    // overwrites whatever was stored (including an edit or an approval) for the chosen (type,
+    // channel) pairs. The dashboard is expected to confirm that loss with the operator before
+    // calling this; the route itself does not ask twice.
+    if (method === "POST" && segments[3] === "format") {
+      const b = (body ?? {}) as { types?: unknown; channels?: unknown };
+      const typesRaw = b.types;
+      if (!Array.isArray(typesRaw) || typesRaw.length === 0) {
+        return { status: 400, json: { error: "types (non-empty array) required" } };
+      }
+      const invalidTypes = typesRaw.filter((t) => typeof t !== "string" || !ALL_TYPES.includes(t as ConversionType));
+      if (invalidTypes.length > 0) return { status: 400, json: { error: `invalid types: ${invalidTypes.join(", ")}` } };
+
+      let channels: Channel[] | undefined;
+      if (b.channels !== undefined) {
+        // Same non-empty rule as `types` just above: `FormatVariants` reads `channels` with `??`,
+        // so an empty array is never replaced by its per-type defaults — it would 200 and silently
+        // render nothing, rather than reject like every other malformed request on this route.
+        if (!Array.isArray(b.channels) || b.channels.length === 0) {
+          return { status: 400, json: { error: "channels, if present, must be a non-empty array" } };
+        }
+        const invalidChannels = b.channels.filter((c) => typeof c !== "string" || !ALL_CHANNELS.includes(c as Channel));
+        if (invalidChannels.length > 0) return { status: 400, json: { error: `invalid channels: ${invalidChannels.join(", ")}` } };
+        channels = b.channels as Channel[];
+      }
+
+      const { renderings, warnings } = await deps.formatVariants.run({ ids: [itemId], types: typesRaw as ConversionType[], channels });
+      return { status: 200, json: { rendered: renderings.length, warnings } };
+    }
+  }
+
+  if (segments[1] === "outlets" && segments.length >= 5) {
+    const itemId = decodeURIComponent(segments[2]);
+    const type = segments[3];
+    const outletId = segments[4];
+    // `SaveOutletOverride` and `MarkDelivery` refuse the moves that would corrupt the ledger
+    // (an unknown room, ticking an auto room, unticking a bot's `sent` row). Those refusals are the
+    // operator asking for something impossible, not a server fault — 400 with the reason, so the
+    // dashboard can show it, rather than the 500 an uncaught throw would produce.
+    const reply = async (extra: Record<string, unknown> = {}): Promise<ApiResult> => ({
+      status: 200,
+      json: { ...extra, board: await deps.loadBoard(itemId) } satisfies BoardReply,
+    });
+    const refuse = (err: unknown): ApiResult => ({
+      status: 400,
+      json: { error: err instanceof Error ? err.message : String(err) },
+    });
+
+    if (method === "PUT" && segments.length === 5) {
+      const b = (body ?? {}) as { text?: unknown; approve?: unknown; revert?: unknown };
+      const input =
+        b.revert === true ? { revert: true }
+        : b.approve === true ? { approve: true }
+        : typeof b.text === "string" && b.text.trim() !== "" ? { text: b.text }
+        : undefined;
+      if (!input) return { status: 400, json: { error: "text, approve or revert required" } };
+      try {
+        const override = await deps.saveOutletOverride.run({ itemId, type, outletId, ...input });
+        return await reply({ override: override ?? null });
+      } catch (err) {
+        return refuse(err);
+      }
+    }
+
+    if (method === "POST" && segments.length === 6 && segments[5] === "send") {
+      const result = await deps.sendToOutlet(itemId, type, outletId);
+      // Nothing went out and there is a reason for it (unconfigured room, manual room, sender
+      // error): 400 so the dashboard's `json()` helper raises it. A partial send still answers
+      // 200 with the board — something did reach a live room, and the rows must reflect that.
+      //
+      // The refusal carries the rebuilt board too. The commonest one is "already delivered to this
+      // room", which means the server's view has moved on — someone ran `pnpm send:channels` in a
+      // terminal while this board was open. Answering with the error alone leaves the row still
+      // offering [발송] for something already sent, so the screen never self-corrects.
+      if (result.sent === 0 && result.error) {
+        return { status: 400, json: { error: result.error, board: await deps.loadBoard(itemId) } };
+      }
+      return await reply({ ...result });
+    }
+
+    if (method === "POST" && segments.length === 6 && segments[5] === "mark") {
+      const delivered = (body as { delivered?: unknown })?.delivered;
+      if (typeof delivered !== "boolean") return { status: 400, json: { error: "delivered (boolean) required" } };
+      try {
+        await deps.markDelivery.run({ itemId, type, outletId, delivered });
+        return await reply();
+      } catch (err) {
+        return refuse(err);
       }
     }
   }
