@@ -256,6 +256,10 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
        * nothing can take back.
        */
       const forgetDraft = () => deliveryLedger.add({ ...previous, postId: undefined, url: undefined });
+      // Read off the row while it still has one — every refusal below names it, and `forgetDraft`
+      // is the one retirement path in the codebase that does NOT preserve `postId` on the row
+      // (`ReconcilePublished` calls it "the only record of which Typefully draft this was").
+      const draftId = previous.postId;
 
       if (before !== undefined && after !== undefined && after.used > before.used) {
         /**
@@ -276,17 +280,28 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
          * either way, so it does not buy a decision.
          */
         await forgetDraft();
+        /**
+         * Two things this message must not overclaim, both of them limits of the numbers it has.
+         *
+         * `inFlight` is counted from OUR two ledgers while `used` is account-wide, so "only this one
+         * was pending" is really "only this one that we know of" — a draft scheduled by hand in
+         * Typefully would publish inside the window and never appear in the count. And the branch
+         * fires on ANY increase, so naming a size ("한 칸") would misreport a `+2`.
+         */
         const others = Math.max(0, before.inFlight - 1);
         const lead = others === 0
-          ? `${who}: 취소하는 사이에 원본이 게시됐습니다 — 재발송하면 같은 글이 두 번 올라가므로 멈췄습니다.`
-          : `${who}: 취소하는 사이에 원본이 게시된 것 같습니다 — 재발송하면 같은 글이 두 번 올라갈 수 있어 멈췄습니다.`;
+          ? `${who}: 취소하는 사이에 원본이 게시된 것으로 보입니다 — 재발송하면 같은 글이 두 번 올라가므로 멈췄습니다.`
+          : `${who}: 취소하는 사이에 원본이 게시됐을 수 있습니다 — 재발송하면 같은 글이 두 번 올라갈 수 있어 멈췄습니다.`;
         const proof = others === 0
-          ? "월간 발행 쿼터가 한 칸 줄었고, 그때 게시를 기다리던 예약은 이 글뿐이었습니다."
-          : `월간 발행 쿼터가 한 칸 줄었습니다 — 다만 그때 게시를 기다리던 예약이 이 글 말고도 ${others}건 있어서, 그중 다른 글이 올라간 것일 수도 있습니다.`;
+          ? "월간 발행 쿼터가 방금 줄었고, 원장이 아는 한 그때 게시를 기다리던 예약은 이 글뿐이었습니다 (Typefully에서 직접 예약한 초안까지는 알 수 없습니다)."
+          : `월간 발행 쿼터가 방금 줄었습니다 — 다만 그때 게시를 기다리던 예약이 이 글 말고도 ${others}건 있어서, 그중 다른 글이 올라간 것일 수도 있습니다.`;
         const next = others === 0
           ? "계정에서 방금 올라간 글을 확인하세요."
           : "계정을 확인하고, 이 글이 실제로 올라가지 않았다면 재발송을 한 번 더 누르세요.";
-        return { cancelled: false, refusal: { sent: 0, failed: 0, error: `${lead} ${proof} ${next} 이 줄은 링크 없는 발송됨으로 남습니다 — 초안이 지워져 주소를 받아올 수 없어 게시 확인도 더는 손대지 않습니다` } };
+        // The draft id, named before `forgetDraft` takes it off the row: it is the only handle the
+        // operator has to match this room against Typefully's own history, and "계정에서 방금 올라간
+        // 글을 확인하세요" with nothing to match on is not an instruction anyone can follow.
+        return { cancelled: false, refusal: { sent: 0, failed: 0, error: `${lead} ${proof} ${next} 이 줄은 링크 없는 발송됨으로 남습니다 (취소한 초안 ${draftId}) — 초안이 지워져 주소를 받아올 수 없어 게시 확인도 더는 손대지 않습니다` } };
       }
 
       if (before === undefined || after === undefined) {
@@ -298,7 +313,7 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
          * pass, which reopens the room and undoes this refusal without anyone deciding to.
          */
         await forgetDraft();
-        return { cancelled: false, refusal: { sent: 0, failed: 0, error: `${who}: 취소 요청은 받아들여졌지만, 그 사이 원본이 게시됐는지는 확인하지 못했습니다 (월간 발행 쿼터를 읽지 못했습니다) — 두 번 올라갈 수 있어 재발송을 멈췄습니다. 계정을 확인하고, 이 글이 실제로 올라가지 않았다면 재발송을 한 번 더 누르세요. 이 줄은 링크 없는 발송됨으로 남습니다` } };
+        return { cancelled: false, refusal: { sent: 0, failed: 0, error: `${who}: 취소 요청은 받아들여졌지만, 그 사이 원본이 게시됐는지는 확인하지 못했습니다 (월간 발행 쿼터를 읽지 못했습니다) — 두 번 올라갈 수 있어 재발송을 멈췄습니다. 계정을 확인하고, 이 글이 실제로 올라가지 않았다면 재발송을 한 번 더 누르세요. 이 줄은 링크 없는 발송됨으로 남습니다 (취소한 초안 ${draftId})` } };
       }
 
       return { cancelled: true }; // the queue no longer holds it, and the caller has to say so

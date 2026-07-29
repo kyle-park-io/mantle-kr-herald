@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rowEditorGate } from "../../web/src/rowEditor";
+import { rowEditorGate, resendKind } from "../../web/src/rowEditor";
 import { deliveredToRoom, type BoardRow } from "../../web/src/types";
 
 const row = (o: Partial<BoardRow> = {}): BoardRow => ({
@@ -230,5 +230,38 @@ describe("deliveredToRoom (web mirror)", () => {
 
   it("does not count a room with no delivery at all", () => {
     expect(deliveredToRoom(row())).toBe(false);
+  });
+});
+
+/**
+ * Which story the 재발송 confirm dialog tells. The dialog is the last screen before an irreversible
+ * post, so describing one row shape in another's words is not a copy nit — it is the operator
+ * approving something other than what they read.
+ *
+ * The shape this exists for is the one the server's resend guard invents: it cancels a queued draft,
+ * cannot rule out that the original published anyway, retires the draft id so no reconcile pass can
+ * quietly reopen the room, and tells the operator to press 재발송 once more if no post ever appeared.
+ * That row is `sent`, no longer `awaitingPublish`, and has no url — so the second click used to land
+ * on the ordinary wording ("이 방에는 …에 나간 글이 있습니다 … 하나 더 올라갑니다"), every clause of
+ * which is unknown or false for it, over a timestamp that is a *scheduling* time.
+ */
+describe("resendKind", () => {
+  it("calls a queued X draft queued — the original is cancelled and exactly one post goes up", () => {
+    expect(resendKind(row({ deliveryStatus: "sent", awaitingPublish: true }), "x")).toBe("queued");
+  });
+
+  it("calls a sent X row with no draft id and no link unlinked — nothing knows whether a post exists", () => {
+    expect(resendKind(row({ deliveryStatus: "sent" }), "x")).toBe("unlinked");
+  });
+
+  it("calls a reconciled X row posted — it carries the url of a post that is really there", () => {
+    expect(resendKind(row({ deliveryStatus: "sent", url: "https://x.com/a/status/777" }), "x")).toBe("posted");
+  });
+
+  // Telegram publishes immediately and comes back with a t.me url, so a linkless telegram row is an
+  // old row, not an unverifiable one — there is no cancel/publish race on that channel to describe.
+  it("never calls a telegram row unlinked, link or no link", () => {
+    expect(resendKind(row({ deliveryStatus: "sent" }), "telegram")).toBe("posted");
+    expect(resendKind(row({ deliveryStatus: "sent", url: "https://t.me/x/1" }), "telegram")).toBe("posted");
   });
 });

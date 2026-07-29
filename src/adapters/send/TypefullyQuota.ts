@@ -53,6 +53,18 @@ export class TypefullyQuota {
      * fixes it where the field enters the system, and an unusable payload then surfaces the way
      * every other unusable payload here does — as a thrown read, which each caller already handles
      * (the guard refuses, the banner shows the error, the send gate logs and proceeds).
+     *
+     * KNOWN TRADE-OFF, recorded rather than implied. That last caller is why this is not free: a
+     * throw is what `SendChannels` catches and then SENDS ANYWAY ("a monitoring call must not become
+     * a new way for delivery to fail"). So a payload carrying `remaining` but no `used` used to
+     * leave the 15/month ceiling enforced on `remaining`, and now leaves it unenforced on every
+     * batch run — a strictly worse failure than the one this fixes, if it ever happens. The strictly
+     * better shape is to keep `used` OPTIONAL on `PublishingQuota`/`Headroom` and let the resend
+     * guard alone treat `undefined` as unreadable-and-refuse, which keeps the ceiling enforceable
+     * while still disarming nothing silently. Not done here because it is conditional on Typefully
+     * omitting a field the live run says it always sends, and it widens two shared types for one
+     * caller. If the send gate ever logs "could not read the Typefully publishing quota" on a
+     * response that HAS a `remaining`, this is the line to revisit.
      */
     if (!q || typeof q.remaining !== "number" || typeof q.used !== "number") {
       throw new Error("Typefully social-set response carried no usable publishing_quota (used/remaining)");

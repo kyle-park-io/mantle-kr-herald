@@ -454,10 +454,13 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
 
     expect(counter.sends).toBe(0); // THE assertion: the original is live, a resend is the double post
     expect(result.sent).toBe(0);
-    expect(result.error).toContain("취소하는 사이에 원본이 게시됐습니다");
-    // This row was the only draft in flight, so the increase cannot belong to a sibling — the
-    // message may state it flatly. (The ambiguous case is the next test.)
-    expect(result.error).toContain("게시를 기다리던 예약은 이 글뿐이었습니다");
+    expect(result.error).toContain("취소하는 사이에 원본이 게시된 것으로 보입니다");
+    // This row was the only draft in flight *that our ledgers know of*, so the increase cannot
+    // belong to a sibling — as far as the count can see. (The ambiguous case is the next test.)
+    expect(result.error).toContain("원장이 아는 한 그때 게시를 기다리던 예약은 이 글뿐이었습니다");
+    // "계정에서 방금 올라간 글을 확인하세요" is not followable without something to match on, and the
+    // row is about to lose its draft id — the one handle onto Typefully's own history.
+    expect(result.error).toContain("draft-raced");
 
     // The row must survive in a shape no reconcile will retire: its draft 404s now, so `gone` would
     // read as "never published" and free a room whose post is live.
@@ -485,7 +488,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const result = await sendToOutlet("x:16", "x", "x-post", true);
 
     expect(counter.sends).toBe(0); // ambiguous still refuses — a resend is the irreversible move
-    expect(result.error).toContain("게시된 것 같습니다"); // not the flat claim the sole-draft case makes
+    expect(result.error).toContain("게시됐을 수 있습니다"); // hedged — the sole-draft case says "보입니다"
     expect(result.error).toContain("이 글 말고도 2건"); // itself excluded from the in-flight count
     expect(result.error).toContain("다른 글이 올라간 것일 수도 있습니다");
   });
@@ -511,7 +514,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const result = await sendToOutlet("x:14", "x", "x-post", true);
 
     expect(counter.sends).toBe(0); // THE assertion: it published during the lookup, so nothing may go out
-    expect(result.error).toContain("취소하는 사이에 원본이 게시됐습니다");
+    expect(result.error).toContain("취소하는 사이에 원본이 게시된 것으로 보입니다");
     const [row] = await ledger.loadAll();
     expect(row.postId).toBeUndefined();
   });
@@ -533,7 +536,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const result = await sendToOutlet("x:15", "x", "x-post", true);
 
     expect(counter.sends).toBe(0); // THE assertion: without the wait this reads as a clean cancel
-    expect(result.error).toContain("취소하는 사이에 원본이 게시됐습니다");
+    expect(result.error).toContain("취소하는 사이에 원본이 게시된 것으로 보입니다");
     expect(waited).toHaveLength(1); // once, between the cancel and the after-read
     expect(waited[0]).toBeGreaterThan(0); // a real wait, not a zero-length one
   });
@@ -569,6 +572,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     expect(counter.sends).toBe(0); // an unread quota is not evidence that nothing published
     expect(result.sent).toBe(0);
     expect(result.error).toContain("월간 발행 쿼터를 읽지 못했습니다");
+    expect(result.error).toContain("draft-unknown"); // the correlation handle, named before it is dropped
 
     /**
      * NOT left holding the draft id. That draft 404s now, so `ReconcilePublished` would read `gone`,
