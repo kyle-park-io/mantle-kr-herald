@@ -1,4 +1,5 @@
 import { parseArticleId, parseTweetId } from "./typefullyPublish";
+import { createTypefullyFetch, type TypefullyFetch } from "./typefullyFetch";
 
 const API = "https://api.typefully.com/v2";
 
@@ -8,14 +9,18 @@ const API = "https://api.typefully.com/v2";
  * response) yields `{}`, which the reconcile treats as "not published yet".
  */
 export class TypefullyDraftLookup {
+  private readonly http: TypefullyFetch;
   constructor(
     private readonly apiKey: string,
     private readonly socialSetId: string,
-    private readonly fetchFn: typeof fetch = fetch,
-  ) {}
+    fetchFn: typeof fetch = fetch,
+    sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+  ) {
+    this.http = createTypefullyFetch(fetchFn, sleep);
+  }
 
   async published(draftId: string): Promise<{ xUrl?: string; xId?: string; articleUrl?: string; articleId?: string }> {
-    const res = await this.fetchFn(`${API}/social-sets/${this.socialSetId}/drafts/${draftId}`, {
+    const res = await this.http(`${API}/social-sets/${this.socialSetId}/drafts/${draftId}`, {
       headers: { Authorization: `Bearer ${this.apiKey}` },
     });
     if (!res.ok) return {};

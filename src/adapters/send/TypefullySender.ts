@@ -1,18 +1,22 @@
 import type { ChannelSender, SendRequest, SendResult } from "../../ports/ChannelSender";
 import { TypefullyMedia } from "./TypefullyMedia";
 import { scheduledPublishAt } from "./typefullyPublish";
+import { createTypefullyFetch, type TypefullyFetch } from "./typefullyFetch";
 
 const API = "https://api.typefully.com/v2";
 
 export class TypefullySender implements ChannelSender {
   readonly name = "x";
+  private readonly http: TypefullyFetch;
   constructor(
     private readonly apiKey: string,
     private readonly socialSetId: string,
     private readonly fetchFn: typeof fetch = fetch,
     private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
     private readonly now: () => number = () => Date.now(),
-  ) {}
+  ) {
+    this.http = createTypefullyFetch(fetchFn, sleep);
+  }
 
   private headers(): Record<string, string> {
     return { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" };
@@ -30,14 +34,19 @@ export class TypefullySender implements ChannelSender {
     const posts = req.segments.map((text, i) =>
       i === 0 && mediaIds.length ? { text, media_ids: mediaIds } : { text },
     );
-    const create = await this.fetchFn(`${API}/social-sets/${this.socialSetId}/drafts`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({ platforms: { x: { enabled: true, posts } }, publish_at: scheduledPublishAt(this.now) }),
-    });
+    // The one Typefully call that must never be replayed: a lost response may still have left a
+    // scheduled draft behind, and a second one publishes the same post twice.
+    const create = await this.http(
+      `${API}/social-sets/${this.socialSetId}/drafts`,
+      { method: "POST", headers: this.headers(), body: JSON.stringify({ platforms: { x: { enabled: true, posts } }, publish_at: scheduledPublishAt(this.now) }) },
+      { idempotent: false },
+    );
     if (!create.ok) {
       const detail = await create.text().catch(() => "");
-      throw new Error(`Typefully create draft failed: HTTP ${create.status}${detail ? ` — ${detail}` : ""}`);
+      // A 5xx is the ambiguous case — a 4xx definitively created nothing, so only the former
+      // sends the operator to the queue.
+      const ambiguous = create.status >= 500 ? " — the draft may have been created; check the Typefully queue before re-running" : "";
+      throw new Error(`Typefully create draft failed: HTTP ${create.status}${detail ? ` — ${detail}` : ""}${ambiguous}`);
     }
     const draft = (await create.json()) as { id?: number | string; share_url?: string };
     const draftId = draft.id !== undefined ? String(draft.id) : undefined;
