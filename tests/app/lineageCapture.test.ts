@@ -48,8 +48,8 @@ describe("lineage capture", () => {
 
   it("SaveConversion appends a converted entry", async () => {
     const l = fakeLineage();
-    await new SaveConversion(fakeConversionStore, fakeFewShotByType, () => "T", l.store).run({
-      itemId: "x:1", type: "announcement", sourceKorean: "원본KO", convertedText: "공지문", approve: false,
+    await new SaveConversion(fakeConversionStore, () => "T", l.store).run({
+      itemId: "x:1", type: "announcement", sourceKorean: "원본KO", convertedText: "공지문",
     });
     expect(l.appended).toEqual([
       { itemId: "x:1", stage: "converted", variant: "announcement", content: "공지문", status: "converted", at: "T" },
@@ -65,13 +65,13 @@ describe("lineage capture", () => {
       upsert: async () => {},
       listRenderedKeys: async () => new Set(),
     };
-    await new ApproveRendering(store, () => "T", l.store).run({ itemId: "x:1", type: "announcement", channel: "telegram" });
+    await new ApproveRendering(store, fakeConversionStore, fakeFewShotByType, () => "T", l.store).run({ itemId: "x:1", type: "announcement", channel: "telegram" });
     expect(l.appended[0]).toMatchObject({ itemId: "x:1", stage: "rendered", variant: "announcement/telegram", content: "본문", status: "approved", at: "T" });
   });
 
   it("ApproveRendering does NOT append when the rendering is not found", async () => {
     const l = fakeLineage();
-    await new ApproveRendering(fakeFormatting, () => "T", l.store).run({ itemId: "x:1", type: "announcement", channel: "telegram" });
+    await new ApproveRendering(fakeFormatting, fakeConversionStore, fakeFewShotByType, () => "T", l.store).run({ itemId: "x:1", type: "announcement", channel: "telegram" });
     expect(l.appended).toHaveLength(0);
   });
 

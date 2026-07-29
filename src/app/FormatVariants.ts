@@ -19,13 +19,19 @@ export interface FormatWarning {
   messages: string[];
 }
 
-/** Load the approved variants matching the selector's types + ids. Shared by the §6 use-cases. */
-export async function selectApprovedVariants(store: ConversionStore, selector: FormatSelector): Promise<ContentVariant[]> {
+/**
+ * Load the variants matching the selector's types + ids. Shared by the §6 use-cases.
+ *
+ * Deliberately NOT filtered on `status`. Formatting is mechanical — it renders a variant into each
+ * channel's canonical text and nothing leaves the machine — so gating it on a variant approval only
+ * bought a second review of copy the reviewer reads again on the outlet board. The one human gate
+ * that matters is 2차: `SendChannels` sends only `approved` *renderings*, and `ApproveRendering` is
+ * where a variant earns its way into the few-shot corpus.
+ */
+export async function selectVariants(store: ConversionStore, selector: FormatSelector): Promise<ContentVariant[]> {
   const types = selector.types ?? ALL_TYPES;
   const wantedIds = selector.ids && selector.ids.length > 0 ? new Set(selector.ids) : undefined;
-  return (await store.loadAll()).filter(
-    (v) => v.status === "approved" && types.includes(v.type) && (!wantedIds || wantedIds.has(v.itemId)),
-  );
+  return (await store.loadAll()).filter((v) => types.includes(v.type) && (!wantedIds || wantedIds.has(v.itemId)));
 }
 
 export class FormatVariants {
@@ -37,11 +43,11 @@ export class FormatVariants {
   ) {}
 
   async run(selector: FormatSelector): Promise<{ renderings: ChannelRendering[]; warnings: FormatWarning[] }> {
-    const approved = await selectApprovedVariants(this.conversionStore, selector);
+    const variants = await selectVariants(this.conversionStore, selector);
 
     const renderings: ChannelRendering[] = [];
     const warnings: FormatWarning[] = [];
-    for (const v of approved) {
+    for (const v of variants) {
       const channels = selector.channels ?? DEFAULT_CHANNELS_BY_TYPE[v.type];
       // The same canonical text is stored for every channel on purpose: it is a common starting
       // point that the writer can then refine per channel, which is what per-channel approval is for.

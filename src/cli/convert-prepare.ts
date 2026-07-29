@@ -56,5 +56,5 @@ await writeJsonFileAtomic(paths.variantsDir, paths.variantsPending, pending);
 
 console.log(`prepared ${pending.length} variant(s) → ${worksheetPath}`);
 console.log(
-  `Fill each 변환 section, then run: pnpm convert:save --id <id> --type <${ALL_TYPES.join("|")}> --file <ko.txt> [--approve]`,
+  `Fill each 변환 section, then run: pnpm convert:save --id <id> --type <${ALL_TYPES.join("|")}> --file <ko.txt>`,
 );

@@ -1,9 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { SaveConversion } from "../../src/app/SaveConversion";
 import type { ConversionStore } from "../../src/ports/ConversionStore";
-import type { FewShotStore } from "../../src/ports/FewShotStore";
-import { ALL_TYPES, type ContentVariant, type ConversionType } from "../../src/domain/conversion/models";
-import type { FewShotExample } from "../../src/domain/translation/models";
+import type { ContentVariant } from "../../src/domain/conversion/models";
 
 function harness() {
   const saved: ContentVariant[] = [];
@@ -11,33 +9,32 @@ function harness() {
     loadAll: async () => saved, listConvertedKeys: async () => new Set(),
     upsert: async (v) => { saved.push(v); },
   };
-  const fewShots = {} as Record<ConversionType, FewShotExample[]>;
-  for (const t of ALL_TYPES) fewShots[t] = [];
-  const mk = (t: ConversionType): FewShotStore => ({ load: async () => fewShots[t], add: async (e) => { fewShots[t].push(e); } });
-  const fewShotByType = {} as Record<ConversionType, FewShotStore>;
-  for (const t of ALL_TYPES) fewShotByType[t] = mk(t);
-  return { saved, fewShots, store, fewShotByType };
+  return { saved, store };
 }
 
 describe("SaveConversion", () => {
-  it("saves as converted without approval and does not touch few-shot", async () => {
+  it("always saves as converted — the agent's copy is never self-approved", async () => {
     const h = harness();
-    const uc = new SaveConversion(h.store, h.fewShotByType, () => "2026-02-02T00:00:00.000Z");
-    const res = await uc.run({ itemId: "x:1", type: "x", sourceKorean: "한글", convertedText: "카피", approve: false });
-    expect(res).toEqual({ itemId: "x:1", type: "x", promoted: false });
+    const uc = new SaveConversion(h.store, () => "2026-02-02T00:00:00.000Z");
+    const res = await uc.run({ itemId: "x:1", type: "x", sourceKorean: "한글", convertedText: "카피" });
+    expect(res).toEqual({ itemId: "x:1", type: "x" });
     expect(h.saved[0].status).toBe("converted");
     expect(h.saved[0].approvedAt).toBeUndefined();
-    expect(h.fewShots.x).toHaveLength(0);
   });
 
-  it("approves → status approved + appends to that type's few-shot only", async () => {
+  /**
+   * A re-save is how an agent rewrites copy the reviewer sent back. It must not quietly inherit the
+   * approval the first round earned at 2차, or the rewritten text would be sendable unread.
+   */
+  it("re-saving an already-approved variant drops it back to converted", async () => {
     const h = harness();
-    const uc = new SaveConversion(h.store, h.fewShotByType, () => "2026-02-02T00:00:00.000Z");
-    const res = await uc.run({ itemId: "x:1", type: "kol", sourceKorean: "한글", convertedText: "브리프", approve: true });
-    expect(res.promoted).toBe(true);
-    expect(h.saved[0].status).toBe("approved");
-    expect(h.saved[0].approvedAt).toBe("2026-02-02T00:00:00.000Z");
-    expect(h.fewShots.kol).toEqual([{ source: "한글", target: "브리프", itemId: "x:1" }]);
-    expect(h.fewShots.x).toHaveLength(0);
+    h.saved.push({ itemId: "x:1", type: "x", sourceKorean: "한글", convertedText: "옛 카피",
+      status: "approved", createdAt: "2026-01-01T00:00:00.000Z", approvedAt: "2026-01-02T00:00:00.000Z" });
+    const uc = new SaveConversion(h.store, () => "2026-02-02T00:00:00.000Z");
+    await uc.run({ itemId: "x:1", type: "x", sourceKorean: "한글", convertedText: "새 카피" });
+    const latest = h.saved[h.saved.length - 1];
+    expect(latest.convertedText).toBe("새 카피");
+    expect(latest.status).toBe("converted");
+    expect(latest.approvedAt).toBeUndefined();
   });
 });

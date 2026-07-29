@@ -27,11 +27,17 @@ describe("FormatVariants", () => {
     expect(s.saved).toHaveLength(2);
   });
 
-  it("ignores non-approved variants", async () => {
+  /**
+   * Formatting is mechanical and nothing leaves the machine, so a variant does not need its own
+   * approval to be rendered — 2차 is the gate, and `SendChannels` enforces it on the rendering. If
+   * this ever filtered on status again, pressing [포맷 다시] on the board would silently do nothing.
+   */
+  it("formats a converted variant that has not been approved", async () => {
     const s = stores([variant({ status: "converted" })]);
     const uc = new FormatVariants(s.conversionStore, s.formattingStore);
     const { renderings } = await uc.run({});
-    expect(renderings).toHaveLength(0);
+    expect(renderings).toHaveLength(1);
+    expect(renderings[0].status).toBe("rendered");
   });
 
   it("honors --channels override and collects warnings", async () => {
