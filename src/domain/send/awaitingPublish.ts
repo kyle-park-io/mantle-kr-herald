@@ -31,12 +31,15 @@ export function awaitingPublish<T extends { outletId: string; status: string; ur
  * An article ledger row holds a scheduled Typefully draft id and no `x.com` url: it is still waiting
  * to be published.
  *
+ * A row carrying `droppedAt` is retired — its draft was deleted before it published, so it is no
+ * longer waiting on anything and must not count as in-flight.
+ *
  * Used by `ReconcilePublished` (to fetch and store the published url) and the headroom count
  * (to estimate how many articles are in flight).
  */
 /** A type predicate, so a caller that reconciles the row does not have to re-assert its `postId`. */
-export function awaitingArticlePublish<T extends { url?: string; postId?: string }>(
+export function awaitingArticlePublish<T extends { url?: string; postId?: string; droppedAt?: string }>(
   row: T,
 ): row is T & { postId: string } {
-  return !isXUrl(row.url) && !!row.postId;
+  return !isXUrl(row.url) && !!row.postId && !row.droppedAt;
 }

@@ -1,0 +1,81 @@
+import type { Stats } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { LOCK_STALE_MS } from "../shared/store/fileLock";
+import { isErrnoException } from "../shared/store/jsonFile";
+import { isStrandedTempFile } from "./retention";
+
+/**
+ * How recently a piece of write debris must have been touched to still count as possibly-live.
+ *
+ * Deliberately the lock's own staleness window rather than a second number: a lock and the
+ * `.tmp-*` written inside the critical section it guards are produced by one write, and judging
+ * them by two different clocks would let the sweep take one while the other is still protected.
+ * The window's sizing argument lives on `LOCK_STALE_MS`, and it holds for both — nothing between
+ * an atomic write's `writeFile` and its `rename` waits on the network either.
+ */
+const IN_PROGRESS_MS = LOCK_STALE_MS;
+
+/**
+ * `stat`, treating a path that vanished between the `readdir` and the `stat` as gone rather than
+ * as an error. A sweep walks a live tree: lock files are the most transient thing in it — created
+ * and deleted on *every* ledger write — so a send releasing its lock mid-walk is the normal case,
+ * not an exceptional one. Letting that `ENOENT` propagate would abort the whole command precisely
+ * when a send is running, which is the situation the staleness gate below exists to survive.
+ */
+async function statIfPresent(path: string): Promise<Stats | null> {
+  try {
+    return await stat(path);
+  } catch (err: unknown) {
+    if (isErrnoException(err) && err.code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+/**
+ * Collects debris an interrupted write can leave next to a live store: the temp file of a killed
+ * atomic write, and the lock file of a process that died mid-write. Live stores are never matched —
+ * see `isStrandedTempFile`.
+ *
+ * Walks `dir` recursively, skipping `skipDir` (the archive, which has its own retention rule).
+ * Returns absolute paths; deciding what to do with them is the caller's job, so this stays safe to
+ * call and easy to test.
+ */
+export async function collectWriteDebris(dir: string, opts: { skipDir?: string } = {}): Promise<string[]> {
+  const targets: string[] = [];
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return targets;
+  }
+  for (const name of names) {
+    const full = join(dir, name);
+    if (isStrandedTempFile(name)) {
+      const debris = await statIfPresent(full);
+      // Already gone while we walked — nothing to clean, and nothing to complain about.
+      if (!debris) continue;
+      // Younger than the staleness window: a live process may still be using it, and both kinds
+      // fail the same way if we take it.
+      //
+      // A lock that young may still belong to a running send. Removing it would let a second
+      // process interleave a read-modify-write of the same ledger and drop a row.
+      //
+      // A `.tmp-*` that young may be an atomic write in the gap between its `writeFile` and its
+      // `rename` — a window `pnpm clean --yes` runs straight into whenever a send is recording.
+      // Removing it there makes the `rename` throw ENOENT, and `SendChannels` reports that as
+      // "was SENT but could NOT be recorded in the ledger — a rerun will re-send it".
+      //
+      // Either way the cleanup command causes a duplicate live post, which is why the gate covers
+      // every name `isStrandedTempFile` matches rather than only the locks.
+      if (Date.now() - debris.mtimeMs < IN_PROGRESS_MS) continue;
+      targets.push(full);
+      continue;
+    }
+    const entry = await statIfPresent(full);
+    if (entry?.isDirectory() && full !== opts.skipDir) {
+      targets.push(...(await collectWriteDebris(full, opts)));
+    }
+  }
+  return targets;
+}

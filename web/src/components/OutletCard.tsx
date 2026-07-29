@@ -14,6 +14,7 @@ import {
   PASTE_DESTINATION,
   SEND_BLOCK_REASON,
   TYPE_LABEL,
+  deliveredToRoom,
   outletLabel,
   type BoardGroup,
   type BoardRow,
@@ -248,7 +249,7 @@ export function OutletCard(props: {
           </span>
         )}
         <span className="ml-auto text-[12px] text-faint">
-          {rows.filter((r) => r.deliveryStatus).length}/{rows.length}곳 완료
+          {rows.filter(deliveredToRoom).length}/{rows.length}곳 완료
         </span>
       </header>
 
@@ -647,6 +648,10 @@ function Row(props: {
   const locked = row.block !== undefined;
   const sent = row.deliveryStatus === "sent";
   const delivered = row.deliveryStatus === "delivered";
+  // Neither `sent` nor `delivered`, on purpose: the scheduled draft was deleted before it published,
+  // so this room has nothing. It falls through to the same 발송/전달함 affordances as a room with no
+  // deliveryStatus at all — the branches below never test for `dropped` — and only adds the note.
+  const dropped = row.deliveryStatus === "dropped";
   const highlighted = props.hovered === row.outletId;
   const strandedFork = row.forked && row.block === "unapproved" && group.status === "approved";
   const blocked = busy || dirty;
@@ -702,17 +707,31 @@ function Row(props: {
     });
 
   /**
-   * A room that already has a post. The first one is not touched by any of this — the room ends up
-   * with two — and the record is replaced, so the link to the first disappears from this screen.
-   * Both facts go in the dialog, because neither is recoverable afterwards.
+   * 재발송 does two entirely different things, and the dialog has to say which one.
+   *
+   * `showResend` is `deliveryStatus === "sent"`, which covers both — including every `awaitingPublish`
+   * row, whose badge two lines above reads `예약됨`. For those the post has NOT gone out: `at` is when
+   * it was *queued*, the server cancels the queued draft before re-sending (so exactly one post goes
+   * up, not two), and there is no earlier link to lose because the row has no url. Describing that as
+   * "글이 하나 더 올라갑니다" contradicts the row's own badge, immediately before an irreversible click.
+   *
+   * The queued wording also names the two ways the server refuses — the original already published,
+   * or the cancel did not take — because both come back as an error *after* the confirm, and an
+   * operator who was promised a send needs to have been told a refusal was possible.
    */
   const askResend = () =>
     props.onConfirm({
       title: `${row.label}에 다시 발송합니다`,
-      lines: [
-        `이 방에는 ${stampFull(row.at) ?? "이미"} 나간 글이 있습니다. 그 글은 지워지지 않고, 이 방에 글이 하나 더 올라갑니다.`,
-        "발송 기록은 새 발송으로 덮어써집니다. 먼저 보낸 글의 링크는 이 화면에서 사라집니다.",
-      ],
+      lines: row.awaitingPublish
+        ? [
+            `이 방에는 ${stampFull(row.at) ?? "이미"}에 예약한 글이 있고, 아직 올라가지 않았습니다.`,
+            "예약된 원본을 취소하고 새로 보냅니다 — 이 방에는 글이 하나만 올라갑니다.",
+            "확인하는 사이 원본이 이미 게시됐거나 예약 취소가 실패하면, 같은 글이 두 번 올라가지 않도록 발송을 멈추고 알려드립니다.",
+          ]
+        : [
+            `이 방에는 ${stampFull(row.at) ?? "이미"} 나간 글이 있습니다. 그 글은 지워지지 않고, 이 방에 글이 하나 더 올라갑니다.`,
+            "발송 기록은 새 발송으로 덮어써집니다. 먼저 보낸 글의 링크는 이 화면에서 사라집니다.",
+          ],
       pieces: rowPieces,
       confirmLabel: "다시 발송",
       onConfirm: () => void post(true),
@@ -743,6 +762,17 @@ function Row(props: {
         <span className="text-[12px] text-faint">{row.delivery === "auto" ? "자동" : "수동"}</span>
         {row.pending && (
           <span className="rounded bg-bg px-1.5 py-0.5 text-[11px] font-medium text-muted">추가됨 · 미저장</span>
+        )}
+        {dropped && (
+          // `at` is when the post was *scheduled*, not when the draft was deleted — the tip says so
+          // rather than pairing a timestamp with "취소" the way `예약됨`/재발송 pair one with a send.
+          <Tip
+            text={`${stampFull(row.at) ?? ""}에 예약했지만 게시되기 전에 취소되어 이 방에는 올라가지 않았습니다. 다시 보낼 수 있습니다.`}
+          >
+            <span className="rounded bg-amber-soft px-1.5 py-0.5 text-[11px] font-medium text-amber-ink">
+              예약 취소됨
+            </span>
+          </Tip>
         )}
 
         <button
@@ -794,7 +824,16 @@ function Row(props: {
                       // actually counts it against the monthly quota — not when it was queued — so
                       // this is the other real trigger for a refetch, alongside a successful send.
                       props.onBoard(res.board, true);
-                      if (res.reconciled === 0) props.onError("아직 게시되지 않았습니다 — 잠시 뒤 다시 눌러보세요.");
+                      // `res.retired > 0` and `res.reconciled === 0` are mutually exclusive outcomes
+                      // for *this* row's draft, but must be checked in this order: a retired draft
+                      // never counts as reconciled either, so the generic "not published yet, try
+                      // later" message would otherwise fire for it too — contradicting the badge the
+                      // refetch above just painted ("예약 취소됨") in the very same click.
+                      if (res.retired > 0) {
+                        props.onError("예약된 게시물이 게시되기 전에 취소되었습니다 — 이 방은 다시 보낼 수 있습니다.");
+                      } else if (res.reconciled === 0) {
+                        props.onError("아직 게시되지 않았습니다 — 잠시 뒤 다시 눌러보세요.");
+                      }
                     })
                   }
                 >
@@ -818,6 +857,10 @@ function Row(props: {
                   text={
                     gate.resendDisabled ? SEND_BLOCK_REASON[row.block!]
                     : dirty ? SAVE_FIRST
+                    // Same split as the confirm dialog above, for the same reason: on an `예약됨`
+                    // row nothing has gone out yet, so "먼저 보낸 글" names a post that does not
+                    // exist — and the queued original is cancelled rather than left to publish.
+                    : row.awaitingPublish ? "예약된 원본을 취소하고 새로 보냅니다 — 이 방에는 글이 하나만 올라갑니다. 원본이 이미 게시됐으면 발송을 멈춥니다."
                     : "이 방에 한 번 더 보냅니다. 먼저 보낸 글은 지워지지 않습니다."
                   }
                 >
@@ -882,6 +925,13 @@ function Row(props: {
               </button>
             </>
           )}
+          {/*
+            `!row.deliveryStatus` still means "no ledger entry at all" with `dropped` in the union: a
+            room can only be `pending` (client-added, no server row yet) while `deliveryByKey` in
+            `board.ts` has nothing for it — and that map is keyed on presence, not on which status —
+            so a `dropped` entry already routes the room into `group.rows` server-side and it is never
+            both `pending` and `dropped` at once.
+          */}
           {row.pending && !row.deliveryStatus && (
             <button
               className="text-[13px] text-faint transition-colors hover:text-ink"

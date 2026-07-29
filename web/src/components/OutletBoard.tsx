@@ -4,6 +4,7 @@ import { btnPrimary } from "../buttonStyles";
 import {
   TYPE_LABEL,
   datePrefix,
+  deliveredToRoom,
   itemUrl,
   LOW_PUBLISHING_QUOTA,
   type BoardView,
@@ -131,7 +132,7 @@ export function OutletBoard(props: {
   }
 
   const rows = board.groups.flatMap((g) => g.rows);
-  const done = rows.filter((r) => r.deliveryStatus).length;
+  const done = rows.filter(deliveredToRoom).length;
   // First-appearance order, which is the board's own top-to-bottom order — the same order the
   // `n/m` badges were numbered in, so the summary and the cards read the same way.
   const outletIds = [...new Set(rows.map((r) => r.outletId))];
@@ -190,7 +191,7 @@ export function OutletBoard(props: {
           <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[13px] text-muted">
             {outletIds.map((id) => {
               const mine = rows.filter((r) => r.outletId === id);
-              const ok = mine.filter((r) => r.deliveryStatus).length;
+              const ok = mine.filter(deliveredToRoom).length;
               return (
                 <button
                   key={id}

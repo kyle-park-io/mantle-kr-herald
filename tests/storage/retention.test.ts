@@ -67,4 +67,18 @@ describe("isStrandedTempFile", () => {
     // Trailing content after the uuid means it is not the suffix we wrote.
     expect(isStrandedTempFile("items.json.tmp-1-2-abc.bak")).toBe(false);
   });
+
+  it("matches a lock file abandoned by a process that died mid-write", () => {
+    expect(isStrandedTempFile("deliveries.json.lock")).toBe(true);
+    expect(isStrandedTempFile("x-article.json.lock")).toBe(true);
+  });
+
+  // SAFETY: the lock pattern must not reach past the suffix `lockPathFor` appends.
+  it("rejects near-misses of the lock suffix", () => {
+    expect(isStrandedTempFile("deliveries.json")).toBe(false);
+    expect(isStrandedTempFile("lock.json")).toBe(false);
+    expect(isStrandedTempFile("pnpm-lock.yaml")).toBe(false);
+    expect(isStrandedTempFile("deliveries.json.lock.bak")).toBe(false);
+  });
+
 });

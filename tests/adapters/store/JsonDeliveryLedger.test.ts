@@ -107,3 +107,37 @@ describe("JsonDeliveryLedger", () => {
     expect((await l.loadKeys()).has(legacyKey)).toBe(true);
   });
 });
+
+/**
+ * A `dropped` row records a scheduled X send whose Typefully draft was deleted before it published —
+ * nothing ever reached the room. `loadKeys()` is what `SendChannels.run()` gates re-sending on, so a
+ * dropped row must stop counting as "already delivered" there, while `loadAll()` — what the board
+ * reads — keeps it, so the operator can still see what happened to it.
+ */
+describe("JsonDeliveryLedger.loadKeys — dropped rows", () => {
+  it("omits a dropped row so the room can be sent to again", async () => {
+    const l = new JsonDeliveryLedger(dir);
+    await l.add({ ...sent, status: "dropped" });
+    expect(await l.loadKeys()).toEqual(new Set());
+    // The row itself is still there — the board explains what happened.
+    expect(await l.loadAll()).toHaveLength(1);
+  });
+
+  it("keeps sent and delivered rows in the key set", async () => {
+    const l = new JsonDeliveryLedger(dir);
+    await l.add(sent);
+    await l.add({ ...sent, outletId: "tg-dev", status: "delivered" });
+    expect(await l.loadKeys()).toEqual(
+      new Set([deliveryKey(sent), deliveryKey({ ...sent, outletId: "tg-dev" })]),
+    );
+  });
+
+  it("replaces a dropped row when the room is sent to again", async () => {
+    const l = new JsonDeliveryLedger(dir);
+    await l.add({ ...sent, status: "dropped" });
+    await l.add({ ...sent, status: "sent", postId: "99" });
+    const all = await l.loadAll();
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ status: "sent", postId: "99" });
+  });
+});

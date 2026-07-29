@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { rowEditorGate } from "../../web/src/rowEditor";
-import type { BoardRow } from "../../web/src/types";
+import { deliveredToRoom, type BoardRow } from "../../web/src/types";
 
 const row = (o: Partial<BoardRow> = {}): BoardRow => ({
   outletId: "tg-dev",
@@ -90,6 +90,23 @@ describe("rowEditorGate", () => {
     expect(untouched(row()).showReadOnlyStale).toBe(false);
     expect(untouched(row({ forked: false })).showReadOnlyLocked).toBe(false);
     expect(untouched(row({ forked: false })).showReadOnlyStale).toBe(false);
+  });
+
+  /**
+   * A `dropped` row is a scheduled Typefully draft deleted before it published — nothing ever
+   * reached the room. `sent` in `rowEditorGate` is derived with `=== "sent"`, which already excludes
+   * `dropped` on its own, but that is exactly the kind of thing a widened union can quietly stop
+   * being true of without a test noticing.
+   */
+  describe("a room whose scheduled post was dropped before it published", () => {
+    it("reads as not yet sent: editable, offers 승인, and has no 재발송", () => {
+      const gate = untouched(row({ status: "rendered", deliveryStatus: "dropped" }));
+      expect({ readOnly: gate.readOnly, showApprove: gate.showApprove, showResend: gate.showResend }).toEqual({
+        readOnly: false,
+        showApprove: true,
+        showResend: false,
+      });
+    });
   });
 
   describe("a room nothing has gone out to", () => {
@@ -191,5 +208,27 @@ describe("rowEditorGate — 재발송", () => {
   it("is absent on a room nothing has gone out to", () => {
     expect(untouched(row()).showResend).toBe(false);
     expect(untouched(row({ deliveryStatus: "delivered" })).showResend).toBe(false);
+  });
+});
+
+/**
+ * The dashboard's half of "already delivered" — `OutletCard` and `OutletBoard` both count a room
+ * toward `{n}/{total}곳 완료` through this one predicate rather than each re-deriving it, the same
+ * reason the domain keeps a single `deliveredToRoom`. Left as a bare `r.deliveryStatus` truthiness
+ * check (as it was before `dropped` existed), a dropped row — a truthy string — would silently count
+ * as done: the exact bug this predicate exists to prevent.
+ */
+describe("deliveredToRoom (web mirror)", () => {
+  it("counts a sent or delivered row as done", () => {
+    expect(deliveredToRoom(row({ deliveryStatus: "sent" }))).toBe(true);
+    expect(deliveredToRoom(row({ deliveryStatus: "delivered" }))).toBe(true);
+  });
+
+  it("does not count a dropped row as done — nothing reached the room", () => {
+    expect(deliveredToRoom(row({ deliveryStatus: "dropped" }))).toBe(false);
+  });
+
+  it("does not count a room with no delivery at all", () => {
+    expect(deliveredToRoom(row())).toBe(false);
   });
 });

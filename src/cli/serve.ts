@@ -62,6 +62,7 @@ import { resolveSheetTitles } from "../adapters/sheets/sheetTitles";
 import { ReconcilePublished } from "../app/ReconcilePublished";
 import { JsonXArticleLedger } from "../adapters/store/JsonXArticleLedger";
 import { TypefullyDraftLookup } from "../adapters/send/TypefullyDraftLookup";
+import type { DraftLookup } from "../ports/DraftLookup";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 
 const port = Number(process.env.PORT) || 5757;
@@ -247,12 +248,12 @@ const loadQuota = makeLoadHeadroom(deliveryLedger, xArticleLedger);
  * where the operator sees `예약됨` — telling them to open a terminal for the link to their own post
  * is how a row stays unresolved forever.
  */
-const reconcilePublished = async (): Promise<{ reconciled: number; pending: number; error?: string }> => {
+const reconcilePublished = async (): Promise<{ reconciled: number; retired: number; pending: number; error?: string }> => {
   let cfg;
   try {
     cfg = loadTypefullyConfig();
   } catch (err) {
-    return { reconciled: 0, pending: 0, error: (err as Error).message };
+    return { reconciled: 0, retired: 0, pending: 0, error: (err as Error).message };
   }
   try {
     return await new ReconcilePublished(
@@ -261,14 +262,33 @@ const reconcilePublished = async (): Promise<{ reconciled: number; pending: numb
       new TypefullyDraftLookup(cfg.apiKey, cfg.socialSetId),
     ).run();
   } catch (err) {
-    return { reconciled: 0, pending: 0, error: (err as Error).message };
+    return { reconciled: 0, retired: 0, pending: 0, error: (err as Error).message };
   }
 };
+
+/**
+ * The window the resend guard looks through before it re-posts to an X room — see
+ * `guardQueuedDraft` in sendToOutlet.ts for what it does with the answer.
+ *
+ * Constructed here in its own try/catch, the way `headroomReader` guards its own construction: a
+ * Telegram-only install has no `TYPEFULLY_*` env, and a throw on this line would take the whole
+ * dashboard down over a guard it has no use for — including every Telegram resend, which needs
+ * nothing from Typefully at all. `undefined` skips the guard, which is safe precisely here: the same
+ * missing credentials stop `createSenders` from building an X sender, so there is no X post to
+ * duplicate.
+ */
+let draftLookup: DraftLookup | undefined;
+try {
+  const typefully = loadTypefullyConfig();
+  draftLookup = new TypefullyDraftLookup(typefully.apiKey, typefully.socialSetId);
+} catch {
+  // Typefully not configured — nothing was ever scheduled through it, so no resend can race a draft.
+}
 
 // The board's per-row [발송] and its resend restore — see sendToOutlet.ts for both doc comments,
 // carried there verbatim. `articleLedger` here is the same singleton `reconcilePublished` reads
 // from, not a fresh instance, so headroom reads never disagree with it (see xArticleLedger above).
-const sendToOutlet = makeSendToOutlet({ formattingStore, deliveryLedger, translationStore, overrideStore, articleLedger: xArticleLedger });
+const sendToOutlet = makeSendToOutlet({ formattingStore, deliveryLedger, translationStore, overrideStore, articleLedger: xArticleLedger, draftLookup });
 
 // Same construction as `src/cli/convert-prepare.ts`, so the board and the CLI read and write the
 // same worksheets and the same `output/variants/pending.json` batch.

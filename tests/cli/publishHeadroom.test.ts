@@ -11,6 +11,8 @@ interface ArticleRow {
   postId?: string;
   url?: string;
   sentAt: string;
+  /** How an article row retires — it has no `status` field to widen. See `awaitingArticlePublish`. */
+  droppedAt?: string;
 }
 
 /** A minimal ledger backed by a live array reference, so a test can mutate it after construction. */
@@ -181,6 +183,32 @@ describe("makeReadHeadroom", () => {
     now += 1_000;
     expect((await read()).inFlight).toBe(2);
     expect(calls).toBe(1); // the quota fetch did not repeat — only inFlight moved
+  });
+
+  /**
+   * A retired row holds no publishing slot, and there are two shapes of retirement: `status:
+   * "dropped"` on a delivery row and `droppedAt` on an article row (which has no `status` field to
+   * widen). Both mean the same thing — the Typefully draft was deleted before it published, so
+   * nothing is in flight and nothing will be billed for it.
+   *
+   * Pinned on `makeReadHeadroom` rather than on the two predicates alone because this is where a
+   * regression actually costs something: an overcounted `inFlight` shrinks `available`, and the
+   * send gate refuses a legal batch against a quota slot that was never taken. The queued row in the
+   * same test is the control — without it, a reader that counted nothing at all would pass.
+   */
+  it("does not count retired rows as in-flight, in either ledger's shape", async () => {
+    const delivery = fakeDeliveryLedger([
+      { ...sentRow({ itemId: "x:1", postId: "draft-dropped" }), status: "dropped" },
+    ]);
+    const article = fakeArticleLedger([
+      articleRow({ itemId: "x:8", postId: "draft-retired", droppedAt: "2026-07-29T10:00:00Z" }),
+      articleRow({ itemId: "x:9", postId: "draft-queued" }), // the control: still waiting to publish
+    ]);
+    const read = makeReadHeadroom(delivery, article, { loadConfig: () => CONFIG, readQuota: async () => QUOTA });
+
+    const h = await read();
+    expect(h.inFlight).toBe(1); // the queued article alone
+    expect(h.available).toBe(QUOTA.remaining - 1);
   });
 
   it("leaves available negative rather than clamping — the caller clamps for display", async () => {

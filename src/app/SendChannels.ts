@@ -3,7 +3,7 @@ import type { ChannelSender } from "../ports/ChannelSender";
 import type { DeliveryLedger } from "../ports/DeliveryLedger";
 import type { SendableChannel, SentArchiveEntry } from "../domain/send/channels";
 import { DELIVERY_DESTINATION } from "../domain/send/channels";
-import { deliveryKey } from "../domain/delivery/models";
+import { deliveredToRoom, deliveryKey } from "../domain/delivery/models";
 import type { Channel, ChannelRendering } from "../domain/formatting/models";
 import type { DeliveryEntry } from "../domain/delivery/models";
 import type { Outlet } from "../domain/outlet/models";
@@ -117,7 +117,11 @@ export class SendChannels {
   async run(input: SendChannelsInput): Promise<SendChannelsResult> {
     const rows = await this.store.loadAll();
     const ledgered = await this.ledger.loadAll();
-    const already = new Set(ledgered.map(deliveryKey));
+    // `deliveredToRoom`, not a raw map: this is the same "already delivered" question
+    // `DeliveryLedger.loadKeys()` answers, computed here instead of a second read because
+    // `planRooms` below also needs the raw `ledgered` rows. A `dropped` row must not count — the
+    // draft was deleted before it published, so the room never received anything.
+    const already = new Set(ledgered.filter(deliveredToRoom).map(deliveryKey));
     const wanted = new Set<SendableChannel>(input.targets);
     let sent = 0;
     let skipped = 0;
@@ -314,7 +318,12 @@ export class SendChannels {
       }
     }
 
-    const everDelivered = new Set(ledgered.map((e) => e.outletId));
+    // The SECOND reader of "has anything ever reached this room" — `run()`'s `already` is the first,
+    // and both must answer it the same way. `deliveredToRoom`, for exactly the reason it uses there:
+    // a `dropped` row is a scheduled draft deleted before it published, so the room received
+    // nothing. Counting it as history would lift the guard below on the strength of a delivery that
+    // never happened and post the whole approved backlog into a room on its genuine first delivery.
+    const everDelivered = new Set(ledgered.filter(deliveredToRoom).map((e) => e.outletId));
     const blocked = new Set<string>();
     const unconfiguredEnv: string[] = [];
     let withheld = 0;
