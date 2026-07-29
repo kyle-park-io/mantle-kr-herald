@@ -102,6 +102,14 @@ describe("SendXArticle — publishing quota gate", () => {
     expect(result.quotaBlocked).toBeUndefined();
   });
 
+  // The gate compares `needed > available`, not `>=` — a run that exactly exhausts the remaining
+  // headroom must still send.
+  it("sends when the run needs exactly the headroom available (boundary)", async () => {
+    const result = await runWith(headroomOf(2), { items: 2 });
+    expect(result.sent).toBe(2);
+    expect(result.quotaBlocked).toBeUndefined();
+  });
+
   // Counting must exclude what would be skipped anyway, or the gate refuses runs that would have sent nothing.
   it("counts only the items this run would actually send", async () => {
     const result = await runWith(headroomOf(1), { items: 2, alreadySent: ["x:1"] });
