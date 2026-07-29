@@ -14,12 +14,40 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const mtimeOf = async (path: string) => (await stat(path)).mtimeMs;
 
 /** Polls until `cond` holds, so a test never has to guess how long acquisition takes. */
-const waitFor = async (cond: () => Promise<boolean>) => {
+const waitFor = async (cond: () => Promise<boolean>, what = "condition") => {
   for (let i = 0; i < 400; i += 1) {
     if (await cond()) return;
     await sleep(5);
   }
-  throw new Error("condition never became true");
+  throw new Error(`${what} never became true`);
+};
+
+/**
+ * Runs an observation again if the wall clock jumped underneath it.
+ *
+ * Staleness is `Date.now() - mtime`, so a wall clock that jumps *forward* makes every lock look
+ * older than it is — including one a heartbeat stamped a moment ago. That is not hypothetical here:
+ * the WSL2 machine this was written on moves `Date.now()` by ~22s in bursts, measured at ~1 jump per
+ * 8s during a burst and none at all for minutes either side. `performance.now()` is monotonic and
+ * does not follow, so the two disagreeing is a reliable detector.
+ *
+ * Retrying is sound rather than lenient, and only because of the direction: the assertions guarded
+ * here are negative ones ("the waiter must be refused"), which a jump can only push to a false
+ * failure, never to a false pass. A real regression has no jump to point at and fails on the first
+ * attempt.
+ */
+const withoutClockJump = async (observe: () => Promise<void>) => {
+  for (let attempt = 1; ; attempt += 1) {
+    const wall = Date.now();
+    const mono = performance.now();
+    try {
+      await observe();
+      return;
+    } catch (err) {
+      const jumped = Math.abs(Date.now() - wall - (performance.now() - mono)) > 1_000;
+      if (!jumped || attempt === 3) throw err;
+    }
+  }
 };
 
 const deferred = () => {
@@ -247,8 +275,16 @@ describe("withFileLock", () => {
   });
 
   describe("heartbeat", () => {
-    // The mechanism, on its own: while a job runs, its lock's mtime keeps moving. Everything below
-    // depends on this, so it is asserted directly rather than only through its consequences.
+    /**
+     * The mechanism, on its own: while a job runs, its lock's mtime keeps moving. Everything below
+     * depends on this, so it is asserted directly rather than only through its consequences.
+     *
+     * Both samples are taken *after* the first beat, deliberately. A beat stamps the mtime from
+     * `Date.now()`; the mtime a file starts life with is written by the kernel. Those are two clocks,
+     * and this machine has been observed disagreeing by tens of seconds for a moment at a time — so
+     * comparing a beat against the creation stamp is a coin toss that has nothing to do with what is
+     * being tested. Comparing two beats keeps the whole assertion inside one clock.
+     */
     it("keeps stamping the lock of a holder that is still working", async () => {
       const dir = await scratch();
       const path = join(dir, "ledger.json");
@@ -257,12 +293,16 @@ describe("withFileLock", () => {
       // staleMs 300 puts a beat every 50ms, so the window watched below covers several.
       const holder = withFileLock(path, () => mayExit.promise, { staleMs: 300 });
       await waitFor(() => exists(lock));
-      const atAcquisition = await mtimeOf(lock);
-      await sleep(300);
-      const later = await mtimeOf(lock);
+      const created = await mtimeOf(lock);
+      // Two changes, not one: the first proves a beat happened at all, the second that they keep
+      // coming. Asserting *change* rather than *increase* is what makes this immune to the clock
+      // jump described on `withoutClockJump` — nothing but a beat writes this file while it is held,
+      // so any change is a beat regardless of which way the clock moved.
+      await waitFor(async () => (await mtimeOf(lock)) !== created, "the first beat");
+      const firstBeat = await mtimeOf(lock);
+      await waitFor(async () => (await mtimeOf(lock)) !== firstBeat, "a second beat");
       mayExit.resolve();
       await holder;
-      expect(later).toBeGreaterThan(atAcquisition);
     });
 
     /**
@@ -271,22 +311,30 @@ describe("withFileLock", () => {
      * walked straight into the read-modify-write it was still running — two writers, one ledger, and
      * whichever row loses the rename becomes a live post the ledger cannot see.
      *
-     * The hold here is three full staleness windows. Without a heartbeat the mtime is stamped once
-     * at acquisition, so the waiter reclaims on its first retry and returns "walked in".
+     * The stall is applied by backdating rather than by really sleeping for three staleness windows,
+     * the same trick the reclaim regression above uses: it puts the lock in exactly the state a
+     * stalled holder leaves it in, in one syscall instead of seconds, and shrinks the window in which
+     * this machine's wall-clock jump could invalidate the reading. A holder with no heartbeat can
+     * never get out of that state; a live one erases it on its next beat, which is what the wait
+     * below is watching for and what fails first if the heartbeat is gone.
      */
     it("does not let a waiter reclaim the lock of a holder that is still working", async () => {
       const dir = await scratch();
       const path = join(dir, "ledger.json");
       const lock = `${path}.lock`;
       const mayExit = deferred();
-      const holder = withFileLock(path, () => mayExit.promise, { staleMs: 500 });
+      // staleMs 400 puts a beat every 66ms.
+      const holder = withFileLock(path, () => mayExit.promise, { staleMs: 400 });
       await waitFor(() => exists(lock));
-      await sleep(1_500);
-      // timeoutMs above staleMs, so this is the ordinary contended path rather than the
-      // misconfigured-timeout diagnostic.
-      await expect(
-        withFileLock(path, async () => "walked in", { staleMs: 500, timeoutMs: 700 }),
-      ).rejects.toThrow(/Timed out/);
+      await backdate(lock, 60_000);
+      await waitFor(async () => Date.now() - (await mtimeOf(lock)) < 400, "the stall healed");
+      await withoutClockJump(async () => {
+        // timeoutMs above staleMs, so this is the ordinary contended path rather than the
+        // misconfigured-timeout diagnostic.
+        await expect(
+          withFileLock(path, async () => "walked in", { staleMs: 400, timeoutMs: 500 }),
+        ).rejects.toThrow(/Timed out/);
+      });
       mayExit.resolve();
       await holder;
     }, 15_000);

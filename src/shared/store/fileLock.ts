@@ -57,13 +57,22 @@ const RETRY_INTERVAL_MS = 25;
  *   lost — 25 of the 30 seconds — before a live holder's lock even begins to look stale. One flaky
  *   beat causing a reclaim would be worse than no heartbeat at all, because it would look like the
  *   bug is fixed.
+ *
+ *   There is a measured floor under that headroom, not merely a comfortable one. Staleness is
+ *   `Date.now() - mtime`, and the WSL2 machine this was written on moves `Date.now()` in bursts of
+ *   ~22.8s (verified: ~1 jump per 8s inside a burst, none at all for minutes either side). A jump
+ *   forward adds its whole size to every lock's apparent age until the next beat re-stamps it, so
+ *   the worst apparent age of a live holder's lock is one interval plus one jump. At 6 that is
+ *   5 + 22.8 = 27.8s, inside the window. At 4 it would be 7.5 + 22.8 = 30.3s — outside it, i.e. a
+ *   spurious reclaim of a working process on an ordinary dev laptop.
  * - **From above.** The interval must be large enough that the common case pays nothing. A real
  *   critical section is ~10ms, so at 5s the timer is cleared before it ever fires on roughly 499 of
  *   every 500 holds: zero extra syscalls on the fast path. The heartbeat exists for the pathological
  *   hold, and only that hold should pay for it.
  *
- * Anything from ~4 to ~10 would satisfy both; nothing here is sensitive to the exact value, which is
- * why it is a small integer and not a tuned constant.
+ * That leaves roughly 6–10 usable, and 6 is taken from the low end because the costs are asymmetric:
+ * beating too often wastes two syscalls nobody will notice, beating too rarely hands a live holder's
+ * ledger to a second writer.
  */
 const HEARTBEAT_BEATS_PER_STALE_WINDOW = 6;
 
