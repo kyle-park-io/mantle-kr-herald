@@ -38,10 +38,25 @@ export class TypefullyQuota {
       publishing_quota?: { used?: number; remaining?: number; resets_at?: string };
     };
     const q = body.publishing_quota;
-    // "Absent" and "zero" are different answers, and only one of them should stop a send.
-    if (!q || typeof q.remaining !== "number") {
-      throw new Error("Typefully social-set response carried no publishing_quota");
+    /**
+     * "Absent" and "zero" are different answers, and only one of them should stop a send.
+     *
+     * `used` is validated here rather than defaulted (`q.used ?? 0`), and that is not symmetry for
+     * its own sake. The resend guard (`guardQueuedDraft`) proves "the original published while we
+     * were cancelling it" by comparing `used` either side of the cancel; a defaulted `0` makes both
+     * sides equal, so the guard reads a publish as "nothing moved", believes it verified, and sends
+     * the duplicate it exists to prevent — silently, on a field nobody was watching.
+     *
+     * Chosen over the alternative of also treating a DROP in `remaining` as proof: that leaves the
+     * defaulted field in place and compensates for it downstream, so the guard would carry two
+     * comparisons and a reader would have to work out which one fires when. Validating at the edge
+     * fixes it where the field enters the system, and an unusable payload then surfaces the way
+     * every other unusable payload here does — as a thrown read, which each caller already handles
+     * (the guard refuses, the banner shows the error, the send gate logs and proceeds).
+     */
+    if (!q || typeof q.remaining !== "number" || typeof q.used !== "number") {
+      throw new Error("Typefully social-set response carried no usable publishing_quota (used/remaining)");
     }
-    return { used: q.used ?? 0, remaining: q.remaining, resetsAt: q.resets_at ?? "" };
+    return { used: q.used, remaining: q.remaining, resetsAt: q.resets_at ?? "" };
   }
 }

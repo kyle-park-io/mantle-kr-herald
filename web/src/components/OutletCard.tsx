@@ -715,9 +715,15 @@ function Row(props: {
    * up, not two), and there is no earlier link to lose because the row has no url. Describing that as
    * "글이 하나 더 올라갑니다" contradicts the row's own badge, immediately before an irreversible click.
    *
-   * The queued wording also names the two ways the server refuses — the original already published,
-   * or the cancel did not take — because both come back as an error *after* the confirm, and an
-   * operator who was promised a send needs to have been told a refusal was possible.
+   * The queued wording also names the ways the server refuses — the original already published, the
+   * cancel did not take, or the cancel could not be told apart from a publish that beat it (Typefully
+   * answers the same 204 to both, so the server compares the publishing quota across the cancel).
+   * All of them come back as an error *after* the confirm, and an operator who was promised a send
+   * needs to have been told a refusal was possible — including the row shape a refusal leaves behind,
+   * which looks broken and is not: `발송됨` with no link, and 게시 확인 never touching it again.
+   *
+   * The quota comparison is also why this click answers a couple of seconds slower than the other
+   * one: two quota reads and a settle wait, on top of the two Typefully round trips.
    */
   const askResend = () =>
     props.onConfirm({
@@ -725,8 +731,9 @@ function Row(props: {
       lines: row.awaitingPublish
         ? [
             `이 방에는 ${stampFull(row.at) ?? "이미"}에 예약한 글이 있고, 아직 올라가지 않았습니다.`,
-            "예약된 원본을 취소하고 새로 보냅니다 — 이 방에는 글이 하나만 올라갑니다.",
-            "확인하는 사이 원본이 이미 게시됐거나 예약 취소가 실패하면, 같은 글이 두 번 올라가지 않도록 발송을 멈추고 알려드립니다.",
+            "예약된 원본을 취소하고 새로 보냅니다 — 이 방에는 글이 하나만 올라갑니다. 취소가 제대로 됐는지 확인하느라 몇 초 걸립니다.",
+            "확인하는 사이 원본이 이미 게시됐거나, 예약 취소가 실패했거나, 취소와 게시를 구분하지 못하면, 같은 글이 두 번 올라가지 않도록 발송을 멈추고 알려드립니다.",
+            "마지막 경우(취소와 게시를 구분하지 못한 경우) 이 줄은 링크 없는 발송됨으로 남고 게시 확인도 더는 손대지 않습니다 — 실제로 안 올라갔다면 재발송을 한 번 더 누르면 그대로 나갑니다.",
           ]
         : [
             `이 방에는 ${stampFull(row.at) ?? "이미"} 나간 글이 있습니다. 그 글은 지워지지 않고, 이 방에 글이 하나 더 올라갑니다.`,
