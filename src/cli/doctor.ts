@@ -157,26 +157,36 @@ if (live) {
     results.push({ name: "Lark  live", status: "fail", detail: err instanceof Error ? err.message : String(err) });
   }
 
+  let typefully: ReturnType<typeof loadTypefullyConfig> | undefined;
   try {
-    const t = loadTypefullyConfig();
-    // Two calls on purpose: /me proves the key, the social set proves the id and carries the quota.
-    // Reporting "quota unreadable" for what is really a bad key would send the operator the wrong way.
-    const me = await fetch("https://api.typefully.com/v2/me", { headers: { Authorization: `Bearer ${t.apiKey}` } });
-    if (!me.ok) {
-      results.push({ name: "Typefully  live", status: "fail", detail: `GET /v2/me → HTTP ${me.status} — check TYPEFULLY_API_KEY` });
-    } else {
-      try {
-        results.push(quotaResult("Typefully  live", await new TypefullyQuota(t.apiKey, t.socialSetId).read()));
-      } catch (err) {
-        results.push({
-          name: "Typefully  live",
-          status: "fail",
-          detail: `key OK, social set unreadable — check TYPEFULLY_SOCIAL_SET_ID (${(err as Error).message})`,
-        });
-      }
-    }
+    typefully = loadTypefullyConfig();
   } catch {
     // TYPEFULLY_* not set — the offline check above already reported it as a warn.
+  }
+  if (typefully) {
+    const t = typefully;
+    try {
+      // Two calls on purpose: /me proves the key, the social set proves the id and carries the quota.
+      // Reporting "quota unreadable" for what is really a bad key would send the operator the wrong way.
+      const me = await fetch("https://api.typefully.com/v2/me", { headers: { Authorization: `Bearer ${t.apiKey}` } });
+      if (!me.ok) {
+        results.push({ name: "Typefully  live", status: "fail", detail: `GET /v2/me → HTTP ${me.status} — check TYPEFULLY_API_KEY` });
+      } else {
+        try {
+          results.push(quotaResult("Typefully  live", await new TypefullyQuota(t.apiKey, t.socialSetId).read()));
+        } catch (err) {
+          results.push({
+            name: "Typefully  live",
+            status: "fail",
+            detail: `key OK, social set unreadable — check TYPEFULLY_SOCIAL_SET_ID (${(err as Error).message})`,
+          });
+        }
+      }
+    } catch (err) {
+      // fetch() rejects on network-level failures (DNS, connection refused, TLS, timeout) — distinct
+      // from an HTTP error status, which is handled above via `!me.ok`. Both must be visible.
+      results.push({ name: "Typefully  live", status: "fail", detail: `unreachable — ${(err as Error).message}` });
+    }
   }
 }
 
