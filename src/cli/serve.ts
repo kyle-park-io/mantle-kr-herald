@@ -325,6 +325,7 @@ const sendToOutlet = async (itemId: string, type: string, outletId: string, rese
     if (result.quotaBlocked) {
       const { needed, available, resetsAt } = result.quotaBlocked;
       const when = resetsAt ? ` (${resetsAt.slice(0, 10)} 리셋)` : "";
+      if (previous) await deliveryLedger.add(previous); // nothing went out — the room is still on its first post
       return { sent: 0, failed: 0, error: `Typefully 월간 발행 쿼터가 부족합니다 — 필요 ${needed}건, 잔여 ${available}건${when}` };
     }
 
