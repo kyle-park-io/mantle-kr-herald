@@ -1,0 +1,138 @@
+import { useEffect, useRef } from "react";
+
+export interface ConfirmRequest {
+  title: string;
+  /** One line each. The last irreversible fact belongs last, where the eye lands before the button. */
+  lines: string[];
+  /**
+   * The copy about to go out, one entry per outgoing piece — a thread is two tweets, and confirming
+   * it as one block would hide both the split and where it lands. Verbatim: this is the delivered
+   * form, not the editor's, so the `---` rule the editor draws is correctly absent from it.
+   */
+  pieces?: string[];
+  confirmLabel: string;
+  /** `danger` for anything that reaches a live room or replaces a record of one. */
+  tone?: "danger" | "primary";
+  onConfirm: () => void;
+}
+
+/**
+ * The board's confirm, replacing `window.confirm`.
+ *
+ * Not cosmetic: the native dialog renders as an unstyled OS strip that reads the same whether it is
+ * asking about a draft or about a post that cannot be recalled, and it collapses the message to one
+ * run of text — so the preview of what is about to be posted arrived as a wall. Here the title, the
+ * consequences and the copy itself are separate blocks, and the button carries the verb.
+ *
+ * Esc cancels and the confirm button takes focus on open, so the keyboard path matches the native
+ * one it replaces.
+ */
+export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest | null; onCancel: () => void }) {
+  const confirmRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!request) return;
+    confirmRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [request, onCancel]);
+
+  if (!request) return null;
+  const danger = request.tone !== "primary";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-[2px]"
+      // A click on the backdrop cancels; one inside the panel must not, or dragging to select the
+      // preview text and releasing outside would dismiss the dialog mid-read.
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={request.title}
+    >
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl">
+        <div className="flex items-start gap-3 border-b border-line px-5 py-4">
+          <span
+            className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[14px] ${
+              danger ? "bg-red-50 text-red-600" : "bg-mint-soft text-mint"
+            }`}
+          >
+            {danger ? "!" : "✓"}
+          </span>
+          <h2 className="text-[15px] font-semibold leading-6 text-ink">{request.title}</h2>
+        </div>
+
+        <div className="space-y-2 px-5 py-4">
+          {request.lines.map((line) => (
+            <p key={line} className="text-[13px] leading-relaxed text-muted">
+              {line}
+            </p>
+          ))}
+          {request.pieces && request.pieces.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
+                보낼 글{request.pieces.length > 1 && ` — ${request.pieces.length}개로 나뉘어 나갑니다`}
+              </div>
+              <div className="max-h-64 space-y-2 overflow-y-auto">
+                {request.pieces.map((piece, i) => (
+                  <div key={i} className="rounded-lg border border-line bg-bg p-3">
+                    {request.pieces!.length > 1 && (
+                      <div className="mb-1.5 font-mono text-[11px] font-semibold text-faint">
+                        {i + 1} / {request.pieces!.length}
+                      </div>
+                    )}
+                    <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink/90">{piece}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-line bg-bg px-5 py-3">
+          <button
+            className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg"
+            onClick={onCancel}
+          >
+            취소
+          </button>
+          <button
+            ref={confirmRef}
+            className={`rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors ${
+              danger ? "bg-red-600 hover:bg-red-700" : "bg-mint hover:bg-mint-hover"
+            }`}
+            onClick={() => {
+              onCancel();
+              request.onConfirm();
+            }}
+          >
+            {request.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The hover card 1차 uses for an explanation that will not fit on the control itself.
+ *
+ * Not a native `title`: that renders as an OS tooltip after a delay, in a size nobody reads, and a
+ * **disabled** button does not reliably fire hover at all — which is why the wrapper carries it
+ * rather than the control.
+ */
+export function Tip({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <span className="group/tip relative inline-flex">
+      {children}
+      <span className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 hidden w-64 rounded-lg border border-line bg-surface px-3 py-2 text-[12px] font-normal leading-relaxed text-muted shadow-lg group-hover/tip:block">
+        {text}
+      </span>
+    </span>
+  );
+}

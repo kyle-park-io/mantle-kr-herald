@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ALL_CHANNELS, ALL_TYPES, TYPE_LABEL, datePrefix, type Rendering } from "../types";
+import { ALL_CHANNELS, ALL_TYPES, CHANNEL_LABEL, TYPE_LABEL, datePrefix, type Rendering } from "../types";
 import { KindBadge } from "./TranslationList";
 
 const STATUS_FILTERS: ["all" | Rendering["status"], string][] = [
@@ -7,20 +7,6 @@ const STATUS_FILTERS: ["all" | Rendering["status"], string][] = [
   ["rendered", "검수 대기"],
   ["approved", "승인됨"],
 ];
-
-export function RenderingChip({ status }: { status: Rendering["status"] }) {
-  const approved = status === "approved";
-  return (
-    <span
-      className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium ${
-        approved ? "bg-mint-soft text-mint" : "bg-amber-soft text-amber-ink"
-      }`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${approved ? "bg-mint" : "bg-amber-ink"}`} />
-      {approved ? "승인" : "대기"}
-    </span>
-  );
-}
 
 /**
  * One item's renderings, folded into a row. The board opens per *item* and shows every group that
@@ -31,8 +17,14 @@ interface ItemRow {
   itemId: string;
   postedAt?: string;
   kind?: "post" | "article";
-  /** Conversion types this item has, in ALL_TYPES order. */
-  types: Rendering["type"][];
+  /**
+   * One entry per card on the board — `(type, channel)`, in board order, with its own approval.
+   *
+   * Types alone were misleading: `공지` covers both the telegram card and the kakao one, so
+   * approving 오픈카톡 changed nothing visible here and the row looked stuck. A reviewer reads this
+   * list to answer "what is left", and what is left is per card.
+   */
+  groups: { type: Rendering["type"]; channel: Rendering["channel"]; approved: boolean }[];
   approved: number;
   total: number;
   preview: string;
@@ -59,7 +51,7 @@ export function toItemRows(renderings: Rendering[]): ItemRow[] {
       itemId,
       postedAt: ordered.find((r) => r.postedAt)?.postedAt,
       kind: ordered.find((r) => r.kind)?.kind,
-      types: [...new Set(ordered.map((r) => r.type))],
+      groups: ordered.map((r) => ({ type: r.type, channel: r.channel, approved: r.status === "approved" })),
       approved: ordered.filter((r) => r.status === "approved").length,
       total: ordered.length,
       preview: (ordered[0]?.text ?? "").replace(/\s+/g, " ").trim(),
@@ -162,9 +154,16 @@ export function RenderingList(props: {
                     {row.preview}
                   </p>
                   <div className="flex flex-wrap gap-1">
-                    {row.types.map((t) => (
-                      <span key={t} className="rounded border border-line px-1.5 py-0.5 text-[10px] font-medium text-muted">
-                        {TYPE_LABEL[t]}
+                    {row.groups.map((g) => (
+                      <span
+                        key={`${g.type}:${g.channel}`}
+                        className={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${
+                          g.approved ? "border-mint/30 bg-mint-soft text-mint" : "border-line text-muted"
+                        }`}
+                        title={g.approved ? "승인됨" : "검수 대기"}
+                      >
+                        {g.approved && "✓ "}
+                        {TYPE_LABEL[g.type]} · {CHANNEL_LABEL[g.channel]}
                       </span>
                     ))}
                   </div>

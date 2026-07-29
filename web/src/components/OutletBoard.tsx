@@ -3,6 +3,7 @@ import { api } from "../api";
 import { btnPrimary } from "../buttonStyles";
 import { TYPE_LABEL, datePrefix, itemUrl, type BoardView, type ConversionType, type ConvertPrepareReply } from "../types";
 import { OutletCard } from "./OutletCard";
+import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { KindBadge } from "./TranslationList";
 
 /**
@@ -37,6 +38,8 @@ export function OutletBoard(props: {
   const [prepareTypes, setPrepareTypes] = useState<Set<ConversionType>>(new Set());
   const [preparing, setPreparing] = useState(false);
   const [prepareResult, setPrepareResult] = useState<ConvertPrepareReply | null>(null);
+  /** One dialog for the whole board, so two rows can never stack confirms on each other. */
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -104,6 +107,7 @@ export function OutletBoard(props: {
 
   return (
     <div className="mx-auto max-w-3xl p-6 sm:p-8">
+      <ConfirmDialog request={confirm} onCancel={() => setConfirm(null)} />
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">{error}</div>
       )}
@@ -177,6 +181,7 @@ export function OutletBoard(props: {
               onGroupChanged={onGroupChanged}
               onError={setError}
               onDirty={onDirty}
+              onConfirm={setConfirm}
             />
           ))}
         </div>

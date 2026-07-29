@@ -221,14 +221,21 @@ export const CHANNEL_RENDERS_BOLD: Record<Channel, boolean> = {
 };
 
 export const CHANNEL_FORMAT_NOTE: Record<Channel, string> = {
-  // Scoped to the *post*, deliberately. X Articles do carry rich text (headings, bold, lists), but
-  // they are a different pipeline — `send:x-article` posts the translation's markdown straight to
-  // Typefully and never touches this channel — so a flat "X는 서식을 지원하지 않습니다" would be wrong
-  // about a path this project actually ships.
-  x: "X 포스트는 서식 없이 나갑니다 — 볼드 표시 없이 만들어지고, 직접 **로 감싸도 발송 시 지워집니다. (X 아티클은 서식이 되지만 pnpm send:x-article 로 번역 본문에서 곧바로 나가는 별도 경로입니다.)",
-  telegram: "봇 발송에서만 **볼드**가 굵게 나옵니다. 복사용 텍스트는 평문입니다.",
-  kakao: "카카오톡은 서식을 지원하지 않아 볼드 표시 없이 만들어집니다. 강조는 이모지·[대괄호]·줄바꿈으로 하세요 — 직접 **로 감싸도 발송 시 지워집니다.",
-  pr_mail: "메일 본문은 평문이라 볼드 표시 없이 만들어집니다. 직접 **로 감싸도 발송 시 지워집니다.",
+  // "포스트", not "X": X Articles do carry rich text, and they are a different path (`send:x-article`
+  // posts the translation's markdown directly, never touching this channel). The article path is not
+  // named here — the reviewer on this card cannot act on it, and the board never rows that outlet.
+  x: "X 포스트에는 굵게가 없습니다. **로 감싸도 그대로 평문으로 나갑니다.",
+  telegram: "**굵게**는 봇으로 보낼 때만 굵게 보입니다. 복사해서 붙여넣으면 평문입니다.",
+  kakao: "카카오톡에는 굵게가 없습니다. **로 감싸도 그대로 평문이고, 강조는 이모지 · [대괄호] · 줄바꿈으로 하세요.",
+  pr_mail: "메일 본문은 평문입니다. **로 감싸도 그대로 나갑니다.",
+};
+
+/** What one outgoing piece is called on each channel — for "트윗 2개" vs "메시지 2개". */
+export const CHANNEL_PIECE: Record<Channel, string> = {
+  x: "트윗",
+  telegram: "메시지",
+  kakao: "메시지",
+  pr_mail: "메일",
 };
 
 export interface BoardRow {
@@ -243,6 +250,8 @@ export interface BoardRow {
   /** Why this room cannot send yet, or absent when it can. Mirrors `SendBlock`. */
   block?: SendBlock;
   deliveryStatus?: "sent" | "delivered";
+  /** Sent, but still a scheduled Typefully draft — `at` is when it was queued, not when it posted. */
+  awaitingPublish?: boolean;
   at?: string;
   url?: string;
   /** How many rows on this board address this same room, and which of them this is (1-based). */

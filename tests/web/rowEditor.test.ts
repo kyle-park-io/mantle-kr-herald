@@ -164,3 +164,32 @@ describe("rowEditorGate", () => {
     });
   });
 });
+
+/**
+ * `재발송` posts again to a room that already has one. It stays on screen once a room has been
+ * posted to, and is *locked* while the copy is blocked — the server would refuse, but hiding it
+ * resizes the row as approval is withdrawn and restored, and a control that vanishes reads as a
+ * fault rather than as a rule.
+ */
+describe("rowEditorGate — 재발송", () => {
+  const posted = (over: Partial<BoardRow> = {}) => untouched(row({ deliveryStatus: "sent", ...over }));
+
+  it("is offered, and enabled, on a sent room whose copy is still sendable", () => {
+    expect({ show: posted().showResend, disabled: posted().resendDisabled }).toEqual({ show: true, disabled: false });
+  });
+
+  it("stays on screen but locked while the copy is blocked", () => {
+    for (const block of ["unapproved", "source-unapproved", "source-changed", "source-missing"] as const) {
+      const gate = posted({ block });
+      expect({ show: gate.showResend, disabled: gate.resendDisabled }, `blocked by ${block}`).toEqual({
+        show: true,
+        disabled: true,
+      });
+    }
+  });
+
+  it("is absent on a room nothing has gone out to", () => {
+    expect(untouched(row()).showResend).toBe(false);
+    expect(untouched(row({ deliveryStatus: "delivered" })).showResend).toBe(false);
+  });
+});

@@ -71,7 +71,8 @@ export interface ApiDeps {
   loadBoard: (itemId: string) => Promise<BoardView>;
   saveOutletOverride: SaveOutletOverride;
   markDelivery: MarkDelivery;
-  sendToOutlet: (itemId: string, type: string, outletId: string) => Promise<{ sent: number; failed: number; error?: string }>;
+  reconcilePublished: () => Promise<{ reconciled: number; pending: number; error?: string }>;
+  sendToOutlet: (itemId: string, type: string, outletId: string, resend?: boolean) => Promise<{ sent: number; failed: number; error?: string }>;
   /** Writes a conversion worksheet for the dashboard; the local agent still fills it in. */
   prepareConversionRun: PrepareConversionRun;
   /** Pure code — unlike conversion, the dashboard can run this one itself. */
@@ -213,6 +214,14 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
   if (segments[1] === "items" && segments.length === 4) {
     const itemId = decodeURIComponent(segments[2]);
 
+    // Board-wide, not per item: one Typefully pass answers for every scheduled draft, and the
+    // board reloads from the rebuilt view either way.
+    if (method === "POST" && segments[3] === "reconcile") {
+      const result = await deps.reconcilePublished();
+      if (result.error) return { status: 400, json: { error: result.error, board: await deps.loadBoard(itemId) } };
+      return { status: 200, json: { ...result, board: await deps.loadBoard(itemId) } };
+    }
+
     if (method === "GET" && segments[3] === "board") {
       return { status: 200, json: await deps.loadBoard(itemId) };
     }
@@ -298,7 +307,10 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     }
 
     if (method === "POST" && segments.length === 6 && segments[5] === "send") {
-      const result = await deps.sendToOutlet(itemId, type, outletId);
+      // `resend` is opt-in per call rather than a separate route: it is the same delivery to the
+      // same room, differing only in that the ledger already holds a row for it.
+      const resend = (body as { resend?: unknown })?.resend === true;
+      const result = await deps.sendToOutlet(itemId, type, outletId, resend);
       // Nothing went out and there is a reason for it (unconfigured room, manual room, sender
       // error): 400 so the dashboard's `json()` helper raises it. A partial send still answers
       // 200 with the board — something did reach a live room, and the rows must reflect that.

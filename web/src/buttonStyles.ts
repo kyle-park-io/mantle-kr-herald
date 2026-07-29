@@ -3,16 +3,22 @@
 // means a palette change has to be made twice, and nothing catches the second file going stale.
 //
 // One geometry for all of them, matching 1차's detail pane: same radius, padding and text size, so a
-// row of buttons lines up whatever mix it holds. The pair that swaps in place — `승인하기` and the
-// `승인됨 ✓`/`승인 취소` control — additionally shares a minimum width, or the card visibly resizes at
-// the moment of approval, which reads as something having gone wrong.
+// row of buttons lines up whatever mix it holds. Only the pair that swaps in place — `승인하기` and
+// the `승인됨 ✓`/`승인 취소` control — also shares a minimum width, or the card visibly resizes at the
+// moment of approval, which reads as something having gone wrong.
 const BASE = "rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors";
-/** Width of the approve/approved pair. Both must carry it; either alone still jumps. */
+/**
+ * Width of the approve/approved pair ONLY. Both must carry it — either alone still jumps — and
+ * nothing else should: on a two-syllable label like `발송` it just stretches the button.
+ */
 const APPROVE_WIDTH = "min-w-[5.5rem] justify-center";
 
 export const btn = `${BASE} inline-flex items-center border border-line-strong bg-surface text-ink hover:bg-bg disabled:cursor-default disabled:opacity-40`;
 
-export const btnPrimary = `${BASE} inline-flex items-center ${APPROVE_WIDTH} bg-mint text-white hover:bg-mint-hover disabled:opacity-40`;
+export const btnPrimary = `${BASE} inline-flex items-center bg-mint text-white hover:bg-mint-hover disabled:opacity-40`;
+
+/** `승인하기` — the same button, sized to match `승인됨 ✓` so approving does not resize the card. */
+export const btnApprove = `${btnPrimary} ${APPROVE_WIDTH}`;
 
 export const btnDanger = `${BASE} inline-flex items-center border border-red-200 bg-surface text-red-600 hover:bg-red-50 disabled:cursor-default disabled:opacity-40`;
 

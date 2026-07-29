@@ -62,6 +62,10 @@ import type { Translation } from "../domain/translation/models";
 import { publishRowLinks, type PublishLinkConfig } from "../adapters/web/publishLinks";
 import { attachKind } from "../adapters/web/attachKind";
 import { resolveSheetTitles } from "../adapters/sheets/sheetTitles";
+import { deliveryKey } from "../domain/delivery/models";
+import { ReconcilePublished } from "../app/ReconcilePublished";
+import { JsonXArticleLedger } from "../adapters/store/JsonXArticleLedger";
+import { TypefullyDraftLookup } from "../adapters/send/TypefullyDraftLookup";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 
 const port = Number(process.env.PORT) || 5757;
@@ -234,6 +238,31 @@ const loadBoard = async (itemId: string): Promise<BoardView> => {
 const isSendableChannel = (c: string): c is SendableChannel => c === "telegram" || c === "x";
 
 /**
+ * Ask Typefully whether the scheduled drafts have published, and write the real x.com urls back.
+ *
+ * The same pass `pnpm send:reconcile` runs. It has to be reachable from the board because that is
+ * where the operator sees `예약됨` — telling them to open a terminal for the link to their own post
+ * is how a row stays unresolved forever.
+ */
+const reconcilePublished = async (): Promise<{ reconciled: number; pending: number; error?: string }> => {
+  let cfg;
+  try {
+    cfg = loadTypefullyConfig();
+  } catch (err) {
+    return { reconciled: 0, pending: 0, error: (err as Error).message };
+  }
+  try {
+    return await new ReconcilePublished(
+      deliveryLedger,
+      new JsonXArticleLedger(paths.publishDir),
+      new TypefullyDraftLookup(cfg.apiKey, cfg.socialSetId),
+    ).run();
+  } catch (err) {
+    return { reconciled: 0, pending: 0, error: (err as Error).message };
+  }
+};
+
+/**
  * The board's per-row [발송]: one item, one type, one room. `SendChannels` is the same use case the
  * CLI runs, narrowed on all three axes — the row the operator clicked must not also push the item's
  * other approved copy, or the same copy into the room next door.
@@ -242,7 +271,15 @@ const isSendableChannel = (c: string): c is SendableChannel => c === "telegram" 
  * and "the room has no chat id" is an install state, not a server fault. Naming the room explicitly
  * also lifts `SendChannels`' first-delivery guard, which is correct here — a human clicked it.
  */
-const sendToOutlet = async (itemId: string, type: string, outletId: string): Promise<{ sent: number; failed: number; error?: string }> => {
+/**
+ * `resend` posts to a room the ledger already records as `sent`.
+ *
+ * The ledger is what makes a send happen at most once, so a re-send has to take that row out of the
+ * way first — and put it back if the send then fails, or the room would read as never-delivered
+ * while a real post sits in it. The original post is NOT removed from the room by any of this: two
+ * messages exist afterwards, and the row that survives describes the second one.
+ */
+const sendToOutlet = async (itemId: string, type: string, outletId: string, resend = false): Promise<{ sent: number; failed: number; error?: string }> => {
   const outlet = outletById(outletId);
   if (!outlet) return { sent: 0, failed: 0, error: `unknown outlet: ${outletId}` };
   if (!deliveredByChannelSender(outlet) || !isSendableChannel(outlet.channel)) {
@@ -252,6 +289,13 @@ const sendToOutlet = async (itemId: string, type: string, outletId: string): Pro
   const chatIds = loadTelegramChatIds();
   if (outlet.chatIdEnv && !chatIds[outlet.id]) {
     return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}): ${outlet.chatIdEnv} is not set` };
+  }
+
+  const key = deliveryKey({ itemId, type, outletId });
+  const previous = resend ? (await deliveryLedger.loadAll()).find((e) => deliveryKey(e) === key) : undefined;
+  if (resend) {
+    if (!previous) return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}): nothing has been sent to this room yet` };
+    await deliveryLedger.remove(key);
   }
 
   try {
@@ -287,10 +331,12 @@ const sendToOutlet = async (itemId: string, type: string, outletId: string): Pro
         : result.unconfigured > 0 ? `${result.unconfiguredEnv.join(", ")} is not set`
         : result.withheld > 0 ? "withheld by the first-delivery guard"
         : "no approved copy to send";
+      if (previous) await deliveryLedger.add(previous); // nothing went out — the room is still on its first post
       return { sent: 0, failed: result.failed, error: `${outlet.label} (${outlet.id}): ${reason}` };
     }
     return { sent: result.sent, failed: result.failed };
   } catch (err) {
+    if (previous) await deliveryLedger.add(previous); // the send threw before reaching the room
     return { sent: 0, failed: 1, error: (err as Error).message };
   }
 };
@@ -354,6 +400,7 @@ const deps: ApiDeps = {
   prepareConversionRun,
   formatVariants,
   sendToOutlet,
+  reconcilePublished,
 };
 
 startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist"), localPublishDir: paths.publishLocalDir });
