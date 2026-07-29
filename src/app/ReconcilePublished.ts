@@ -1,21 +1,15 @@
 import type { DeliveryLedger } from "../ports/DeliveryLedger";
-import { awaitingPublish, awaitingArticlePublish, isXUrl } from "../domain/send/awaitingPublish";
+import type { DraftLookup } from "../ports/DraftLookup";
+import type { DraftState } from "../domain/send/draftState";
+import { awaitingPublish, awaitingArticlePublish } from "../domain/send/awaitingPublish";
 
-/** Published X url(s) + parsed ids for a Typefully draft, as returned by `TypefullyDraftLookup`. */
-interface Published {
-  xUrl?: string;
-  xId?: string;
-  articleUrl?: string;
-  articleId?: string;
-}
-interface Lookup {
-  published(draftId: string): Promise<Published>;
-}
 interface ArticleRow {
   itemId: string;
   postId?: string;
   url?: string;
   sentAt: string;
+  /** Set when the row is retired — see the `gone` branch below and `XArticleSentEntry`. */
+  droppedAt?: string;
 }
 interface ArticleLedger {
   loadAll(): Promise<ArticleRow[]>;
@@ -33,32 +27,53 @@ interface ArticleLedger {
  * `channels.json`, which stopped being written the moment sends became per-room — every fix would
  * have landed in a file nothing else reads, leaving the board showing Typefully draft ids for every
  * X post.
+ *
+ * `lookup.published()` answers three ways (see `DraftState`), not two: a `gone` draft was deleted
+ * before it published and will never publish, so this pass retires the row instead of polling it
+ * forever — `status: "dropped"` for a delivery row, `droppedAt` for an article row (which has no
+ * `status` field to widen). Both are picked up by `awaitingPublish`/`awaitingArticlePublish` and
+ * `deliveredToRoom`, so a retired row stops holding its quota slot and its room becomes sendable
+ * again. `postId` and `at`/`sentAt` are preserved verbatim on a retired row — they are the only
+ * record of which Typefully draft this was, and a later manual check (the live-send protocol) needs
+ * the draft id to correlate against Typefully's own history.
+ *
+ * Getting `gone` wrong in the other direction — retiring a row whose draft was in fact about to
+ * publish — is the dangerous case: the ledger stops tracking it, a later run can no longer see it,
+ * and re-sending the same content publishes it a second time to a brand's own account. That is why
+ * `TypefullyDraftLookup` only ever answers `gone` on an unambiguous 404, and everything else
+ * (including a thrown request, handled by the `try/catch` below) stays `pending`.
  */
 export class ReconcilePublished {
   constructor(
     private readonly delivery: Pick<DeliveryLedger, "loadAll" | "add">,
     private readonly article: ArticleLedger,
-    private readonly lookup: Lookup,
+    private readonly lookup: Pick<DraftLookup, "published">,
+    private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
-  async run(): Promise<{ reconciled: number; pending: number }> {
+  async run(): Promise<{ reconciled: number; retired: number; pending: number }> {
     let reconciled = 0;
+    let retired = 0;
     let pending = 0;
 
     for (const row of await this.delivery.loadAll()) {
       // The same predicate the board paints `예약됨` from, so the screen and this pass cannot
-      // disagree about which rows are still waiting on Typefully's queue.
+      // disagree about which rows are still waiting on Typefully's queue. A `dropped` row already
+      // fails this check, so a retired row is never looked up again.
       if (!awaitingPublish(row)) continue;
-      let u: Published;
+      let u: DraftState;
       try {
         u = await this.lookup.published(row.postId);
       } catch {
         pending += 1;
         continue;
       }
-      if (u.xUrl) {
+      if (u.state === "published" && u.xUrl) {
         await this.delivery.add({ ...row, postId: u.xId ?? row.postId, url: u.xUrl });
         reconciled += 1;
+      } else if (u.state === "gone") {
+        await this.delivery.add({ ...row, status: "dropped" });
+        retired += 1;
       } else {
         pending += 1;
       }
@@ -66,21 +81,24 @@ export class ReconcilePublished {
 
     for (const row of await this.article.loadAll()) {
       if (!awaitingArticlePublish(row)) continue;
-      let u: Published;
+      let u: DraftState;
       try {
         u = await this.lookup.published(row.postId);
       } catch {
         pending += 1;
         continue;
       }
-      if (u.articleUrl) {
+      if (u.state === "published" && u.articleUrl) {
         await this.article.add({ ...row, postId: u.articleId ?? row.postId, url: u.articleUrl });
         reconciled += 1;
+      } else if (u.state === "gone") {
+        await this.article.add({ ...row, droppedAt: this.now() });
+        retired += 1;
       } else {
         pending += 1;
       }
     }
 
-    return { reconciled, pending };
+    return { reconciled, retired, pending };
   }
 }
