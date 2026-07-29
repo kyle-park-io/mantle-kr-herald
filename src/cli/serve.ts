@@ -332,7 +332,7 @@ const deps: ApiDeps = {
   formattingStore,
   conversionStore,
   saveRendering: new SaveRendering(formattingStore, undefined, buildLineage()),
-  approveRendering: new ApproveRendering(formattingStore, undefined, buildLineage()),
+  approveRendering: new ApproveRendering(formattingStore, conversionStore, fewShotStoresByType(paths.conversionConfigDir), undefined, buildLineage()),
   loadStatus,
   loadPublishState,
   loadTranslations,

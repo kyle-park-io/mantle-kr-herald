@@ -5,7 +5,7 @@ import { assembleRefinementWorksheet, type RefinementDraft } from "../domain/for
 import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { ConversionStore } from "../ports/ConversionStore";
 import type { GlossaryStore } from "../ports/GlossaryStore";
-import { selectApprovedVariants, type FormatSelector } from "./FormatVariants";
+import { selectVariants, type FormatSelector } from "./FormatVariants";
 
 export interface PendingRendering {
   itemId: string;
@@ -21,10 +21,10 @@ export class PrepareRefinements {
   ) {}
 
   async run(selector: FormatSelector): Promise<{ worksheet: string; pending: PendingRendering[] }> {
-    const approved = await selectApprovedVariants(this.conversionStore, selector);
+    const variants = await selectVariants(this.conversionStore, selector);
 
     const drafts: RefinementDraft[] = [];
-    for (const v of approved) {
+    for (const v of variants) {
       const channels = selector.channels ?? DEFAULT_CHANNELS_BY_TYPE[v.type];
       const draft = toCanonical(v.convertedText);
       for (const channel of channels) {

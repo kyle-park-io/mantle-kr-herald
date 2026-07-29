@@ -199,6 +199,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **변환본 승인 단계가 없어졌습니다 — 사람의 검수 관문은 2차 하나입니다.** 예전에는 `format`이
+  `status === "approved"`인 변환본만 골라 썼기 때문에, 검수 관문이 세 개(1차 번역 → 변환본 승인 →
+  2차 채널)였습니다. 그런데 가운데 관문에는 **화면이 없었습니다** — `pnpm convert:save --approve`로만
+  통과할 수 있어서, 대시보드에서 `[변환 준비]` → `[포맷 다시]`를 누른 담당자는 아무 일도 일어나지 않는
+  이유를 알 길이 없었습니다. 이제 `format`과 `format --refine`은 변환본의 상태를 보지 않습니다. 포맷은
+  기계적인 변환이고 아무것도 밖으로 나가지 않으므로, 같은 글을 2차에서 또 읽게 하는 것 말고는 얻는 게
+  없었습니다. **실제 발송 잠금은 그대로입니다** — `send:channels`는 여전히 승인된 *렌더링*만 내보냅니다.
+  `convert:save`의 `--approve` 플래그는 제거됐고, 변환본은 항상 `converted`로 저장됩니다.
+- **변환 few-shot 승격이 2차 승인 시점으로 옮겨졌습니다.** 예전에는 `convert:save --approve`가
+  승격을 겸했는데, 그 시점의 글은 **에이전트가 막 쓴, 아무도 안 읽은 글**입니다. 위 변경으로 `--approve`가
+  사라지면 승격 경로도 같이 사라지므로, 이제 `ApproveRendering`(2차 승인)이 그 뒤의 변환본을
+  `conversion/few-shot.<type>.json`에 올리고 변환본 상태도 `approved`로 표시합니다 — 파이프라인에서 사람이
+  변환된 글을 실제로 읽는 유일한 지점이기 때문입니다. 같은 유형의 채널을 여러 개 승인해도 `itemId` 기준
+  upsert라 예시는 하나만 남습니다. 승격되는 예시의 대상 텍스트는 **변환본**이며, 2차에서 채널별로 고친
+  내용은 코퍼스에 반영되지 않습니다(승격이 `convert:save`에 있던 시절과 동일).
 - **발송 원장이 채널이 아니라 방 단위로 다시 매겨졌습니다 — `output/publish/deliveries.json`.**
   예전 원장 `output/publish/channels.json`은 `(itemId, type, channel)`로 한 행이었는데, 커뮤니티방과
   데브방은 **둘 다 `telegram`**입니다. 그래서 커뮤니티방으로 한 번 나가면 그 행이 채널 전체를 "보냄"으로

@@ -1,6 +1,5 @@
 import type { ContentVariant, ConversionType } from "../domain/conversion/models";
 import type { ConversionStore } from "../ports/ConversionStore";
-import type { FewShotStore } from "../ports/FewShotStore";
 import type { LineageStore } from "../ports/LineageStore";
 
 export interface SaveConversionInput {
@@ -8,27 +7,32 @@ export interface SaveConversionInput {
   type: ConversionType;
   sourceKorean: string;
   convertedText: string;
-  approve: boolean;
 }
 
+/**
+ * Stores the agent's converted copy. Always `converted` — a variant is never approved here.
+ *
+ * The copy an agent writes has had no human eye on it yet, so approving it at save time would both
+ * skip the review and feed the unreviewed text straight into the few-shot corpus that steers every
+ * later conversion (which is exactly how the corpus once ended up fighting its own style guide).
+ * `ApproveRendering` marks the variant approved and promotes it, at 2차, where a human reads it.
+ */
 export class SaveConversion {
   constructor(
     private readonly conversionStore: ConversionStore,
-    private readonly fewShotByType: Record<ConversionType, FewShotStore>,
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly lineage?: LineageStore,
   ) {}
 
-  async run(input: SaveConversionInput): Promise<{ itemId: string; type: ConversionType; promoted: boolean }> {
+  async run(input: SaveConversionInput): Promise<{ itemId: string; type: ConversionType }> {
     const timestamp = this.now();
     const variant: ContentVariant = {
       itemId: input.itemId,
       type: input.type,
       sourceKorean: input.sourceKorean,
       convertedText: input.convertedText,
-      status: input.approve ? "approved" : "converted",
+      status: "converted",
       createdAt: timestamp,
-      approvedAt: input.approve ? timestamp : undefined,
     };
     await this.conversionStore.upsert(variant);
     if (this.lineage) {
@@ -38,9 +42,6 @@ export class SaveConversion {
         console.warn(`[lineage] append failed for ${input.itemId}: ${(err as Error).message}`);
       }
     }
-    if (input.approve) {
-      await this.fewShotByType[input.type].add({ source: input.sourceKorean, target: input.convertedText, itemId: input.itemId });
-    }
-    return { itemId: input.itemId, type: input.type, promoted: input.approve };
+    return { itemId: input.itemId, type: input.type };
   }
 }

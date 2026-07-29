@@ -34,12 +34,13 @@ describe("PrepareRefinements", () => {
     expect(worksheet).toContain("보정:");
   });
 
-  it("ignores non-approved variants", async () => {
+  /** Same rule as `FormatVariants`: the variant's status is not a gate — 2차 is. */
+  it("includes a converted variant that has not been approved", async () => {
     const { pending } = await new PrepareRefinements(
       conversionStore([variant({ status: "converted" })]),
       glossaryStore(),
     ).run({});
-    expect(pending).toEqual([]);
+    expect(pending).toEqual([{ itemId: "x:1", type: "x", channel: "x" }]);
   });
 });
 

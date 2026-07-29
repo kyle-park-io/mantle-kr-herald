@@ -18,7 +18,7 @@
 | 파일 | 갱신 방식 |
 | --- | --- |
 | `translation/few-shot.json` | **자동** — `translate:save --approve` 시 예시로 승격 |
-| `conversion/few-shot.{x,announcement,explainer,casual,kol,pr}.json` | **자동** — `convert:save --approve` 시 승격 |
+| `conversion/few-shot.{x,announcement,explainer,casual,kol,pr}.json` | **자동** — 대시보드 2차 검수에서 승인할 때 승격 |
 | `translation/tm.json` | **반자동** — `tm:promote`(사람이 pair를 확인한 뒤) |
 | `translation/glossary.json` | **수기** — `pnpm glossary add …` 또는 직접 편집 |
 | `translation/style-guide.md` · `locale.json` · `conversion/*.md` · `checklist.*.md` | **수기** — 직접 편집만 |

@@ -5,16 +5,22 @@ const warning = { itemId: "x:1", type: "announcement" as const, channel: "telegr
 
 describe("reformatMessage", () => {
   /**
-   * `FormatVariants.selectApprovedVariants` only picks up `status === "approved"` variants —
-   * `convert:save` without `--approve` leaves one `"converted"`, invisible to a reformat. Without
-   * this branch, `rendered === 0` and "regenerated cleanly" both produce no message, so the operator
-   * cannot tell a silent no-op apart from a real (if uneventful) reformat.
+   * `FormatVariants.selectVariants` does not filter on status, so the only remaining cause of an
+   * empty reformat is a missing variant. Without this branch, `rendered === 0` and "regenerated
+   * cleanly" both produce no message, so the operator cannot tell a silent no-op apart from a real
+   * (if uneventful) reformat.
    */
   it("names the likely cause when nothing was rendered", () => {
     const message = reformatMessage({ rendered: 0, warnings: [] }, "공지");
     expect(message).not.toBeNull();
-    expect(message).toContain("승인");
-    expect(message).toContain("convert:save --approve");
+    expect(message).toContain("변환본이 아직 없어서");
+    expect(message).toContain("변환 준비");
+  });
+
+  /** The old copy blamed a variant approval gate that no longer exists — it must not come back. */
+  it("does not tell the operator to approve the variant", () => {
+    const message = reformatMessage({ rendered: 0, warnings: [] }, "공지");
+    expect(message).not.toContain("--approve");
   });
 
   it("still surfaces format warnings when something was rendered", () => {
@@ -30,6 +36,6 @@ describe("reformatMessage", () => {
     // Not reachable through FormatVariants today (warnings are per rendered destination), but the
     // precedence should still be deterministic: rendered === 0 is the more actionable fact.
     const message = reformatMessage({ rendered: 0, warnings: [warning] }, "공지");
-    expect(message).toContain("승인");
+    expect(message).toContain("변환본이 아직 없어서");
   });
 });
