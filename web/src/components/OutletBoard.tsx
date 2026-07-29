@@ -68,6 +68,20 @@ export function OutletBoard(props: {
     setQuota(r.quota ?? null);
   }, []);
 
+  /**
+   * Every mutating board route answers through `onBoard`, but only a real send and a reconcile pass
+   * (게시 확인) can move the Typefully quota — `OutletCard` passes `quotaMayHaveChanged` only from
+   * those two call sites. Refetching here on every board update would also fire on 전달함 ticks,
+   * saves, approvals and reverts, none of which touch Typefully.
+   */
+  const handleBoard = useCallback(
+    (next: BoardView, quotaMayHaveChanged?: boolean) => {
+      setBoard(next);
+      if (quotaMayHaveChanged) void loadQuota();
+    },
+    [loadQuota],
+  );
+
   useEffect(() => {
     setBoard(null);
     setError(null);
@@ -95,12 +109,13 @@ export function OutletBoard(props: {
   }, [dirtyKeys, onDirtyChange]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
+  // 저장 / 승인하기 / 승인 취소 — the group-text mutations `OutletCard` raises through this prop —
+  // never reach Typefully, so this intentionally does not touch the quota; see `handleBoard` above
+  // for the two calls that do.
   const parentChanged = props.onGroupChanged;
   const onGroupChanged = useCallback(async () => {
-    // A send is the one action that can move the quota, so the banner refreshes alongside the
-    // board and the 2차 list rather than waiting for the next mount.
-    await Promise.all([parentChanged(), reload(), loadQuota()]);
-  }, [parentChanged, reload, loadQuota]);
+    await Promise.all([parentChanged(), reload()]);
+  }, [parentChanged, reload]);
 
   if (!board) {
     return (
@@ -215,7 +230,7 @@ export function OutletBoard(props: {
               convertedText={props.convertedByType[g.type] ?? ""}
               hovered={hovered}
               onHover={setHovered}
-              onBoard={setBoard}
+              onBoard={handleBoard}
               onGroupChanged={onGroupChanged}
               onError={setError}
               onDirty={onDirty}

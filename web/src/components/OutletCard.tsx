@@ -66,8 +66,13 @@ export function OutletCard(props: {
   /** The room the pointer is over, board-wide — a room in two cards highlights in both. */
   hovered: string | null;
   onHover: (outletId: string | null) => void;
-  /** Every mutating route answers with the rebuilt board; hand it straight up. */
-  onBoard: (board: BoardView) => void;
+  /**
+   * Every mutating route answers with the rebuilt board; hand it straight up. `quotaMayHaveChanged`
+   * is true only from the two call sites that can actually move the Typefully publishing quota — a
+   * successful send and a reconcile pass (see `post()` and the 게시 확인 handler in `Row` below) —
+   * so the board's quota banner does not refetch on every 전달함 tick, save, approve or revert.
+   */
+  onBoard: (board: BoardView, quotaMayHaveChanged?: boolean) => void;
   /** The group text lives in the rendering store, whose routes do not answer with a board. */
   onGroupChanged: () => Promise<void>;
   onError: (message: string | null) => void;
@@ -627,7 +632,8 @@ function Row(props: {
   onCopy: (key: string, value: string) => void;
   onDrop: () => void;
   onSettle: (collapse?: boolean) => void;
-  onBoard: (board: BoardView) => void;
+  /** See the same-named prop on `OutletCard` above — the `quotaMayHaveChanged` contract is identical. */
+  onBoard: (board: BoardView, quotaMayHaveChanged?: boolean) => void;
   onError: (message: string | null) => void;
   onConfirm: (request: ConfirmRequest) => void;
   run: (fn: () => Promise<void>) => Promise<void>;
@@ -652,9 +658,15 @@ function Row(props: {
    */
   const rowPieces = props.segments ?? [row.text];
 
-  const apply = (reply: { board: BoardView }, collapse = false) => {
+  /**
+   * `quotaMayHaveChanged` defaults to false: every other caller of `apply` (전달함, 저장, 승인,
+   * 되돌리기, below) is a ledger/override mutation that never touches Typefully, and refetching the
+   * quota on each of those would be a wasted call on the smallest rate-limit bucket for no reason —
+   * only `post()`'s successful `x`-channel send opts in.
+   */
+  const apply = (reply: { board: BoardView }, collapse = false, quotaMayHaveChanged = false) => {
     props.onSettle(collapse);
-    props.onBoard(reply.board);
+    props.onBoard(reply.board, quotaMayHaveChanged);
   };
 
   const post = (resend: boolean) =>
@@ -666,10 +678,14 @@ function Row(props: {
         // A refusal usually means the server already knows something this screen does not
         // ("already delivered to this room" — someone ran `send:channels` in a terminal). Repaint
         // from the board it sent back, or the row goes on offering 발송 for a room that has it.
+        // Nothing reached Typefully here, so the quota did not move — no refetch.
         if (e instanceof ApiError && e.board) props.onBoard(e.board);
         throw e;
       }
-      apply(reply);
+      // A real post went out (or partially did). Only the `x` channel is delivered through
+      // Typefully — a telegram/kakao send can never move that quota, so this stays scoped to the
+      // one channel that actually can.
+      apply(reply, false, group.channel === "x");
       // 200 can still carry a partial failure: something reached a live room and something did not.
       // Saying nothing would read as a clean send.
       if (reply.failed > 0 || reply.error)
@@ -774,7 +790,10 @@ function Row(props: {
                   onClick={() =>
                     run(async () => {
                       const res = await api.reconcile(itemId);
-                      props.onBoard(res.board);
+                      // A scheduled draft that reconcile now finds published is the moment Typefully
+                      // actually counts it against the monthly quota — not when it was queued — so
+                      // this is the other real trigger for a refetch, alongside a successful send.
+                      props.onBoard(res.board, true);
                       if (res.reconciled === 0) props.onError("아직 게시되지 않았습니다 — 잠시 뒤 다시 눌러보세요.");
                     })
                   }
