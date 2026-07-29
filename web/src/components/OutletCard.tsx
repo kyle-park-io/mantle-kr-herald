@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { ApiError, api } from "../api";
 import { btn, btnDanger, btnPrimary } from "../buttonStyles";
 import { reformatMessage } from "../reformatMessage";
 import { rowEditorGate } from "../rowEditor";
@@ -15,6 +15,7 @@ import {
   type BoardView,
   type Destination,
   type Emissions,
+  type SendReply,
 } from "../types";
 import { RenderingChip } from "./RenderingList";
 
@@ -679,12 +680,22 @@ function Row(props: {
               onClick={() => {
                 if (!confirmSend()) return;
                 void run(async () => {
-                  const reply = await api.sendOutlet(itemId, type, row.outletId);
+                  let reply: SendReply;
+                  try {
+                    reply = await api.sendOutlet(itemId, type, row.outletId);
+                  } catch (e) {
+                    // A refusal usually means the server already knows something this screen does
+                    // not ("already delivered to this room" — someone ran `send:channels` in a
+                    // terminal). Repaint from the board it sent back, or the row goes on offering
+                    // 발송 for a room that has already received it.
+                    if (e instanceof ApiError && e.board) props.onBoard(e.board);
+                    throw e;
+                  }
                   apply(reply);
                   // 200 can still carry a partial failure: something reached a live room and
                   // something did not. Saying nothing would read as a clean send.
                   if (reply.failed > 0 || reply.error)
-                    props.onError(reply.error ?? `${row.label}: ${reply.failed}건 실패 — 서버 로그를 확인하세요`);
+                    props.onError(reply.error ?? `${row.label}: ${reply.failed}건 실패했습니다`);
                 });
               }}
             >

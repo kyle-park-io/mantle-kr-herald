@@ -453,7 +453,21 @@ describe("board routes", () => {
     const { d } = spied({ send: () => ({ sent: 0, failed: 0, error: "TELEGRAM_CHAT_ID_DEV is not set" }) });
     const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
     expect(res.status).toBe(400);
-    expect(res.json).toEqual({ error: "TELEGRAM_CHAT_ID_DEV is not set" });
+    expect(res.json).toMatchObject({ error: "TELEGRAM_CHAT_ID_DEV is not set" });
+  });
+
+  /**
+   * The commonest refusal is "already delivered to this room" — the operator ran
+   * `pnpm send:channels` in a terminal while the board was open. An error with no board leaves the
+   * row still offering [발송] for a room that has already received it, so the screen never
+   * self-corrects and the operator's next move is to click it again.
+   */
+  it("POST send that was refused still answers with the rebuilt board", async () => {
+    const { spy, d } = spied({ send: () => ({ sent: 0, failed: 0, error: "already delivered to this room" }) });
+    const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
+    expect(res.status).toBe(400);
+    expect(res.json).toEqual({ error: "already delivered to this room", board: { itemId: "x:1", groups: [], unconverted: [] } });
+    expect(spy.boards).toContain("x:1");
   });
 
   it("POST send that partly succeeded still answers 200 with the board", async () => {

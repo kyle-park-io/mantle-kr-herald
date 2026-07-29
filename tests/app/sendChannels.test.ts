@@ -52,7 +52,7 @@ const fork = (o: Partial<OutletOverride>): OutletOverride => ({
 
 /** A full result with everything at zero, so a test states only what it is about. */
 const result = (o: Partial<SendChannelsResult> = {}): SendChannelsResult => ({
-  sent: 0, skipped: 0, failed: 0, unconfigured: 0, unconfiguredEnv: [], withheld: 0, ...o,
+  sent: 0, skipped: 0, failed: 0, unconfigured: 0, unconfiguredEnv: [], withheld: 0, failures: [], ...o,
 });
 
 /**
@@ -111,8 +111,19 @@ describe("SendChannels", () => {
     const sender: ChannelSender = { name: "telegram", send: async (r) => { if (r.itemId === "x:1") throw new Error("boom"); return { postId: "p" }; } };
     const recorder = async () => { throw new Error("no sheet"); };
     const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, recorder, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
-    // Doubled from 1/1: each rendering is now attempted once per auto room.
-    expect(res).toEqual(result({ sent: 2, failed: 2 }));
+    // Doubled from 1/1: each rendering is now attempted once per auto room. The sender's own
+    // message rides along per room — it is the only thing a dashboard operator, who has no server
+    // log, can be told about why their [발송] did nothing.
+    expect(res).toEqual(
+      result({
+        sent: 2,
+        failed: 2,
+        failures: [
+          { key: "x:1:announcement:tg-community", error: "boom" },
+          { key: "x:1:announcement:tg-dev", error: "boom" },
+        ],
+      }),
+    );
     expect(added.map((e) => e.itemId)).toEqual(["x:2", "x:2"]); // failed one is NOT ledgered → retryable
   });
 
@@ -160,7 +171,14 @@ describe("SendChannels", () => {
     // sender is only proven untouched *by the guard* when the rooms are otherwise deliverable.
     const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
     // Still 1: the limit is a property of the rendering, so it is counted once, not once per room.
-    expect(res).toEqual(result({ failed: 1 }));
+    // The reason travels with it: the board's [발송] answers 400 with this text, and "an over-limit
+    // segment" is the one failure the operator can actually fix (by editing the rendering).
+    expect(res).toEqual(
+      result({
+        failed: 1,
+        failures: [{ key: "x:1:announcement", error: "a segment exceeds the telegram limit — edit the rendering" }],
+      }),
+    );
     expect(sends).toBe(0);
     expect(added).toEqual([]);
   });
@@ -244,7 +262,9 @@ describe("SendChannels", () => {
     const { ledger } = fakeLedger();
     const sender = okSender("x");
     const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger).run({ targets: ["x"] });
-    expect(res).toEqual(result({ failed: 1 }));
+    expect(res).toEqual(
+      result({ failed: 1, failures: [{ key: "x:1:announcement", error: "a segment exceeds the x limit — edit the rendering" }] }),
+    );
   });
 
   it("sends an over-280 x rendering when xMaxWeighted is 25000 (Premium)", async () => {

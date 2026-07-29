@@ -8,6 +8,24 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * A refused request that came back with the server's own rebuilt board.
+ *
+ * A send is refused mostly because the server's view has moved on — the row was already delivered
+ * from a terminal `pnpm send:channels` while this screen was open. Showing the reason and leaving
+ * the row as it was would keep offering [발송] for something already sent, so the board travels
+ * with the error and the caller repaints from it.
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly board?: BoardView,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 const rPath = (itemId: string, type: ConversionType, channel: Channel) =>
   `/api/renderings/${encodeURIComponent(itemId)}/${type}/${channel}`;
 
@@ -70,8 +88,12 @@ export const api = {
   /** Deletes the override: the room falls back to the group text *and* the group's approval. */
   revertOutlet: (itemId: string, type: ConversionType, outletId: string) =>
     putOutlet(itemId, type, outletId, { revert: true }),
-  sendOutlet: (itemId: string, type: ConversionType, outletId: string) =>
-    fetch(`${oPath(itemId, type, outletId)}/send`, { method: "POST" }).then((r) => json<SendReply>(r)),
+  sendOutlet: async (itemId: string, type: ConversionType, outletId: string) => {
+    const res = await fetch(`${oPath(itemId, type, outletId)}/send`, { method: "POST" });
+    const body = (await res.json().catch(() => ({}))) as Partial<SendReply> & { error?: string };
+    if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, body.board);
+    return body as SendReply;
+  },
   markOutlet: (itemId: string, type: ConversionType, outletId: string, delivered: boolean) =>
     fetch(`${oPath(itemId, type, outletId)}/mark`, {
       method: "POST",

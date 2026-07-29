@@ -268,7 +268,10 @@ const sendToOutlet = async (itemId: string, type: string, outletId: string): Pro
     // through the same dashboard error path.
     if (result.sent === 0) {
       const reason =
-        result.failed > 0 ? "the send failed — check the server log"
+        // Never "check the server log": a dashboard operator has no terminal open. `failures`
+        // carries what the run actually hit (an over-limit segment, a sender's own error), which is
+        // the difference between "edit the rendering" and "try again".
+        result.failed > 0 ? result.failures.map((f) => f.error).join(" · ") || "the send failed"
         : result.skipped > 0 ? "already delivered to this room"
         : result.unconfigured > 0 ? `${result.unconfiguredEnv.join(", ")} is not set`
         : result.withheld > 0 ? "withheld by the first-delivery guard"

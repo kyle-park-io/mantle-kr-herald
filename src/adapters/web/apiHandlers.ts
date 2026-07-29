@@ -284,7 +284,14 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
       // Nothing went out and there is a reason for it (unconfigured room, manual room, sender
       // error): 400 so the dashboard's `json()` helper raises it. A partial send still answers
       // 200 with the board — something did reach a live room, and the rows must reflect that.
-      if (result.sent === 0 && result.error) return { status: 400, json: { error: result.error } };
+      //
+      // The refusal carries the rebuilt board too. The commonest one is "already delivered to this
+      // room", which means the server's view has moved on — someone ran `pnpm send:channels` in a
+      // terminal while this board was open. Answering with the error alone leaves the row still
+      // offering [발송] for something already sent, so the screen never self-corrects.
+      if (result.sent === 0 && result.error) {
+        return { status: 400, json: { error: result.error, board: await deps.loadBoard(itemId) } };
+      }
       return await reply({ ...result });
     }
 

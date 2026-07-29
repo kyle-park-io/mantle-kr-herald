@@ -47,6 +47,14 @@ export interface SendChannelsResult {
   unconfiguredEnv: string[];
   /** Renderings withheld from a never-delivered room by the first-delivery guard. */
   withheld: number;
+  /**
+   * Why each `failed` happened, in the order it happened — same shape as `PublishResult.failures`.
+   *
+   * Every reason is also warned to the console, which is enough for the CLI operator running this
+   * in their own terminal. A dashboard operator has no terminal: the board's per-row [발송] is this
+   * use case, and "the send failed — check the server log" is not something they can act on.
+   */
+  failures: { key: string; error: string }[];
 }
 
 /** A rendering already narrowed to a channel this use-case can actually send. */
@@ -84,6 +92,7 @@ export class SendChannels {
     let sent = 0;
     let skipped = 0;
     let failed = 0;
+    const failures: { key: string; error: string }[] = [];
 
     const overrideRows = this.overrides ? await this.overrides.loadAll() : [];
     const overrideByKey = new Map(overrideRows.map((o) => [overrideKey(o), o] as const));
@@ -144,7 +153,9 @@ export class SendChannels {
           // The limit is a property of the text, not of the room, so this counts once for every
           // room sharing it rather than once per room. Keyed by the rooms it cost, like every other
           // message in this loop — `…:telegram` named a channel nobody is looking at.
-          console.warn(`[send] ${r.itemId}:${r.type} skipped for ${rooms.map((o) => o.id).join(", ")}: a segment exceeds the channel limit — edit the rendering`);
+          const reason = `a segment exceeds the ${r.channel} limit — edit the rendering`;
+          console.warn(`[send] ${r.itemId}:${r.type} skipped for ${rooms.map((o) => o.id).join(", ")}: ${reason}`);
+          failures.push({ key: `${r.itemId}:${r.type}`, error: reason });
           failed += 1;
           continue;
         }
@@ -184,12 +195,13 @@ export class SendChannels {
             sent += 1;
           } catch (err) {
             console.warn(`[send] ${key} failed: ${(err as Error).message}`);
+            failures.push({ key, error: (err as Error).message });
             failed += 1;
           }
         }
       }
     }
-    return { sent, skipped, failed, unconfigured: unconfiguredEnv.length, unconfiguredEnv, withheld };
+    return { sent, skipped, failed, unconfigured: unconfiguredEnv.length, unconfiguredEnv, withheld, failures };
   }
 
   /**
