@@ -19,8 +19,25 @@ describe("collectWriteDebris", () => {
   it("collects a temp file stranded by an interrupted atomic write", async () => {
     const dir = await scratch();
     await writeFile(join(dir, TEMP_NAME), "");
+    await backdate(join(dir, TEMP_NAME), LOCK_STALE_MS + 60_000);
     await writeFile(join(dir, "items.json"), "[]");
     expect(await collectWriteDebris(dir)).toEqual([join(dir, TEMP_NAME)]);
+  });
+
+  /**
+   * REGRESSION: the age gate this branch added guarded `.lock` only, and `.tmp-*` fell straight
+   * through to the collect. `writeJsonFileAtomic` writes its temp file and *then* renames it, so a
+   * `pnpm clean --yes` landing in that gap removed the file the rename was about to move: the
+   * rename throws ENOENT, `SendChannels` warns "was SENT but could NOT be recorded in the ledger —
+   * a rerun will re-send it", and the next run posts the same copy into the live room again.
+   *
+   * A freshly-written temp file IS that gap — there is no other state a young one can be in.
+   */
+  it("leaves a temp file young enough to be an atomic write mid-rename", async () => {
+    const dir = await scratch();
+    await writeFile(join(dir, TEMP_NAME), "[]");
+    await writeFile(join(dir, "deliveries.json"), "[]");
+    expect(await collectWriteDebris(dir)).toEqual([]);
   });
 
   it("collects a lock whose owner plainly died", async () => {
@@ -62,14 +79,18 @@ describe("collectWriteDebris", () => {
     await mkdir(join(dir, "publish"), { recursive: true });
     await writeFile(join(dir, "publish", "deliveries.json"), "[]");
     await writeFile(join(dir, "publish", TEMP_NAME), "");
+    await backdate(join(dir, "publish", TEMP_NAME), LOCK_STALE_MS + 60_000);
     expect(await collectWriteDebris(dir)).toEqual([join(dir, "publish", TEMP_NAME)]);
   });
 
+  // Backdated past the age gate on purpose: without it this would pass for the wrong reason — the
+  // file would be held back as possibly-live, and the test would stop saying anything about skipDir.
   it("leaves the archive alone — it has its own retention rule", async () => {
     const dir = await scratch();
     const archive = join(dir, "archive");
     await mkdir(archive, { recursive: true });
     await writeFile(join(archive, TEMP_NAME), "");
+    await backdate(join(archive, TEMP_NAME), LOCK_STALE_MS + 60_000);
     expect(await collectWriteDebris(dir, { skipDir: archive })).toEqual([]);
   });
 });

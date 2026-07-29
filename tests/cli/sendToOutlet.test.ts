@@ -85,6 +85,7 @@ function makeDeps(overrides: Partial<SendToOutletDeps> = {}): SendToOutletDeps {
     translationStore: fakeTranslationStore([]),
     overrideStore: fakeOverrideStore(),
     articleLedger: fakeArticleLedger(),
+    draftLookup: undefined, // a required key with a nullable value — see `SendToOutletDeps`
     chatIds: () => TG_CHAT_IDS,
     xMaxWeighted: () => 280,
     senders: () => ({ telegram: undefined, x: undefined }),
@@ -310,7 +311,7 @@ const queuedRow = (itemId: string, postId = "draft-777"): DeliveryEntry =>
  * `expect(counter.sends).toBe(0)` in the refusal tests mean something, and what the two proceeding
  * tests below assert directly.
  */
-function sendableX(itemId: string, ledger: DeliveryLedger, draftLookup?: DraftLookup) {
+function sendableX(itemId: string, ledger: DeliveryLedger, draftLookup: DraftLookup | undefined) {
   const counter = { sends: 0 };
   const sendToOutlet = makeSendToOutlet(makeDeps({
     formattingStore: fakeFormattingStore([rendering({ itemId, type: "x", channel: "x" })]),
@@ -442,5 +443,132 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     expect(lookup.lookups).toEqual([]);
     expect(result.sent).toBe(1);
     expect(counter.sends).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// What the ledger must say when the guard CANCELLED the queued original and the send then failed.
+//
+// All three restore sites used to write `previous` back verbatim: `status: "sent"` with `postId`
+// pointing at the draft this code had just deleted. That row is a lie with three costs — the board
+// paints `예약됨` for a draft that no longer exists, `awaitingPublish` keeps one of the fifteen
+// monthly publishes reserved for it, and `deliveredToRoom` skips the room as already-delivered until
+// some reconcile pass retires it (≤2 min under `serve`, never for a pure CLI run).
+//
+// `dropped` is what actually happened, and it frees both the room and the slot immediately.
+//
+// Every test below asserts the ledger contents, not just the error string: the error was already
+// correct before the fix, and asserting on it alone passes straight through the bug.
+// ---------------------------------------------------------------------------------------------
+
+describe("makeSendToOutlet — a cancelled original is retired, not restored as sent", () => {
+  const dropped = (previous: DeliveryEntry): DeliveryEntry => ({ ...previous, status: "dropped" });
+
+  it("retires the row when the send is then refused for quota", async () => {
+    const previous = queuedRow("x:20", "draft-q");
+    const ledger = fakeDeliveryLedger([previous]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
+    let sends = 0;
+    const sendToOutlet = makeSendToOutlet(makeDeps({
+      formattingStore: fakeFormattingStore([rendering({ itemId: "x:20", type: "x", channel: "x" })]),
+      translationStore: fakeTranslationStore([source("x:20")]),
+      deliveryLedger: ledger,
+      senders: () => ({ telegram: undefined, x: { name: "typefully", send: async () => { sends += 1; return { postId: "p" }; } } }),
+      headroom: quotaHeadroom(0), // needs 1, has 0
+      draftLookup: lookup.lookup,
+    }));
+
+    const result = await sendToOutlet("x:20", "x", "x-post", true);
+
+    expect(result.sent).toBe(0);
+    expect(result.error).toContain("쿼터");
+    expect(sends).toBe(0);
+    expect(lookup.cancels).toEqual(["draft-q"]); // the original really was taken out of the queue
+    expect(await ledger.loadAll()).toEqual([dropped(previous)]);
+  });
+
+  it("retires the row when nothing is sent for any other reason", async () => {
+    const previous = queuedRow("x:21", "draft-z");
+    const ledger = fakeDeliveryLedger([previous]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
+    const sendToOutlet = makeSendToOutlet(makeDeps({
+      formattingStore: fakeFormattingStore([]), // the approved copy is gone by the time of the resend
+      deliveryLedger: ledger,
+      senders: () => ({ telegram: undefined, x: { name: "typefully", send: async () => ({ postId: "p" }) } }),
+      draftLookup: lookup.lookup,
+    }));
+
+    const result = await sendToOutlet("x:21", "x", "x-post", true);
+
+    expect(result.sent).toBe(0);
+    expect(result.error).toContain("no approved copy to send");
+    expect(lookup.cancels).toEqual(["draft-z"]);
+    expect(await ledger.loadAll()).toEqual([dropped(previous)]);
+  });
+
+  it("retires the row when the send path throws before completing", async () => {
+    const previous = queuedRow("x:22", "draft-y");
+    const ledger = fakeDeliveryLedger([previous]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
+    const sendToOutlet = makeSendToOutlet(makeDeps({
+      formattingStore: fakeFormattingStore([rendering({ itemId: "x:22", type: "x", channel: "x" })]),
+      translationStore: fakeTranslationStore([source("x:22")]),
+      deliveryLedger: ledger,
+      senders: () => ({ telegram: undefined, x: { name: "typefully", send: async () => ({ postId: "p" }) } }),
+      recorder: async () => { throw new Error("recorder boom"); },
+      draftLookup: lookup.lookup,
+    }));
+
+    const result = await sendToOutlet("x:22", "x", "x-post", true);
+
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.error).toBe("recorder boom");
+    expect(lookup.cancels).toEqual(["draft-y"]);
+    expect(await ledger.loadAll()).toEqual([dropped(previous)]);
+  });
+
+  // The complement: nothing was cancelled, so the room still holds exactly what `previous` says it
+  // does and the row must go back untouched. A fix that retired unconditionally would strand a real
+  // Telegram post as `예약 취소됨` and offer to send it again.
+  it("restores a telegram row verbatim — no draft was cancelled", async () => {
+    const previous = sentRow({ itemId: "x:23", type: "announcement", outletId: "tg-community" });
+    const ledger = fakeDeliveryLedger([previous]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
+    const sendToOutlet = makeSendToOutlet(makeDeps({
+      formattingStore: fakeFormattingStore([]), // nothing to send → the zero-send restore
+      deliveryLedger: ledger,
+      senders: () => ({ telegram: okSender("telegram-bot"), x: undefined }),
+      draftLookup: lookup.lookup,
+    }));
+
+    const result = await sendToOutlet("x:23", "announcement", "tg-community", true);
+
+    expect(result.sent).toBe(0);
+    expect(lookup.cancels).toEqual([]);
+    expect(await ledger.loadAll()).toEqual([previous]); // still `sent`, still holding its t.me url
+  });
+
+  // `gone` reaches the same restore sites with `cancelled: false`: the draft was already deleted
+  // before this call, so this code removed nothing — but the row is still describing a post the room
+  // never received, which is what makes `previous` verbatim wrong to reason about from the outside.
+  // Pinned as-is deliberately: retiring here would be a *separate* behaviour change (the row was
+  // already stale on arrival, not made stale by this call), and this test exists so that change
+  // cannot happen silently.
+  it("restores a `gone` original verbatim — this call cancelled nothing", async () => {
+    const previous = queuedRow("x:24", "draft-gone");
+    const ledger = fakeDeliveryLedger([previous]);
+    const lookup = fakeDraftLookup(async () => ({ state: "gone" }));
+    const sendToOutlet = makeSendToOutlet(makeDeps({
+      formattingStore: fakeFormattingStore([]),
+      deliveryLedger: ledger,
+      senders: () => ({ telegram: undefined, x: { name: "typefully", send: async () => ({ postId: "p" }) } }),
+      draftLookup: lookup.lookup,
+    }));
+
+    await sendToOutlet("x:24", "x", "x-post", true);
+
+    expect(lookup.cancels).toEqual([]);
+    expect(await ledger.loadAll()).toEqual([previous]);
   });
 });

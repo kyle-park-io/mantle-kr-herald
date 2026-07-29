@@ -178,11 +178,12 @@ describe("web type mirror", () => {
   });
 
   /**
-   * `deliveryStatus` is a plain string union, not enumerable from either side at runtime (there is
-   * no `ALL_DELIVERY_STATUSES` array to iterate) — `SameUnion` is the only check that can catch a
-   * drift here at all. Widening `DeliveryEntry["status"]` (Task 2's `dropped`) without widening the
-   * mirror would leave the dashboard reading `dropped` rows as `undefined`, painting them as never
-   * having gone out rather than as a retired scheduled post.
+   * `SameUnion` is the check for *membership*: the web mirror declares its own literal union, and
+   * nothing at runtime forces it to match the domain's. Widening `DeliveryEntry["status"]` (Task 2's
+   * `dropped`) without widening the mirror would leave the dashboard reading `dropped` rows as
+   * `undefined`, painting them as never having gone out rather than as a retired scheduled post.
+   * The next test walks `ALL_DELIVERY_STATUSES` to pin what each member *means*; this one pins that
+   * the two sides agree on which members exist.
    */
   it("mirrors the delivery status union", () => {
     type Check = SameUnion<NonNullable<BoardRow["deliveryStatus"]>, NonNullable<WebBoardRow["deliveryStatus"]>>;

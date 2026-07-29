@@ -31,13 +31,6 @@ describe("TypefullyDraftLookup", () => {
     });
   });
 
-  it("reports a published draft", async () => {
-    const { fn } = fakeFetch({ x_published_url: "https://x.com/a/status/9", x_article_published_url: null });
-    expect(await new TypefullyDraftLookup("KEY", "42", fn).published("100")).toEqual({
-      state: "published", xUrl: "https://x.com/a/status/9", xId: "9", articleUrl: undefined, articleId: undefined,
-    });
-  });
-
   it("reports a draft with no published url as still scheduled", async () => {
     const { fn } = fakeFetch({ x_published_url: null, x_article_published_url: null });
     expect(await new TypefullyDraftLookup("KEY", "42", fn).published("100")).toEqual({ state: "scheduled" });

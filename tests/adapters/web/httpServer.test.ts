@@ -27,7 +27,7 @@ function fakeBoardDeps(): Pick<ApiDeps, "loadBoard" | "saveOutletOverride" | "ma
     loadBoard: async (itemId: string) => ({ itemId, groups: [], unconverted: [] }),
     saveOutletOverride: { run: async () => undefined } as unknown as ApiDeps["saveOutletOverride"],
     markDelivery: { run: async () => {} } as unknown as ApiDeps["markDelivery"],
-    reconcilePublished: async () => ({ reconciled: 0, pending: 0 }),
+    reconcilePublished: async () => ({ reconciled: 0, retired: 0, pending: 0 }),
     sendToOutlet: async () => ({ sent: 0, failed: 0 }),
   };
 }

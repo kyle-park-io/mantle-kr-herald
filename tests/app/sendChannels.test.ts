@@ -607,6 +607,33 @@ describe("SendChannels first-delivery guard", () => {
     const res = await new SendChannels(backlog(), { telegram: okSender("telegram"), x: undefined }, ledger, fakeTranslations(), undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
     expect(res).toEqual(result({ sent: 6 })); // 3 renderings × 2 rooms
   });
+
+  /**
+   * REGRESSION. `everDelivered` is the *second* reader of "has anything ever reached this room" —
+   * `already` above is the first — and only the first was routed through `deliveredToRoom` when
+   * `dropped` was introduced. A `dropped` row is a scheduled draft deleted before it published, i.e.
+   * a room that provably received NOTHING; counting it as history lifted this guard on the strength
+   * of a delivery that never happened, and the whole approved backlog went into a live room.
+   *
+   * One retired row is all it takes, which is exactly what a first-ever X send that Typefully never
+   * published leaves behind.
+   */
+  it("still withholds the backlog from a room whose only ledger row is dropped", async () => {
+    const sent: (string | undefined)[] = [];
+    const sender: ChannelSender = { name: "telegram-bot", send: async (req) => { sent.push(req.chatId); return { postId: "m1" }; } };
+    const { ledger } = fakeLedger([
+      sentEntry({ itemId: "x:1", outletId: "tg-community" }),
+      sentEntry({ itemId: "x:2", outletId: "tg-community" }),
+      sentEntry({ itemId: "x:3", outletId: "tg-community" }),
+      // 데브방's one and only row — retired, so this room has never actually received anything.
+      sentEntry({ itemId: "x:1", outletId: "tg-dev", status: "dropped" }),
+    ]);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await new SendChannels(backlog(), { telegram: sender, x: undefined }, ledger, fakeTranslations(), undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+
+    expect(sent).toEqual([]); // THE assertion: three live posts into 데브방 is what the bug did
+    expect(res).toEqual(result({ skipped: 3, withheld: 3 }));
+  });
 });
 
 /**

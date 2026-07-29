@@ -72,7 +72,14 @@ export interface ApiDeps {
   loadBoard: (itemId: string) => Promise<BoardView>;
   saveOutletOverride: SaveOutletOverride;
   markDelivery: MarkDelivery;
-  reconcilePublished: () => Promise<{ reconciled: number; pending: number; error?: string }>;
+  /**
+   * `retired` is load-bearing on the wire, not a statistic: `OutletCard` branches on `res.retired > 0`
+   * to say "예약된 게시물이 게시되기 전에 취소되었습니다" instead of the generic "아직 게시되지
+   * 않았습니다". The route forwards this through an untyped `{ ...result, board }` spread, so a
+   * closure narrowed to `{ reconciled, pending }` would drop it with no type error, no test failure,
+   * and `undefined > 0` on the board. Declared here so narrowing it is a compile error.
+   */
+  reconcilePublished: () => Promise<{ reconciled: number; retired: number; pending: number; error?: string }>;
   sendToOutlet: (itemId: string, type: string, outletId: string, resend?: boolean) => Promise<{ sent: number; failed: number; error?: string }>;
   /** Writes a conversion worksheet for the dashboard; the local agent still fills it in. */
   prepareConversionRun: PrepareConversionRun;

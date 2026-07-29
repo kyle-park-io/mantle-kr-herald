@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { expiredArchiveDays, isLockFile, isStrandedTempFile } from "../../src/storage/retention";
+import { expiredArchiveDays, isStrandedTempFile } from "../../src/storage/retention";
 
 const now = new Date("2026-07-20T12:00:00.000Z");
 
@@ -81,15 +81,4 @@ describe("isStrandedTempFile", () => {
     expect(isStrandedTempFile("deliveries.json.lock.bak")).toBe(false);
   });
 
-});
-
-describe("isLockFile", () => {
-  // `pnpm clean` needs this to tell a lock apart from a temp file: a lock young enough to still be
-  // held by a running send must survive the sweep, or removing it re-opens the race that drops a
-  // send row — and a dropped send row is a duplicate live post.
-  it("distinguishes a lock from an atomic-write temp file", () => {
-    expect(isLockFile("deliveries.json.lock")).toBe(true);
-    expect(isLockFile("items.json.tmp-4821-1750000000000-3f2b1c9d-aaaa-bbbb-cccc-ddddeeeeffff")).toBe(false);
-    expect(isLockFile("deliveries.json")).toBe(false);
-  });
 });

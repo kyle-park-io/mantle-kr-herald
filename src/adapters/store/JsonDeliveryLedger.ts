@@ -26,8 +26,21 @@ export class JsonDeliveryLedger implements DeliveryLedger {
    * to a live Telegram room or X account — and once any unrelated write persists it into
    * `deliveries.json`, it must keep appearing in `loadKeys()` afterwards. Basing writes on a
    * legacy-blind read would let an already-sent item silently become indistinguishable from
-   * never-sent the moment any unrelated entry is added, and `SendChannels.run()` gates re-sending
-   * solely on `loadKeys()` — so that gap becomes a duplicate live post, not just a stale label.
+   * never-sent the moment any unrelated entry is added — and that gap becomes a duplicate live post,
+   * not just a stale label, because THREE separate deciders read these rows to answer "has this
+   * already gone out":
+   *
+   * - `loadKeys()` below — the port's own answer, used by callers that just want the key set.
+   * - `SendChannels.run()`'s `already` (`src/app/SendChannels.ts:124`) — the per-delivery gate,
+   *   which recomputes the same question here rather than calling `loadKeys()`, because
+   *   `planRooms` needs the raw rows too.
+   * - `SendChannels.planRooms()`'s `everDelivered` (`src/app/SendChannels.ts:321`) — the
+   *   first-delivery guard's "has this ROOM ever received anything", keyed by `outletId` rather
+   *   than by delivery key.
+   *
+   * All three go through the shared `deliveredToRoom` predicate, and a fourth reader must too. This
+   * sentence used to say the gate was `loadKeys()` alone; that was how `everDelivered` came to count
+   * `dropped` rows as history for two releases — a grep for `loadKeys()` callers could not find it.
    */
   async loadAll(): Promise<DeliveryEntry[]> {
     const current = await readJsonFile<DeliveryEntry[] | null>(this.path, null);

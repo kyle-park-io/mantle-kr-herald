@@ -3,7 +3,18 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { LOCK_STALE_MS } from "../shared/store/fileLock";
 import { isErrnoException } from "../shared/store/jsonFile";
-import { isLockFile, isStrandedTempFile } from "./retention";
+import { isStrandedTempFile } from "./retention";
+
+/**
+ * How recently a piece of write debris must have been touched to still count as possibly-live.
+ *
+ * Deliberately the lock's own staleness window rather than a second number: a lock and the
+ * `.tmp-*` written inside the critical section it guards are produced by one write, and judging
+ * them by two different clocks would let the sweep take one while the other is still protected.
+ * The window's sizing argument lives on `LOCK_STALE_MS`, and it holds for both — nothing between
+ * an atomic write's `writeFile` and its `rename` waits on the network either.
+ */
+const IN_PROGRESS_MS = LOCK_STALE_MS;
 
 /**
  * `stat`, treating a path that vanished between the `readdir` and the `stat` as gone rather than
@@ -41,15 +52,23 @@ export async function collectWriteDebris(dir: string, opts: { skipDir?: string }
   for (const name of names) {
     const full = join(dir, name);
     if (isStrandedTempFile(name)) {
-      if (isLockFile(name)) {
-        const held = await statIfPresent(full);
-        // Already released while we walked — nothing to clean, and nothing to complain about.
-        if (!held) continue;
-        // A lock younger than the staleness window may still belong to a running send. Removing it
-        // would let a second process interleave a read-modify-write of the same ledger and drop a
-        // row — and a dropped send row is a duplicate live post. Leave those to their owner.
-        if (Date.now() - held.mtimeMs < LOCK_STALE_MS) continue;
-      }
+      const debris = await statIfPresent(full);
+      // Already gone while we walked — nothing to clean, and nothing to complain about.
+      if (!debris) continue;
+      // Younger than the staleness window: a live process may still be using it, and both kinds
+      // fail the same way if we take it.
+      //
+      // A lock that young may still belong to a running send. Removing it would let a second
+      // process interleave a read-modify-write of the same ledger and drop a row.
+      //
+      // A `.tmp-*` that young may be an atomic write in the gap between its `writeFile` and its
+      // `rename` — a window `pnpm clean --yes` runs straight into whenever a send is recording.
+      // Removing it there makes the `rename` throw ENOENT, and `SendChannels` reports that as
+      // "was SENT but could NOT be recorded in the ledger — a rerun will re-send it".
+      //
+      // Either way the cleanup command causes a duplicate live post, which is why the gate covers
+      // every name `isStrandedTempFile` matches rather than only the locks.
+      if (Date.now() - debris.mtimeMs < IN_PROGRESS_MS) continue;
       targets.push(full);
       continue;
     }

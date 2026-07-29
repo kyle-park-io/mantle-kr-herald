@@ -8,9 +8,18 @@ import type { Headroom, HeadroomView } from "../domain/send/headroom";
 /** A minute is long enough to spare the smallest rate-limit bucket, short enough to stay true. */
 const QUOTA_TTL_MS = 60_000;
 
-/** The subset of `JsonXArticleLedger` this module reads — any ledger shaped like it will do. */
+/**
+ * The subset of `JsonXArticleLedger` this module reads — any ledger shaped like it will do.
+ *
+ * `droppedAt` is part of that subset even though nothing here reads it by name: it is how an article
+ * row retires (it has no `status` field to widen), and `awaitingArticlePublish` below is what reads
+ * it. Leaving it off the interface worked only by accident — a JS object keeps properties its type
+ * omits — and any projection through this shape (`rows.map(({ postId, url }) => …)`, a fake in a
+ * test, a narrowed adapter) would silently drop it, putting every retired article back in the
+ * in-flight count and re-creating the stuck quota slot this branch exists to fix.
+ */
 interface ArticleLedger {
-  loadAll(): Promise<{ postId?: string; url?: string }[]>;
+  loadAll(): Promise<{ postId?: string; url?: string; droppedAt?: string }[]>;
 }
 
 interface ReadHeadroomDeps {
