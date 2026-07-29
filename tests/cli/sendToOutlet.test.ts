@@ -11,6 +11,8 @@ import { deliveryKey } from "../../src/domain/delivery/models";
 import type { Translation } from "../../src/domain/translation/models";
 import type { SendableChannel } from "../../src/domain/send/channels";
 import type { Headroom } from "../../src/domain/send/headroom";
+import type { DraftLookup } from "../../src/ports/DraftLookup";
+import type { DraftState } from "../../src/domain/send/draftState";
 import { outletById } from "../../src/domain/outlet/models";
 
 // ---------------------------------------------------------------------------------------------
@@ -91,6 +93,20 @@ function makeDeps(overrides: Partial<SendToOutletDeps> = {}): SendToOutletDeps {
     archiver: async () => undefined,
     ...overrides,
   };
+}
+
+/**
+ * A `DraftLookup` that records what it was asked. `published` takes a thunk rather than a value so a
+ * test can make the lookup throw — the case where the resend must refuse rather than guess.
+ */
+function fakeDraftLookup(published: () => Promise<DraftState>, cancelled = true) {
+  const lookups: string[] = [];
+  const cancels: string[] = [];
+  const lookup: DraftLookup = {
+    published: async (draftId) => { lookups.push(draftId); return published(); },
+    cancel: async (draftId) => { cancels.push(draftId); return cancelled; },
+  };
+  return { lookup, lookups, cancels };
 }
 
 /** A headroom reader bound only to the "x" target — a stand-in for `headroomReader`'s own gating. */
@@ -270,5 +286,161 @@ describe("makeSendToOutlet — guards that return before any send", () => {
       error: `${outlet.label} (${outlet.id}): nothing has been sent to this room yet`,
     });
     expect(sends).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The resend guard. An X send does not publish when it is made — it is scheduled through Typefully
+// a couple of minutes out — so a resend inside that window used to schedule a SECOND draft while the
+// first was still counting down: two live posts on a brand account, irreversibly, and two of the
+// fifteen monthly publishes the gate had counted as one.
+//
+// Every refusal below asserts `counter.sends === 0`, not just the error string. An error message
+// returned while the post goes out anyway is the exact failure this guard exists to prevent, and an
+// assertion on the message alone would pass through it.
+// ---------------------------------------------------------------------------------------------
+
+/** A room whose ledger row holds a Typefully draft id and no x.com url — `awaitingPublish` is true. */
+const queuedRow = (itemId: string, postId = "draft-777"): DeliveryEntry =>
+  sentRow({ itemId, type: "x", outletId: "x-post", postId, url: undefined, senderName: "typefully" });
+
+/**
+ * Everything an X resend needs to actually go out: approved copy, an approved source, a working
+ * sender, no quota gate. So `counter.sends` reads 1 whenever nothing refuses — which is what makes
+ * `expect(counter.sends).toBe(0)` in the refusal tests mean something, and what the two proceeding
+ * tests below assert directly.
+ */
+function sendableX(itemId: string, ledger: DeliveryLedger, draftLookup?: DraftLookup) {
+  const counter = { sends: 0 };
+  const sendToOutlet = makeSendToOutlet(makeDeps({
+    formattingStore: fakeFormattingStore([rendering({ itemId, type: "x", channel: "x" })]),
+    translationStore: fakeTranslationStore([source(itemId)]),
+    deliveryLedger: ledger,
+    senders: () => ({
+      telegram: undefined,
+      x: { name: "typefully", send: async () => { counter.sends += 1; return { postId: "draft-new" }; } },
+    }),
+    draftLookup,
+  }));
+  return { sendToOutlet, counter };
+}
+
+describe("makeSendToOutlet — a resend must not race the original's scheduled publish", () => {
+  it("refuses a resend when the original has already published, and reconciles the row", async () => {
+    const previous = queuedRow("x:6");
+    const ledger = fakeDeliveryLedger([previous]);
+    const lookup = fakeDraftLookup(async () => ({ state: "published", xUrl: "https://x.com/a/status/777", xId: "777" }));
+    const { sendToOutlet, counter } = sendableX("x:6", ledger, lookup.lookup);
+
+    const result = await sendToOutlet("x:6", "x", "x-post", true);
+
+    expect(counter.sends).toBe(0); // THE assertion: the original is live, so nothing may go out
+    expect(result.sent).toBe(0);
+    expect(result.error).toContain("이미 게시");
+    expect(result.error).toContain("https://x.com/a/status/777");
+    expect(lookup.cancels).toEqual([]); // a published draft cannot be cancelled
+    // Updated in place, never removed: the board must stop showing 예약됨 for a post that is live.
+    expect(await ledger.loadAll()).toEqual([{ ...previous, postId: "777", url: "https://x.com/a/status/777" }]);
+  });
+
+  it("cancels a still-scheduled original before resending", async () => {
+    const ledger = fakeDeliveryLedger([queuedRow("x:7", "draft-abc")]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
+    const { sendToOutlet, counter } = sendableX("x:7", ledger, lookup.lookup);
+
+    const result = await sendToOutlet("x:7", "x", "x-post", true);
+
+    expect(lookup.cancels).toEqual(["draft-abc"]); // the ORIGINAL draft id, not the new one
+    expect(result.sent).toBe(1);
+    expect(result.error).toBeUndefined();
+    expect(counter.sends).toBe(1);
+  });
+
+  it("refuses the resend when cancelling fails", async () => {
+    const previous = queuedRow("x:8", "draft-abc");
+    const ledger = fakeDeliveryLedger([previous]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), false);
+    const { sendToOutlet, counter } = sendableX("x:8", ledger, lookup.lookup);
+
+    const result = await sendToOutlet("x:8", "x", "x-post", true);
+
+    expect(counter.sends).toBe(0); // THE assertion: the original may still publish
+    expect(result.sent).toBe(0);
+    expect(lookup.cancels).toEqual(["draft-abc"]);
+    expect(result.error).toContain("취소하지 못했습니다");
+    expect(await ledger.loadAll()).toEqual([previous]); // the row the room is still described by
+  });
+
+  it("refuses the resend when the lookup itself throws", async () => {
+    const previous = queuedRow("x:9");
+    const ledger = fakeDeliveryLedger([previous]);
+    const lookup = fakeDraftLookup(async () => { throw new Error("ECONNRESET"); });
+    const { sendToOutlet, counter } = sendableX("x:9", ledger, lookup.lookup);
+
+    const result = await sendToOutlet("x:9", "x", "x-post", true);
+
+    expect(counter.sends).toBe(0); // unknown is not "safe to send" — the reconcile can wait, this cannot
+    expect(result.sent).toBe(0);
+    expect(lookup.cancels).toEqual([]);
+    expect(result.error).toContain("확인하지 못했습니다");
+    expect(await ledger.loadAll()).toEqual([previous]);
+  });
+
+  it("resends without cancelling when the original draft is gone", async () => {
+    const ledger = fakeDeliveryLedger([queuedRow("x:10")]);
+    const lookup = fakeDraftLookup(async () => ({ state: "gone" }));
+    const { sendToOutlet, counter } = sendableX("x:10", ledger, lookup.lookup);
+
+    const result = await sendToOutlet("x:10", "x", "x-post", true);
+
+    expect(lookup.cancels).toEqual([]); // nothing to cancel — it was already deleted
+    expect(result.sent).toBe(1);
+    expect(counter.sends).toBe(1);
+  });
+
+  it("does not consult Typefully when resending a telegram row", async () => {
+    // Telegram publishes immediately and comes back with a t.me url, so `awaitingPublish` is false
+    // and there is no queued draft to race. A round trip here would be a cost for nothing.
+    const ledger = fakeDeliveryLedger([sentRow({ itemId: "x:11", type: "announcement", outletId: "tg-community" })]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }));
+    const sendToOutlet = makeSendToOutlet(makeDeps({
+      formattingStore: fakeFormattingStore([rendering({ itemId: "x:11" })]),
+      translationStore: fakeTranslationStore([source("x:11")]),
+      deliveryLedger: ledger,
+      senders: () => ({ telegram: okSender("telegram-bot"), x: undefined }),
+      draftLookup: lookup.lookup,
+    }));
+
+    const result = await sendToOutlet("x:11", "announcement", "tg-community", true);
+
+    expect(lookup.lookups).toEqual([]);
+    expect(lookup.cancels).toEqual([]);
+    expect(result.sent).toBe(1);
+  });
+
+  it("does not consult Typefully for an X row already carrying its x.com url", async () => {
+    // Reconciled rows describe a post that is already live; there is no draft left in the queue.
+    const ledger = fakeDeliveryLedger([
+      sentRow({ itemId: "x:12", type: "x", outletId: "x-post", postId: "777", url: "https://x.com/a/status/777", senderName: "typefully" }),
+    ]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }));
+    const { sendToOutlet, counter } = sendableX("x:12", ledger, lookup.lookup);
+
+    const result = await sendToOutlet("x:12", "x", "x-post", true);
+
+    expect(lookup.lookups).toEqual([]);
+    expect(result.sent).toBe(1);
+    expect(counter.sends).toBe(1);
+  });
+
+  it("does not consult Typefully on a first send — the guard is a resend-only cost", async () => {
+    const lookup = fakeDraftLookup(async () => ({ state: "published", xUrl: "https://x.com/a/status/1", xId: "1" }));
+    const { sendToOutlet, counter } = sendableX("x:13", fakeDeliveryLedger([]), lookup.lookup);
+
+    const result = await sendToOutlet("x:13", "x", "x-post", false);
+
+    expect(lookup.lookups).toEqual([]);
+    expect(result.sent).toBe(1);
+    expect(counter.sends).toBe(1);
   });
 });

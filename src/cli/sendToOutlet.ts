@@ -4,9 +4,12 @@ import type { DeliveryLedger } from "../ports/DeliveryLedger";
 import type { TranslationStore } from "../ports/TranslationStore";
 import type { OutletOverrideStore } from "../ports/OutletOverrideStore";
 import type { ChannelSender } from "../ports/ChannelSender";
+import type { DraftLookup } from "../ports/DraftLookup";
 import type { SendableChannel } from "../domain/send/channels";
-import { deliveryKey } from "../domain/delivery/models";
-import { outletById, deliveredByChannelSender, outletsForChannel } from "../domain/outlet/models";
+import type { DraftState } from "../domain/send/draftState";
+import { awaitingPublish } from "../domain/send/awaitingPublish";
+import { deliveryKey, type DeliveryEntry } from "../domain/delivery/models";
+import { outletById, deliveredByChannelSender, outletsForChannel, type Outlet } from "../domain/outlet/models";
 import { headroomReader } from "./publishHeadroom";
 import { createSenders } from "./channelSenders";
 import { buildRecorder } from "./recorder";
@@ -26,6 +29,16 @@ export interface SendToOutletDeps {
    * fresh one, or a read here can disagree with what `reconcilePublished` sees (see its own comment).
    */
   articleLedger: Parameters<typeof headroomReader>[2];
+  /**
+   * Typefully, for the resend guard (`guardQueuedDraft` below).
+   *
+   * Optional, and legitimately absent: a Telegram-only install has no `TYPEFULLY_*` env, and
+   * `serve.ts` composes this in its own `try/catch` so a missing key cannot take the dashboard down.
+   * Absent means the guard is skipped — safe *there* and only there, because the same missing
+   * credentials stop `createSenders` from building an X sender at all, so there is no X post for a
+   * resend to duplicate. Anywhere that can send to X, pass this.
+   */
+  draftLookup?: DraftLookup;
   chatIds?: () => Record<string, string>;
   xMaxWeighted?: () => number;
   senders?: (targets: SendableChannel[]) => Record<SendableChannel, ChannelSender | undefined>;
@@ -56,6 +69,7 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
     translationStore,
     overrideStore,
     articleLedger,
+    draftLookup,
     chatIds: loadChatIds = loadTelegramChatIds,
     xMaxWeighted: loadXMax = loadXMaxWeighted,
     senders: makeSenders = createSenders,
@@ -63,6 +77,76 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
     recorder: makeRecorder = buildRecorder,
     archiver: makeArchiver = buildArchiver,
   } = deps;
+
+  /**
+   * The resend's look-before-you-leap. Returns a refusal to hand straight back to the caller, or
+   * `undefined` when the resend may proceed.
+   *
+   * An X send does not publish when it is made: X refuses to direct-publish a draft containing a
+   * URL, so every X post goes out through Typefully's queue a couple of minutes later. Inside that
+   * window 재발송 used to schedule a *second* draft while the first was still counting down — and the
+   * first one still published. Two live posts on a brand's account, irreversibly, and two of the
+   * fifteen monthly publishes for a gate that had counted one.
+   *
+   * So the resend asks Typefully what became of the original first, through the same `published()`
+   * `ReconcilePublished` uses, on the same `awaitingPublish` predicate the board paints `예약됨`
+   * from — actor and reporter cannot disagree about whether the original is live:
+   *
+   * - `published` — refuse, writing the real url/id into the row on the way out so the board stops
+   *   showing `예약됨` for a post that is already up.
+   * - `gone`      — the draft was deleted and will never publish. Nothing to cancel; proceed.
+   * - `scheduled` — cancel it, and proceed only on a confirmed cancel. A cancel that did not take
+   *   means the original may still publish, and proceeding is exactly the double post.
+   *
+   * Anything that throws refuses too. `ReconcilePublished` can treat "unknown" as "ask again later"
+   * because waiting costs a stuck row; here the alternative to waiting is publishing twice.
+   *
+   * EVERY return from here happens BEFORE `deliveryLedger.remove(key)`, so a refusal leaves the
+   * ledger exactly as it found it and there is no restore to remember. That ordering is the whole
+   * point: PR #89 exists because an early return added between the `remove` and the restores skipped
+   * one, and the room read as never-sent. Keep new refusals on this side of the `remove`.
+   */
+  const guardQueuedDraft = async (
+    outlet: Outlet,
+    previous: DeliveryEntry,
+  ): Promise<{ sent: number; failed: number; error: string } | undefined> => {
+    // Telegram publishes immediately, and an X row that already carries its x.com url describes a
+    // post that is live rather than a draft in the queue. Neither may cost a Typefully round trip.
+    if (!awaitingPublish(previous)) return undefined;
+    if (!draftLookup) return undefined; // unconfigured — see `SendToOutletDeps.draftLookup`
+    const who = `${outlet.label} (${outlet.id})`;
+
+    let state: DraftState;
+    try {
+      state = await draftLookup.published(previous.postId);
+    } catch {
+      return { sent: 0, failed: 0, error: `${who}: 예약했던 원본의 게시 여부를 확인하지 못했습니다 — 이미 게시됐다면 같은 글이 두 번 올라가므로 재발송을 멈췄습니다. 잠시 후 다시 시도하세요` };
+    }
+
+    if (state.state === "published") {
+      // Updated in place, not removed and restored: this call is refusing, so the row is not going
+      // anywhere — and the operator asked about this room, which is the moment to make it true.
+      const url = state.xUrl ?? state.articleUrl;
+      const postId = (state.xUrl ? state.xId : state.articleId) ?? previous.postId;
+      if (url) await deliveryLedger.add({ ...previous, postId, url });
+      const where = url ? ` (${url})` : "";
+      return { sent: 0, failed: 0, error: `${who}: 예약했던 원본이 이미 게시됐습니다${where} — 재발송하면 같은 글이 두 번 올라가므로 멈췄습니다. 이 방의 기록은 실제 주소로 갱신했습니다` };
+    }
+
+    if (state.state === "scheduled") {
+      let cancelled: boolean;
+      try {
+        cancelled = await draftLookup.cancel(previous.postId);
+      } catch {
+        cancelled = false; // a request that never completed is not a draft that was removed
+      }
+      if (!cancelled) {
+        return { sent: 0, failed: 0, error: `${who}: 아직 게시 전인 원본의 예약을 취소하지 못했습니다 — 그대로 재발송하면 예약분까지 함께 게시되므로 멈췄습니다. Typefully 큐에서 초안을 지운 뒤 다시 시도하세요` };
+      }
+    }
+
+    return undefined; // `gone`, or a confirmed 예약 취소됨 — nothing of ours is left in the queue
+  };
 
   /**
    * The board's per-row [발송]: one item, one type, one room. `SendChannels` is the same use case the
@@ -78,8 +162,13 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
    *
    * The ledger is what makes a send happen at most once, so a re-send has to take that row out of the
    * way first — and put it back if the send then fails, or the room would read as never-delivered
-   * while a real post sits in it. The original post is NOT removed from the room by any of this: two
-   * messages exist afterwards, and the row that survives describes the second one.
+   * while a real post sits in it. A post that already reached the room is NOT removed by any of this:
+   * two messages exist afterwards, and the row that survives describes the second one.
+   *
+   * The one exception is an X post that has not reached the room yet — a Typefully draft still
+   * counting down to publish. `guardQueuedDraft` cancels that one, or refuses the resend, because
+   * "two messages exist afterwards" is the *acceptable* outcome only when the operator can see the
+   * first one and chose to send anyway.
    */
   return async (itemId: string, type: string, outletId: string, resend = false): Promise<{ sent: number; failed: number; error?: string }> => {
     const outlet = outletById(outletId);
@@ -97,6 +186,10 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
     const previous = resend ? (await deliveryLedger.loadAll()).find((e) => deliveryKey(e) === key) : undefined;
     if (resend) {
       if (!previous) return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}): nothing has been sent to this room yet` };
+      // Deliberately before the `remove`, not after it: every refusal this can produce returns with
+      // the ledger untouched, so no restore has to be remembered on the way out. See its own comment.
+      const refusal = await guardQueuedDraft(outlet, previous);
+      if (refusal) return refusal;
       await deliveryLedger.remove(key);
     }
 
