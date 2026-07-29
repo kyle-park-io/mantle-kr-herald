@@ -83,7 +83,7 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
     승인된 번역 본문에서 곧바로 나가고 원장도 따로 쓰기 때문에, 운영자가
     `pnpm send:x-article [--ids <id>[,<id>]]`를 별도로 실행해야 합니다. 대시보드 발송판에도
     아티클 방은 나오지 않으니, 화면의 `N곳 · M건 중 K건 완료`가 다 찼다고 해서 아티클까지
-    나갔다고 판단하면 안 됩니다([`review.md`](review.md) §4). 이 명령도 바로 위와 같은 헤드룸
+    나갔다고 판단하면 안 됩니다([`review.md`](review.md) §4). 이 명령도 바로 위와 같은
     게이트를 거칩니다 — 이번 실행이 필요로 하는 건수가 남은 쿼터보다 많으면 CLI 요약에 영어 경고
     (`⚠ x-article was not sent: this run needs N publish(es) and the account has M left until
     <리셋 시각>.`)가 뜨고 아티클은 한 건도 나가지 않으며, 예약된 아티클도 배너의 예약분 계산에
