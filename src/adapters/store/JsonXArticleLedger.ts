@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
+import { createSerializer } from "../../shared/store/serialWrites";
 
 export interface XArticleSentEntry {
   itemId: string;
@@ -10,6 +11,7 @@ export interface XArticleSentEntry {
 
 export class JsonXArticleLedger {
   private readonly path: string;
+  private readonly serial = createSerializer();
   constructor(private readonly dir: string) {
     this.path = join(dir, "x-article.json");
   }
@@ -23,8 +25,10 @@ export class JsonXArticleLedger {
     return this.load();
   }
   async add(entry: XArticleSentEntry): Promise<void> {
-    const byId = new Map((await this.load()).map((e) => [e.itemId, e]));
-    byId.set(entry.itemId, entry);
-    await writeJsonFileAtomic(this.dir, this.path, [...byId.values()]);
+    return this.serial(async () => {
+      const byId = new Map((await this.load()).map((e) => [e.itemId, e]));
+      byId.set(entry.itemId, entry);
+      await writeJsonFileAtomic(this.dir, this.path, [...byId.values()]);
+    });
   }
 }
