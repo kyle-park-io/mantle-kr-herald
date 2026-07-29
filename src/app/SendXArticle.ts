@@ -22,10 +22,12 @@ export class SendXArticle {
     private readonly now: () => string = () => new Date().toISOString(),
     /**
      * Reads how much Typefully publishing headroom is left — the same reader `SendChannels` gates X
-     * room sends with (`publishHeadroom.ts`), so the board's banner and both gates can never name two
-     * different numbers. Optional: an install with no Typefully credentials builds this class through
-     * `headroomReader`, which answers `undefined` there, and every pre-headroom call site (all
-     * existing tests) stays valid without it. When absent the gate does not run.
+     * room sends with (`publishHeadroom.ts`), so the board's banner and both gates can never use
+     * different arithmetic to compute it. They can still show different numbers for up to a minute:
+     * the banner's read is cached, both gates' are not (`headroomReader` forces `ttlMs: 0`).
+     * Optional: an install with no Typefully credentials builds this class through `headroomReader`,
+     * which answers `undefined` there, and every pre-headroom call site (all existing tests) stays
+     * valid without it. When absent the gate does not run.
      */
     private readonly headroom?: () => Promise<Headroom>,
   ) {}
