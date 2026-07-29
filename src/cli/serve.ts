@@ -40,7 +40,10 @@ import {
   loadTypefullyConfig,
   loadXMaxWeighted,
   loadDbConfig,
+  tryLoadAuthConfig,
 } from "../config";
+import { Login } from "../app/Login";
+import { createAttemptLimiter } from "../domain/auth/attemptLimiter";
 import { createUploaders, resolveTargets } from "./uploaders";
 import type { PublishResult } from "../app/PublishTranslations";
 import { REPO_ROOT, OUTPUT_DIR, paths } from "../paths";
@@ -327,10 +330,17 @@ const prepareConversionRun = new PrepareConversionRun(
 // reformat renders byte-identical output to `pnpm format`.
 const formatVariants = new FormatVariants(conversionStore, formattingStore, undefined, loadXMaxWeighted());
 
+/**
+ * One limiter for the process, so failures accumulate across requests rather than resetting on each
+ * one. Unconfigured (`HERALD_AUTH_*` unset) it refuses every attempt — see `src/app/Login.ts`.
+ */
+const loginUseCase = new Login(tryLoadAuthConfig(), createAttemptLimiter());
+
 const deps: ApiDeps = {
   translationStore,
   saveTranslation,
   publishOne,
+  login: (credentials) => loginUseCase.run(credentials, new Date()),
   storageMode,
   formattingStore,
   conversionStore,

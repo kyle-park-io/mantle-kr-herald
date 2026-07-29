@@ -54,6 +54,7 @@ function fakeDeps(): ApiDeps {
     loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
     xMaxWeighted: 280,
     loadQuota: async () => ({ error: "not configured" }),
+    login: async () => ({ ok: false, retryAfterMs: 0 }),
   };
 }
 
@@ -109,6 +110,7 @@ describe("startServer", () => {
       loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
       xMaxWeighted: 280,
       loadQuota: async () => ({ error: "not configured" }),
+      login: async () => ({ ok: false, retryAfterMs: 0 }),
     };
     const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
     servers.push(server);
@@ -150,6 +152,7 @@ describe("startServer", () => {
       },
       xMaxWeighted: 280,
       loadQuota: async () => ({ error: "not configured" }),
+      login: async () => ({ ok: false, retryAfterMs: 0 }),
     };
     const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
     servers.push(server);

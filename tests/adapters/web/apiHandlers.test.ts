@@ -144,6 +144,7 @@ function makeDeps(
       },
     } as unknown as ApiDeps["formatVariants"],
     loadQuota: async () => ({ error: "not configured" }),
+    login: async () => ({ ok: false, retryAfterMs: 0 }),
   };
 }
 
