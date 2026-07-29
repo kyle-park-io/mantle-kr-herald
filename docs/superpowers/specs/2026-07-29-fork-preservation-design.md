@@ -36,8 +36,33 @@ with no error on screen.
 ### 1. Forks enter the lineage
 
 `LineageStage` gains **`"forked"`**. `SaveOutletOverride` takes an optional `lineage?` constructor
-argument after `now`, matching PR #60's shape exactly: best-effort, wrapped so a lineage failure is
-swallowed and can never change a save's outcome, and absent-store means no-op.
+argument after `now`, matching PR #60's shape: absent-store means no-op.
+
+**Amended during implementation — the best-effort rule is split, and the revert is the exception.**
+As designed, all three captures were to be best-effort (failure swallowed, never changes a save's
+outcome). That is right for two of them and wrong for the third, so the implemented policy is:
+
+- **Text saved and approved stay best-effort**, exactly as PR #60. The override still exists in the
+  store afterwards, so a swallowed append costs history, not text.
+- **The revert does not.** A swallowed failure followed by an unconditional `store.remove` destroys
+  a text that cannot be regenerated, leaving a `console.warn` on a server console nobody reads while
+  the board reports success. So on the revert path a failure to record — of the lineage append *or*
+  of the read that feeds it — propagates, and `remove` never runs. `apiHandlers`' PUT branch already
+  turns that throw into a readable 400, so the operator sees a failure and the fork survives.
+
+Best-effort exists so lineage cannot break a *save*. Here the "save" is a revert, which is a
+convenience the operator can retry, while the text is not regenerable — so the asymmetry is the
+point, not an inconsistency to be tidied away.
+
+Holding the *read* to the same rule matters only in the transient case: the sole implementer,
+`JsonOutletOverrideStore.remove`, re-reads the same file, so a persistently failing read already
+failed the revert. But a read that throws once and then succeeds on `remove`'s retry would delete
+the fork with no copy anywhere.
+
+Capturing before the remove also makes the pair crash-safe in the write-ahead sense. The reverse
+partial failure — capture succeeds, `remove` fails, leaving a `reverted` entry for a revert that
+never happened — is tolerated: the lineage is append-only history and the fork is still in the
+store, so a stray `reverted` entry beside a live override is expected, not a bug.
 
 `variant` is `"<type>/<outletId>"` — the same shape as the existing `"type/channel"` convention, one
 axis over.
@@ -101,9 +126,14 @@ So `state:pull` is deliberately more cautious than `config:pull`:
 
 ## Testing
 
-- Lineage capture at all three moments, including the assertion that a **throwing lineage store
-  leaves the save's return value and the store's contents unchanged** — best-effort has to be proven
-  best-effort, not assumed.
+- Lineage capture at all three moments, including the assertion that on the **text-saved and
+  approved** paths a throwing lineage store leaves the save's return value and the store's contents
+  unchanged — best-effort has to be proven best-effort, not assumed.
+- On the **revert** path the opposite assertion, for the reason in §1: a throwing lineage store (or
+  an unreadable override store) makes the call **reject** and leaves the fork **still in the store**.
+  The survival half is the one the fix rests on, so it needs a mutant that reaches it — one that
+  keeps the rejection and performs the remove anyway, since a mutant that only removes the rejection
+  dies on the first assertion and never proves survival.
 - The revert path records the discarded text. This test fails against today's code, which is the
   point.
 - Bundle round-trip: push then pull reproduces the four files byte-for-byte.

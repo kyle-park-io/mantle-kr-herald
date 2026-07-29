@@ -53,6 +53,12 @@ export class SaveOutletOverride {
        *
        * Running before the remove also makes the pair crash-safe in the write-ahead sense: a crash
        * between the two loses nothing, because the text is recorded first and still in the store.
+       *
+       * The reverse partial failure is possible and deliberately tolerated: the capture succeeds,
+       * `remove` then fails, and the lineage carries a `reverted` entry for a revert that never
+       * happened — a second one if the operator retries. That is harmless, because the lineage is
+       * append-only history and the fork is still in the store the entry says it was discarded
+       * from. **A stray `reverted` entry beside a live override is this, not a bug.**
        */
       await this.captureRevert(input, key);
       await this.store.remove(key);
@@ -123,8 +129,14 @@ export class SaveOutletOverride {
   /**
    * Reads the fork about to be discarded and records it. Nothing here is swallowed: a store that
    * cannot be read and a lineage that cannot be written both mean "no copy exists", and the caller
-   * must not go on to delete the only one. The real `JsonOutletOverrideStore.remove` re-reads the
-   * same file anyway, so a read that throws was never going to produce a successful revert.
+   * must not go on to delete the only one.
+   *
+   * Holding the *read* to that rule buys nothing in the deterministic case — the only implementer,
+   * `JsonOutletOverrideStore.remove`, re-reads the same file through the same `readJsonFile`, so a
+   * read that keeps failing already failed the revert with a byte-identical message. It is the
+   * **transient** case this is for: a read that throws once and then succeeds on `remove`'s retry
+   * used to delete the fork with no copy anywhere. That is the whole reason the guard is here, and
+   * it is not visible from the happy path.
    */
   private async captureRevert(input: SaveOutletOverrideInput, key: string): Promise<void> {
     if (!this.lineage) return;
