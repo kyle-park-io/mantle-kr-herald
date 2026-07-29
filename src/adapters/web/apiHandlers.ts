@@ -80,10 +80,11 @@ export interface ApiDeps {
   formatVariants: FormatVariants;
   /**
    * How much Typefully publishing headroom is left, for the banner — the same reader
-   * (`publishHeadroom.ts`) the send gate (`SendChannels`) reads, so the banner can never show a
-   * number the gate would refuse. `error` when the headroom itself could not be read; the name
-   * `loadQuota` and the always-200 `{ …, error? }` contract stay as they were, only the payload
-   * widens.
+   * (`publishHeadroom.ts`) the send gate (`SendChannels`) reads, so the banner and the gate can never
+   * use different arithmetic to compute it. The banner's number can still lag the gate's by up to a
+   * minute after an out-of-band publish: the banner's read is cached so it can poll cheaply, the
+   * gate's is not. `error` when the headroom itself could not be read; the name `loadQuota` and the
+   * always-200 `{ …, error? }` contract stay as they were, only the payload widens.
    */
   loadQuota: () => Promise<HeadroomView>;
 }
