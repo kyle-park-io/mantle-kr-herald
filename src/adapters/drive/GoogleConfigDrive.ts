@@ -16,7 +16,17 @@ function multipartBody(metadata: object, content: string): { boundary: string; b
 const ListSchema = z.object({ files: z.array(z.object({ id: z.string(), name: z.string() })).nullish() });
 
 export class GoogleConfigDrive implements ConfigDrive {
-  constructor(private readonly auth: TokenSource, private readonly fetchFn: typeof fetch = fetch) {}
+  /**
+   * `label` names the bundle in failure messages, nothing else — the same reason
+   * `parseConfigBundle` takes one. The likeliest failure on the operational-state path is a stale
+   * `GDRIVE_STATE_FOLDER_ID`, and `config download failed: HTTP 404` would send the operator to
+   * check the wrong environment variable.
+   */
+  constructor(
+    private readonly auth: TokenSource,
+    private readonly fetchFn: typeof fetch = fetch,
+    private readonly label: string = "config",
+  ) {}
 
   async upload(folderId: string, name: string, content: string): Promise<{ id: string }> {
     const token = await this.auth.getToken();
@@ -26,9 +36,9 @@ export class GoogleConfigDrive implements ConfigDrive {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": `multipart/related; boundary=${boundary}` },
       body,
     });
-    if (!res.ok) throw new Error(`config upload failed: HTTP ${res.status} — ${await res.text()}`);
+    if (!res.ok) throw new Error(`${this.label} upload failed: HTTP ${res.status} — ${await res.text()}`);
     const data = (await res.json()) as { id?: string };
-    if (!data.id) throw new Error("config upload response missing id");
+    if (!data.id) throw new Error(`${this.label} upload response missing id`);
     return { id: data.id };
   }
 
@@ -37,7 +47,7 @@ export class GoogleConfigDrive implements ConfigDrive {
     const q = `'${folderId}' in parents and name contains '${prefix}' and trashed = false`;
     const url = `${FILES_URL}?q=${encodeURIComponent(q)}&orderBy=${encodeURIComponent("createdTime desc")}&pageSize=1&fields=${encodeURIComponent("files(id,name)")}`;
     const res = await this.fetchFn(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`config list failed: HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`${this.label} list failed: HTTP ${res.status}`);
     const data = ListSchema.parse(await res.json());
     return (data.files ?? [])[0];
   }
@@ -45,7 +55,7 @@ export class GoogleConfigDrive implements ConfigDrive {
   async download(fileId: string): Promise<string> {
     const token = await this.auth.getToken();
     const res = await this.fetchFn(`${FILES_URL}/${fileId}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`config download failed: HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`${this.label} download failed: HTTP ${res.status}`);
     return await res.text();
   }
 }

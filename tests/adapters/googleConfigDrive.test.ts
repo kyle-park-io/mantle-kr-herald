@@ -49,4 +49,25 @@ describe("GoogleConfigDrive", () => {
     const f = fakeFetch(() => ({ ok: false, status: 403, text: "denied" }));
     await expect(new GoogleConfigDrive(auth, f.fn).upload("F", "n", "c")).rejects.toThrow(/403/);
   });
+
+  it("says `config` by default, so the existing commands read as before", async () => {
+    const f = fakeFetch(() => ({ ok: false, status: 404 }));
+    await expect(new GoogleConfigDrive(auth, f.fn).download("F1")).rejects.toThrow("config download failed: HTTP 404");
+  });
+
+  it("names the bundle it was given, so a stale folder id points at the right env var", async () => {
+    // The likeliest operational-state failure is a stale GDRIVE_STATE_FOLDER_ID. Reporting it as a
+    // `config download failed` would send the operator to check GDRIVE_CONFIG_FOLDER_ID instead.
+    const drive = new GoogleConfigDrive(auth, fakeFetch(() => ({ ok: false, status: 404 })).fn, "operational-state");
+    await expect(drive.download("F1")).rejects.toThrow("operational-state download failed: HTTP 404");
+
+    const listing = new GoogleConfigDrive(auth, fakeFetch(() => ({ ok: false, status: 404 })).fn, "operational-state");
+    await expect(listing.latest("F", "p")).rejects.toThrow("operational-state list failed: HTTP 404");
+
+    const upload = new GoogleConfigDrive(auth, fakeFetch(() => ({ ok: false, status: 403, text: "x" })).fn, "operational-state");
+    await expect(upload.upload("F", "n", "c")).rejects.toThrow(/^operational-state upload failed/);
+
+    const noId = new GoogleConfigDrive(auth, fakeFetch(() => ({ ok: true, json: {} })).fn, "operational-state");
+    await expect(noId.upload("F", "n", "c")).rejects.toThrow("operational-state upload response missing id");
+  });
 });

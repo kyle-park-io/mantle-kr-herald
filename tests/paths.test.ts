@@ -33,6 +33,13 @@ describe("paths", () => {
     expect(paths.archiveDir).toBe(join(OUTPUT_DIR, "archive"));
   });
 
+  it("names the four non-regenerable operational files (what `state:push` snapshots)", () => {
+    expect(paths.formattedOverrides).toBe(join(OUTPUT_DIR, "formatted", "overrides.json"));
+    expect(paths.publishDeliveries).toBe(join(OUTPUT_DIR, "publish", "deliveries.json"));
+    expect(paths.publishXArticle).toBe(join(OUTPUT_DIR, "publish", "x-article.json"));
+    expect(paths.publishState).toBe(join(OUTPUT_DIR, "publish", "state.json"));
+  });
+
   it("points the steering config dirs at the repo root", () => {
     expect(paths.translationConfigDir).toBe(join(REPO_ROOT, "translation"));
     expect(paths.conversionConfigDir).toBe(join(REPO_ROOT, "conversion"));
