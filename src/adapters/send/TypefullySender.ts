@@ -48,7 +48,19 @@ export class TypefullySender implements ChannelSender {
       const ambiguous = create.status >= 500 ? " — the draft may have been created; check the Typefully queue before re-running" : "";
       throw new Error(`Typefully create draft failed: HTTP ${create.status}${detail ? ` — ${detail}` : ""}${ambiguous}`);
     }
-    const draft = (await create.json()) as { id?: number | string; share_url?: string };
+    // A 200 already came back: the draft's existence is certain, not ambiguous — the per-attempt
+    // timeout signal (`createTypefullyFetch`) stays armed after `fetch()` resolves, so a body that
+    // stalls past the budget throws here, outside the retry wrapper's idempotency handling. Say what
+    // is actually true instead of the wrapper's hedged "may still have been processed".
+    let draft: { id?: number | string; share_url?: string };
+    try {
+      draft = (await create.json()) as { id?: number | string; share_url?: string };
+    } catch (err) {
+      throw new Error(
+        `Typefully accepted the draft but its response could not be read: ${(err as Error).message} — the draft WAS created; check the Typefully queue before re-running`,
+        { cause: err },
+      );
+    }
     const draftId = draft.id !== undefined ? String(draft.id) : undefined;
     return { postId: draftId, url: draft.share_url };
   }

@@ -122,4 +122,19 @@ describe("TypefullySender — retry behaviour", () => {
     });
     expect(calls).toHaveLength(2);
   });
+
+  // Headers arrived inside the per-attempt timeout budget (ok = true), but the body stalled past it —
+  // this happens OUTSIDE createTypefullyFetch's retry wrapper, so it must not be reported with the
+  // wrapper's hedged "may still have been processed": a 200 already means the draft exists for sure.
+  it("says the draft WAS created when the response body fails to read after a 200", async () => {
+    const fn = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => { throw new Error("The operation was aborted due to timeout"); },
+    })) as unknown as typeof fetch;
+    const sender = new TypefullySender("KEY", "42", fn, async () => {});
+    await expect(
+      sender.send({ itemId: "x:1", type: "announcement", channel: "x", segments: ["hi"] }),
+    ).rejects.toThrow(/draft WAS created/);
+  });
 });
