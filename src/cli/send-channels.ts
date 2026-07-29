@@ -5,6 +5,7 @@ import { loadTelegramChatIds, loadXMaxWeighted } from "../config";
 import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
 import { JsonDeliveryLedger } from "../adapters/store/JsonDeliveryLedger";
 import { JsonOutletOverrideStore } from "../adapters/store/JsonOutletOverrideStore";
+import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { ALL_OUTLETS, deliveredByChannelSender, outletById, outletsForChannel } from "../domain/outlet/models";
 import { SendChannels } from "../app/SendChannels";
 import { resolveChannelTargets, createSenders } from "./channelSenders";
@@ -40,6 +41,9 @@ const ledger = new JsonDeliveryLedger(paths.publishDir);
 // The CLI has to honour forks too: a room that received its own copy from the dashboard must not
 // receive the group copy from here, or the two disagree about what that room was sent.
 const overrides = new JsonOutletOverrideStore(paths.formattedDir);
+// Each room's approval is checked against the approval of the translation it came from, so copy
+// whose source was withdrawn — or rewritten and re-approved since — stays put instead of going live.
+const translations = new JsonTranslationStore(paths.translationsDir);
 const record = await buildRecorder();
 const archive = await buildArchiver();
 
@@ -47,6 +51,7 @@ const result = await new SendChannels(
   store,
   senders,
   ledger,
+  translations,
   record,
   archive,
   undefined,

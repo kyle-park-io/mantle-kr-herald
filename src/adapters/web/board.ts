@@ -4,6 +4,7 @@ import { ALL_CHANNELS, type Channel, type ChannelRendering } from "../../domain/
 import { deliveredByChannelSender, outletsForChannel, type Outlet } from "../../domain/outlet/models";
 import { overrideKey, textFor, type OutletOverride } from "../../domain/outlet/override";
 import { deliveryKey, type DeliveryEntry } from "../../domain/delivery/models";
+import { sendBlock, type SendBlock, type SourceApproval } from "../../domain/send/sendBlock";
 
 /** One room under a group card: what it will send, and whether it already went out. */
 export interface BoardRow {
@@ -15,6 +16,11 @@ export interface BoardRow {
   forked: boolean;
   status: "rendered" | "approved";
   text: string;
+  /**
+   * Why this room cannot send yet, or absent when it can. From `sendBlock` — the same call
+   * `SendChannels` makes — so a row that paints as sendable is exactly a row that sends.
+   */
+  block?: SendBlock;
   deliveryStatus?: "sent" | "delivered";
   at?: string;
   url?: string;
@@ -76,6 +82,8 @@ export function buildBoard(
   renderings: ChannelRendering[],
   overrides: OutletOverride[],
   deliveries: DeliveryEntry[],
+  /** The 1차 translation these renderings descend from; `undefined` blocks every row, loudly. */
+  translation: SourceApproval | undefined,
 ): BoardView {
   const mine = renderings.filter((r) => r.itemId === itemId);
   const overrideByKey = new Map(overrides.map((o) => [overrideKey(o), o] as const));
@@ -111,6 +119,7 @@ export function buildBoard(
     const rows: PendingRow[] = rowed.map((o) => {
       const resolved = textFor(r, overrideByKey.get(keyOf(o)));
       const entry = deliveryByKey.get(deliveryKey({ itemId, type: r.type, outletId: o.id }));
+      const block = sendBlock(resolved, translation);
       return {
         outletId: o.id,
         label: o.label,
@@ -118,6 +127,7 @@ export function buildBoard(
         forked: resolved.forked,
         status: resolved.status,
         text: resolved.text,
+        ...(block ? { block } : {}),
         ...(entry ? { deliveryStatus: entry.status, at: entry.at, url: entry.url } : {}),
       };
     });

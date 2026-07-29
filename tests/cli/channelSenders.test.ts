@@ -8,6 +8,7 @@ import type { DeliveryLedger } from "../../src/ports/DeliveryLedger";
 import type { ChannelRendering } from "../../src/domain/formatting/models";
 import type { DeliveryEntry } from "../../src/domain/delivery/models";
 import { deliveryKey } from "../../src/domain/delivery/models";
+import type { TranslationStore } from "../../src/ports/TranslationStore";
 
 describe("resolveChannelTargets", () => {
   it("defaults to all channels", () => {
@@ -66,9 +67,18 @@ describe("createSenders — telegram on a per-room .env", () => {
 
     const rendering: ChannelRendering = {
       itemId: "x:1", type: "announcement", channel: "telegram", text: "본문", refined: false,
-      createdAt: "2026-07-29T00:00:00Z", status: "approved",
+      createdAt: "2026-07-29T00:00:00Z", status: "approved", approvedAt: "2026-07-29T01:00:00Z",
     };
     const store: FormattingStore = { loadAll: async () => [rendering], upsert: async () => {}, listRenderedKeys: async () => new Set() };
+    // The 1차 source, approved before the rendering — `sendBlock` compares the two stamps.
+    const translations: TranslationStore = {
+      loadAll: async () => [{
+        itemId: "x:1", source: "x", sourceText: "src", koreanText: "ko",
+        status: "approved", translatedAt: "2026-07-28T00:00:00Z", approvedAt: "2026-07-28T12:00:00Z",
+      }],
+      upsert: async () => {},
+      listTranslatedIds: async () => new Set(["x:1"]),
+    };
     let rows: DeliveryEntry[] = [];
     const ledger: DeliveryLedger = {
       loadAll: async () => rows,
@@ -79,7 +89,7 @@ describe("createSenders — telegram on a per-room .env", () => {
 
     // The real CLI wiring: senders from `createSenders`, chat ids from `loadTelegramChatIds`.
     const res = await new SendChannels(
-      store, createSenders(["telegram"]), ledger, undefined, undefined, () => "T", undefined, outletsForChannel, loadTelegramChatIds(),
+      store, createSenders(["telegram"]), ledger, translations, undefined, undefined, () => "T", undefined, outletsForChannel, loadTelegramChatIds(),
     ).run({ targets: ["telegram"] });
 
     expect(res.sent).toBe(2);
