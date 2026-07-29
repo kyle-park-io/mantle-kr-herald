@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { access, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fork } from "node:child_process";
@@ -8,6 +8,19 @@ import { withFileLock } from "../../../src/shared/store/fileLock";
 const scratch = () => mkdtemp(join(tmpdir(), "lock-"));
 
 const exists = (path: string) => access(path).then(() => true, () => false);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const mtimeOf = async (path: string) => (await stat(path)).mtimeMs;
+
+/** Polls until `cond` holds, so a test never has to guess how long acquisition takes. */
+const waitFor = async (cond: () => Promise<boolean>) => {
+  for (let i = 0; i < 400; i += 1) {
+    if (await cond()) return;
+    await sleep(5);
+  }
+  throw new Error("condition never became true");
+};
 
 const deferred = () => {
   let resolve!: () => void;
@@ -28,6 +41,26 @@ const run = (script: string, args: string[]) =>
     const child = fork(script, args, { execArgv: ["--import", "tsx"] });
     child.on("error", reject);
     child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))));
+  });
+
+/** Reports whether a child process ended on its own, distinguishing that from having to be killed. */
+const runWithin = (script: string, args: string[], ms: number) =>
+  new Promise<string>((resolve, reject) => {
+    const child = fork(script, args, { execArgv: ["--import", "tsx"] });
+    const giveUp = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve("hung");
+    }, ms);
+    child.on("error", (err) => {
+      clearTimeout(giveUp);
+      reject(err);
+    });
+    child.on("exit", (code, signal) => {
+      clearTimeout(giveUp);
+      // Killed by the timer above, which has already resolved.
+      if (signal) return;
+      resolve(code === 0 ? "exited" : `exit ${code}`);
+    });
   });
 
 describe("withFileLock", () => {
@@ -211,5 +244,130 @@ describe("withFileLock", () => {
     releaseHolder();
     await Promise.all([holder, waiter]);
     expect(order).toEqual(["holder:start", "holder:end", "waiter"]);
+  });
+
+  describe("heartbeat", () => {
+    // The mechanism, on its own: while a job runs, its lock's mtime keeps moving. Everything below
+    // depends on this, so it is asserted directly rather than only through its consequences.
+    it("keeps stamping the lock of a holder that is still working", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const lock = `${path}.lock`;
+      const mayExit = deferred();
+      // staleMs 300 puts a beat every 50ms, so the window watched below covers several.
+      const holder = withFileLock(path, () => mayExit.promise, { staleMs: 300 });
+      await waitFor(() => exists(lock));
+      const atAcquisition = await mtimeOf(lock);
+      await sleep(300);
+      const later = await mtimeOf(lock);
+      mayExit.resolve();
+      await holder;
+      expect(later).toBeGreaterThan(atAcquisition);
+    });
+
+    /**
+     * THE reason the heartbeat exists. A holder that works for longer than the staleness window used
+     * to be indistinguishable from a holder that died, so the next waiter reclaimed its lock and
+     * walked straight into the read-modify-write it was still running — two writers, one ledger, and
+     * whichever row loses the rename becomes a live post the ledger cannot see.
+     *
+     * The hold here is three full staleness windows. Without a heartbeat the mtime is stamped once
+     * at acquisition, so the waiter reclaims on its first retry and returns "walked in".
+     */
+    it("does not let a waiter reclaim the lock of a holder that is still working", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const lock = `${path}.lock`;
+      const mayExit = deferred();
+      const holder = withFileLock(path, () => mayExit.promise, { staleMs: 500 });
+      await waitFor(() => exists(lock));
+      await sleep(1_500);
+      // timeoutMs above staleMs, so this is the ordinary contended path rather than the
+      // misconfigured-timeout diagnostic.
+      await expect(
+        withFileLock(path, async () => "walked in", { staleMs: 500, timeoutMs: 700 }),
+      ).rejects.toThrow(/Timed out/);
+      mayExit.resolve();
+      await holder;
+    }, 15_000);
+
+    /**
+     * The `unref`. Every caller of this module is a short-lived CLI that has to exit when its work
+     * is done; a ref'd interval left armed by a hold that never settles is the only live handle and
+     * hangs the command forever with no output. A real child process is the only honest way to test
+     * "does this process exit" — see `fileLock.heartbeat-child.mjs` for the setup.
+     */
+    it("does not keep a short-lived CLI alive with its heartbeat timer", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const script = join(import.meta.dirname, "fileLock.heartbeat-child.mjs");
+      expect(await runWithin(script, [path], 10_000)).toBe("exited");
+    }, 20_000);
+
+    /**
+     * Teardown on the throwing path. A released lock is deleted, so a surviving timer would usually
+     * reap itself on the next beat's ENOENT — which is exactly why this probes instead of trusting
+     * that: it puts the dead holder's own token back on the path, so a timer that outlived the throw
+     * still recognises the file as its own and stamps it. Nothing else in the module writes here, so
+     * a moved mtime can only be a heartbeat that should not still be running.
+     *
+     * staleMs 3_000 puts the next beat 500ms out, comfortably after the probe file is in place and
+     * comfortably inside the window watched below.
+     */
+    it("stops the heartbeat when the job throws", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const lock = `${path}.lock`;
+      let token = "";
+      await expect(
+        withFileLock(
+          path,
+          async () => {
+            token = (await readFile(lock, "utf8")).trim();
+            throw new Error("boom");
+          },
+          { staleMs: 3_000 },
+        ),
+      ).rejects.toThrow("boom");
+
+      await writeFile(lock, `${token}\n`);
+      // Ages the probe so any stamp at all is unmistakable rather than a millisecond of rounding.
+      await backdate(lock, 5_000);
+      const before = await mtimeOf(lock);
+      await sleep(900);
+      expect(await mtimeOf(lock)).toBe(before);
+    }, 15_000);
+
+    /**
+     * Ownership. A holder frozen past the staleness window has its lock reclaimed underneath it; if
+     * its heartbeat then kept stamping the path blindly, it would keep the *successor's* lock
+     * looking fresh. That is not a cosmetic mistake: should the successor die, nothing would ever
+     * judge its lock stale while the original holder's timer ran, and the ledger would stay wedged
+     * until someone deleted the file by hand — the heartbeat inventing the deadlock it was added to
+     * prevent.
+     *
+     * The successor is written by hand rather than acquired by a real reclaimer, because a real one
+     * runs a heartbeat of its own and then no assertion could say whose stamp it was reading.
+     */
+    it("does not refresh a lock it no longer owns", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const lock = `${path}.lock`;
+      const mayExit = deferred();
+      // staleMs 300 puts a beat every 50ms — several inside the window watched below.
+      const stalled = withFileLock(path, () => mayExit.promise, { staleMs: 300 });
+      await waitFor(() => exists(lock));
+
+      await writeFile(lock, "999999:owned-by-someone-else\n");
+      await backdate(lock, 5_000);
+      const before = await mtimeOf(lock);
+      await sleep(300);
+      expect(await mtimeOf(lock)).toBe(before);
+
+      mayExit.resolve();
+      await stalled;
+      // And on the way out it must leave the stranger's lock alone, too.
+      expect(await exists(lock)).toBe(true);
+    });
   });
 });
