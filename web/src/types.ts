@@ -249,15 +249,37 @@ export interface BoardRow {
   text: string;
   /** Why this room cannot send yet, or absent when it can. Mirrors `SendBlock`. */
   block?: SendBlock;
-  deliveryStatus?: "sent" | "delivered";
+  /**
+   * `dropped` is a scheduled X post whose Typefully draft was deleted before it published — nothing
+   * reached the room. It is NOT a third kind of "done": the row must read as sendable, the same as a
+   * room with no `deliveryStatus` at all. See `deliveredToRoom` below, the one place that decides
+   * which values count.
+   */
+  deliveryStatus?: "sent" | "delivered" | "dropped";
   /** Sent, but still a scheduled Typefully draft — `at` is when it was queued, not when it posted. */
   awaitingPublish?: boolean;
+  /**
+   * When this row's `deliveryStatus` was set. For `dropped` this is the moment the post was
+   * *scheduled*, not when the draft was later deleted — rendering it as a send/cancel timestamp
+   * would claim a precision the ledger does not keep.
+   */
   at?: string;
   url?: string;
   /** How many rows on this board address this same room, and which of them this is (1-based). */
   siblingCount: number;
   siblingIndex: number;
 }
+
+/**
+ * Whether a room's `deliveryStatus` means the room already has this copy — the dashboard's
+ * counterpart to `deliveredToRoom` in `src/domain/delivery/models.ts`. `OutletCard` and
+ * `OutletBoard` both count a room toward `{n}/{total}곳 완료` through this one predicate rather than
+ * each re-deriving it, so the two tallies cannot silently disagree — and so a `dropped` row (a
+ * truthy string, same as `sent`/`delivered`) does not accidentally count as done just because
+ * `deliveryStatus` is no longer `undefined`.
+ */
+export const deliveredToRoom = (row: Pick<BoardRow, "deliveryStatus">): boolean =>
+  row.deliveryStatus === "sent" || row.deliveryStatus === "delivered";
 
 /** One `(type, channel)` rendering plus the rooms that receive it. One card on screen. */
 export interface BoardGroup {

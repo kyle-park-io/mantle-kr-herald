@@ -14,6 +14,7 @@ import {
   PASTE_DESTINATION,
   SEND_BLOCK_REASON,
   TYPE_LABEL,
+  deliveredToRoom,
   outletLabel,
   type BoardGroup,
   type BoardRow,
@@ -248,7 +249,7 @@ export function OutletCard(props: {
           </span>
         )}
         <span className="ml-auto text-[12px] text-faint">
-          {rows.filter((r) => r.deliveryStatus).length}/{rows.length}곳 완료
+          {rows.filter(deliveredToRoom).length}/{rows.length}곳 완료
         </span>
       </header>
 
@@ -647,6 +648,10 @@ function Row(props: {
   const locked = row.block !== undefined;
   const sent = row.deliveryStatus === "sent";
   const delivered = row.deliveryStatus === "delivered";
+  // Neither `sent` nor `delivered`, on purpose: the scheduled draft was deleted before it published,
+  // so this room has nothing. It falls through to the same 발송/전달함 affordances as a room with no
+  // deliveryStatus at all — the branches below never test for `dropped` — and only adds the note.
+  const dropped = row.deliveryStatus === "dropped";
   const highlighted = props.hovered === row.outletId;
   const strandedFork = row.forked && row.block === "unapproved" && group.status === "approved";
   const blocked = busy || dirty;
@@ -743,6 +748,17 @@ function Row(props: {
         <span className="text-[12px] text-faint">{row.delivery === "auto" ? "자동" : "수동"}</span>
         {row.pending && (
           <span className="rounded bg-bg px-1.5 py-0.5 text-[11px] font-medium text-muted">추가됨 · 미저장</span>
+        )}
+        {dropped && (
+          // `at` is when the post was *scheduled*, not when the draft was deleted — the tip says so
+          // rather than pairing a timestamp with "취소" the way `예약됨`/재발송 pair one with a send.
+          <Tip
+            text={`${stampFull(row.at) ?? ""}에 예약했지만 게시되기 전에 취소되어 이 방에는 올라가지 않았습니다. 다시 보낼 수 있습니다.`}
+          >
+            <span className="rounded bg-amber-soft px-1.5 py-0.5 text-[11px] font-medium text-amber-ink">
+              예약 취소됨
+            </span>
+          </Tip>
         )}
 
         <button
@@ -882,6 +898,13 @@ function Row(props: {
               </button>
             </>
           )}
+          {/*
+            `!row.deliveryStatus` still means "no ledger entry at all" with `dropped` in the union: a
+            room can only be `pending` (client-added, no server row yet) while `deliveryByKey` in
+            `board.ts` has nothing for it — and that map is keyed on presence, not on which status —
+            so a `dropped` entry already routes the room into `group.rows` server-side and it is never
+            both `pending` and `dropped` at once.
+          */}
           {row.pending && !row.deliveryStatus && (
             <button
               className="text-[13px] text-faint transition-colors hover:text-ink"

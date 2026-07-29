@@ -1,6 +1,7 @@
 // tests/adapters/web/board.test.ts
 import { describe, expect, it } from "vitest";
 import { buildBoard } from "../../../src/adapters/web/board";
+import { deliveredToRoom } from "../../../src/domain/delivery/models";
 import type { ChannelRendering } from "../../../src/domain/formatting/models";
 import type { SourceApproval } from "../../../src/domain/send/sendBlock";
 
@@ -65,6 +66,27 @@ describe("buildBoard", () => {
     const rows = board.groups[0]!.rows;
     expect(rows.find((row) => row.outletId === "tg-community")).toMatchObject({ deliveryStatus: "sent", url: "u" });
     expect(rows.find((row) => row.outletId === "tg-dev")?.deliveryStatus).toBeUndefined();
+  });
+
+  /**
+   * A `dropped` row is a scheduled Typefully draft that was deleted before it published: the room
+   * never received anything, so the board must forward that fact rather than silently treating the
+   * row like a `sent` one. `deliveredToRoom` is the one predicate the board's own send gate
+   * (`sendBlock`/`SendChannels`) and the ledgers already agree "already delivered" means — the same
+   * value the dashboard's completion tally has to agree with, or a dropped room would count as done
+   * while still offering nothing but a stale record.
+   */
+  it("surfaces a dropped delivery as `deliveryStatus: \"dropped\"`, not as delivered", () => {
+    const board = buildBoard("x:1", [r("x", "x", "트윗")], [], [
+      { itemId: "x:1", type: "x", outletId: "x-post", status: "dropped", at: "T", by: "auto" },
+    ], approvedSource);
+    const row = board.groups[0]!.rows.find((row) => row.outletId === "x-post");
+    expect(row).toMatchObject({ deliveryStatus: "dropped", at: "T" });
+    // Not a live url either — a dropped draft was deleted before it ever had one.
+    expect(row?.url).toBeUndefined();
+    // The same predicate every ledger's `loadKeys()` uses to decide "already delivered" says no —
+    // proving the tally the dashboard builds from this field would exclude the row too.
+    expect(deliveredToRoom({ status: row?.deliveryStatus })).toBe(false);
   });
 
   it("numbers a room that appears in several groups", () => {

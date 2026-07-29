@@ -22,13 +22,20 @@ export interface BoardRow {
    * `SendChannels` makes — so a row that paints as sendable is exactly a row that sends.
    */
   block?: SendBlock;
-  deliveryStatus?: "sent" | "delivered";
+  /**
+   * `dropped` mirrors `DeliveryEntry["status"]` verbatim — a scheduled X post whose Typefully draft
+   * was deleted before it published, so nothing reached the room. It is deliberately not a third
+   * "done" state: `deliveredToRoom` (see `../../domain/delivery/models.ts`) is what excludes it from
+   * every "already delivered" question, and the dashboard's own tally must agree.
+   */
+  deliveryStatus?: "sent" | "delivered" | "dropped";
   /**
    * Sent, but the post is a scheduled Typefully draft that has not been looked up yet — so `at` is
    * when it was queued, `url` is missing, and the row must not claim to be live. See
    * `awaitingPublish`.
    */
   awaitingPublish?: boolean;
+  /** When `deliveryStatus` was set. For `dropped`, this is when the post was scheduled, not retired. */
   at?: string;
   url?: string;
   /** How many rows on this board address this same room, and which of them this is (1-based). */

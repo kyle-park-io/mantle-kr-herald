@@ -175,6 +175,19 @@ describe("web type mirror", () => {
     expect(Object.keys(WEB_CHANNEL_RENDERS_BOLD).sort()).toEqual(Object.keys(CHANNEL_RENDERS_BOLD).sort());
   });
 
+  /**
+   * `deliveryStatus` is a plain string union, not enumerable from either side at runtime (there is
+   * no `ALL_DELIVERY_STATUSES` array to iterate) — `SameUnion` is the only check that can catch a
+   * drift here at all. Widening `DeliveryEntry["status"]` (Task 2's `dropped`) without widening the
+   * mirror would leave the dashboard reading `dropped` rows as `undefined`, painting them as never
+   * having gone out rather than as a retired scheduled post.
+   */
+  it("mirrors the delivery status union", () => {
+    type Check = SameUnion<NonNullable<BoardRow["deliveryStatus"]>, NonNullable<WebBoardRow["deliveryStatus"]>>;
+    const ok: Check = true;
+    expect(ok).toBe(true);
+  });
+
   /** [복사] hands a human the `_paste` spelling; the canonical text would paste raw markdown. */
   it("names each channel's paste destination as the domain does", () => {
     for (const channel of ALL_CHANNELS) {
