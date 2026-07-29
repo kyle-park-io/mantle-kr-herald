@@ -446,5 +446,14 @@ console.log(`Review dashboard on http://localhost:${port}  (build the UI first: 
 
 // The board's [게시 확인] button stays — this only means an operator who never clicks it still
 // sees real x.com links, a couple of minutes after the post goes out.
-const stopReconcile = startReconcileScheduler(reconcilePublished, { log: (m) => console.log(m) });
-for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => { stopReconcile(); process.exit(0); });
+//
+// Guarded: a Telegram-only install has no TYPEFULLY_* env. Every other Typefully-optional path on
+// this branch treats that as "nothing to do" (quotaReader returns undefined, doctor uses
+// optionalCheck) — without this guard, `reconcilePublished` would report the missing-key error as
+// `r.error` on every tick, forever, on an install that is not broken.
+try {
+  loadTypefullyConfig();
+  startReconcileScheduler(reconcilePublished, { log: (m) => console.log(m) });
+} catch {
+  // Typefully not configured — nothing was ever scheduled through it, so there is nothing to reconcile.
+}
