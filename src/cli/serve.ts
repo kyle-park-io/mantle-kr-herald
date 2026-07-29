@@ -34,6 +34,7 @@ import { createSenders } from "./channelSenders";
 import { buildRecorder } from "./recorder";
 import { buildArchiver } from "./archiver";
 import { quotaReader } from "./typefullyQuotaReader";
+import { startReconcileScheduler } from "./reconcileScheduler";
 import type { SendableChannel } from "../domain/send/channels";
 import {
   loadStorageMode,
@@ -416,3 +417,8 @@ const deps: ApiDeps = {
 
 startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist"), localPublishDir: paths.publishLocalDir });
 console.log(`Review dashboard on http://localhost:${port}  (build the UI first: pnpm build:web)`);
+
+// The board's [게시 확인] button stays — this only means an operator who never clicks it still
+// sees real x.com links, a couple of minutes after the post goes out.
+const stopReconcile = startReconcileScheduler(reconcilePublished, { log: (m) => console.log(m) });
+for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => { stopReconcile(); process.exit(0); });
