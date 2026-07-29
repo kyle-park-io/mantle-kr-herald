@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ALL_TYPES, typeLabel } from "../../src/domain/conversion/models";
 import { ALL_CHANNELS } from "../../src/domain/formatting/models";
 import { DESTINATIONS_BY_CHANNEL } from "../../src/domain/formatting/emitters";
+import type { Destination } from "../../src/domain/formatting/emitters/types";
 import { ALL_OUTLETS } from "../../src/domain/outlet/models";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
 import type { FormatWarning } from "../../src/app/FormatVariants";
@@ -12,6 +13,8 @@ import {
   OUTLET_LABEL as WEB_OUTLET_LABEL,
   OUTLET_DELIVERY as WEB_OUTLET_DELIVERY,
   PASTE_DESTINATION as WEB_PASTE_DESTINATION,
+  DESTINATION_LABEL as WEB_DESTINATION_LABEL,
+  type Destination as WebDestination,
   type BoardView as WebBoardView,
   type BoardGroup as WebBoardGroup,
   type BoardRow as WebBoardRow,
@@ -28,6 +31,10 @@ import {
 /** `true` when A and B carry exactly the same keys; otherwise a tuple naming the ones that drifted. */
 type Drift<A, B> = Exclude<keyof A, keyof B> | Exclude<keyof B, keyof A>;
 type SameKeys<A, B> = [Drift<A, B>] extends [never] ? true : ["board mirror drifted on", Drift<A, B>];
+/** The same check for two string unions rather than two object types. */
+type SameUnion<A extends string, B extends string> = [Exclude<A, B> | Exclude<B, A>] extends [never]
+  ? true
+  : ["mirror drifted on", Exclude<A, B> | Exclude<B, A>];
 
 describe("web type mirror", () => {
   it("mirrors ALL_TYPES from the domain, in the same order", () => {
@@ -108,6 +115,25 @@ describe("web type mirror", () => {
     const keys: SameKeys<WebFormatWarning, FormatWarning> = true;
     expect([fromDomain, toDomain]).toHaveLength(2);
     expect(keys).toBe(true);
+  });
+
+  /**
+   * The last unchecked corner of the mirror. `Destination` is a union, not an array, so nothing on
+   * the domain side is enumerable at runtime — but every destination is reachable from some
+   * channel, which `DESTINATIONS_BY_CHANNEL` does enumerate. Adding one to the domain without
+   * mirroring it renders an *unlabelled* tab in 목적지별 출력 — and since `RenderingDetail.tsx` was
+   * deleted, that panel is the only place a reviewer ever sees the outgoing bytes.
+   *
+   * Two checks, for the same reason the board payload has two: `SameUnion` compares the unions at
+   * compile time (a destination in neither channel map still cannot drift), and the key-set check
+   * proves the dashboard has a Korean label for each one.
+   */
+  it("mirrors every destination, and labels each of them", () => {
+    const unions: SameUnion<WebDestination, Destination> = true;
+    const reachable = [...new Set(ALL_CHANNELS.flatMap((c) => DESTINATIONS_BY_CHANNEL[c]))].sort();
+    expect(Object.keys(WEB_DESTINATION_LABEL).sort()).toEqual(reachable);
+    expect(Object.values(WEB_DESTINATION_LABEL).filter((label) => label.trim() === "")).toEqual([]);
+    expect(unions).toBe(true);
   });
 
   /** [복사] hands a human the `_paste` spelling; the canonical text would paste raw markdown. */
