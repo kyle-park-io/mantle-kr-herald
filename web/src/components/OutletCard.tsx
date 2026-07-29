@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { btn, btnDanger, btnPrimary } from "../buttonStyles";
 import { reformatMessage } from "../reformatMessage";
+import { rowEditorGate } from "../rowEditor";
 import {
   CHANNEL_LABEL,
   DESTINATION_LABEL,
@@ -574,6 +575,8 @@ function Row(props: {
   const highlighted = props.hovered === row.outletId;
   const strandedFork = row.forked && locked && group.status === "approved";
   const blocked = busy || dirty;
+  // What this room's editor may still do. A `sent` row is read-only: see `rowEditorGate`.
+  const gate = rowEditorGate(row, { busy, draft: props.draft });
 
   const apply = (reply: { board: BoardView }, collapse = false) => {
     props.onSettle(collapse);
@@ -616,9 +619,15 @@ function Row(props: {
           className={`rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors ${
             row.forked ? "bg-amber-soft text-amber-ink" : "text-faint hover:text-ink"
           }`}
-          title={row.forked ? "이 방만의 글을 펼칩니다" : "이 방만 다른 글을 씁니다"}
+          title={
+            gate.readOnly
+              ? "이 방에 나간 글을 봅니다 — 고칠 수 없습니다"
+              : row.forked
+                ? "이 방만의 글을 펼칩니다"
+                : "이 방만 다른 글을 씁니다"
+          }
         >
-          {row.forked ? "✎따로" : "✎ 따로 쓰기"}
+          {gate.readOnly ? (row.forked ? "✎따로 · 보기" : "글 보기") : row.forked ? "✎따로" : "✎ 따로 쓰기"}
         </button>
 
         <span className="ml-auto flex flex-wrap items-center gap-2">
@@ -721,22 +730,29 @@ function Row(props: {
       {props.open && (
         <div className="px-4 pb-3">
           <textarea
-            className="min-h-32 w-full resize-y rounded-lg border border-line bg-surface p-3 text-[13px] leading-relaxed text-ink outline-none transition-colors focus:border-mint focus:ring-4 focus:ring-mint/10"
+            className={`min-h-32 w-full resize-y rounded-lg border border-line p-3 text-[13px] leading-relaxed outline-none transition-colors ${
+              gate.readOnly
+                ? "cursor-default bg-bg text-muted"
+                : "bg-surface text-ink focus:border-mint focus:ring-4 focus:ring-mint/10"
+            }`}
             value={props.draft}
             onChange={(e) => props.onDraft(e.target.value)}
+            readOnly={gate.readOnly}
             spellCheck={false}
-            aria-label={`${row.label} 전용 글`}
+            aria-label={gate.readOnly ? `${row.label}에 발송된 글` : `${row.label} 전용 글`}
           />
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              className={btn}
-              disabled={busy || props.draft.trim() === "" || props.draft === row.text}
-              title={row.forked ? undefined : "저장하면 이 방은 그룹과 분리되어 따로 검수·발송합니다"}
-              onClick={() => run(async () => apply(await api.editOutlet(itemId, type, row.outletId, props.draft)))}
-            >
-              저장
-            </button>
-            {props.draft !== row.text && (
+            {gate.showSave && (
+              <button
+                className={btn}
+                disabled={gate.saveDisabled}
+                title={row.forked ? undefined : "저장하면 이 방은 그룹과 분리되어 따로 검수·발송합니다"}
+                onClick={() => run(async () => apply(await api.editOutlet(itemId, type, row.outletId, props.draft)))}
+              >
+                저장
+              </button>
+            )}
+            {gate.showCancel && (
               <button
                 className={btn}
                 disabled={busy}
@@ -746,22 +762,22 @@ function Row(props: {
                 취소
               </button>
             )}
-            {row.forked &&
-              (row.status === "approved" ? (
-                <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[12px] font-medium text-mint">
-                  승인됨 ✓
-                </span>
-              ) : (
-                <button
-                  className={btnPrimary}
-                  disabled={busy || props.draft !== row.text}
-                  title={props.draft !== row.text ? SAVE_FIRST : undefined}
-                  onClick={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId)))}
-                >
-                  승인 ✓
-                </button>
-              ))}
-            {row.forked && (
+            {gate.showApproved && (
+              <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[12px] font-medium text-mint">
+                승인됨 ✓
+              </span>
+            )}
+            {gate.showApprove && (
+              <button
+                className={btnPrimary}
+                disabled={gate.approveDisabled}
+                title={props.draft !== row.text ? SAVE_FIRST : undefined}
+                onClick={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId)))}
+              >
+                승인 ✓
+              </button>
+            )}
+            {gate.showRevert && (
               <button
                 className={btn}
                 disabled={busy}
@@ -775,7 +791,12 @@ function Row(props: {
                 그룹 글로 되돌리기
               </button>
             )}
-            {!row.forked && <span className="text-[11px] text-faint">저장하면 이 방만 따로 검수·발송합니다.</span>}
+            {gate.showForkHint && <span className="text-[11px] text-faint">저장하면 이 방만 따로 검수·발송합니다.</span>}
+            {gate.readOnly && (
+              <span className="text-[11px] text-faint">
+                이 방이 실제로 받은 글입니다 — 이미 발송되어 고칠 수 없습니다.
+              </span>
+            )}
           </div>
           {row.forked && (
             <DestinationPreview

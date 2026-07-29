@@ -44,6 +44,11 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
             // every group that item has, because delivery is decided across them (a room receiving
             // both 공지 and 해설 has to be seen as one room).
             <OutletBoard
+              // Keyed by item, so switching items remounts rather than reusing the previous item's
+              // state. Without it, a mutation still in flight resolves into the new item's board and
+              // repaints it with the previous item's rows — the actions stay correct (they carry
+              // `board.itemId`), but the screen shows one item's delivery state under another's id.
+              key={selected.itemId}
               itemId={selected.itemId}
               convertedByType={Object.fromEntries(
                 items.filter((r) => r.itemId === selected.itemId).map((r) => [r.type, r.convertedText]),
