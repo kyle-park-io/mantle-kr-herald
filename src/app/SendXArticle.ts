@@ -2,7 +2,7 @@ import type { TranslationStore } from "../ports/TranslationStore";
 import { toXArticleMarkdown } from "../domain/publish/articleMarkdown";
 import { matchesItemId } from "../domain/itemId";
 import type { Translation } from "../domain/translation/models";
-import type { Headroom } from "../cli/publishHeadroom";
+import type { Headroom } from "../domain/send/headroom";
 
 type ArticleMetaResult = { isArticle: boolean; coverImageUrl?: string };
 type ArticleMeta = (itemId: string) => Promise<ArticleMetaResult>;

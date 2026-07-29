@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { makeReadHeadroom, makeLoadHeadroom, headroomReader, type Headroom } from "../../src/cli/publishHeadroom";
+import { makeReadHeadroom, makeLoadHeadroom, headroomReader } from "../../src/cli/publishHeadroom";
+import type { Headroom } from "../../src/domain/send/headroom";
 import type { DeliveryLedger } from "../../src/ports/DeliveryLedger";
 import type { DeliveryEntry } from "../../src/domain/delivery/models";
 import type { PublishingQuota } from "../../src/adapters/send/TypefullyQuota";

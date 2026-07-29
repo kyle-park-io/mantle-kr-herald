@@ -18,7 +18,7 @@ import { matchesItemId } from "../domain/itemId";
 import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { PublishRecord } from "../domain/sheet/models";
 import { extractMedia } from "../domain/media/sourceMedia";
-import type { Headroom } from "../cli/publishHeadroom";
+import type { Headroom } from "../domain/send/headroom";
 
 export type Recorder = (rec: PublishRecord) => Promise<void>;
 export type Archiver = (entry: SentArchiveEntry) => Promise<void>;
