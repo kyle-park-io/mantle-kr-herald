@@ -18,6 +18,8 @@ import { matchesItemId } from "../domain/itemId";
 import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { PublishRecord } from "../domain/sheet/models";
 import { extractMedia } from "../domain/media/sourceMedia";
+import { awaitingPublish } from "../domain/send/awaitingPublish";
+import type { PublishingQuota } from "../adapters/send/TypefullyQuota";
 
 export type Recorder = (rec: PublishRecord) => Promise<void>;
 export type Archiver = (entry: SentArchiveEntry) => Promise<void>;
@@ -49,6 +51,14 @@ export interface SendChannelsResult {
   unconfiguredEnv: string[];
   /** Renderings withheld from a never-delivered room by the first-delivery guard. */
   withheld: number;
+  /**
+   * Set when the account's monthly Typefully publishing quota could not cover this batch, in which
+   * case **no** X room was delivered to. Deliberately not `failed`, for the same reason
+   * `unconfigured` is not: an account at its plan's ceiling is behaving exactly as intended, and a
+   * `failed N` that grows every run reads as breakage. The reason is carried here and nowhere else —
+   * duplicating it into `failures` would report one event in two vocabularies.
+   */
+  quotaBlocked?: { needed: number; available: number; resetsAt: string };
   /**
    * Why each `failed` happened, in the order it happened — same shape as `PublishResult.failures`.
    *
@@ -94,6 +104,12 @@ export class SendChannels {
      * never be unmarked.
      */
     private readonly overrides?: OutletOverrideStore,
+    /**
+     * Reads the social set's monthly publishing quota. Optional: a Telegram-only install has no
+     * Typefully credentials, and every pre-quota call site stays valid without it. When absent the
+     * gate does not run, which is the pre-existing behaviour.
+     */
+    private readonly quota?: () => Promise<PublishingQuota>,
   ) {}
 
   async run(input: SendChannelsInput): Promise<SendChannelsResult> {
@@ -135,6 +151,33 @@ export class SendChannels {
     // Decided once for the whole batch, before anything is sent — see planRooms.
     const { blocked, unconfiguredEnv, withheld } = this.planRooms(candidates, already, ledgered, input, deliverable);
 
+    // Before a single draft is created: can the account still publish what this batch needs?
+    //
+    // All-or-nothing for X, on purpose. A partial batch leaves an operator reconstructing how far
+    // it got from a room-by-room ledger, and the answer changes under them as the queue publishes.
+    let quotaBlocked: SendChannelsResult["quotaBlocked"];
+    const xCandidates = candidates.filter((r) => r.channel === "x");
+    if (this.quota && xCandidates.length > 0) {
+      const needed = xCandidates.reduce((n, r) => n + this.roomsFor(r, blocked, already, deliverable).pending.length, 0);
+      if (needed > 0) {
+        try {
+          const q = await this.quota();
+          // A draft scheduled minutes ago has not published yet, so it is in neither `used` nor a
+          // lower `remaining`. These rows are already in memory, so the correction is free.
+          const inFlight = ledgered.filter((row) => awaitingPublish(row)).length;
+          const available = q.remaining - inFlight;
+          if (needed > available) {
+            quotaBlocked = { needed, available, resetsAt: q.resetsAt };
+            for (const o of this.outletsFor("x")) blocked.add(o.id);
+            console.warn(`[send] X withheld: the batch needs ${needed} publish(es), ${available} left before ${q.resetsAt || "the next reset"}`);
+          }
+        } catch (err) {
+          // A monitoring call must not become a new way for delivery to fail.
+          console.warn(`[send] could not read the Typefully publishing quota, sending anyway: ${(err as Error).message}`);
+        }
+      }
+    }
+
     for (const r of candidates) {
       const sender = this.senders[r.channel]!;
 
@@ -142,9 +185,8 @@ export class SendChannels {
       // Telegram, so a channel-keyed ledger let the first room's send mark the second as done and
       // that room silently never received anything.
       // `blocked` = unconfigured, or withheld by the first-delivery guard.
-      const outlets = this.outletsFor(r.channel).filter((o) => deliverable(r, o) && !blocked.has(o.id));
+      const { outlets, pending } = this.roomsFor(r, blocked, already, deliverable);
       const keyFor = (outlet: Outlet) => deliveryKey({ itemId: r.itemId, type: r.type, outletId: outlet.id });
-      const pending = outlets.filter((o) => !already.has(keyFor(o)));
       skipped += outlets.length - pending.length;
       if (pending.length === 0) continue;
 
@@ -215,7 +257,25 @@ export class SendChannels {
         }
       }
     }
-    return { sent, skipped, failed, unconfigured: unconfiguredEnv.length, unconfiguredEnv, withheld, failures };
+    return { sent, skipped, failed, unconfigured: unconfiguredEnv.length, unconfiguredEnv, withheld, failures, quotaBlocked };
+  }
+
+  /**
+   * The rooms this run would deliver `r` to, and which of them have not already received it.
+   *
+   * Extracted so the quota gate counts exactly what the send loop will send. A second copy of this
+   * filter would drift, and a gate that miscounts either refuses a legal batch or lets an
+   * over-quota one through — both of which are worse than the duplication it saves.
+   */
+  private roomsFor(
+    r: SendableRendering,
+    blocked: Set<string>,
+    already: Set<string>,
+    deliverable: (r: ChannelRendering, o: Outlet) => boolean,
+  ): { outlets: Outlet[]; pending: Outlet[] } {
+    const outlets = this.outletsFor(r.channel).filter((o) => deliverable(r, o) && !blocked.has(o.id));
+    const pending = outlets.filter((o) => !already.has(deliveryKey({ itemId: r.itemId, type: r.type, outletId: o.id })));
+    return { outlets, pending };
   }
 
   /**
