@@ -43,9 +43,13 @@ export interface HeadroomView {
 
 /**
  * Builds the reader the send gate (`SendChannels`) and the board's banner both read "how much
- * headroom is left" from — one module, one arithmetic, so the two can never name two different
- * numbers. `makeLoadHeadroom` below wraps this same function for the board's always-200 contract, and
- * `headroomReader` wraps it for the gate's opt-in construction.
+ * headroom is left" from — one module, one arithmetic, so the two can never use different formulas
+ * to compute `available`. They can still SHOW different numbers for up to a minute: the banner's
+ * quota read is cached (`ttlMs`, default `QUOTA_TTL_MS`) so it can poll without spending the
+ * social-set rate-limit budget, while `headroomReader` forces `ttlMs: 0` on every gate — the gate
+ * enforces against an irreversible ceiling, so the caching that serves the banner would make the
+ * gate's own read stale, not just slow. `makeLoadHeadroom` below wraps this same function for the
+ * board's always-200 contract, and `headroomReader` wraps it for the gate's opt-in construction.
  *
  * "Unknown" and "exhausted" are different states, and only one of them means the operator should
  * stop — so a failed read THROWS rather than answering a zero headroom. The caller decides what that
@@ -127,5 +131,9 @@ export function headroomReader(
     // Unconfigured — `createSenders` will not build an X sender either, so there is no send to gate.
     return undefined;
   }
-  return makeReadHeadroom(deliveryLedger, articleLedger);
+  // The gate enforces against an irreversible ceiling, so it always reads fresh. The TTL exists for
+  // the banner, which polls; every gate caller constructs this reader and calls it exactly once, so
+  // this costs no extra API call today — it only removes the possibility that a future refactor
+  // hoists a construction site and silently makes the gate permissive.
+  return makeReadHeadroom(deliveryLedger, articleLedger, { ttlMs: 0 });
 }
