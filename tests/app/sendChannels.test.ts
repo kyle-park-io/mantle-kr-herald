@@ -475,6 +475,14 @@ describe("SendChannels — publishing quota gate", () => {
     expect(result.quotaBlocked).toBeUndefined();
   });
 
+  // The gate compares `needed > available`, not `>=` — a batch that exactly exhausts the remaining
+  // headroom must still send. This run needs exactly 1 (one X rendering, one auto X room).
+  it("sends when the batch needs exactly the headroom available (boundary)", async () => {
+    const result = await sendChannelsWithQuota(async () => headroomOf(1));
+    expect(result.sent).toBe(1);
+    expect(result.quotaBlocked).toBeUndefined();
+  });
+
   /**
    * A draft created two minutes ago has not published yet, so it is in neither `used` nor a lower
    * `remaining`. Without this term two runs inside the scheduling window each see the same headroom
