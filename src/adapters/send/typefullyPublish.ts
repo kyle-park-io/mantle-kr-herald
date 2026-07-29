@@ -16,8 +16,16 @@ export function parseTweetId(url: string | undefined): string | undefined {
   return m ? m[1] : undefined;
 }
 
-/** The X article id in `https://x.com/i/article/<id>`. */
+/**
+ * The X article id in a published article url.
+ *
+ * Typefully returns `https://x.com/<handle>/status/<id>` for `x_article_published_url` — the same
+ * shape as a tweet url, not the `https://x.com/i/article/<id>` this used to assume. Both are
+ * accepted: the `/i/article/` form is what X shows in a browser, and a draft reconciled before this
+ * fix may still carry one. `parseTweetId` matches the same `/status/` pattern, but the two read
+ * different fields (`x_published_url` vs `x_article_published_url`), so there is nothing to confuse.
+ */
 export function parseArticleId(url: string | undefined): string | undefined {
-  const m = url ? /\/article\/(\d+)/.exec(url) : null;
+  const m = url ? /\/(?:i\/article|status)\/(\d+)/.exec(url) : null;
   return m ? m[1] : undefined;
 }
