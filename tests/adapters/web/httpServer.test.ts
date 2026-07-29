@@ -53,6 +53,7 @@ function fakeDeps(): ApiDeps {
     loadPublishState: async () => [],
     loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
     xMaxWeighted: 280,
+    login: async () => ({ ok: false, retryAfterMs: 0 }),
   };
 }
 
@@ -107,6 +108,7 @@ describe("startServer", () => {
       loadPublishState: async () => [],
       loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
       xMaxWeighted: 280,
+      login: async () => ({ ok: false, retryAfterMs: 0 }),
     };
     const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
     servers.push(server);
@@ -147,6 +149,7 @@ describe("startServer", () => {
         throw new Error("boom");
       },
       xMaxWeighted: 280,
+      login: async () => ({ ok: false, retryAfterMs: 0 }),
     };
     const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
     servers.push(server);

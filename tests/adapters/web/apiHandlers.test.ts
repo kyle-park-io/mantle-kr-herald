@@ -142,6 +142,7 @@ function makeDeps(
         return { renderings: [], warnings: [] };
       },
     } as unknown as ApiDeps["formatVariants"],
+    login: async () => ({ ok: false, retryAfterMs: 0 }),
   };
 }
 

@@ -18,6 +18,7 @@ import type { SaveOutletOverride } from "../../app/SaveOutletOverride";
 import type { MarkDelivery } from "../../app/MarkDelivery";
 import type { PrepareConversionRun } from "../../app/PrepareConversionRun";
 import type { FormatVariants } from "../../app/FormatVariants";
+import type { LoginResult } from "../../app/Login";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -77,6 +78,8 @@ export interface ApiDeps {
   prepareConversionRun: PrepareConversionRun;
   /** Pure code — unlike conversion, the dashboard can run this one itself. */
   formatVariants: FormatVariants;
+  /** Checks the dashboard's one credential behind a lockout. See `src/app/Login.ts`. */
+  login: (credentials: { username: string; password: string }) => Promise<LoginResult>;
 }
 
 /** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */
@@ -89,6 +92,30 @@ async function findById(store: TranslationStore, id: string): Promise<Translatio
 export async function handleApi(deps: ApiDeps, method: string, path: string, body: unknown): Promise<ApiResult> {
   const segments = path.split("/").filter(Boolean); // ["api", "translations", ...]
   if (segments[0] !== "api") return { status: 404, json: { error: "not found" } };
+
+  /**
+   * The one route that must answer before anyone is authenticated.
+   *
+   * The refusal says nothing about which half was wrong. With a single account, naming the field
+   * would tell someone probing when they had found the account name — half the secret — so both
+   * failures read identically. The lockout is the one case that says more, because a caller who is
+   * not told to wait will simply keep hammering.
+   */
+  if (method === "POST" && segments.length === 2 && segments[1] === "login") {
+    const { username, password } = (body ?? {}) as { username?: unknown; password?: unknown };
+    if (typeof username !== "string" || typeof password !== "string") {
+      return { status: 400, json: { error: "아이디와 비밀번호가 필요합니다." } };
+    }
+    const result = await deps.login({ username, password });
+    if (result.ok) return { status: 200, json: { ok: true } };
+    if (result.retryAfterMs > 0) {
+      return {
+        status: 429,
+        json: { error: "너무 많이 시도했습니다. 잠시 후 다시 시도해 주세요.", retryAfterMs: result.retryAfterMs },
+      };
+    }
+    return { status: 401, json: { error: "아이디 또는 비밀번호가 맞지 않습니다." } };
+  }
 
   // The frontend cannot know the server's storage mode, and it decides which publish targets to
   // offer — a local-mode dashboard defaulting to "google" would fail on every first click.

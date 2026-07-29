@@ -194,6 +194,26 @@ export function loadTelegramChatIds(): Record<string, string> {
   return out;
 }
 
+export interface AuthConfig {
+  username: string;
+  /** A `scrypt$...` encoding produced by `pnpm auth:hash` — never the password itself. */
+  passwordHash: string;
+}
+
+/**
+ * The dashboard's one account, or `undefined` when it is not configured.
+ *
+ * Deliberately a `try` loader with no throwing counterpart: the dashboard predates having any
+ * credential and still runs bound to loopback without one, so requiring the pair would stop every
+ * existing install at startup. An unconfigured server serves as before and refuses every login.
+ */
+export function tryLoadAuthConfig(): AuthConfig | undefined {
+  const username = process.env.HERALD_AUTH_USERNAME?.trim();
+  const passwordHash = process.env.HERALD_AUTH_PASSWORD_HASH?.trim();
+  if (!username || !passwordHash) return undefined;
+  return { username, passwordHash };
+}
+
 export interface TypefullyConfig {
   apiKey: string;
   socialSetId: string;

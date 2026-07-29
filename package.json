@@ -41,6 +41,7 @@
     "config:pull": "tsx --env-file-if-exists=.env src/cli/config-pull.ts",
     "glossary": "tsx src/cli/glossary.ts",
     "google:auth": "tsx --env-file-if-exists=.env src/cli/google-auth.ts",
+    "auth:hash": "tsx src/cli/auth-hash.ts",
     "serve": "tsx --env-file-if-exists=.env src/cli/serve.ts",
     "dev:web": "vite --config web/vite.config.ts",
     "build:web": "vite build --config web/vite.config.ts",
