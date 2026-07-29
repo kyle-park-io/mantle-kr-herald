@@ -223,6 +223,78 @@ describe("startServer", () => {
     expect(res.status).toBe(404);
   });
 
+  /**
+   * The dashboard has no auth, and `POST /api/outlets/:itemId/:type/:outletId/send` takes no body —
+   * a *simple* cross-site request, so no preflight stands between a page the operator happens to
+   * have open and a live post to a real Telegram room. Loopback binding and a guessed `itemId` make
+   * it impractical, not impossible; these tests hold the guard in place.
+   */
+  describe("cross-site guard", () => {
+    /** A server whose send route records its calls, so a refusal is shown to reach no use case. */
+    async function startCounting() {
+      const dir = await mkdtemp(join(tmpdir(), "web-"));
+      await writeFile(join(dir, "index.html"), "<!doctype html><title>dash</title>");
+      const sends: string[] = [];
+      const deps = fakeDeps();
+      deps.sendToOutlet = async (itemId: string, _type: string, outletId: string) => {
+        sends.push(`${itemId}:${outletId}`);
+        return { sent: 1, failed: 0 };
+      };
+      const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
+      servers.push(server);
+      await new Promise((r) => server.once("listening", r));
+      const { port } = server.address() as AddressInfo;
+      return { base: `http://127.0.0.1:${port}`, sends };
+    }
+
+    const send = (base: string, headers: Record<string, string> = {}) =>
+      fetch(`${base}/api/outlets/x%3A1/announcement/tg-dev/send`, { method: "POST", headers });
+
+    it("refuses a send whose Origin is another site, without reaching the use case", async () => {
+      const { base, sends } = await startCounting();
+      const res = await send(base, { Origin: "https://evil.example" });
+      expect(res.status).toBe(403);
+      expect(sends).toEqual([]);
+    });
+
+    // A sandboxed iframe or a `file://` page sends `Origin: null`. It is not this machine.
+    it("refuses a send from an opaque origin", async () => {
+      const { base, sends } = await startCounting();
+      const res = await send(base, { Origin: "null" });
+      expect(res.status).toBe(403);
+      expect(sends).toEqual([]);
+    });
+
+    it("allows the dashboard's own send (same-origin, and the no-Origin case)", async () => {
+      const { base, sends } = await startCounting();
+      expect((await send(base, { Origin: base })).status).toBe(200);
+      expect((await send(base)).status).toBe(200);
+      expect(sends).toHaveLength(2);
+    });
+
+    // `pnpm dev:web` serves the UI from Vite on :5173 and proxies /api here with the browser's own
+    // Origin intact, so the guard cannot key on this server's own port.
+    it("allows a send proxied from the Vite dev server on another loopback port", async () => {
+      const { base, sends } = await startCounting();
+      expect((await send(base, { Origin: "http://localhost:5173" })).status).toBe(200);
+      expect(sends).toHaveLength(1);
+    });
+
+    // The one shape a cross-site HTML form can post. Refused even with no Origin at all.
+    it("refuses a form-encoded state-changing request", async () => {
+      const { base, sends } = await startCounting();
+      const res = await send(base, { "Content-Type": "application/x-www-form-urlencoded" });
+      expect(res.status).toBe(403);
+      expect(sends).toEqual([]);
+    });
+
+    it("leaves reads alone — a foreign Origin on a GET still serves", async () => {
+      const { base } = await startCounting();
+      const res = await fetch(`${base}/api/translations`, { headers: { Origin: "https://evil.example" } });
+      expect(res.status).toBe(200);
+    });
+  });
+
   it("serves a .woff2 font with the font/woff2 content-type", async () => {
     const dir = await mkdtemp(join(tmpdir(), "web-"));
     await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
