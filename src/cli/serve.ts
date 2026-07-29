@@ -80,6 +80,9 @@ const conversionStore = new JsonConversionStore(paths.variantsDir);
 // Same directories the CLI uses, so `send:channels` and the dashboard read one ledger, not two.
 const overrideStore = new JsonOutletOverrideStore(paths.formattedDir);
 const deliveryLedger = new JsonDeliveryLedger(paths.publishDir);
+// One instance for the whole process: `reconcilePublished` runs every two minutes and its writes
+// must serialize against each other on the same chain, not a fresh one per pass (see serialWrites.ts).
+const xArticleLedger = new JsonXArticleLedger(paths.publishDir);
 
 const storageMode = loadStorageMode();
 
@@ -262,7 +265,7 @@ const reconcilePublished = async (): Promise<{ reconciled: number; pending: numb
   try {
     return await new ReconcilePublished(
       deliveryLedger,
-      new JsonXArticleLedger(paths.publishDir),
+      xArticleLedger,
       new TypefullyDraftLookup(cfg.apiKey, cfg.socialSetId),
     ).run();
   } catch (err) {
