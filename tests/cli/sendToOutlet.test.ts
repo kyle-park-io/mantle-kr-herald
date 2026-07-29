@@ -11,6 +11,7 @@ import { deliveryKey } from "../../src/domain/delivery/models";
 import type { Translation } from "../../src/domain/translation/models";
 import type { SendableChannel } from "../../src/domain/send/channels";
 import type { Headroom } from "../../src/domain/send/headroom";
+import { awaitingPublish } from "../../src/domain/send/awaitingPublish";
 import type { DraftLookup } from "../../src/ports/DraftLookup";
 import type { DraftState } from "../../src/domain/send/draftState";
 import { outletById } from "../../src/domain/outlet/models";
@@ -311,7 +312,31 @@ const queuedRow = (itemId: string, postId = "draft-777"): DeliveryEntry =>
  * `expect(counter.sends).toBe(0)` in the refusal tests mean something, and what the two proceeding
  * tests below assert directly.
  */
-function sendableX(itemId: string, ledger: DeliveryLedger, draftLookup: DraftLookup | undefined) {
+/**
+ * A headroom reader that answers a different `used` on each successive call, so a test can stage
+ * what the resend guard reads before and after the cancel. `undefined` in the sequence stands for a
+ * quota read that failed. Anything past the end repeats the last value.
+ */
+function quotaSequence(used: (number | undefined)[]): SendToOutletDeps["headroom"] {
+  let i = 0;
+  return (targets: SendableChannel[]) =>
+    targets.includes("x")
+      ? async () => {
+          const u = used[Math.min(i++, used.length - 1)];
+          if (u === undefined) throw new Error("quota read failed");
+          return { remaining: 15 - u, used: u, inFlight: 0, available: 15 - u, resetsAt: "2026-08-01T00:00:00+09:00" };
+        }
+      : undefined;
+}
+
+function sendableX(
+  itemId: string,
+  ledger: DeliveryLedger,
+  draftLookup: DraftLookup | undefined,
+  // Typefully being configured is what puts a draft lookup here at all, so the quota is readable
+  // too; a still `used` is the ordinary case where nothing published while we cancelled.
+  headroom: SendToOutletDeps["headroom"] = quotaSequence([9, 9]),
+) {
   const counter = { sends: 0 };
   const sendToOutlet = makeSendToOutlet(makeDeps({
     formattingStore: fakeFormattingStore([rendering({ itemId, type: "x", channel: "x" })]),
@@ -322,6 +347,7 @@ function sendableX(itemId: string, ledger: DeliveryLedger, draftLookup: DraftLoo
       x: { name: "typefully", send: async () => { counter.sends += 1; return { postId: "draft-new" }; } },
     }),
     draftLookup,
+    headroom,
   }));
   return { sendToOutlet, counter };
 }
@@ -370,6 +396,43 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     expect(lookup.cancels).toEqual(["draft-abc"]);
     expect(result.error).toContain("취소하지 못했습니다");
     expect(await ledger.loadAll()).toEqual([previous]); // the row the room is still described by
+  });
+
+  it("refuses when the quota moved across the cancel — the original published while we were cancelling", async () => {
+    // Typefully answers 204 to a DELETE whether it cancelled a queued draft or deleted the record of
+    // one that just published (measured live 2026-07-30), so the cancel's own answer proves nothing.
+    // A publish is charged at publication, so a `used` that moved is the proof.
+    const previous = queuedRow("x:10", "draft-raced");
+    const ledger = fakeDeliveryLedger([previous]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
+    const { sendToOutlet, counter } = sendableX("x:10", ledger, lookup.lookup, quotaSequence([9, 10]));
+
+    const result = await sendToOutlet("x:10", "x", "x-post", true);
+
+    expect(counter.sends).toBe(0); // THE assertion: the original is live, a resend is the double post
+    expect(result.sent).toBe(0);
+    expect(result.error).toContain("취소하는 사이에 원본이 게시됐습니다");
+
+    // The row must survive in a shape no reconcile will retire: its draft 404s now, so `gone` would
+    // read as "never published" and free a room whose post is live.
+    const [row] = await ledger.loadAll();
+    expect(row.status).toBe("sent");
+    expect(row.postId).toBeUndefined();
+    expect(awaitingPublish(row)).toBe(false);
+  });
+
+  it("refuses when the quota could not be read, and leaves the row for the ordinary reconcile", async () => {
+    const previous = queuedRow("x:11", "draft-unknown");
+    const ledger = fakeDeliveryLedger([previous]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
+    const { sendToOutlet, counter } = sendableX("x:11", ledger, lookup.lookup, quotaSequence([9, undefined]));
+
+    const result = await sendToOutlet("x:11", "x", "x-post", true);
+
+    expect(counter.sends).toBe(0); // an unread quota is not evidence that nothing published
+    expect(result.sent).toBe(0);
+    expect(result.error).toContain("확인하지 못했습니다");
+    expect(await ledger.loadAll()).toEqual([previous]); // untouched — reconcile resolves it as usual
   });
 
   it("refuses the resend when the lookup itself throws", async () => {
@@ -496,6 +559,7 @@ describe("makeSendToOutlet — a cancelled original is retired, not restored as 
       deliveryLedger: ledger,
       senders: () => ({ telegram: undefined, x: { name: "typefully", send: async () => ({ postId: "p" }) } }),
       draftLookup: lookup.lookup,
+      headroom: quotaSequence([9, 9]), // the quota did not move: nothing published while we cancelled
     }));
 
     const result = await sendToOutlet("x:21", "x", "x-post", true);
@@ -517,6 +581,7 @@ describe("makeSendToOutlet — a cancelled original is retired, not restored as 
       senders: () => ({ telegram: undefined, x: { name: "typefully", send: async () => ({ postId: "p" }) } }),
       recorder: async () => { throw new Error("recorder boom"); },
       draftLookup: lookup.lookup,
+      headroom: quotaSequence([9, 9]), // the quota did not move: nothing published while we cancelled
     }));
 
     const result = await sendToOutlet("x:22", "x", "x-post", true);

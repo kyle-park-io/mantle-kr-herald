@@ -148,6 +148,29 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
     }
 
     if (state.state === "scheduled") {
+      /**
+       * Measured live 2026-07-30: `DELETE` on a draft that has ALREADY published also answers
+       * `204`, and the follow-up `GET` is `404` either way — so a successful cancel and "I just
+       * deleted the record of a post that went live" are indistinguishable from the response alone.
+       * If the draft publishes in the gap between `published()` above and this `DELETE`, believing
+       * the 204 is the double post this whole guard exists to prevent.
+       *
+       * The quota is the signal that separates them. The same live run measured that a publish is
+       * charged at PUBLICATION, not at scheduling — eight polls held at `used 9` across the whole
+       * queue window and the tick that returned a url was the tick that showed `used 10`. So a
+       * `used` that moved across the cancel is proof the draft published, and it costs one read on
+       * a path the operator triggers by hand.
+       */
+      const readHeadroom = makeHeadroomReader(["x"], deliveryLedger, articleLedger);
+      const usedNow = async (): Promise<number | undefined> => {
+        try {
+          return (await readHeadroom?.())?.used;
+        } catch {
+          return undefined; // a quota blip must not decide anything on its own — see below
+        }
+      };
+
+      const usedBefore = await usedNow();
       let cancelled: boolean;
       try {
         cancelled = await draftLookup.cancel(previous.postId);
@@ -157,6 +180,33 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
       if (!cancelled) {
         return { cancelled: false, refusal: { sent: 0, failed: 0, error: `${who}: 아직 게시 전인 원본의 예약을 취소하지 못했습니다 — 그대로 재발송하면 예약분까지 함께 게시되므로 멈췄습니다. Typefully 큐에서 초안을 지운 뒤 다시 시도하세요` } };
       }
+      const usedAfter = await usedNow();
+
+      if (usedBefore !== undefined && usedAfter !== undefined && usedAfter > usedBefore) {
+        /**
+         * Proven: the original published while we were cancelling it. Its draft record is gone, so
+         * the x.com url is unrecoverable from Typefully — and that is exactly why this row cannot be
+         * left as it is. `awaitingPublish` would still match it, `ReconcilePublished` would ask
+         * about a draft that now 404s, read `gone`, and retire the row to `dropped` — which frees a
+         * room whose post IS live and hands the next batch run a second copy to send.
+         *
+         * Dropping `postId` is what takes it out of that path: no draft id means not `awaitingPublish`,
+         * so no reconcile will ever revisit it, and the row stays an honest `sent` with no link.
+         */
+        await deliveryLedger.add({ ...previous, postId: undefined, url: undefined });
+        return { cancelled: false, refusal: { sent: 0, failed: 0, error: `${who}: 취소하는 사이에 원본이 게시됐습니다 — 재발송하면 같은 글이 두 번 올라가므로 멈췄습니다. 계정에서 방금 올라간 글을 확인하세요 (초안이 지워져 링크는 남기지 못했습니다)` } };
+      }
+
+      if (usedBefore === undefined || usedAfter === undefined) {
+        /**
+         * The cancel took, but the quota could not be read on one side, so "it published while we
+         * cancelled" is unproven either way. Refuse — a resend is irreversible and an unread quota
+         * is not evidence. The row is deliberately left untouched: it still carries the draft id, so
+         * the ordinary reconcile pass resolves it the way it resolves any other cancelled draft.
+         */
+        return { cancelled: false, refusal: { sent: 0, failed: 0, error: `${who}: 예약을 취소했지만 그 사이 게시됐는지 확인하지 못했습니다 — 두 번 올라갈 수 있어 재발송을 멈췄습니다. 계정을 확인한 뒤 다시 시도하세요` } };
+      }
+
       return { cancelled: true }; // the queue no longer holds it, and the caller has to say so
     }
 
