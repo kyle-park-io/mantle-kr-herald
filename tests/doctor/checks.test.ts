@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { configCheck, cloudCheck, optionalCheck, parseScopes, scopeCheck, accessResult, sheetAccessResult } from "../../src/doctor/checks";
+import {
+  configCheck,
+  cloudCheck,
+  optionalCheck,
+  parseScopes,
+  scopeCheck,
+  accessResult,
+  sheetAccessResult,
+  quotaResult,
+} from "../../src/doctor/checks";
 
 const DRIVE = "https://www.googleapis.com/auth/drive.file";
 const SHEETS = "https://www.googleapis.com/auth/spreadsheets";
@@ -135,5 +144,27 @@ describe("sheetAccessResult", () => {
 
   it("other status → HTTP N", () => {
     expect(sheetAccessResult("Sheet", { ok: false, status: 500 }).detail).toBe("HTTP 500");
+  });
+});
+
+describe("quotaResult", () => {
+  it("is ok with headroom, and names the total and the reset date", () => {
+    const r = quotaResult("Typefully  live", { used: 9, remaining: 6, resetsAt: "2026-08-01T00:00:00+09:00" });
+    expect(r.status).toBe("ok");
+    expect(r.detail).toContain("6 left of 15");
+    expect(r.detail).toContain("2026-08-01");
+  });
+
+  it("warns at the low-quota threshold", () => {
+    expect(quotaResult("t", { used: 12, remaining: 3, resetsAt: "" }).status).toBe("warn");
+    expect(quotaResult("t", { used: 11, remaining: 4, resetsAt: "" }).status).toBe("ok");
+  });
+
+  it("warns at zero rather than failing — an exhausted plan is not a broken install", () => {
+    expect(quotaResult("t", { used: 15, remaining: 0, resetsAt: "" }).status).toBe("warn");
+  });
+
+  it("omits the reset clause when the API did not give one", () => {
+    expect(quotaResult("t", { used: 0, remaining: 15, resetsAt: "" }).detail).not.toContain("resets");
   });
 });
