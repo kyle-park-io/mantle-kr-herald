@@ -158,6 +158,12 @@ export class SendChannels {
     let quotaBlocked: SendChannelsResult["quotaBlocked"];
     const xCandidates = candidates.filter((r) => r.channel === "x");
     if (this.quota && xCandidates.length > 0) {
+      // Unverified assumption, named on purpose: `needed` counts one pending room delivery as one
+      // quota unit, i.e. one draft == one publish. `TypefullySender` puts a multi-segment thread
+      // into a single draft's `posts[]`, so this assumes Typefully bills a whole thread as one
+      // publish rather than one per tweet. Neither the docs nor the audit data confirm this, and
+      // checking it live would cost real publishes against a 15/month ceiling — so this is a choice,
+      // not an oversight. If it is wrong, this undercounts.
       const needed = xCandidates.reduce((n, r) => n + this.roomsFor(r, blocked, already, deliverable).pending.length, 0);
       if (needed > 0) {
         try {
