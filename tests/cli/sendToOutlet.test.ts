@@ -146,7 +146,13 @@ describe("makeSendToOutlet — the resend ledger restore", () => {
     expect(await ledger.loadAll()).toEqual([previous]);
   });
 
-  it("restores the row when the send throws", async () => {
+  // `SendChannels` catches every sender throw internally (`src/app/SendChannels.ts` wraps
+  // `sender.send()` in its own try/catch and turns it into `failed += 1` / `failures.push(...)`) —
+  // it never propagates out of `.run()`. So this exercises the `result.failed > 0` branch of the
+  // *zero-send* restore (the same site the previous test hits), not the outer `catch` below. It is
+  // kept because that reason branch is real and worth covering on its own; the outer catch gets its
+  // own test next.
+  it("restores the row when the sender fails", async () => {
     const previous = sentRow({ itemId: "x:3", type: "announcement", outletId: "tg-community" });
     const ledger = fakeDeliveryLedger([previous]);
     const sendToOutlet = makeSendToOutlet(makeDeps({
@@ -161,6 +167,29 @@ describe("makeSendToOutlet — the resend ledger restore", () => {
     expect(result.sent).toBe(0);
     expect(result.failed).toBe(1);
     expect(result.error).toContain("boom");
+    expect(await ledger.loadAll()).toEqual([previous]);
+  });
+
+  // The one restore site `SendChannels` cannot reach for us: something outside `.run()`'s own
+  // per-room handling throws (here, the recorder dep, read via `Promise.all([makeRecorder(),
+  // makeArchiver()])` inside the same `try`). This is what actually reaches the outer `catch` at
+  // the bottom of `sendToOutlet.ts`, distinct from every other restore test in this file.
+  it("restores the row when the send path throws before completing", async () => {
+    const previous = sentRow({ itemId: "x:5", type: "announcement", outletId: "tg-community" });
+    const ledger = fakeDeliveryLedger([previous]);
+    const sendToOutlet = makeSendToOutlet(makeDeps({
+      formattingStore: fakeFormattingStore([rendering({ itemId: "x:5" })]),
+      translationStore: fakeTranslationStore([source("x:5")]),
+      deliveryLedger: ledger,
+      senders: () => ({ telegram: okSender("telegram-bot"), x: undefined }),
+      recorder: async () => { throw new Error("recorder boom"); },
+    }));
+
+    const result = await sendToOutlet("x:5", "announcement", "tg-community", true);
+
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.error).toBe("recorder boom");
     expect(await ledger.loadAll()).toEqual([previous]);
   });
 
