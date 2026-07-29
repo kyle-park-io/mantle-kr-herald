@@ -35,11 +35,14 @@ export class SaveOutletOverride {
     const existing = (await this.store.loadAll()).find((o) => overrideKey(o) === key);
     const at = this.now();
 
-    if (input.approve) {
-      if (!existing) throw new Error(`${key} has no override to approve — approve the group instead`);
-      const approved: OutletOverride = { ...existing, status: "approved", approvedAt: at };
-      await this.store.upsert(approved);
-      return approved;
+    if (input.approve !== undefined) {
+      const verb = input.approve ? "approve" : "unapprove";
+      if (!existing) throw new Error(`${key} has no override to ${verb} — the group carries this room's approval`);
+      const updated: OutletOverride = input.approve
+        ? { ...existing, status: "approved", approvedAt: at }
+        : { ...existing, status: "rendered", approvedAt: undefined };
+      await this.store.upsert(updated);
+      return updated;
     }
 
     if (input.text === undefined) throw new Error(`${key}: nothing to save`);

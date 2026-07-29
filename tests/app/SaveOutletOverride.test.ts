@@ -57,3 +57,22 @@ describe("SaveOutletOverride", () => {
     await expect(new SaveOutletOverride(s, () => "T").run({ ...args, outletId: "nope", text: "x" })).rejects.toThrow(/unknown outlet/i);
   });
 });
+
+describe("SaveOutletOverride — 승인 취소", () => {
+  it("drops an approved fork back to rendered and clears the stamp", async () => {
+    const s = fakeStore([{ ...args, text: "이 방 전용", status: "approved", createdAt: "T0", approvedAt: "T1" }]);
+    const res = await new SaveOutletOverride(s, () => "T2").run({ ...args, approve: false });
+    expect(res?.status).toBe("rendered");
+    expect(res?.approvedAt).toBeUndefined();
+    expect(res?.text).toBe("이 방 전용"); // the copy itself is untouched
+  });
+
+  /**
+   * `approve: false` has to be told apart from "no approve field": read as absent it would fall
+   * through to the text branch and throw `nothing to save` on a perfectly valid 승인 취소.
+   */
+  it("refuses to unapprove a room that has no override of its own", async () => {
+    const uc = new SaveOutletOverride(fakeStore(), () => "T2");
+    await expect(uc.run({ ...args, approve: false })).rejects.toThrow(/unapprove/);
+  });
+});

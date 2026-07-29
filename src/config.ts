@@ -145,6 +145,28 @@ export function loadGoogleSheetConfig(): GoogleSheetConfig {
   return { spreadsheetId };
 }
 
+/**
+ * The workbooks the dashboard header links to: the data hub and, optionally, the hand-kept QA
+ * workbook. Ids rather than URLs in `.env`, so they read the same as `GSHEET_ID` and cannot drift
+ * from the format `sheet:init` prints; the URL is built here, in one place.
+ *
+ * Never throws — a missing id hides its link rather than taking the whole dashboard down over a
+ * convenience feature.
+ */
+export interface SheetLink {
+  url: string;
+  /** The workbook's own title, so the header names the sheet rather than saying "시트". */
+  title: string;
+}
+
+export function loadSheetLinks(): { data?: SheetLink; qa?: SheetLink } {
+  const link = (id: string | undefined, fallback: string): SheetLink | undefined =>
+    id?.trim() ? { url: `https://docs.google.com/spreadsheets/d/${id.trim()}/edit`, title: fallback } : undefined;
+  // Titles are filled in by `resolveSheetTitles` once the API answers; these stand in until then,
+  // and stay if it never does — a header link is not worth failing the dashboard over.
+  return { data: link(process.env.GSHEET_ID, "데이터 시트"), qa: link(process.env.GSHEET_QA_ID, "QA 시트") };
+}
+
 export interface TelegramConfig {
   botToken: string;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ALL_TYPES, typeLabel } from "../../src/domain/conversion/models";
 import { ALL_CHANNELS } from "../../src/domain/formatting/models";
-import { DESTINATIONS_BY_CHANNEL } from "../../src/domain/formatting/emitters";
+import { CHANNEL_RENDERS_BOLD, DESTINATIONS_BY_CHANNEL } from "../../src/domain/formatting/emitters";
 import type { Destination } from "../../src/domain/formatting/emitters/types";
 import { ALL_OUTLETS } from "../../src/domain/outlet/models";
 import { SEND_BLOCK_REASON, type SendBlock } from "../../src/domain/send/sendBlock";
@@ -16,6 +16,8 @@ import {
   PASTE_DESTINATION as WEB_PASTE_DESTINATION,
   DESTINATION_LABEL as WEB_DESTINATION_LABEL,
   SEND_BLOCK_REASON as WEB_SEND_BLOCK_REASON,
+  CHANNEL_RENDERS_BOLD as WEB_CHANNEL_RENDERS_BOLD,
+  CHANNEL_FORMAT_NOTE as WEB_CHANNEL_FORMAT_NOTE,
   type SendBlock as WebSendBlock,
   type Destination as WebDestination,
   type BoardView as WebBoardView,
@@ -150,6 +152,25 @@ describe("web type mirror", () => {
     const unions: SameUnion<WebSendBlock, SendBlock> = true;
     expect(WEB_SEND_BLOCK_REASON).toEqual(SEND_BLOCK_REASON);
     expect(unions).toBe(true);
+  });
+
+  /**
+   * The card tells the reviewer whether the `**볼드**` they are typing survives to that channel.
+   * Derived here by running the real emitters on a probe rather than restated by hand, because the
+   * note is only useful if it cannot quietly stop being true — a card that promises bold on a
+   * channel that strips it sends copy whose emphasis silently disappeared.
+   */
+  it("says bold renders on exactly the channels the domain says it does", () => {
+    for (const channel of ALL_CHANNELS) {
+      expect(WEB_CHANNEL_RENDERS_BOLD[channel], `bold on ${channel}`).toBe(CHANNEL_RENDERS_BOLD[channel]);
+      // Every channel gets a note about bold, and it must not contradict the flag beside it: only a
+      // channel that actually renders bold may tell the reviewer their text comes out 굵게.
+      const note = WEB_CHANNEL_FORMAT_NOTE[channel];
+      expect(note, `note for ${channel}`).toContain("볼드");
+      expect(note.includes("굵게"), `note for ${channel} promises bold`).toBe(CHANNEL_RENDERS_BOLD[channel]);
+    }
+    expect(Object.keys(WEB_CHANNEL_FORMAT_NOTE).sort()).toEqual([...ALL_CHANNELS].sort());
+    expect(Object.keys(WEB_CHANNEL_RENDERS_BOLD).sort()).toEqual(Object.keys(CHANNEL_RENDERS_BOLD).sort());
   });
 
   /** [복사] hands a human the `_paste` spelling; the canonical text would paste raw markdown. */

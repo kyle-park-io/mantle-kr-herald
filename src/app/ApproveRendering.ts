@@ -9,6 +9,8 @@ export interface ApproveRenderingInput {
   itemId: string;
   type: ConversionType;
   channel: Channel;
+  /** `false` withdraws the approval, mirroring 1차's `승인 취소`. Defaults to `true`. */
+  approve?: boolean;
 }
 
 /**
@@ -29,20 +31,30 @@ export class ApproveRendering {
   ) {}
 
   async run(input: ApproveRenderingInput): Promise<ChannelRendering | undefined> {
+    const approve = input.approve ?? true;
     const all = await this.formattingStore.loadAll();
     const existing = all.find((r) => r.itemId === input.itemId && r.type === input.type && r.channel === input.channel);
     if (!existing) return undefined;
-    const approved: ChannelRendering = { ...existing, status: "approved", approvedAt: this.now() };
-    await this.formattingStore.upsert(approved);
-    await this.promoteVariant(input, approved.approvedAt!);
+    const at = this.now();
+    const updated: ChannelRendering = approve
+      ? { ...existing, status: "approved", approvedAt: at }
+      : { ...existing, status: "rendered", approvedAt: undefined };
+    await this.formattingStore.upsert(updated);
+    /**
+     * Promotion is one-way. Withdrawing an approval says "do not send this yet"; it does not say the
+     * copy was bad, and the corpus is hand-curated — entries get edited and re-ordered by people, so
+     * auto-deleting one on an unapprove would silently undo that work. Re-approving re-upserts the
+     * same `itemId`, so nothing duplicates either.
+     */
+    if (approve) await this.promoteVariant(input, at);
     if (this.lineage) {
       try {
-        await this.lineage.append({ itemId: input.itemId, stage: "rendered", variant: `${input.type}/${input.channel}`, content: approved.text, status: "approved", at: approved.approvedAt! });
+        await this.lineage.append({ itemId: input.itemId, stage: "rendered", variant: `${input.type}/${input.channel}`, content: updated.text, status: updated.status, at });
       } catch (err) {
         console.warn(`[lineage] append failed for ${input.itemId}: ${(err as Error).message}`);
       }
     }
-    return approved;
+    return updated;
   }
 
   /**

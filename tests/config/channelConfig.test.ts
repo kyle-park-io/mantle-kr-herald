@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { loadTelegramConfig, loadTypefullyConfig } from "../../src/config";
+import { loadSheetLinks, loadTelegramConfig, loadTypefullyConfig } from "../../src/config";
 
 const saved = { ...process.env };
 afterEach(() => {
@@ -35,5 +35,33 @@ describe("channel config loaders", () => {
     process.env.TYPEFULLY_SOCIAL_SET_ID = "42";
     delete process.env.TYPEFULLY_API_KEY;
     expect(() => loadTypefullyConfig()).toThrow(/TYPEFULLY_API_KEY/);
+  });
+});
+
+describe("loadSheetLinks", () => {
+  it("builds a spreadsheet URL per configured id", () => {
+    process.env.GSHEET_ID = "AAA";
+    process.env.GSHEET_QA_ID = "BBB";
+    expect(loadSheetLinks()).toEqual({
+      data: { url: "https://docs.google.com/spreadsheets/d/AAA/edit", title: "데이터 시트" },
+      qa: { url: "https://docs.google.com/spreadsheets/d/BBB/edit", title: "QA 시트" },
+    });
+  });
+
+  /** A blank id hides its header link; it must never render a URL with an empty id in it. */
+  it("omits a link whose id is unset or blank", () => {
+    process.env.GSHEET_ID = "AAA";
+    process.env.GSHEET_QA_ID = "   ";
+    expect(loadSheetLinks()).toEqual({
+      data: { url: "https://docs.google.com/spreadsheets/d/AAA/edit", title: "데이터 시트" },
+      qa: undefined,
+    });
+  });
+
+  /** Header links are a convenience — an unconfigured sheet must not take the dashboard down. */
+  it("never throws when nothing is configured", () => {
+    delete process.env.GSHEET_ID;
+    delete process.env.GSHEET_QA_ID;
+    expect(loadSheetLinks()).toEqual({ data: undefined, qa: undefined });
   });
 });

@@ -13,7 +13,7 @@ export function StatusChip({ status }: { status: Translation["status"] }) {
   const approved = status === "approved";
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
+      className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium ${
         approved ? "bg-mint-soft text-mint" : "bg-amber-soft text-amber-ink"
       }`}
     >
@@ -26,7 +26,7 @@ export function StatusChip({ status }: { status: Translation["status"] }) {
 export function KindBadge({ kind }: { kind?: "post" | "article" }) {
   if (!kind) return null;
   return (
-    <span className="inline-flex shrink-0 items-center rounded-md border border-line px-1.5 py-0.5 text-[10px] font-medium text-muted">
+    <span className="inline-flex shrink-0 items-center rounded-md border border-line px-1.5 py-0.5 text-[11px] font-medium text-muted">
       {kind === "article" ? "아티클" : "포스트"}
     </span>
   );

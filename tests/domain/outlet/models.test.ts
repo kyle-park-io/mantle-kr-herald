@@ -16,8 +16,8 @@ describe("outlet model", () => {
   });
 
   it("groups outlets by channel — telegram carries four rooms", () => {
-    expect(outletsForChannel("telegram").map((o) => o.id)).toEqual(["tg-community", "tg-dev", "tg-kol", "tg-blockchain"]);
-    expect(outletsForChannel("kakao").map((o) => o.id)).toEqual(["kakao-kol", "kakao-blockchain"]);
+    expect(outletsForChannel("telegram").map((o) => o.id)).toEqual(["tg-community", "tg-dev", "tg-blockchain", "tg-kol"]);
+    expect(outletsForChannel("kakao").map((o) => o.id)).toEqual(["kakao-blockchain", "kakao-kol"]);
   });
 
   it("names a primary outlet for every channel, and each one exists", () => {

@@ -30,6 +30,22 @@ export const DESTINATIONS_BY_CHANNEL: Record<Channel, Destination[]> = {
   pr_mail: ["pr_mail"],
 };
 
+/**
+ * Whether any of a channel's destinations actually renders `**bold**`.
+ *
+ * Only `telegram_bot` does (`**x**` → `<b>x</b>`); every other emitter calls `stripBold`. Kept as a
+ * constant rather than probed at runtime so it can be read where no emitter output is at hand —
+ * `FormatVariants` uses it to decide whether a channel's stored text should carry bold markers at
+ * all. `tests/domain/formatting/channelBold.test.ts` runs the real emitters against it, so a new
+ * destination that changes the answer for a channel fails the suite rather than drifting.
+ */
+export const CHANNEL_RENDERS_BOLD: Record<Channel, boolean> = {
+  x: false,
+  telegram: true,
+  kakao: false,
+  pr_mail: false,
+};
+
 export function emit(canonical: string, destination: Destination, xMaxWeighted: number = X_MAX_WEIGHTED): EmitResult {
   return EMITTERS[destination](stripMedia(canonical), xMaxWeighted);
 }

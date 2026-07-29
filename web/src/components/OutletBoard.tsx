@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { btnPrimary } from "../buttonStyles";
-import { TYPE_LABEL, itemUrl, type BoardView, type ConversionType, type ConvertPrepareReply } from "../types";
+import { TYPE_LABEL, datePrefix, itemUrl, type BoardView, type ConversionType, type ConvertPrepareReply } from "../types";
 import { OutletCard } from "./OutletCard";
+import { KindBadge } from "./TranslationList";
 
 /**
  * The 2차 surface: one card per `(type, channel)` group, each listing the rooms that receive it.
@@ -18,6 +19,9 @@ export function OutletBoard(props: {
    * and `itemUrl` returns null for anything that is not an `x:` item.
    */
   convertedByType: Record<string, string>;
+  /** Source-item display metadata, mirroring 1차's header. Absent for a Lark item. */
+  postedAt?: string;
+  kind?: "post" | "article";
   /** The rendering list on the left carries status chips the card can change. */
   onGroupChanged: () => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
@@ -85,46 +89,70 @@ export function OutletBoard(props: {
   const outletIds = [...new Set(rows.map((r) => r.outletId))];
   const url = itemUrl(board.itemId);
 
+  /**
+   * Jump to a room's first row. A DOM query rather than a ref map because the rows live inside
+   * `OutletCard`, one component down and one per group — threading a ref through every card to
+   * reach a room that may be in several of them buys nothing over the attribute the row already
+   * carries. `hovered` is set too, so the row is visibly marked once the scroll lands.
+   */
+  const scrollToOutlet = (outletId: string): void => {
+    setHovered(outletId);
+    document
+      .querySelector(`[data-outlet="${CSS.escape(outletId)}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
   return (
     <div className="mx-auto max-w-3xl p-6 sm:p-8">
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">{error}</div>
       )}
 
+      {/* Same shape as 1차's detail header — date, the id itself as the link, kind badge — so the
+          two modes read as one screen rather than two. `itemUrl` is null for a `lark:` item, which
+          is why the id still renders as plain code when there is nothing to link to. */}
       <header className="mb-5">
         <div className="flex flex-wrap items-center gap-2.5">
-          <code className="font-mono text-[12px] text-muted">{board.itemId}</code>
-          {url && (
+          {props.postedAt && (
+            <span className="font-mono text-[13px] font-medium text-faint">{datePrefix(props.postedAt)}</span>
+          )}
+          {url ? (
             <a
               href={url}
               target="_blank"
               rel="noreferrer"
-              className="text-[12px] font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+              className="font-mono text-[13px] text-muted underline-offset-2 hover:text-mint hover:underline"
             >
-              원문 ↗
+              {board.itemId}
             </a>
+          ) : (
+            <code className="font-mono text-[13px] text-muted">{board.itemId}</code>
           )}
+          <KindBadge kind={props.kind} />
         </div>
         <p className="mt-2 text-[13px] font-medium text-ink">
           수신처 {outletIds.length}곳 · {rows.length}건 중 {done}건 완료
         </p>
         {outletIds.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-muted">
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[13px] text-muted">
             {outletIds.map((id) => {
               const mine = rows.filter((r) => r.outletId === id);
               const ok = mine.filter((r) => r.deliveryStatus).length;
               return (
-                <span
+                <button
                   key={id}
+                  type="button"
                   onMouseEnter={() => setHovered(id)}
                   onMouseLeave={() => setHovered(null)}
-                  className={`rounded px-1 ${hovered === id ? "bg-mint-soft text-mint" : ""}`}
+                  onClick={() => scrollToOutlet(id)}
+                  title={`${mine[0].label} 줄로 이동`}
+                  className={`rounded px-1 ${hovered === id ? "bg-mint-soft text-mint" : "hover:bg-bg"}`}
                 >
                   {mine[0].label}{" "}
                   <span className={`font-mono tabular-nums ${ok === mine.length ? "text-mint" : "text-faint"}`}>
                     {ok}/{mine.length}
                   </span>
-                </span>
+                </button>
               );
             })}
           </div>
@@ -163,14 +191,14 @@ export function OutletBoard(props: {
             아직 변환 안 됨 —{" "}
             <span className="text-ink">{board.unconverted.map((t) => TYPE_LABEL[t]).join(" · ")}</span>
           </summary>
-          <p className="mt-2 text-[12px] leading-relaxed text-faint">
+          <p className="mt-2 text-[13px] leading-relaxed text-faint">
             대시보드는 변환하지 않습니다 — 여기서는 유형을 골라 워크시트만 준비할 수 있습니다. 에이전트가
             채운 뒤 <code className="font-mono">pnpm convert:save</code> 와{" "}
             <code className="font-mono">pnpm format</code> 을 실행하면 여기에 카드가 생깁니다.
           </p>
           <div className="mt-2.5 flex flex-wrap items-center gap-3">
             {board.unconverted.map((t) => (
-              <label key={t} className="inline-flex items-center gap-1.5 text-[12px] text-ink">
+              <label key={t} className="inline-flex items-center gap-1.5 text-[13px] text-ink">
                 <input
                   type="checkbox"
                   checked={prepareTypes.has(t)}
@@ -207,12 +235,12 @@ export function OutletBoard(props: {
             {prepareResult &&
               (prepareResult.pending > 0 ? (
                 <div className="flex flex-col gap-1">
-                  <p className="text-[12px] font-medium text-mint">
+                  <p className="text-[13px] font-medium text-mint">
                     워크시트 준비됨 — 에이전트에게 변환을 요청하세요:{" "}
                     <code className="font-mono text-ink">{prepareResult.worksheetPath}</code>
                   </p>
                   {prepareResult.archived && (
-                    <p className="text-[11px] font-medium text-amber-ink">
+                    <p className="text-[12px] font-medium text-amber-ink">
                       ⚠ 이전에 준비했던 미저장 배치는 보관되었습니다 —{" "}
                       <code className="font-mono">{prepareResult.archived}</code>. 에이전트가 그 배치를 채우던
                       중이었다면 다시 변환 준비가 필요합니다.
@@ -220,7 +248,7 @@ export function OutletBoard(props: {
                   )}
                 </div>
               ) : (
-                <p className="text-[12px] text-faint">
+                <p className="text-[13px] text-faint">
                   대기 중인 항목이 없습니다 — 승인된 원문이 없거나 이미 변환된 상태입니다. 이미 변환됐다면{" "}
                   <code className="font-mono">pnpm format</code> 을 실행하면 여기에 카드가 생깁니다.
                 </p>

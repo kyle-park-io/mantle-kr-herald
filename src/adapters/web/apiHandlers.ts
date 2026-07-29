@@ -12,6 +12,7 @@ import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
 import { emitAll } from "../../domain/formatting/emitters";
 import type { ApiTranslation } from "./attachKind";
+import type { SheetLink } from "../../config";
 import type { BoardView } from "./board";
 import type { SaveOutletOverride } from "../../app/SaveOutletOverride";
 import type { MarkDelivery } from "../../app/MarkDelivery";
@@ -32,6 +33,8 @@ export interface StatusView {
   sync: { synced: number; needsRepublish: number; unpublished: number };
   availableTargets: ("local" | "google" | "lark")[];
   integrations: IntegrationStatus[];
+  /** Header links to the team workbooks. A key is absent when its id is not configured. */
+  sheetLinks: { data?: SheetLink; qa?: SheetLink };
 }
 
 export interface PublishStateRow {
@@ -140,9 +143,21 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
 
   if (segments[1] === "renderings") {
     if (method === "GET" && segments.length === 2) {
-      const [renderings, variants] = await Promise.all([deps.formattingStore.loadAll(), deps.conversionStore.loadAll()]);
+      const [renderings, variants, translations] = await Promise.all([
+        deps.formattingStore.loadAll(),
+        deps.conversionStore.loadAll(),
+        // For `postedAt`/`kind` only. The 2차 list is per *item*, like 1차, so it shows the same
+        // date prefix and 포스트/아티클 badge — which live on the source item, not the rendering.
+        deps.loadTranslations(),
+      ]);
       const convertedByKey = new Map(variants.map((v) => [`${v.itemId}:${v.type}`, v.convertedText]));
-      const enriched = renderings.map((r) => ({ ...r, convertedText: convertedByKey.get(`${r.itemId}:${r.type}`) ?? "" }));
+      const sourceById = new Map(translations.map((t) => [t.itemId, t] as const));
+      const enriched = renderings.map((r) => ({
+        ...r,
+        convertedText: convertedByKey.get(`${r.itemId}:${r.type}`) ?? "",
+        postedAt: sourceById.get(r.itemId)?.postedAt,
+        kind: sourceById.get(r.itemId)?.kind,
+      }));
       return { status: 200, json: enriched };
     }
 
@@ -165,8 +180,9 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
         return { status: 200, json: updated };
       }
 
-      if (method === "POST" && segments.length === 6 && segments[5] === "approve") {
-        const updated = await deps.approveRendering.run({ itemId, type, channel });
+      // Two routes rather than one with a body flag, mirroring `/api/translations/:id/{approve,unapprove}`.
+      if (method === "POST" && segments.length === 6 && (segments[5] === "approve" || segments[5] === "unapprove")) {
+        const updated = await deps.approveRendering.run({ itemId, type, channel, approve: segments[5] === "approve" });
         if (!updated) return { status: 404, json: { error: "not found" } };
         return { status: 200, json: updated };
       }
@@ -265,9 +281,11 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
 
     if (method === "PUT" && segments.length === 5) {
       const b = (body ?? {}) as { text?: unknown; approve?: unknown; revert?: unknown };
+      // `approve` is matched on both booleans, not truthiness: `false` is the 승인 취소 request, and
+      // reading it as "absent" would fall through to the text branch and 400 on a valid call.
       const input =
         b.revert === true ? { revert: true }
-        : b.approve === true ? { approve: true }
+        : typeof b.approve === "boolean" ? { approve: b.approve }
         : typeof b.text === "string" && b.text.trim() !== "" ? { text: b.text }
         : undefined;
       if (!input) return { status: 400, json: { error: "text, approve or revert required" } };

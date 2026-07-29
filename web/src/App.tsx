@@ -7,6 +7,16 @@ import { RenderingsView } from "./components/RenderingsView";
 
 type Mode = "translations" | "renderings";
 
+/**
+ * The mode lives in the URL hash so a reload comes back to it. A reviewer working through 2차 who
+ * refreshes — or follows a `원문 ↗` link and comes back — was landing in 1차 every time, with the
+ * item they were on deselected.
+ *
+ * The hash rather than localStorage: it survives a reload the same way, it makes the two modes
+ * linkable and back-button-able, and it keeps two windows independent, which storage would not.
+ */
+const modeFromHash = (): Mode => (window.location.hash === "#renderings" ? "renderings" : "translations");
+
 const FUNNEL_STEPS = [
   ["수집", "collected"],
   ["번역", "translated"],
@@ -23,7 +33,7 @@ const GROUP_LABEL: Record<"collect" | "publish" | "send" | "data", string> = {
 };
 
 export function App() {
-  const [mode, setMode] = useState<Mode>("translations");
+  const [mode, setMode] = useState<Mode>(modeFromHash);
   const [items, setItems] = useState<Translation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +59,16 @@ export function App() {
     if (dirty && !window.confirm("저장하지 않은 편집이 있습니다. 모드를 바꿀까요?")) return;
     setDirty(false);
     setMode(m);
+    window.location.hash = m === "renderings" ? "#renderings" : "";
   };
+
+  // Back/forward, or the hash edited by hand. The confirm above is deliberately not repeated: the
+  // navigation already happened, so refusing it here would leave the URL and the screen disagreeing.
+  useEffect(() => {
+    const onHashChange = () => setMode(modeFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   const handleSelect = (id: string) => {
     if (dirty && !window.confirm("저장하지 않은 편집이 있습니다. 그래도 이동할까요?")) return;
@@ -192,6 +211,35 @@ export function App() {
 
           {status && (
             <div className="ml-auto hidden items-center gap-3 md:flex">
+              {/* Left of the funnel and set apart with a wider gap: these leave the dashboard,
+                  while everything to the right of them reports on it. Each appears only when its id
+                  is configured, so an empty GSHEET_QA_ID hides QA rather than linking nowhere. */}
+              {(status.sheetLinks.data || status.sheetLinks.qa) && (
+                <span className="mr-3 flex items-center gap-3 text-[13px]">
+                  {status.sheetLinks.data && (
+                    <a
+                      href={status.sheetLinks.data.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-mint underline-offset-2 hover:underline"
+                      title="팀 데이터 시트 — history · x-performance · targets"
+                    >
+                      {status.sheetLinks.data.title} ↗
+                    </a>
+                  )}
+                  {status.sheetLinks.qa && (
+                    <a
+                      href={status.sheetLinks.qa.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-amber-ink underline-offset-2 hover:underline"
+                      title="QA 시트 — 요청·이슈를 여기에 적어주세요 (점검 현황 · 미완 항목 · 변경 이력)"
+                    >
+                      {status.sheetLinks.qa.title} ↗
+                    </a>
+                  )}
+                </span>
+              )}
               <div className="flex items-center gap-1.5 text-[13px]">
                 {FUNNEL_STEPS.map(([label, key], i) => (
                   <div key={key} className="flex items-center gap-1.5">

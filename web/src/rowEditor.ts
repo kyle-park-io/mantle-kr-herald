@@ -11,6 +11,13 @@ export interface RowEditorGate {
   approveDisabled: boolean;
   /** The fork carries its own approval — a status, not an action, so a sent row still shows it. */
   showApproved: boolean;
+  /** …and while it can still be withdrawn, that status doubles as the 승인 취소 button. */
+  showUnapprove: boolean;
+  /**
+   * Approved, but the approval is the *group's* — this room has no override of its own, so there is
+   * nothing here to withdraw and the editor says where the button actually is.
+   */
+  showGroupApprovalHint: boolean;
   showRevert: boolean;
   /** "saving forks this room" — only worth saying while saving is still possible. */
   showForkHint: boolean;
@@ -45,16 +52,28 @@ export function rowEditorGate(
 ): RowEditorGate {
   const sent = row.deliveryStatus === "sent";
   const changed = ctx.draft !== row.text;
+  /**
+   * Approved copy is locked, exactly as in 1차: withdraw the approval first, then edit.
+   *
+   * The alternative — letting an edit silently drop the row back to `rendered` — is what the store
+   * does on its own, and it hides the one fact that matters here: this room was cleared to send and
+   * no longer is. `SendChannels` reads the store, so a reviewer who typed a fix and walked away
+   * would leave the room withheld with nothing on screen having said so.
+   */
+  const approved = row.status === "approved";
+  const locked = sent || approved;
   return {
-    readOnly: sent,
-    showSave: !sent,
+    readOnly: locked,
+    showSave: !locked,
     saveDisabled: ctx.busy || ctx.draft.trim() === "" || !changed,
-    showCancel: !sent && changed,
-    showApprove: !sent && row.forked && row.status !== "approved",
+    showCancel: !locked && changed,
+    showApprove: !sent && row.forked && !approved,
     approveDisabled: ctx.busy || changed,
-    showApproved: row.forked && row.status === "approved",
+    showApproved: row.forked && approved,
+    showUnapprove: !sent && row.forked && approved,
+    showGroupApprovalHint: !sent && !row.forked && approved,
     showRevert: !sent && row.forked,
-    showForkHint: !sent && !row.forked,
+    showForkHint: !locked && !row.forked,
     showReadOnlyLocked: sent && row.forked,
     showReadOnlyStale: sent && !row.forked,
   };
