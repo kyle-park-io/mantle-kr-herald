@@ -1,6 +1,6 @@
 import { PUBLISH_DELAY_MS } from "../adapters/send/typefullyPublish";
 
-type ReconcilePass = () => Promise<{ reconciled: number; pending: number; error?: string }>;
+type ReconcilePass = () => Promise<{ reconciled: number; retired: number; pending: number; error?: string }>;
 
 /**
  * Poll Typefully for scheduled drafts that have gone live, so the board stops showing `예약됨` for
@@ -24,8 +24,12 @@ export function startReconcileScheduler(
     running = true;
     void run()
       .then((r) => {
-        if (r.error) log(`[reconcile] pass reported an error: ${r.error}`);
-        else if (r.reconciled > 0) log(`[reconcile] ${r.reconciled} row(s) now carry their x.com url`);
+        if (r.error) { log(`[reconcile] pass reported an error: ${r.error}`); return; }
+        if (r.reconciled > 0) log(`[reconcile] ${r.reconciled} row(s) now carry their x.com url`);
+        // A retired row is the same class of silent state change `reconciled` already gets a line
+        // for — a draft deleted out-of-band while this process runs unattended must not disappear
+        // from the ledger without a trace until someone happens to reload the board.
+        if (r.retired > 0) log(`[reconcile] ${r.retired} row(s) retired — 예약 취소됨 (Typefully 초안이 삭제되어 이 방은 다시 보낼 수 있습니다)`);
       })
       .catch((err) => log(`[reconcile] pass failed: ${(err as Error).message}`))
       .finally(() => { running = false; });

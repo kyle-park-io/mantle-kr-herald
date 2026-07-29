@@ -247,12 +247,12 @@ const loadQuota = makeLoadHeadroom(deliveryLedger, xArticleLedger);
  * where the operator sees `예약됨` — telling them to open a terminal for the link to their own post
  * is how a row stays unresolved forever.
  */
-const reconcilePublished = async (): Promise<{ reconciled: number; pending: number; error?: string }> => {
+const reconcilePublished = async (): Promise<{ reconciled: number; retired: number; pending: number; error?: string }> => {
   let cfg;
   try {
     cfg = loadTypefullyConfig();
   } catch (err) {
-    return { reconciled: 0, pending: 0, error: (err as Error).message };
+    return { reconciled: 0, retired: 0, pending: 0, error: (err as Error).message };
   }
   try {
     return await new ReconcilePublished(
@@ -261,7 +261,7 @@ const reconcilePublished = async (): Promise<{ reconciled: number; pending: numb
       new TypefullyDraftLookup(cfg.apiKey, cfg.socialSetId),
     ).run();
   } catch (err) {
-    return { reconciled: 0, pending: 0, error: (err as Error).message };
+    return { reconciled: 0, retired: 0, pending: 0, error: (err as Error).message };
   }
 };
 

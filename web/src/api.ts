@@ -91,12 +91,17 @@ export const api = {
     return (await res.json().catch(() => ({}))) as HeadroomView;
   },
 
-  /** Ask Typefully whether the scheduled X drafts have published, and pull their real urls in. */
+  /**
+   * Ask Typefully whether the scheduled X drafts have published, and pull their real urls in. A
+   * draft can also come back `gone` — deleted before it published — in which case the row this
+   * itemId cares about was retired (`dropped`), not published; `retired` has to be on this type or
+   * a caller has no way to tell "still waiting" from "will never happen" apart.
+   */
   reconcile: async (itemId: string) => {
     const res = await fetch(`/api/items/${encodeURIComponent(itemId)}/reconcile`, { method: "POST" });
-    const body = (await res.json().catch(() => ({}))) as { reconciled?: number; pending?: number; error?: string; board?: BoardView };
+    const body = (await res.json().catch(() => ({}))) as { reconciled?: number; retired?: number; pending?: number; error?: string; board?: BoardView };
     if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, body.board);
-    return body as { reconciled: number; pending: number; board: BoardView };
+    return body as { reconciled: number; retired: number; pending: number; board: BoardView };
   },
   board: (itemId: string) => fetch(`/api/items/${encodeURIComponent(itemId)}/board`).then((r) => json<BoardView>(r)),
   /** Gives one room its own text — that is what forking is; there is no separate fork call. */

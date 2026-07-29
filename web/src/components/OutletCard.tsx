@@ -810,7 +810,16 @@ function Row(props: {
                       // actually counts it against the monthly quota — not when it was queued — so
                       // this is the other real trigger for a refetch, alongside a successful send.
                       props.onBoard(res.board, true);
-                      if (res.reconciled === 0) props.onError("아직 게시되지 않았습니다 — 잠시 뒤 다시 눌러보세요.");
+                      // `res.retired > 0` and `res.reconciled === 0` are mutually exclusive outcomes
+                      // for *this* row's draft, but must be checked in this order: a retired draft
+                      // never counts as reconciled either, so the generic "not published yet, try
+                      // later" message would otherwise fire for it too — contradicting the badge the
+                      // refetch above just painted ("예약 취소됨") in the very same click.
+                      if (res.retired > 0) {
+                        props.onError("예약된 게시물이 게시되기 전에 취소되었습니다 — 이 방은 다시 보낼 수 있습니다.");
+                      } else if (res.reconciled === 0) {
+                        props.onError("아직 게시되지 않았습니다 — 잠시 뒤 다시 눌러보세요.");
+                      }
                     })
                   }
                 >
