@@ -254,8 +254,15 @@ KOL list 읽기 → X 계정 조회 → 월간 집계 → x-performance 탭에 u
 - **멱등(idempotent) — 로컬 원장 `output/publish/deliveries.json`.** 발송에 성공한
   `(itemId, type, outletId)` 조합은 원장에 한 행으로 남고, 다음 실행에서는 건너뜁니다(`skipped`).
   **채널이 아니라 방 단위**라 한 채널에 방이 둘이면 각각 한 행이 남습니다. 실패한 항목은 원장에 남지
-  않으므로 다음 실행에서 그대로 재시도됩니다 — 재실행은 항상 안전합니다. 예전 `channels.json`은 읽기
+  않으므로 다음 실행에서 그대로 재시도됩니다. 예전 `channels.json`은 읽기
   전용으로 이관됩니다(채널 → 그 채널의 대표 방).
+  - **한 가지 예외 — `status: "dropped"`(화면의 `예약 취소됨`) 행은 걸러내지 않습니다.** X 발송은
+    Typefully 큐에 예약으로 들어가고, 그 초안이 게시 전에 지워지면 그 방에는 아무것도 도착하지
+    않습니다. `pnpm send:reconcile`(또는 대시보드 배경 확인)이 그 사실을 확인하면 행의 상태를
+    `dropped`로 바꾸는데, **그 순간부터 그 조합은 다시 발송 대상**이 됩니다 — 의도한 동작입니다
+    (아무것도 받지 못한 방을 영영 막아 두지 않기 위해서). 따라서 정확한 표현은 "재실행은 항상 아무
+    일도 하지 않는다"가 아니라 "**실제로 도착한 것은 두 번 나가지 않는다**"입니다. 판정은
+    `deliveredToRoom`(`src/domain/delivery/models.ts`) 하나가 모든 곳에서 담당합니다.
 - **어느 저장 모드에서도 동작합니다.** 이 명령은 `HERALD_STORAGE_MODE`를 아예 읽지 않습니다 —
   텔레그램 봇 토큰과 Typefully API 키만 있으면 `local`/`cloud` 구분 없이 그대로 발송됩니다
   ([`artifacts.md`](artifacts.md) §2).
