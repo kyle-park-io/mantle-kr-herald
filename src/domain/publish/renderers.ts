@@ -59,12 +59,17 @@ export function renderSent(e: SentArchiveEntry): string {
 }
 
 /**
- * "<sentDate>-<safeItemId>-<outletId>.md" — browsable, and needs no translation lookup at send time.
- * Named by room, not by channel: two auto rooms share a channel, and the archivers `upload()` (they
- * never `update()`), so a channel-named archive lands twice in the same folder under one name.
+ * "<sentDate>-<safeItemId>-<type>-<outletId>.md" — browsable, and needs no translation lookup at
+ * send time.
+ *
+ * Named by (type, room), because the archive is the only durable record of the exact bytes a room
+ * received — the delivery ledger keeps a postId and a url, not the text. The archivers `upload()`
+ * (they never `update()`), so any two sends sharing a name collide: `LocalFileUploader` overwrites
+ * in place, and Drive accepts two indistinguishable same-named files. Both halves of the name earn
+ * their place — 맨틀 한국 데브방 receives both 공지 and 해설, and two rooms share one channel.
  */
-export function sentFileName(e: Pick<SentArchiveEntry, "itemId" | "outletId" | "sentAt">): string {
+export function sentFileName(e: Pick<SentArchiveEntry, "itemId" | "type" | "outletId" | "sentAt">): string {
   const date = e.sentAt.slice(0, 10);
   const id = safeItemId(e.itemId);
-  return `${date}-${id}-${e.outletId}.md`;
+  return `${date}-${id}-${e.type}-${e.outletId}.md`;
 }
