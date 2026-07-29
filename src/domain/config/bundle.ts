@@ -17,14 +17,19 @@ export function assembleConfigBundle(files: ConfigFile[], now: () => string = ()
   return JSON.stringify({ version: 1, pushedAt: now(), files: map }, null, 2);
 }
 
-export function parseConfigBundle(json: string): ConfigFile[] {
+/**
+ * `label` names the bundle in the failure message only. The container format is shared with the
+ * operational-state snapshot (`src/domain/state/snapshot.ts`), and an operator running
+ * `state:pull` should not be told their *config* bundle is corrupt.
+ */
+export function parseConfigBundle(json: string, label = "config"): ConfigFile[] {
   let raw: unknown;
   try {
     raw = JSON.parse(json);
   } catch {
-    throw new Error("downloaded snapshot is not a valid config bundle (not JSON)");
+    throw new Error(`downloaded snapshot is not a valid ${label} bundle (not JSON)`);
   }
   const parsed = BundleSchema.safeParse(raw);
-  if (!parsed.success) throw new Error(`downloaded snapshot is not a valid config bundle: ${parsed.error.message}`);
+  if (!parsed.success) throw new Error(`downloaded snapshot is not a valid ${label} bundle: ${parsed.error.message}`);
   return Object.entries(parsed.data.files).map(([path, content]) => ({ path, content }));
 }

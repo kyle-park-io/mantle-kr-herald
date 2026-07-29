@@ -32,10 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   적으면 보드에서도 `발송됨`으로 보이고 다시 누를 수 없습니다), 최소한 **과거 항목의 데브방 줄은
   누르지 말라고 팀에 공지**하세요. PR #80을 이미 거쳐
   `deliveries.json`이 있는 설치본은 해당 없습니다.
-- **`output/formatted/overrides.json`을 백업 대상에 넣으세요.** 방별로 갈라 쓴 글(`✎따로`)은 이
-  파일에만 있고, 다시 만들어낼 수 없습니다 — 파일이 사라지면 갈라졌던 방이 전부 조용히 그룹 글로
-  되돌아가고, 화면에는 오류 하나 뜨지 않습니다. 발송 원장(`output/publish/deliveries.json`)과 같이
-  다루면 됩니다.
+- **`pnpm state:push`를 한 번 돌리세요 — 손으로 백업하던 파일들을 이제 이 명령이 맡습니다.** 방별로
+  갈라 쓴 글(`✎따로`)은 `output/formatted/overrides.json`에만 있고 다시 만들어낼 수 없습니다 —
+  파일이 사라지면 갈라졌던 방이 전부 조용히 그룹 글로 되돌아가고, 화면에는 오류 하나 뜨지 않습니다.
+  발송 원장(`output/publish/deliveries.json`, `x-article.json`)과 동기화 원장
+  (`output/publish/state.json`)도 마찬가지입니다. 아래 `Added`의 `state:push`/`state:pull`이 이 네
+  개를 Drive 스냅샷으로 묶습니다.
 - **업그레이드 후 첫 `pnpm send:reconcile`(또는 대시보드가 2분마다 도는 배경 확인)에서 `발송됨`이던
   줄이 `예약 취소됨`으로 바뀔 수 있습니다 — 데이터가 사라진 게 아니라 고쳐진 것입니다.** X 발송은
   Typefully 큐에 예약으로 들어가고, 그 초안이 게시되기 전에 지워지면 그 방에는 **아무것도 올라가지
@@ -92,8 +94,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   차이(diff)가 아니라 전문인데, 버린 글은 보통 직전 항목과 한 글자도 다르지 않아서 차이로 찍으면
   `(내용 동일)` 한 줄이 되고, 몇 번 고친 뒤라면 버린 글이 어디에도 통째로는 남지 않기 때문입니다.
   **되살리는 것은 자동이 아닙니다** — 계보는 기록이지 롤백이 아니라서, 복구는
-  그 본문을 복사해 다시 붙여넣는 사람의 판단입니다. 다른 계보 기록과 같이 best-effort라, 계보
-  기록이 실패해도 저장·승인·되돌리기 자체는 그대로 됩니다. 설계는
+  그 본문을 복사해 다시 붙여넣는 사람의 판단입니다. **저장·승인은 다른 계보 기록과 같이
+  best-effort**(계보 기록이 실패해도 저장 자체는 됩니다 — 글은 override에 그대로 남으니 잃는 건
+  이력뿐입니다)**지만, 되돌리기만은 다릅니다**: 버릴 본문을 계보에 남기지 못하면 되돌리기는
+  **실패하고 override는 지워지지 않습니다**(보드에 400 오류로 뜹니다). 기록에 실패한 채 지우면 그
+  글은 어디에도 없기 때문입니다. 설계는
+  `docs/superpowers/specs/2026-07-29-fork-preservation-design.md`.
+- **`pnpm state:push` / `pnpm state:pull [--yes]` — 다시 만들 수 없는 운영 파일의 Drive 백업.**
+  `output/` 아래 대부분은 다시 만들 수 있지만(항목은 재수집, 번역·변환·렌더링은 재생성) **네 개는
+  아닙니다**: 방별 포크(`formatted/overrides.json`), 발송 원장(`publish/deliveries.json`,
+  `publish/x-article.json`), 동기화 원장(`publish/state.json`). `state:push`는 이 넷을 타임스탬프
+  스냅샷(`operational-state-<시각>.json`) 하나로 묶어 Drive의 `operational-state` 폴더에 올립니다 —
+  덮어쓰지 않고 쌓이므로 히스토리가 곧 롤백입니다. 폴더는 첫 실행 때 `steering-config`와 같은 상위
+  폴더 아래에 자동으로 만들어지고 id를 알려줍니다(`GDRIVE_STATE_FOLDER_ID`).
+  **`state:pull`은 `config:pull`보다 일부러 더 조심스럽습니다.** 스티어링 설정은 관리자가 올리고
+  팀원이 내려받는 **공유**지만, 이쪽은 **이 기기가 무엇을 이미 보냈는가의 기록**입니다 — 남의
+  스냅샷을 받으면 이미 나간 방이 미발송으로 보이고, 확인 창 한 번이면 몇 달 전 글이 살아 있는 방으로
+  나갑니다. 그래서 (1) `--yes` 없이는 **미리보기만** 하고 아무것도 쓰지 않으며, 미리보기는 파일
+  이름이 아니라 **파일마다 현재 행 수와 스냅샷 행 수를 나란히** 보여줍니다(`현재 128행 → 스냅샷
+  3행`), (2) 쓰기 전에 현재 트리를 `output/archive/state-<시각>/`에 먼저 백업하고, (3) 스냅샷 파싱이나
+  백업이 실패하면 **한 글자도 쓰지 않고** 중단합니다. 스냅샷에 없는 로컬 파일은 **지우지 않고 그대로
+  둡니다**(`유지`로 표시) — 없는 걸 맞추겠다고 살아 있는 발송 원장을 지우는 것이야말로 이 기능이
+  막으려는 사고이기 때문입니다. 설계는
   `docs/superpowers/specs/2026-07-29-fork-preservation-design.md`.
 - **2차 검수가 목록에서 발송판(board)으로 바뀌었습니다.** `(itemId, type, channel)` 렌더링을 나열하던
   기존 화면 대신, 카드 하나가 `타입 · 채널` 문구 하나(그리고 승인 상태)를 담고 그 아래에 **그 문구를

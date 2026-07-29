@@ -210,6 +210,13 @@ export function loadGoogleConfigFolder(): string | undefined {
   return process.env.GDRIVE_CONFIG_FOLDER_ID?.trim() || undefined;
 }
 
+/** Folder for `state:push`/`state:pull` snapshots. Separate from the steering-config folder on
+ *  purpose: that one is shared with the team, and this one holds a record of what this machine has
+ *  already sent. Auto-provisioned by the first `state:push`. */
+export function loadGoogleStateFolder(): string | undefined {
+  return process.env.GDRIVE_STATE_FOLDER_ID?.trim() || undefined;
+}
+
 export type { StorageMode };
 
 export function loadStorageMode(): StorageMode {

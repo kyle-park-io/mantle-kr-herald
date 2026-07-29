@@ -313,6 +313,13 @@ interface SyncEntry {
 - `output/x/state.json`, `output/lark/state.json` — 수집 워터마크. 잃으면 에러 없이 조용히 재수집
   구간이 비게 됩니다.
 
+> 위 목록 중 **`output/formatted/overrides.json`, `output/publish/deliveries.json`,
+> `output/publish/x-article.json`, `output/publish/state.json` 네 개는 `pnpm state:push`가
+> Drive 스냅샷으로 묶어 줍니다** — 손으로 챙기지 않아도 됩니다. 복구는 `pnpm state:pull`
+> (`--yes` 없이는 미리보기, 파일마다 현재 행 수와 스냅샷 행 수를 나란히 보여줍니다).
+> 스티어링 파일은 `pnpm config:push`/`config:pull` 쪽입니다. 나머지(번역·변환·렌더링)는 사람의
+> 노동이 담겼지만 스냅샷 대상은 아니므로 여전히 직접 챙기세요.
+
 **지워도 되는 것 (재생성 가능하거나 이미 다른 곳에 보존됨):**
 
 - 이미 `pnpm archive`로 옮긴 뒤의 워크시트 원본(`output/{translations,variants,formatted}/worksheets/*.md`) — `prepare`를 다시 실행하면 재생성됩니다
