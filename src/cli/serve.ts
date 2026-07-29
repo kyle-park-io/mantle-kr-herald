@@ -33,6 +33,9 @@ import { deliveredByChannelSender, outletById, outletsForChannel } from "../doma
 import { createSenders } from "./channelSenders";
 import { buildRecorder } from "./recorder";
 import { buildArchiver } from "./archiver";
+import { quotaReader } from "./typefullyQuotaReader";
+import { startReconcileScheduler } from "./reconcileScheduler";
+import { makeLoadQuota } from "./loadQuota";
 import type { SendableChannel } from "../domain/send/channels";
 import {
   loadStorageMode,
@@ -237,6 +240,11 @@ const loadBoard = async (itemId: string): Promise<BoardView> => {
 
 const isSendableChannel = (c: string): c is SendableChannel => c === "telegram" || c === "x";
 
+// The board's banner: the account-wide Typefully publishing quota plus the in-flight count that
+// turns it into the number the send gate actually enforces. See loadQuota.ts for the caching and
+// staleness rules — extracted so both are unit-tested rather than living in this closure.
+const loadQuota = makeLoadQuota(deliveryLedger);
+
 /**
  * Ask Typefully whether the scheduled drafts have published, and write the real x.com urls back.
  *
@@ -316,7 +324,19 @@ const sendToOutlet = async (itemId: string, type: string, outletId: string, rese
       // Without this a forked room receives the *group* text — the wrong copy, irreversibly, since
       // the ledger then records the room as `sent` and a `sent` row can never be unmarked.
       overrideStore,
+      quotaReader([channel]),
     ).run({ targets: [channel], ids: new Set([itemId]), types: [type], outletIds: [outletId] });
+
+    // A quota refusal is not a plain zero-send: the operator needs to know the account is at its
+    // ceiling, not that this row failed to send for some ordinary reason.
+    if (result.quotaBlocked) {
+      const { needed, available, resetsAt } = result.quotaBlocked;
+      const when = resetsAt ? ` (${resetsAt.slice(0, 10)} 리셋)` : "";
+      if (previous) await deliveryLedger.add(previous); // nothing went out — the room is still on its first post
+      // `available` (remaining − inFlight) can be negative when a stale in-flight row overcounts —
+      // clamp only the displayed number; the refusal itself already happened on the raw comparison.
+      return { sent: 0, failed: 0, error: `Typefully 월간 발행 쿼터가 부족합니다 — 필요 ${needed}건, 잔여 ${Math.max(0, available)}건${when}` };
+    }
 
     // `sent 0` on its own tells the reviewer nothing, so every zero-send outcome carries a reason.
     // Kept in the same English as the `MarkDelivery` / `SaveOutletOverride` refusals, which surface
@@ -401,7 +421,22 @@ const deps: ApiDeps = {
   formatVariants,
   sendToOutlet,
   reconcilePublished,
+  loadQuota,
 };
 
 startServer(deps, { port, staticDir: join(REPO_ROOT, "web", "dist"), localPublishDir: paths.publishLocalDir });
 console.log(`Review dashboard on http://localhost:${port}  (build the UI first: pnpm build:web)`);
+
+// The board's [게시 확인] button stays — this only means an operator who never clicks it still
+// sees real x.com links, a couple of minutes after the post goes out.
+//
+// Guarded: a Telegram-only install has no TYPEFULLY_* env. Every other Typefully-optional path on
+// this branch treats that as "nothing to do" (quotaReader returns undefined, doctor uses
+// optionalCheck) — without this guard, `reconcilePublished` would report the missing-key error as
+// `r.error` on every tick, forever, on an install that is not broken.
+try {
+  loadTypefullyConfig();
+  startReconcileScheduler(reconcilePublished, { log: (m) => console.log(m) });
+} catch {
+  // Typefully not configured — nothing was ever scheduled through it, so there is nothing to reconcile.
+}

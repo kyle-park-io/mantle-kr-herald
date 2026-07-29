@@ -92,3 +92,34 @@ describe("TypefullySender media", () => {
     expect(calls[0].jsonBody.platforms.x.posts).toEqual([{ text: "a" }]);
   });
 });
+
+describe("TypefullySender — retry behaviour", () => {
+  it("does not retry a 5xx on draft creation: the draft may already exist", async () => {
+    const calls: string[] = [];
+    const fn = (async (url: string) => {
+      calls.push(String(url));
+      return { ok: false, status: 502, text: async () => "bad gateway" } as Response;
+    }) as unknown as typeof fetch;
+    const sender = new TypefullySender("KEY", "42", fn, async () => {});
+    await expect(
+      sender.send({ itemId: "x:1", type: "announcement", channel: "x", segments: ["hi"] }),
+    ).rejects.toThrow(/may have been created/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("retries a 429 on draft creation — it was rejected, not processed", async () => {
+    const calls: string[] = [];
+    const fn = (async (url: string) => {
+      calls.push(String(url));
+      return calls.length === 1
+        ? ({ ok: false, status: 429, text: async () => "" } as Response)
+        : ({ ok: true, status: 200, json: async () => ({ id: 7, share_url: "https://typefully.com/s/7" }) } as Response);
+    }) as unknown as typeof fetch;
+    const sender = new TypefullySender("KEY", "42", fn, async () => {});
+    expect(await sender.send({ itemId: "x:1", type: "announcement", channel: "x", segments: ["hi"] })).toEqual({
+      postId: "7",
+      url: "https://typefully.com/s/7",
+    });
+    expect(calls).toHaveLength(2);
+  });
+});

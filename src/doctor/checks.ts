@@ -86,3 +86,32 @@ export function sheetAccessResult(name: string, res: { ok: boolean; status: numb
         : `HTTP ${res.status}`;
   return { name, status: "fail", detail };
 }
+
+/**
+ * Below this many remaining publishes, say so. Roughly a day's sends at the current cadence — late
+ * enough not to nag, early enough to upgrade or reschedule before a batch is refused outright.
+ * Shared with the dashboard banner so the CLI and the screen never disagree about when to worry.
+ */
+export const LOW_PUBLISHING_QUOTA = 3;
+
+/**
+ * The social set's monthly publishing quota. Never `fail`: an account at its plan's ceiling is
+ * working exactly as sold, and doctor exiting non-zero over it would be wrong.
+ *
+ * This answers "is the integration healthy", not "can I send right now" — it is the raw account
+ * total, not corrected for drafts scheduled minutes ago that have not yet been confirmed published
+ * (the board's banner does that correction; reading the delivery ledger from doctor would be a new
+ * dependency for little gain here). "on the account" says so, rather than implying this is what a
+ * send would be gated against.
+ */
+export function quotaResult(
+  name: string,
+  q: { used: number; remaining: number; resetsAt: string },
+): CheckResult {
+  const resets = q.resetsAt ? ` · resets ${q.resetsAt.slice(0, 10)}` : "";
+  return {
+    name,
+    status: q.remaining <= LOW_PUBLISHING_QUOTA ? "warn" : "ok",
+    detail: `publishing quota ${q.remaining} left of ${q.used + q.remaining} on the account${resets}`,
+  };
+}

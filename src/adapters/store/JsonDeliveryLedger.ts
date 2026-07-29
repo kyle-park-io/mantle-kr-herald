@@ -37,14 +37,34 @@ export class JsonDeliveryLedger implements DeliveryLedger {
     return new Set((await this.loadAll()).map(deliveryKey));
   }
 
+  private queue: Promise<void> = Promise.resolve();
+  /**
+   * Serializes writes on this instance. `writeJsonFileAtomic` makes each write all-or-nothing, but
+   * add/remove are read-modify-write: two overlapping calls both read the same file and the second
+   * rename silently discards the first one's row. The dashboard runs a reconcile pass every two
+   * minutes against the same instance the send path uses, so that overlap is now routine — and a
+   * dropped `sent` row means a live scheduled post the ledger cannot see, which the next run re-sends.
+   */
+  private serial<T>(fn: () => Promise<T>): Promise<T> {
+    // The second `fn` is deliberate: a rejected predecessor must not prevent the next write from
+    // running, or one failed write would wedge every write on this instance after it.
+    const next = this.queue.then(fn, fn);
+    this.queue = next.then(() => {}, () => {});
+    return next;
+  }
+
   async add(entry: DeliveryEntry): Promise<void> {
-    const byKey = new Map((await this.loadAll()).map((e) => [deliveryKey(e), e]));
-    byKey.set(deliveryKey(entry), entry);
-    await writeJsonFileAtomic(this.dir, this.path, [...byKey.values()]);
+    return this.serial(async () => {
+      const byKey = new Map((await this.loadAll()).map((e) => [deliveryKey(e), e]));
+      byKey.set(deliveryKey(entry), entry);
+      await writeJsonFileAtomic(this.dir, this.path, [...byKey.values()]);
+    });
   }
 
   async remove(key: string): Promise<void> {
-    const kept = (await this.loadAll()).filter((e) => deliveryKey(e) !== key);
-    await writeJsonFileAtomic(this.dir, this.path, kept);
+    return this.serial(async () => {
+      const kept = (await this.loadAll()).filter((e) => deliveryKey(e) !== key);
+      await writeJsonFileAtomic(this.dir, this.path, kept);
+    });
   }
 }

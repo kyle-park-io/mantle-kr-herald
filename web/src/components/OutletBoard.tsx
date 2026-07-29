@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { btnPrimary } from "../buttonStyles";
-import { TYPE_LABEL, datePrefix, itemUrl, type BoardView, type ConversionType, type ConvertPrepareReply } from "../types";
+import {
+  TYPE_LABEL,
+  datePrefix,
+  itemUrl,
+  LOW_PUBLISHING_QUOTA,
+  type BoardView,
+  type ConversionType,
+  type ConvertPrepareReply,
+  type PublishingQuota,
+  type QuotaView,
+} from "../types";
 import { OutletCard } from "./OutletCard";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { KindBadge } from "./TranslationList";
@@ -30,6 +40,9 @@ export function OutletBoard(props: {
   const { itemId, onDirtyChange } = props;
   const [board, setBoard] = useState<BoardView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [quota, setQuota] = useState<PublishingQuota | null>(null);
+  /** Rooms already sent to but not yet confirmed published — see `loadQuota` below. */
+  const [inFlight, setInFlight] = useState(0);
   const [hovered, setHovered] = useState<string | null>(null);
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
   // §10 [변환 준비]: which not-yet-converted types the operator picked, and the last worksheet
@@ -49,6 +62,34 @@ export function OutletBoard(props: {
     }
   }, [itemId]);
 
+  /**
+   * The account-wide Typefully quota, for the banner above the group cards. An unreadable quota is
+   * not an empty one — show nothing rather than paint a healthy account as blocked at `0건`.
+   *
+   * `inFlight` always lands alongside it (defaulting to 0 rather than being left stale) — the
+   * banner's headline number is `remaining − inFlight`, the same arithmetic the send gate applies,
+   * so the two must be set together or the banner could show a number the gate would refuse.
+   */
+  const loadQuota = useCallback(async () => {
+    const r: QuotaView = await api.typefullyQuota();
+    setQuota(r.quota ?? null);
+    setInFlight(r.inFlight ?? 0);
+  }, []);
+
+  /**
+   * Every mutating board route answers through `onBoard`, but only a real send and a reconcile pass
+   * (게시 확인) can move the Typefully quota — `OutletCard` passes `quotaMayHaveChanged` only from
+   * those two call sites. Refetching here on every board update would also fire on 전달함 ticks,
+   * saves, approvals and reverts, none of which touch Typefully.
+   */
+  const handleBoard = useCallback(
+    (next: BoardView, quotaMayHaveChanged?: boolean) => {
+      setBoard(next);
+      if (quotaMayHaveChanged) void loadQuota();
+    },
+    [loadQuota],
+  );
+
   useEffect(() => {
     setBoard(null);
     setError(null);
@@ -57,6 +98,10 @@ export function OutletBoard(props: {
     setPrepareResult(null);
     void reload();
   }, [itemId, reload]);
+
+  useEffect(() => {
+    void loadQuota();
+  }, [loadQuota]);
 
   const onDirty = useCallback((key: string, dirty: boolean) => {
     setDirtyKeys((prev) => {
@@ -72,6 +117,9 @@ export function OutletBoard(props: {
   }, [dirtyKeys, onDirtyChange]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
+  // 저장 / 승인하기 / 승인 취소 — the group-text mutations `OutletCard` raises through this prop —
+  // never reach Typefully, so this intentionally does not touch the quota; see `handleBoard` above
+  // for the two calls that do.
   const parentChanged = props.onGroupChanged;
   const onGroupChanged = useCallback(async () => {
     await Promise.all([parentChanged(), reload()]);
@@ -91,6 +139,9 @@ export function OutletBoard(props: {
   // `n/m` badges were numbered in, so the summary and the cards read the same way.
   const outletIds = [...new Set(rows.map((r) => r.outletId))];
   const url = itemUrl(board.itemId);
+  // The number the send gate (`SendChannels`) actually enforces, not the raw account total —
+  // clamped because a stale `inFlight` count must read as "none left", not as a bug (`잔여 -2건`).
+  const availableQuota = quota ? Math.max(0, quota.remaining - inFlight) : 0;
 
   /**
    * Jump to a room's first row. A DOM query rather than a ref map because the rows live inside
@@ -163,6 +214,20 @@ export function OutletBoard(props: {
         )}
       </header>
 
+      {quota && (
+        <div
+          className={`mb-4 rounded-lg border px-3 py-2 text-[13px] ${
+            availableQuota <= LOW_PUBLISHING_QUOTA
+              ? "border-amber-ink/20 bg-amber-soft text-amber-ink"
+              : "border-line bg-surface text-muted"
+          }`}
+        >
+          X 발행 잔여 <strong className="font-semibold">{availableQuota}건</strong>
+          {inFlight > 0 ? ` (예약 ${inFlight}건 대기)` : ""} / {quota.used + quota.remaining}건
+          {quota.resetsAt ? ` · ${quota.resetsAt.slice(5, 10).replace("-", "/")} 리셋` : ""}
+        </div>
+      )}
+
       {board.groups.length === 0 ? (
         <p className="rounded-xl border border-line bg-surface p-5 text-[13px] leading-relaxed text-faint shadow-sm">
           이 항목은 아직 렌더링이 없습니다. <code className="font-mono">pnpm format</code> 을 먼저 실행하세요.
@@ -177,7 +242,7 @@ export function OutletBoard(props: {
               convertedText={props.convertedByType[g.type] ?? ""}
               hovered={hovered}
               onHover={setHovered}
-              onBoard={setBoard}
+              onBoard={handleBoard}
               onGroupChanged={onGroupChanged}
               onError={setError}
               onDirty={onDirty}

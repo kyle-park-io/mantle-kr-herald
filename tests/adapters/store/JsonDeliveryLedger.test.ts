@@ -44,6 +44,21 @@ describe("JsonDeliveryLedger", () => {
     expect(await l.loadAll()).toEqual([]);
   });
 
+  it("serializes concurrent add() calls so neither write is lost — the reconcile-vs-send race", async () => {
+    // `add()` is read-modify-write: two overlapping calls both read the same file and the second
+    // rename silently discards the first one's row. The dashboard's reconcile pass and the send
+    // path share one instance, so this is not a theoretical race — it is the exact failure mode
+    // that turns a live scheduled X post into an invisible-then-duplicated one. Firing both without
+    // awaiting the first is what reproduces the overlap; a sequential `await` each would never race.
+    const l = new JsonDeliveryLedger(dir);
+    const a = { itemId: "x:1", type: "announcement", outletId: "tg-community", status: "sent" as const, at: "2026-07-29T00:00:00.000Z", by: "auto" as const };
+    const b = { itemId: "x:2", type: "announcement", outletId: "tg-dev", status: "sent" as const, at: "2026-07-29T00:00:01.000Z", by: "auto" as const };
+    await Promise.all([l.add(a), l.add(b)]);
+    const keys = await l.loadKeys();
+    expect(keys.has(deliveryKey(a))).toBe(true);
+    expect(keys.has(deliveryKey(b))).toBe(true);
+  });
+
   it("migrates a legacy channel-keyed ledger to the channel's primary outlet", async () => {
     await writeFile(
       join(dir, "channels.json"),

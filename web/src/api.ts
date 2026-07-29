@@ -1,6 +1,6 @@
 import type {
   Translation, PublishResult, Rendering, ConversionType, Channel, AppStatus, PublishStateRow, Emissions,
-  BoardView, BoardReply, SendReply, ConvertPrepareReply, FormatReply,
+  BoardView, BoardReply, SendReply, ConvertPrepareReply, FormatReply, QuotaView,
 } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
@@ -80,6 +80,16 @@ export const api = {
     fetch(`${rPath(itemId, type, channel)}/emissions${outletId ? `/${outletId}` : ""}`).then((r) => json<Emissions>(r)),
   status: () => fetch("/api/status").then((r) => json<AppStatus>(r)),
   publishState: () => fetch("/api/publish/state").then((r) => json<PublishStateRow[]>(r)),
+
+  /**
+   * The account-wide Typefully publishing quota, for the board banner. Always resolves — the
+   * server answers 200 either way, since an unreadable quota is information for the banner, not a
+   * client error — so this never throws; a missing `quota` means "show nothing".
+   */
+  typefullyQuota: async (): Promise<QuotaView> => {
+    const res = await fetch("/api/typefully/quota");
+    return (await res.json().catch(() => ({}))) as QuotaView;
+  },
 
   /** Ask Typefully whether the scheduled X drafts have published, and pull their real urls in. */
   reconcile: async (itemId: string) => {

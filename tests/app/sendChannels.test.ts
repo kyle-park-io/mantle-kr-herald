@@ -14,6 +14,7 @@ import { overrideKey } from "../../src/domain/outlet/override";
 import type { OutletOverrideStore } from "../../src/ports/OutletOverrideStore";
 import type { TranslationStore } from "../../src/ports/TranslationStore";
 import type { Translation } from "../../src/domain/translation/models";
+import type { PublishingQuota } from "../../src/adapters/send/TypefullyQuota";
 
 const rendering = (o: Partial<ChannelRendering>): ChannelRendering => ({
   itemId: "x:1", type: "announcement", channel: "telegram", text: "**hi** everyone", refined: false,
@@ -411,6 +412,96 @@ describe("SendChannels", () => {
     expect(sends).toBe(1);
     expect(res).toEqual(result({ sent: 1 }));
     expect(added.map((e) => e.outletId)).toEqual(["x-post"]);
+  });
+});
+
+/**
+ * The account can publish 15 posts a month through Typefully, and nothing checked that before this
+ * gate existed. It has to be all-or-nothing per run (a partial batch leaves an operator
+ * reconstructing how far it got from a room-by-room ledger) and it has to not count as `failed` (an
+ * account at its plan's ceiling is behaving as sold, not broken).
+ */
+describe("SendChannels — publishing quota gate", () => {
+  const quotaOf = (remaining: number) => async () => ({ used: 15 - remaining, remaining, resetsAt: "2026-08-01T00:00:00+09:00" });
+
+  /** One X rendering, approved for the one auto X room (x-post), plus the quota reader as the 12th argument. */
+  function sendChannelsWithQuota(quota: () => Promise<PublishingQuota>, opts: { ledgerSeed?: DeliveryEntry[] } = {}) {
+    const store = fakeStore([rendering({ itemId: "x:1", type: "x", channel: "x", status: "approved" })]);
+    const { ledger } = fakeLedger(opts.ledgerSeed ?? []);
+    return new SendChannels(
+      store, { telegram: undefined, x: okSender("x") }, ledger, fakeTranslations(),
+      undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS, undefined, quota,
+    ).run({ targets: ["x"] });
+  }
+
+  /** One X rendering and one Telegram rendering, with only tg-community configured so a telegram send counts as 1. */
+  function sendChannelsWithBothChannels(quota: () => Promise<PublishingQuota>) {
+    const store = fakeStore([
+      rendering({ itemId: "x:1", type: "x", channel: "x", status: "approved" }),
+      rendering({ itemId: "x:2", channel: "telegram", status: "approved" }),
+    ]);
+    const { ledger } = fakeLedger();
+    return new SendChannels(
+      store, { telegram: okSender("telegram"), x: okSender("x") }, ledger, fakeTranslations(),
+      undefined, undefined, undefined, undefined, outletsForChannel, { "tg-community": "-100111" }, undefined, quota,
+    ).run({ targets: ["telegram", "x"] });
+  }
+
+  /** No X rendering at all, so the batch never needs an X send and the gate must stay silent. */
+  function sendChannelsTelegramOnly(quota: () => Promise<PublishingQuota>) {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", status: "approved" })]);
+    const { ledger } = fakeLedger();
+    return new SendChannels(
+      store, { telegram: okSender("telegram"), x: undefined }, ledger, fakeTranslations(),
+      undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS, undefined, quota,
+    ).run({ targets: ["telegram"] });
+  }
+
+  it("blocks every X room when the batch needs more than the quota allows", async () => {
+    const result = await sendChannelsWithQuota(quotaOf(0));
+    expect(result.sent).toBe(0);
+    // A quota refusal is an account state, not a fault — `failed` must stay clean.
+    expect(result.failed).toBe(0);
+    expect(result.failures).toEqual([]);
+    expect(result.quotaBlocked).toEqual({ needed: 1, available: 0, resetsAt: "2026-08-01T00:00:00+09:00" });
+  });
+
+  it("sends normally when the quota covers the batch", async () => {
+    const result = await sendChannelsWithQuota(quotaOf(6));
+    expect(result.sent).toBe(1);
+    expect(result.quotaBlocked).toBeUndefined();
+  });
+
+  /**
+   * A draft created two minutes ago has not published yet, so it is in neither `used` nor a lower
+   * `remaining`. Without this term two runs inside the scheduling window each see the same headroom
+   * and together overshoot the account's monthly ceiling.
+   */
+  it("counts rows still awaiting publish against the remaining quota", async () => {
+    const result = await sendChannelsWithQuota(quotaOf(1), {
+      ledgerSeed: [sentEntry({ itemId: "x:9", outletId: "x-post", postId: "10104901" })],
+    });
+    expect(result.sent).toBe(0);
+    expect(result.quotaBlocked).toEqual({ needed: 1, available: 0, resetsAt: "2026-08-01T00:00:00+09:00" });
+  });
+
+  it("leaves telegram rooms alone when X is over quota", async () => {
+    const result = await sendChannelsWithBothChannels(quotaOf(0));
+    expect(result.quotaBlocked).toBeDefined();
+    expect(result.sent).toBe(1); // the telegram room
+  });
+
+  // A monitoring call must never become a new way for delivery to fail.
+  it("sends anyway when the quota lookup itself throws", async () => {
+    const result = await sendChannelsWithQuota(async () => { throw new Error("network down"); });
+    expect(result.sent).toBe(1);
+    expect(result.quotaBlocked).toBeUndefined();
+  });
+
+  it("never calls the quota reader when the batch has no X rooms", async () => {
+    let called = 0;
+    await sendChannelsTelegramOnly(async () => { called += 1; return { used: 0, remaining: 15, resetsAt: "" }; });
+    expect(called).toBe(0);
   });
 });
 

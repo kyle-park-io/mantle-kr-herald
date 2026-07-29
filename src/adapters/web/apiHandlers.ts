@@ -18,6 +18,7 @@ import type { SaveOutletOverride } from "../../app/SaveOutletOverride";
 import type { MarkDelivery } from "../../app/MarkDelivery";
 import type { PrepareConversionRun } from "../../app/PrepareConversionRun";
 import type { FormatVariants } from "../../app/FormatVariants";
+import type { PublishingQuota } from "../send/TypefullyQuota";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -77,6 +78,13 @@ export interface ApiDeps {
   prepareConversionRun: PrepareConversionRun;
   /** Pure code — unlike conversion, the dashboard can run this one itself. */
   formatVariants: FormatVariants;
+  /**
+   * The Typefully publishing quota for the banner, plus `inFlight` — rooms already sent to but not
+   * yet confirmed published, the same count the send gate (`SendChannels`) subtracts from
+   * `quota.remaining`. The banner needs both so it can show the number the gate actually enforces
+   * rather than the raw account total. `error` when the quota itself could not be read.
+   */
+  loadQuota: () => Promise<{ quota?: PublishingQuota; inFlight?: number; error?: string }>;
 }
 
 /** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */
@@ -98,6 +106,12 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
 
   if (method === "GET" && segments.length === 2 && segments[1] === "status") {
     return { status: 200, json: await deps.loadStatus() };
+  }
+
+  // Account-wide, not per item — and deliberately not a field on BoardView: board loads are
+  // frequent and the social-set bucket is the smallest rate limit we measured (500/hr).
+  if (method === "GET" && segments.length === 3 && segments[1] === "typefully" && segments[2] === "quota") {
+    return { status: 200, json: await deps.loadQuota() };
   }
 
   if (method === "GET" && segments.length === 3 && segments[1] === "publish" && segments[2] === "state") {

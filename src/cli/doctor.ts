@@ -8,13 +8,24 @@ import {
   loadGoogleDriveConfig,
   loadGoogleSheetConfig,
   loadStorageMode,
+  loadTypefullyConfig,
 } from "../config";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
+import { TypefullyQuota } from "../adapters/send/TypefullyQuota";
 import { HttpClient } from "../shared/http/HttpClient";
 import { paths } from "../paths";
 import { steeringFiles, missingSteeringFiles, skeletonSteeringFiles } from "../doctor/steering";
-import { configCheck, cloudCheck, optionalCheck, parseScopes, scopeCheck, accessResult, sheetAccessResult } from "../doctor/checks";
+import {
+  configCheck,
+  cloudCheck,
+  optionalCheck,
+  parseScopes,
+  scopeCheck,
+  accessResult,
+  sheetAccessResult,
+  quotaResult,
+} from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
 
@@ -54,6 +65,8 @@ results.push(optionalCheck("Lark Drive (D)", () => loadLarkDriveConfig(), "opt-i
 results.push(cloudCheck("Google auth", () => loadGoogleAuthConfig(), local, "not needed in local mode", authMode()));
 results.push(cloudCheck("Google Drive (D)", () => loadGoogleDriveConfig(), local, "not needed in local mode"));
 results.push(optionalCheck("Google Sheet (§9a)", () => loadGoogleSheetConfig(), "optional — only for the Sheet data hub (§9a)"));
+// X delivery is opt-in — a Telegram-only install is a valid setup, not a broken one.
+results.push(optionalCheck("Typefully (X)", () => loadTypefullyConfig(), "only needed to send to X"));
 
 // Presence is not enough: `config:init` writes empty skeletons, so a file can exist and steer
 // nothing. Reporting ok there would hide exactly the failure that matters — translating with an
@@ -142,6 +155,45 @@ if (live) {
     });
   } catch (err) {
     results.push({ name: "Lark  live", status: "fail", detail: err instanceof Error ? err.message : String(err) });
+  }
+
+  let typefully: ReturnType<typeof loadTypefullyConfig> | undefined;
+  try {
+    typefully = loadTypefullyConfig();
+  } catch {
+    // TYPEFULLY_* not set — the offline check above already reported it as a warn.
+  }
+  if (typefully) {
+    const t = typefully;
+    try {
+      // Two calls on purpose: /me proves the key, the social set proves the id and carries the quota.
+      // Reporting "quota unreadable" for what is really a bad key would send the operator the wrong way.
+      const me = await fetch("https://api.typefully.com/v2/me", { headers: { Authorization: `Bearer ${t.apiKey}` } });
+      if (!me.ok) {
+        // 401/403 mean the key itself was rejected — anything else (5xx, 429, ...) is Typefully's
+        // side failing, and sending the operator to re-check a perfectly good key during an outage
+        // is the wrong remedy.
+        const detail =
+          me.status === 401 || me.status === 403
+            ? `GET /v2/me → HTTP ${me.status} — check TYPEFULLY_API_KEY`
+            : `GET /v2/me → HTTP ${me.status} — Typefully upstream failure, not necessarily your key`;
+        results.push({ name: "Typefully  live", status: "fail", detail });
+      } else {
+        try {
+          results.push(quotaResult("Typefully  live", await new TypefullyQuota(t.apiKey, t.socialSetId).read()));
+        } catch (err) {
+          results.push({
+            name: "Typefully  live",
+            status: "fail",
+            detail: `key OK, social set unreadable — check TYPEFULLY_SOCIAL_SET_ID (${(err as Error).message})`,
+          });
+        }
+      }
+    } catch (err) {
+      // fetch() rejects on network-level failures (DNS, connection refused, TLS, timeout) — distinct
+      // from an HTTP error status, which is handled above via `!me.ok`. Both must be visible.
+      results.push({ name: "Typefully  live", status: "fail", detail: `unreachable — ${(err as Error).message}` });
+    }
   }
 }
 
