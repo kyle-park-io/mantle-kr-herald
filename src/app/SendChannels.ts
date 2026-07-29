@@ -105,10 +105,11 @@ export class SendChannels {
     private readonly overrides?: OutletOverrideStore,
     /**
      * Reads how much Typefully publishing headroom is left — the same reader the board's banner
-     * reads from (`publishHeadroom.ts`), so the gate and the screen can never name two different
-     * numbers. Optional: a Telegram-only install has no Typefully credentials, and every pre-headroom
-     * call site stays valid without it. When absent the gate does not run, which is the pre-existing
-     * behaviour.
+     * reads from (`publishHeadroom.ts`), so the gate and the banner can never use different
+     * arithmetic to compute it. They can still show different numbers for up to a minute: the
+     * banner's read is cached, this gate's is not (`headroomReader` forces `ttlMs: 0`). Optional: a
+     * Telegram-only install has no Typefully credentials, and every pre-headroom call site stays
+     * valid without it. When absent the gate does not run, which is the pre-existing behaviour.
      */
     private readonly headroom?: () => Promise<Headroom>,
   ) {}

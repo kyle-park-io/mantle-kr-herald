@@ -321,9 +321,10 @@ export interface FormatReply {
 }
 
 /**
- * Mirrors `Headroom` in src/cli/publishHeadroom.ts — how much Typefully publishing headroom is left.
- * One module on the server computes this once, for both the send gate and this banner, so the two
- * can never name two different numbers.
+ * Mirrors `Headroom` in src/domain/send/headroom.ts — how much Typefully publishing headroom is
+ * left. One module on the server computes this, for both the send gate and this banner, so the two
+ * can never use different arithmetic. They can still be up to a minute apart on `remaining`: the
+ * banner's server-side read is cached, the gate's is not.
  */
 export interface Headroom {
   /** The account's raw remaining publishes, for display. */
@@ -342,7 +343,7 @@ export interface Headroom {
 }
 
 /**
- * Mirrors `HeadroomView` in src/cli/publishHeadroom.ts — the GET /api/typefully/quota payload. An
+ * Mirrors `HeadroomView` in src/domain/send/headroom.ts — the GET /api/typefully/quota payload. An
  * unreadable headroom answers `error` rather than a zero headroom: "unknown" and "exhausted" are
  * different states, and only one of them means the account is actually blocked — rendering a failed
  * read as an empty headroom would paint a healthy account as blocked at `0건`.

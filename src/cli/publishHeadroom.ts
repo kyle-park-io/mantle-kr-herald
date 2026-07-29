@@ -36,10 +36,10 @@ interface ReadHeadroomDeps {
  * Either way the failure is never cached: a transient blip must not blank the banner, or wrongly
  * refuse a send, for a full minute the way a real quota read would.
  *
- * `inFlight` is recomputed on every call, unlike the Typefully quota itself: it is two local file
- * reads (no API call, no pressure on the 500/hr social-set bucket the caching exists for), and it has
- * to be exact — a minute-old count would let the banner and the gate name two different numbers
- * again, which is the whole defect this module exists to fix.
+ * `inFlight` is recomputed on every call, unlike the Typefully quota itself: two local file reads
+ * cost nothing (no API call, no pressure on the 500/hr social-set bucket the caching exists for), so
+ * there is no reason to let it go stale the way `remaining` briefly can above. It is the one number
+ * in `Headroom` the banner and the gate always agree on.
  */
 export function makeReadHeadroom(
   deliveryLedger: DeliveryLedger,
