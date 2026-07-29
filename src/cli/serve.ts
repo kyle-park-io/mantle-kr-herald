@@ -43,6 +43,7 @@ import {
   loadLarkAppConfig,
   loadGoogleSheetConfig,
   loadTelegramConfig,
+  loadSheetLinks,
   loadTelegramChatIds,
   loadTypefullyConfig,
   loadXMaxWeighted,
@@ -60,6 +61,8 @@ import { contentHash, isStale } from "../domain/publish/syncLedger";
 import type { Translation } from "../domain/translation/models";
 import { publishRowLinks, type PublishLinkConfig } from "../adapters/web/publishLinks";
 import { attachKind } from "../adapters/web/attachKind";
+import { resolveSheetTitles } from "../adapters/sheets/sheetTitles";
+import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 
 const port = Number(process.env.PORT) || 5757;
 const translationStore = new JsonTranslationStore(paths.translationsDir);
@@ -180,6 +183,7 @@ const loadStatus = async (): Promise<StatusView> => {
     sync,
     availableTargets: usableTargets,
     integrations,
+    sheetLinks: await withSheetTitles(loadSheetLinks()),
   };
 };
 
@@ -213,6 +217,9 @@ const loadPublishState = async (): Promise<PublishStateRow[]> => {
     };
   });
 };
+
+/** Named after the workbooks themselves; falls back to the placeholder titles when unreachable. */
+const withSheetTitles = resolveSheetTitles(() => createGoogleAuth(loadGoogleAuthConfig()));
 
 const loadBoard = async (itemId: string): Promise<BoardView> => {
   const [renderings, overrides, deliveries, translations] = await Promise.all([

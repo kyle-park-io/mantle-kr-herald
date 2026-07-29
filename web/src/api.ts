@@ -67,8 +67,10 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     }).then((r) => json<Omit<Rendering, "convertedText">>(r)),
-  approveRendering: (itemId: string, type: ConversionType, channel: Channel) =>
-    fetch(`${rPath(itemId, type, channel)}/approve`, { method: "POST" }).then((r) => json<Omit<Rendering, "convertedText">>(r)),
+  approveRendering: (itemId: string, type: ConversionType, channel: Channel, approve = true) =>
+    fetch(`${rPath(itemId, type, channel)}/${approve ? "approve" : "unapprove"}`, { method: "POST" }).then((r) =>
+      json<Omit<Rendering, "convertedText">>(r),
+    ),
   /**
    * The destination spellings of a rendering. With `outletId`, the spellings of *that room's*
    * copy — which differs from the group's the moment the room is forked, and is what a human
@@ -83,8 +85,8 @@ export const api = {
   /** Gives one room its own text — that is what forking is; there is no separate fork call. */
   editOutlet: (itemId: string, type: ConversionType, outletId: string, text: string) =>
     putOutlet(itemId, type, outletId, { text }),
-  approveOutlet: (itemId: string, type: ConversionType, outletId: string) =>
-    putOutlet(itemId, type, outletId, { approve: true }),
+  approveOutlet: (itemId: string, type: ConversionType, outletId: string, approve = true) =>
+    putOutlet(itemId, type, outletId, { approve }),
   /** Deletes the override: the room falls back to the group text *and* the group's approval. */
   revertOutlet: (itemId: string, type: ConversionType, outletId: string) =>
     putOutlet(itemId, type, outletId, { revert: true }),

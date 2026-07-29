@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrading — action required for existing installs
 
+- **`.env`가 아직 `TELEGRAM_CHAT_ID`를 쓰고 있다면 지금 옮기세요 — 안 옮기면 텔레그램 발송이 조용히
+  멈춥니다.** 그 값을 `TELEGRAM_CHAT_ID_COMMUNITY`(맨틀 한국 커뮤니티)로 복사하고 옛 줄은 지우면
+  됩니다. 데브방을 쓴다면 `TELEGRAM_CHAT_ID_DEV`도 채우세요. 확인은 `pnpm send:channels --target
+  telegram`의 요약 줄 — 미설정 방은 `· 미설정 N (TELEGRAM_CHAT_ID_DEV)`로 이름과 함께 나옵니다.
 - **보드에 `발송 · 잠김`이 늘어 보일 수 있습니다 — 대부분 정상입니다.** 발송이 원문 번역의 승인까지
   확인하기 시작했으므로, 승인이 취소된 번역이나 **문구를 승인한 뒤에 다시 승인된** 번역에 딸린 방은
   이제 잠깁니다. 줄 아래 노란 글씨가 어느 쪽인지 알려주고, 읽어보고 괜찮으면 `승인 ✓`를 다시 누르면
@@ -202,6 +206,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `KAKAO_FOLD`) so it cannot drift from the code; the glossary section lists only terms actually
   present in the batch's drafts; and each draft is preceded by a per-segment `length/limit` report
   computed against its channel's primary destination.
+
+### Removed
+
+- **레거시 `TELEGRAM_CHAT_ID`를 완전히 제거했습니다.** 방이 하나뿐이던 시절의 단일 변수로, 방별 변수로
+  나뉜 뒤에는 `TELEGRAM_CHAT_ID_COMMUNITY`가 비었을 때의 폴백으로만 남아 있었습니다. 이제 코드가 아예
+  읽지 않습니다 — `.env`에 남아 있어도 무시됩니다. **폴백이 한 방(커뮤니티)만 가리켰다는 게 문제였습니다:**
+  절반만 옮긴 `.env`에서 데브방으로 갈 문구가 조용히 커뮤니티방으로 나갈 수 있었고, 발송은 되돌릴 수
+  없습니다. 같은 이유로 `TelegramConfig.chatId`와 `TelegramBotSender`의 기본 chat id 생성자 인자도
+  없앴습니다 — 방은 발송의 속성이지 발송기의 속성이 아니고, 기본값이 있으면 방을 빠뜨린 요청이 그
+  기본값이 가리키는 방으로 나갑니다. 이제 `loadTelegramConfig()`는 토큰만 돌려주고, 방 id가 없는 방은
+  그냥 미설정으로 남아 이름과 함께 보고됩니다. `.env.example`의 텔레그램 블록도 파일 관례(영어,
+  `[REQUIRED for …]` 태그)에 맞춰 다시 썼습니다.
 
 ### Changed
 

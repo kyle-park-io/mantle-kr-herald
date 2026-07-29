@@ -100,6 +100,7 @@ function makeDeps(
       sync: { synced: 1, needsRepublish: 2, unpublished: 0 },
       availableTargets: ["local"],
       integrations: [],
+      sheetLinks: {},
     }),
     loadPublishState: async () => [
       { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
@@ -258,6 +259,7 @@ describe("handleApi", () => {
       sync: { synced: 1, needsRepublish: 2, unpublished: 0 },
       availableTargets: ["local"],
       integrations: [],
+      sheetLinks: {},
     });
   });
 

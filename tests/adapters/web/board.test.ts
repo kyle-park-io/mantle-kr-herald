@@ -20,7 +20,7 @@ describe("buildBoard", () => {
     expect(group?.text).toBe("공통");
     // Every telegram room suggests `announcement` — 텔레그램 KOL방 included (ALL_OUTLETS gives it
     // `["kol", "announcement"]`), so the whole channel is rowed and nothing is left to add.
-    expect(group?.rows.map((row) => row.outletId)).toEqual(["tg-community", "tg-dev", "tg-kol", "tg-blockchain"]);
+    expect(group?.rows.map((row) => row.outletId)).toEqual(["tg-community", "tg-dev", "tg-blockchain", "tg-kol"]);
     expect(group?.addableOutletIds).toEqual([]);
   });
 
@@ -90,7 +90,7 @@ describe("buildBoard", () => {
     const board = buildBoard("x:1", [r("pr", "telegram", "보도자료")], [], [], approvedSource);
     const group = board.groups.find((g) => g.type === "pr");
     expect(group?.rows).toEqual([]);
-    expect(group?.addableOutletIds).toEqual(["tg-community", "tg-dev", "tg-kol", "tg-blockchain"]);
+    expect(group?.addableOutletIds).toEqual(["tg-community", "tg-dev", "tg-blockchain", "tg-kol"]);
   });
 
   it("leaves out a room that can be neither sent nor ticked", () => {

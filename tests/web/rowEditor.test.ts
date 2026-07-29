@@ -73,9 +73,10 @@ describe("rowEditorGate", () => {
     });
   });
 
-  // 전달함 is a human's own claim and can be unticked, so the copy is still a draft.
+  // 전달함 is a human's own claim and can be unticked, so the copy is still a draft. Unapproved,
+  // because approval locks the editor on its own — this is about delivery not locking it.
   it("leaves a hand-delivered room editable", () => {
-    const gate = untouched(row({ delivery: "manual", deliveryStatus: "delivered" }));
+    const gate = untouched(row({ status: "rendered", delivery: "manual", deliveryStatus: "delivered" }));
     expect({ readOnly: gate.readOnly, save: gate.showSave, revert: gate.showRevert }).toEqual({
       readOnly: false,
       save: true,
@@ -93,19 +94,19 @@ describe("rowEditorGate", () => {
 
   describe("a room nothing has gone out to", () => {
     it("edits freely and can be saved once the draft differs", () => {
-      const r = row();
+      const r = row({ status: "rendered" });
       expect(untouched(r).readOnly).toBe(false);
       expect(rowEditorGate(r, { busy: false, draft: "고친 글" }).saveDisabled).toBe(false);
     });
 
     it("cannot save an unchanged or blank draft", () => {
-      const r = row();
+      const r = row({ status: "rendered" });
       expect(untouched(r).saveDisabled).toBe(true);
       expect(rowEditorGate(r, { busy: false, draft: "   " }).saveDisabled).toBe(true);
     });
 
     it("shows 취소 only while the draft differs", () => {
-      const r = row();
+      const r = row({ status: "rendered" });
       expect(untouched(r).showCancel).toBe(false);
       expect(rowEditorGate(r, { busy: false, draft: "고친 글" }).showCancel).toBe(true);
     });
@@ -120,7 +121,41 @@ describe("rowEditorGate", () => {
     it("offers 그룹 글로 되돌리기 only to a forked room", () => {
       expect(untouched(row()).showRevert).toBe(true);
       expect(untouched(row({ forked: false })).showRevert).toBe(false);
-      expect(untouched(row({ forked: false })).showForkHint).toBe(true);
+      expect(untouched(row({ status: "rendered", forked: false })).showForkHint).toBe(true);
+    });
+
+    /**
+     * Approved copy is locked, exactly as in 1차. Letting an edit through would silently drop the
+     * row back to `rendered` — the room stops being sendable and nothing on screen says so.
+     */
+    it("locks an approved fork and offers 승인 취소 instead of 저장", () => {
+      const gate = untouched(row());
+      expect({ readOnly: gate.readOnly, save: gate.showSave, unapprove: gate.showUnapprove }).toEqual({
+        readOnly: true,
+        save: false,
+        unapprove: true,
+      });
+      expect(gate.showApprove).toBe(false); // already approved
+      expect(gate.showRevert).toBe(true); // 그룹 글로 되돌리기 still deletes the fork
+    });
+
+    /** An unforked room has no override, so there is nothing here to withdraw — say where it is. */
+    it("locks an unforked room under an approved group but points at the group's button", () => {
+      const gate = untouched(row({ forked: false }));
+      expect({ readOnly: gate.readOnly, unapprove: gate.showUnapprove, hint: gate.showGroupApprovalHint }).toEqual({
+        readOnly: true,
+        unapprove: false,
+        hint: true,
+      });
+    });
+
+    /** A sent row is past withdrawing: 승인됨 stays as a record, with no button under it. */
+    it("shows 승인됨 without 승인 취소 once the room has been posted to", () => {
+      const gate = untouched(row({ deliveryStatus: "sent" }));
+      expect({ approved: gate.showApproved, unapprove: gate.showUnapprove }).toEqual({
+        approved: true,
+        unapprove: false,
+      });
     });
 
     it("disables both writes while a request is in flight", () => {

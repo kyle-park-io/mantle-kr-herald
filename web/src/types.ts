@@ -54,6 +54,9 @@ export interface Rendering {
   status: "rendered" | "approved";
   approvedAt?: string;
   convertedText: string; // joined source context (variant convertedText)
+  // Joined from the source item so the 2차 list and board header read like 1차's.
+  kind?: "post" | "article";
+  postedAt?: string; // source post date (ISO), for the [YYMMDD] prefix
 }
 
 /** Stable identity key for a rendering: (itemId, type, channel). */
@@ -70,12 +73,20 @@ export interface IntegrationStatus {
   configured: boolean;
 }
 
+/** A header link to a team workbook, named after the workbook itself. */
+export interface SheetLink {
+  url: string;
+  title: string;
+}
+
 export interface AppStatus {
   storageMode: StorageMode;
   availableTargets: ("local" | "google" | "lark")[];
   funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
   sync: { synced: number; needsRepublish: number; unpublished: number };
   integrations: IntegrationStatus[];
+  /** Header links to the team workbooks — absent when the id is not configured. */
+  sheetLinks: { data?: SheetLink; qa?: SheetLink };
 }
 
 export interface PublishStateRow {
@@ -148,7 +159,7 @@ export const OUTLET_LABEL: Record<string, string> = {
   "tg-community": "맨틀 한국 커뮤니티",
   "tg-dev": "맨틀 한국 데브방",
   "tg-kol": "텔레그램 KOL방",
-  "tg-blockchain": "한국 블록체인 커뮤니티방",
+  "tg-blockchain": "텔레그램 블록체인 커뮤니티방",
   "kakao-kol": "오픈카톡 KOL방",
   "kakao-blockchain": "오픈카톡 블록체인 커뮤니티방",
   "pr-mail": "PR 메일",
@@ -185,6 +196,39 @@ export const SEND_BLOCK_REASON: Record<SendBlock, string> = {
   "source-unapproved": "원문이 1차 승인 상태가 아닙니다",
   unapproved: "아직 승인되지 않았습니다",
   "source-changed": "원문이 이 문구를 승인한 뒤에 다시 승인됐습니다 — 다시 검수하거나 변환을 새로 하세요",
+};
+
+/**
+ * What the `**볼드**` in a card's text actually does on that channel, told to the reviewer at the
+ * one place they type it.
+ *
+ * Only `telegram_bot` renders it (`**x**` → `<b>x</b>`); every other emitter calls `stripBold`, so
+ * the markers vanish and the words go out plain. KakaoTalk parses no markup at all — its composer
+ * offers no formatting, and a pasted `**제목**` would just show the asterisks.
+ *
+ * This is about the four *channels*, which carry posts and messages. X Articles are rich text and
+ * are not one of them: `send:x-article` posts the translation's markdown directly, so the `x` note
+ * says "포스트" rather than "X" and points at that path.
+ *
+ * Mirrors `CHANNEL_RENDERS_BOLD` in the domain, which `tests/domain/formatting/channelBold.test.ts`
+ * checks by running the real emitters — so a flag that stops being true fails the suite.
+ */
+export const CHANNEL_RENDERS_BOLD: Record<Channel, boolean> = {
+  x: false,
+  telegram: true,
+  kakao: false,
+  pr_mail: false,
+};
+
+export const CHANNEL_FORMAT_NOTE: Record<Channel, string> = {
+  // Scoped to the *post*, deliberately. X Articles do carry rich text (headings, bold, lists), but
+  // they are a different pipeline — `send:x-article` posts the translation's markdown straight to
+  // Typefully and never touches this channel — so a flat "X는 서식을 지원하지 않습니다" would be wrong
+  // about a path this project actually ships.
+  x: "X 포스트는 서식 없이 나갑니다 — 볼드 표시 없이 만들어지고, 직접 **로 감싸도 발송 시 지워집니다. (X 아티클은 서식이 되지만 pnpm send:x-article 로 번역 본문에서 곧바로 나가는 별도 경로입니다.)",
+  telegram: "봇 발송에서만 **볼드**가 굵게 나옵니다. 복사용 텍스트는 평문입니다.",
+  kakao: "카카오톡은 서식을 지원하지 않아 볼드 표시 없이 만들어집니다. 강조는 이모지·[대괄호]·줄바꿈으로 하세요 — 직접 **로 감싸도 발송 시 지워집니다.",
+  pr_mail: "메일 본문은 평문이라 볼드 표시 없이 만들어집니다. 직접 **로 감싸도 발송 시 지워집니다.",
 };
 
 export interface BoardRow {

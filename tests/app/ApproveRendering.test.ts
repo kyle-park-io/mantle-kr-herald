@@ -103,3 +103,58 @@ describe("ApproveRendering", () => {
     expect(h.fewShots.x).toHaveLength(0);
   });
 });
+
+describe("ApproveRendering — 승인 취소", () => {
+  it("drops the rendering back to rendered and clears the stamp", async () => {
+    const h = harness([rnd({ status: "approved", approvedAt: "2026-05-01T00:00:00.000Z" })]);
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const res = await uc.run({ itemId: "x:1", type: "x", channel: "telegram", approve: false });
+    expect(res?.status).toBe("rendered");
+    expect(res?.approvedAt).toBeUndefined();
+    expect(h.renderings()[0].status).toBe("rendered");
+  });
+
+  /**
+   * Promotion is one-way. The corpus is hand-curated — entries get rewritten and re-ordered by
+   * people — so removing one because a reviewer withdrew a send would silently undo that work.
+   * Re-approving upserts the same `itemId`, so nothing duplicates either.
+   */
+  it("does not write to the few-shot corpus at all", async () => {
+    const h = harness([rnd()]);
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    await uc.run({ itemId: "x:1", type: "x", channel: "telegram" });
+    expect(h.fewShots.x).toHaveLength(1);
+
+    // Emptied by hand, standing in for a curator who pruned this example. An unapprove that still
+    // called `promoteVariant` would put it straight back — and `add` upserts by itemId, so a test
+    // that only counted entries would never notice.
+    h.fewShots.x.length = 0;
+    await uc.run({ itemId: "x:1", type: "x", channel: "telegram", approve: false });
+    expect(h.fewShots.x).toEqual([]);
+  });
+
+  /** The variant's own `approved` mark records that it was promoted, so it must not move either. */
+  it("does not touch the variant's status", async () => {
+    const h = harness([rnd()]);
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    await uc.run({ itemId: "x:1", type: "x", channel: "telegram" });
+    const afterApprove = { ...h.variants()[0] };
+    await uc.run({ itemId: "x:1", type: "x", channel: "telegram", approve: false });
+    expect(h.variants()[0]).toEqual(afterApprove);
+  });
+
+  it("re-approval upserts rather than appending", async () => {
+    const h = harness([rnd()]);
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    await uc.run({ itemId: "x:1", type: "x", channel: "telegram" });
+    await uc.run({ itemId: "x:1", type: "x", channel: "telegram", approve: false });
+    await uc.run({ itemId: "x:1", type: "x", channel: "telegram" });
+    expect(h.fewShots.x).toHaveLength(1);
+  });
+
+  it("defaults to approving when the flag is omitted", async () => {
+    const h = harness([rnd({ status: "rendered", approvedAt: undefined })]);
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "T");
+    expect((await uc.run({ itemId: "x:1", type: "x", channel: "telegram" }))?.status).toBe("approved");
+  });
+});

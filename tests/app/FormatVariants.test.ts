@@ -62,11 +62,20 @@ describe("FormatVariants", () => {
     expect(renderings.map((r) => r.type)).toEqual(["kol"]);
   });
 
+  /** Telegram, because it is the channel that renders bold — see "bold per channel" below. */
   it("stores canonical text — bold and links survive, destination syntax does not", async () => {
     const s = stores([variant({ convertedText: "  **메인넷**\r\n\n\n\n\n[자세히](https://x.io)  " })]);
     const uc = new FormatVariants(s.conversionStore, s.formattingStore, () => "2026-03-03T00:00:00.000Z");
-    const { renderings } = await uc.run({});
+    const { renderings } = await uc.run({ channels: ["telegram"] });
     expect(renderings[0].text).toBe("**메인넷**\n\n\n[자세히](https://x.io)");
+  });
+
+  /** Link syntax is content — a label and a URL — so it stays even where nothing renders it. */
+  it("keeps link syntax on a channel that strips bold", async () => {
+    const s = stores([variant({ convertedText: "**메인넷** [자세히](https://x.io)" })]);
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore, () => "2026-03-03T00:00:00.000Z");
+    const { renderings } = await uc.run({ channels: ["kakao"] });
+    expect(renderings[0].text).toBe("메인넷 [자세히](https://x.io)");
   });
 
   it("warns via the channel's destinations, counting Hangul as 2 for x, and names both x destinations once", async () => {
@@ -82,5 +91,32 @@ describe("FormatVariants", () => {
     const { renderings, warnings } = await uc.run({ types: ["x"] });
     expect(renderings.some((r) => r.channel === "x")).toBe(true);
     expect(warnings).toEqual([]); // 300 weighted is under 25000 → no 초과 warning
+  });
+});
+
+/**
+ * Bold survives to the channels that can render it and is dropped from the ones that cannot — and
+ * the same variant does both at once, which is why the decision cannot move back to the variant.
+ */
+describe("FormatVariants — bold per channel", () => {
+  const bolded = () => variant({ type: "announcement", convertedText: "📢 **제목**\n\n**[소제목]**\n본문" });
+
+  it("keeps bold for telegram and drops it for kakao, from one variant", async () => {
+    const s = stores([bolded()]);
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore);
+    const { renderings } = await uc.run({ channels: ["telegram", "kakao"] });
+    const byChannel = Object.fromEntries(renderings.map((r) => [r.channel, r.text]));
+    expect(byChannel.telegram).toContain("**제목**");
+    expect(byChannel.kakao).not.toContain("**");
+    // The words survive — only the markers go.
+    expect(byChannel.kakao).toContain("📢 제목");
+    expect(byChannel.kakao).toContain("[소제목]");
+  });
+
+  it("drops bold for x and pr_mail too", async () => {
+    const s = stores([bolded()]);
+    const uc = new FormatVariants(s.conversionStore, s.formattingStore);
+    const { renderings } = await uc.run({ channels: ["x", "pr_mail"] });
+    for (const r of renderings) expect(r.text, `bold left in ${r.channel}`).not.toContain("**");
   });
 });

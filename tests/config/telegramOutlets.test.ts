@@ -23,19 +23,21 @@ describe("loadTelegramChatIds", () => {
     expect(loadTelegramChatIds()).toEqual({ "tg-community": "-100111", "tg-dev": "-100222" });
   });
 
-  it("falls back to legacy TELEGRAM_CHAT_ID for the primary room only, and warns", () => {
+  /**
+   * The old single variable named one room (커뮤니티), so honouring it on a half-migrated `.env`
+   * resolved *that* room's id for a send meant for another — a live post to the wrong room, which
+   * cannot be recalled. A room is now configured or it is not; there is nothing to fall back to.
+   */
+  it("ignores the retired TELEGRAM_CHAT_ID entirely, leaving the room unconfigured", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     withEnv({ TELEGRAM_CHAT_ID: "-100999" });
-    expect(loadTelegramChatIds()).toEqual({ "tg-community": "-100999" });
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]?.[0]).toContain("TELEGRAM_CHAT_ID_COMMUNITY");
+    expect(loadTelegramChatIds()).toEqual({});
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it("prefers the per-outlet variable over the legacy one and does not warn", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("reads only the per-outlet variable when a stale legacy line is still present", () => {
     withEnv({ TELEGRAM_CHAT_ID: "-100999", TELEGRAM_CHAT_ID_COMMUNITY: "-100111" });
     expect(loadTelegramChatIds()).toEqual({ "tg-community": "-100111" });
-    expect(warn).not.toHaveBeenCalled();
   });
 
   it("returns an empty map when nothing is configured", () => {

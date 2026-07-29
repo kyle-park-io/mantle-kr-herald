@@ -40,10 +40,13 @@ export const ALL_OUTLETS: Outlet[] = [
   { id: "x-article", label: "@0xMantleKR 아티클", channel: "x", delivery: "auto", suggestedTypes: [], autoPipeline: "x-article" },
   { id: "tg-community", label: "맨틀 한국 커뮤니티", channel: "telegram", delivery: "auto", suggestedTypes: ["announcement", "casual"], chatIdEnv: "TELEGRAM_CHAT_ID_COMMUNITY" },
   { id: "tg-dev", label: "맨틀 한국 데브방", channel: "telegram", delivery: "auto", suggestedTypes: ["announcement", "explainer"], chatIdEnv: "TELEGRAM_CHAT_ID_DEV" },
+  // Community rooms before KOL rooms, on both channels: this array's order is the order the board
+  // rows a channel's rooms in, and a 공지 goes to the community first — a KOL room is a paid
+  // promotion ask, which is a different decision and belongs further down the list.
+  { id: "tg-blockchain", label: "텔레그램 블록체인 커뮤니티방", channel: "telegram", delivery: "manual", suggestedTypes: ["announcement"] },
   { id: "tg-kol", label: "텔레그램 KOL방", channel: "telegram", delivery: "manual", suggestedTypes: ["kol", "announcement"] },
-  { id: "tg-blockchain", label: "한국 블록체인 커뮤니티방", channel: "telegram", delivery: "manual", suggestedTypes: ["announcement"] },
-  { id: "kakao-kol", label: "오픈카톡 KOL방", channel: "kakao", delivery: "manual", suggestedTypes: ["announcement"] },
   { id: "kakao-blockchain", label: "오픈카톡 블록체인 커뮤니티방", channel: "kakao", delivery: "manual", suggestedTypes: ["announcement"] },
+  { id: "kakao-kol", label: "오픈카톡 KOL방", channel: "kakao", delivery: "manual", suggestedTypes: ["announcement"] },
   // `manual` until a mail sender exists: `pr_mail` is not a SendableChannel, so `send:channels`
   // can never reach it, and as `auto` it was also refused by MarkDelivery — permanently
   // undeliverable and permanently unmarkable. Manual is the truth today: a human sends the mail
@@ -53,8 +56,9 @@ export const ALL_OUTLETS: Outlet[] = [
 
 /**
  * Where a legacy `(itemId, type, channel)` ledger row is attributed when re-keyed by outlet.
- * The two kakao rooms are interchangeable for this purpose, so `kakao-blockchain` is an
- * arbitrary but fixed choice — recorded here so a later reader does not look for meaning in it.
+ * Each is that channel's first room in `ALL_OUTLETS`. These values are load-bearing for already
+ * migrated ledgers, so they must NOT be re-derived from the array — reordering rooms later would
+ * silently re-attribute history. Change one only with a data migration.
  */
 export const PRIMARY_OUTLET_BY_CHANNEL: Record<Channel, string> = {
   x: "x-post",

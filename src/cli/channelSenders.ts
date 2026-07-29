@@ -30,7 +30,7 @@ export function createSenders(targets: SendableChannel[]): Record<SendableChanne
   for (const t of targets) {
     if (t === "telegram") {
       const c = loadTelegramConfig();
-      senders.telegram = new TelegramBotSender(c.botToken, c.chatId);
+      senders.telegram = new TelegramBotSender(c.botToken);
     } else {
       const c = loadTypefullyConfig();
       senders.x = new TypefullySender(c.apiKey, c.socialSetId);

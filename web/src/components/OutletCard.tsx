@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
-import { btn, btnDanger, btnPrimary } from "../buttonStyles";
+import { btn, btnApproved, btnApprovedHover, btnApprovedRest, btnDanger, btnPrimary } from "../buttonStyles";
 import { reformatMessage } from "../reformatMessage";
 import { rowEditorGate } from "../rowEditor";
 import {
+  CHANNEL_FORMAT_NOTE,
   CHANNEL_LABEL,
+  CHANNEL_RENDERS_BOLD,
   DESTINATION_LABEL,
   OUTLET_DELIVERY,
   PASTE_DESTINATION,
@@ -49,6 +51,7 @@ const stampFull = (iso?: string): string | undefined => {
 };
 
 const SAVE_FIRST = "편집 내용을 먼저 저장하세요";
+const APPROVED_LOCK = "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요.";
 
 /** The `_paste` segments of an emission set, or `null` when they have not loaded. */
 const pasteSegments = (em: Emissions | undefined, channel: BoardGroup["channel"]): string[] | null =>
@@ -72,6 +75,7 @@ export function OutletCard(props: {
   const { itemId, group, onDirty, onError } = props;
   const { type, channel } = group;
   const cardKey = `${type}:${channel}`;
+  const groupApproved = group.status === "approved";
 
   const [text, setText] = useState(group.text);
   const [busy, setBusy] = useState(false);
@@ -217,12 +221,12 @@ export function OutletCard(props: {
   return (
     <article className="rounded-xl border border-line bg-surface shadow-sm">
       <header className="flex flex-wrap items-center gap-2.5 border-b border-line px-4 py-2.5">
-        <span className="rounded-md border border-line bg-bg px-2 py-0.5 text-[12px] font-medium text-ink">
+        <span className="rounded-md border border-line bg-bg px-2 py-0.5 text-[13px] font-medium text-ink">
           {TYPE_LABEL[type]} · {CHANNEL_LABEL[channel]}
         </span>
         <RenderingChip status={group.status} />
         {dirty && (
-          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-ink">
+          <span className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-ink">
             <span className="h-1.5 w-1.5 rounded-full bg-amber-ink" />
             편집 중 · 저장 전
           </span>
@@ -252,23 +256,41 @@ export function OutletCard(props: {
         >
           포맷 다시
         </button>
-        <span className="ml-auto text-[11px] text-faint">
+        <span className="ml-auto text-[12px] text-faint">
           {rows.filter((r) => r.deliveryStatus).length}/{rows.length}곳 완료
         </span>
       </header>
 
       <div className="px-4 py-3">
         <textarea
-          className="min-h-40 w-full resize-y rounded-xl border border-line bg-surface p-3.5 text-[14px] leading-relaxed text-ink shadow-sm outline-none transition-colors focus:border-mint focus:ring-4 focus:ring-mint/10"
+          className={`min-h-40 w-full resize-y rounded-xl border border-line p-3.5 text-[15px] leading-relaxed shadow-sm outline-none transition-colors ${
+            groupApproved
+              ? "cursor-default bg-bg text-muted"
+              : "bg-surface text-ink focus:border-mint focus:ring-4 focus:ring-mint/10"
+          }`}
+          // Approved copy is locked, exactly as in 1차. Editing it would silently drop the card back
+          // to `rendered` — the rooms stop being sendable with nothing on screen having said so.
+          readOnly={groupApproved}
+          title={groupApproved ? APPROVED_LOCK : undefined}
           value={text}
           onChange={(e) => setText(e.target.value)}
           spellCheck={false}
           aria-label={`${TYPE_LABEL[type]} · ${CHANNEL_LABEL[channel]} 그룹 글`}
         />
+        {/*
+          The reviewer types `**볼드**` into this box, and on every channel but Telegram's bot it is
+          stripped before delivery. Saying so here — beside the box, not in a doc — is the only
+          place it lands before the copy is approved and sent.
+        */}
+        <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
+          {CHANNEL_RENDERS_BOLD[channel] ? "✓ " : "· "}
+          {CHANNEL_FORMAT_NOTE[channel]}
+        </p>
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           <button
             className={btn}
-            disabled={busy || !groupDirty}
+            disabled={busy || !groupDirty || groupApproved}
+            title={groupApproved ? APPROVED_LOCK : undefined}
             onClick={() =>
               run(async () => {
                 // Adopt what the server actually stored. `toCanonical` trims and collapses blank
@@ -284,9 +306,27 @@ export function OutletCard(props: {
             저장
           </button>
           {group.status === "approved" ? (
-            <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[12px] font-medium text-mint">
-              승인됨 ✓
-            </span>
+            // Same hover-swap control as 1차: one grid cell holds both labels so the button sizes to
+            // the wider and never jumps. Approval has to be withdrawable here — the editor above is
+            // locked while approved, so this is the only way back to editing.
+            <button
+              className={btnApproved}
+              disabled={busy}
+              title="클릭하면 승인을 취소합니다"
+              onClick={() =>
+                run(async () => {
+                  await api.approveRendering(itemId, type, channel, false);
+                  await props.onGroupChanged();
+                })
+              }
+            >
+              <span className={btnApprovedRest}>
+                승인됨 ✓
+              </span>
+              <span className={btnApprovedHover}>
+                승인 취소
+              </span>
+            </button>
           ) : (
             <button
               className={btnPrimary}
@@ -299,7 +339,7 @@ export function OutletCard(props: {
                 })
               }
             >
-              승인 ✓
+              승인하기
             </button>
           )}
           <CopyButton
@@ -312,14 +352,14 @@ export function OutletCard(props: {
         </div>
 
         {groupPaste && groupPaste.length > 1 && (
-          <p className="mt-2 text-[11px] leading-relaxed text-muted">
+          <p className="mt-2 text-[12px] leading-relaxed text-muted">
             이 글은 {groupPaste.length}개로 나뉘어 올라갑니다. 한 덩어리로 붙여넣지 말고 아래 <b>목적지별 출력</b>에서
             조각별로 복사하세요.
           </p>
         )}
 
         {warnings.length > 0 && (
-          <ul className="mt-2.5 space-y-1 rounded-lg border border-amber-ink/20 bg-amber-soft px-3 py-2 text-[12px] leading-relaxed text-amber-ink">
+          <ul className="mt-2.5 space-y-1 rounded-lg border border-amber-ink/20 bg-amber-soft px-3 py-2 text-[13px] leading-relaxed text-amber-ink">
             {warnings.map((w) => (
               <li key={w}>⚠ {w}</li>
             ))}
@@ -378,17 +418,17 @@ export function OutletCard(props: {
           );
         })}
         {rows.length === 0 && (
-          <li className="px-4 py-3 text-[12px] text-faint">이 타입을 받는 방이 아직 없습니다. 아래에서 추가하세요.</li>
+          <li className="px-4 py-3 text-[13px] text-faint">이 타입을 받는 방이 아직 없습니다. 아래에서 추가하세요.</li>
         )}
       </ul>
 
       <div className="rounded-b-xl border-t border-line bg-surface px-4 py-2.5">
         {addable.length === 0 ? (
-          <span className="text-[12px] text-faint">이 채널의 모든 방이 이미 올라와 있습니다.</span>
+          <span className="text-[13px] text-faint">이 채널의 모든 방이 이미 올라와 있습니다.</span>
         ) : (
           <>
             <button
-              className="text-[12px] font-medium text-muted transition-colors hover:text-ink"
+              className="text-[13px] font-medium text-muted transition-colors hover:text-ink"
               onClick={() => setPicking((p) => !p)}
             >
               {picking ? "− 닫기" : "+ 다른 방 추가"}
@@ -398,14 +438,14 @@ export function OutletCard(props: {
                 {addable.map((id) => (
                   <button
                     key={id}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-line bg-bg px-2 py-1 text-[12px] text-ink transition-colors hover:bg-surface"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-line bg-bg px-2 py-1 text-[13px] text-ink transition-colors hover:bg-surface"
                     onClick={() => {
                       setAdded((p) => [...p, id]);
                       setPicking(false);
                     }}
                   >
                     {outletLabel(id)}
-                    <span className="text-[11px] text-faint">{OUTLET_DELIVERY[id] === "auto" ? "자동" : "수동"}</span>
+                    <span className="text-[12px] text-faint">{OUTLET_DELIVERY[id] === "auto" ? "자동" : "수동"}</span>
                   </button>
                 ))}
               </div>
@@ -446,15 +486,15 @@ function CopyButton(props: {
 function Source({ convertedText }: { convertedText: string }) {
   return (
     <details className="mt-3 rounded-lg border border-line bg-bg px-3 py-2">
-      <summary className="cursor-pointer text-[12px] font-medium text-muted marker:text-faint">
+      <summary className="cursor-pointer text-[13px] font-medium text-muted marker:text-faint">
         변환 원문 · converted
       </summary>
       {convertedText ? (
-        <div className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-muted">
+        <div className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap text-[14px] leading-relaxed text-muted">
           {convertedText}
         </div>
       ) : (
-        <p className="mt-2 text-[12px] leading-relaxed text-faint">
+        <p className="mt-2 text-[13px] leading-relaxed text-faint">
           이 타입의 변환 원문이 없습니다. <code className="font-mono">pnpm convert:save</code> 로 저장된 변환본이 있어야
           여기에 표시됩니다.
         </p>
@@ -484,14 +524,14 @@ function DestinationPreview(props: {
 
   return (
     <details className="mt-2 rounded-lg border border-line bg-bg px-3 py-2">
-      <summary className="cursor-pointer text-[12px] font-medium text-muted marker:text-faint">{props.label}</summary>
+      <summary className="cursor-pointer text-[13px] font-medium text-muted marker:text-faint">{props.label}</summary>
       <div className="mt-2">
         <div className="mb-2 inline-flex flex-wrap gap-0.5 rounded-lg border border-line bg-surface p-0.5">
           {keys.map((d) => (
             <button
               key={d}
               onClick={() => setTab(d)}
-              className={`rounded-[7px] px-2.5 py-1 text-[12px] font-medium transition-colors ${
+              className={`rounded-[7px] px-2.5 py-1 text-[13px] font-medium transition-colors ${
                 d === active ? "bg-bg text-ink shadow-sm" : "text-muted hover:text-ink"
               }`}
             >
@@ -505,7 +545,7 @@ function DestinationPreview(props: {
             const key = `${props.copiedPrefix}:${active}:${i}`;
             return (
               <div key={i} className="rounded-lg border border-line bg-surface p-2.5">
-                <div className="mb-1.5 flex items-center gap-2.5 text-[12px]">
+                <div className="mb-1.5 flex items-center gap-2.5 text-[13px]">
                   {result.segments.length > 1 && (
                     <span className="font-medium text-muted">
                       {s.label ?? `${i + 1}/${result.segments.length}`}
@@ -531,7 +571,7 @@ function DestinationPreview(props: {
                     {props.copied === key ? "복사됨 ✓" : "복사"}
                   </button>
                 </div>
-                <div className="max-h-56 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[12px] leading-relaxed text-ink/80">
+                <div className="max-h-56 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[13px] leading-relaxed text-ink/80">
                   {s.text}
                 </div>
               </div>
@@ -597,6 +637,10 @@ function Row(props: {
 
   return (
     <li
+      // The header's room summary scrolls here by this attribute. A room can appear under several
+      // cards (데브방 takes both 공지 and 해설), so the selector below picks the first — which is the
+      // board's own top-to-bottom order, the same order the `n/m` badges were numbered in.
+      data-outlet={row.outletId}
       onMouseEnter={() => props.onHover(row.outletId)}
       onMouseLeave={() => props.onHover(null)}
       className={`border-b border-line last:border-b-0 transition-colors ${
@@ -604,23 +648,23 @@ function Row(props: {
       } ${highlighted ? "bg-mint-soft/70 shadow-[inset_2px_0_0_var(--color-mint)]" : ""}`}
     >
       <div className="flex flex-wrap items-center gap-2 px-4 py-2">
-        <span className="text-[13px] font-medium text-ink">{row.label}</span>
+        <span className="text-[14px] font-medium text-ink">{row.label}</span>
         {row.siblingCount > 1 && (
           <span
-            className="rounded bg-bg px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted"
+            className="rounded bg-bg px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-muted"
             title={`이 방은 이 항목에서 ${row.siblingCount}건을 받습니다`}
           >
             {row.siblingIndex}/{row.siblingCount}
           </span>
         )}
-        <span className="text-[11px] text-faint">{row.delivery === "auto" ? "자동" : "수동"}</span>
+        <span className="text-[12px] text-faint">{row.delivery === "auto" ? "자동" : "수동"}</span>
         {row.pending && (
-          <span className="rounded bg-bg px-1.5 py-0.5 text-[10px] font-medium text-muted">추가됨 · 미저장</span>
+          <span className="rounded bg-bg px-1.5 py-0.5 text-[11px] font-medium text-muted">추가됨 · 미저장</span>
         )}
 
         <button
           onClick={props.onToggle}
-          className={`rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors ${
+          className={`rounded px-1.5 py-0.5 text-[12px] font-medium transition-colors ${
             row.forked ? "bg-amber-soft text-amber-ink" : "text-faint hover:text-ink"
           }`}
           title={
@@ -638,7 +682,7 @@ function Row(props: {
           {sent ? (
             <>
               <span
-                className="inline-flex items-center gap-1 rounded-md bg-mint-soft px-2 py-1 text-[12px] font-medium text-mint"
+                className="inline-flex items-center gap-1 rounded-md bg-mint-soft px-2 py-1 text-[13px] font-medium text-mint"
                 title={stampFull(row.at)}
               >
                 발송됨 {stamp(row.at)}
@@ -648,7 +692,7 @@ function Row(props: {
                   href={row.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-[12px] font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+                  className="text-[13px] font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
                 >
                   보기 ↗
                 </a>
@@ -656,7 +700,7 @@ function Row(props: {
             </>
           ) : delivered ? (
             <button
-              className="rounded-md bg-mint-soft px-2.5 py-1 text-[12px] font-medium text-mint transition-colors hover:bg-mint-soft/70 disabled:opacity-40"
+              className="rounded-md bg-mint-soft px-2.5 py-1 text-[13px] font-medium text-mint transition-colors hover:bg-mint-soft/70 disabled:opacity-40"
               disabled={busy}
               title={`${stampFull(row.at) ?? ""} — 체크를 해제하면 전달 기록이 지워집니다`}
               onClick={() => run(async () => apply(await api.markOutlet(itemId, type, row.outletId, false)))}
@@ -725,7 +769,7 @@ function Row(props: {
           )}
           {row.pending && !row.deliveryStatus && (
             <button
-              className="text-[12px] text-faint transition-colors hover:text-ink"
+              className="text-[13px] text-faint transition-colors hover:text-ink"
               onClick={props.onDrop}
               title="이 행을 목록에서 뺍니다"
             >
@@ -736,25 +780,25 @@ function Row(props: {
       </div>
 
       {strandedFork && (
-        <p className="px-4 pb-2 text-[11px] font-medium text-amber-ink">
+        <p className="px-4 pb-2 text-[12px] font-medium text-amber-ink">
           ⚠ 그룹은 승인됐지만 이 방의 글은 아직 검수 전입니다 — 그룹을 발송해도 이 방은 빠집니다.
         </p>
       )}
 
       {/*
-        `unapproved` needs no line — `발송 · 잠김` already says it and `승인 ✓` is on screen. The
+        `unapproved` needs no line — `발송 · 잠김` already says it and `승인하기` is on screen. The
         source-level blocks are different: nothing else on this card mentions the 1차 translation, so
         a reviewer staring at approved copy under a locked button would have no idea what to fix, and
         a tooltip on a disabled button is not somewhere anyone thinks to look.
       */}
       {row.block !== undefined && row.block !== "unapproved" && !sent && (
-        <p className="px-4 pb-2 text-[11px] font-medium text-amber-ink">⚠ {SEND_BLOCK_REASON[row.block]}</p>
+        <p className="px-4 pb-2 text-[12px] font-medium text-amber-ink">⚠ {SEND_BLOCK_REASON[row.block]}</p>
       )}
 
       {props.open && (
         <div className="px-4 pb-3">
           <textarea
-            className={`min-h-32 w-full resize-y rounded-lg border border-line p-3 text-[13px] leading-relaxed outline-none transition-colors ${
+            className={`min-h-32 w-full resize-y rounded-lg border border-line p-3 text-[15px] leading-relaxed outline-none transition-colors ${
               gate.readOnly
                 ? "cursor-default bg-bg text-muted"
                 : "bg-surface text-ink focus:border-mint focus:ring-4 focus:ring-mint/10"
@@ -790,10 +834,27 @@ function Row(props: {
                 취소
               </button>
             )}
-            {gate.showApproved && (
-              <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[12px] font-medium text-mint">
-                승인됨 ✓
-              </span>
+            {/* Withdrawable until the room has actually been posted to; after that it is a record. */}
+            {gate.showUnapprove ? (
+              <button
+                className={btnApproved}
+                disabled={busy}
+                title="클릭하면 이 방의 승인을 취소합니다"
+                onClick={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId, false)))}
+              >
+                <span className={btnApprovedRest}>
+                  승인됨 ✓
+                </span>
+                <span className={btnApprovedHover}>
+                  승인 취소
+                </span>
+              </button>
+            ) : (
+              gate.showApproved && (
+                <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[13px] font-medium text-mint">
+                  승인됨 ✓
+                </span>
+              )
             )}
             {gate.showApprove && (
               <button
@@ -802,7 +863,7 @@ function Row(props: {
                 title={props.draft !== row.text ? SAVE_FIRST : undefined}
                 onClick={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId)))}
               >
-                승인 ✓
+                승인하기
               </button>
             )}
             {gate.showRevert && (
@@ -819,14 +880,19 @@ function Row(props: {
                 그룹 글로 되돌리기
               </button>
             )}
-            {gate.showForkHint && <span className="text-[11px] text-faint">저장하면 이 방만 따로 검수·발송합니다.</span>}
+            {gate.showForkHint && <span className="text-[12px] text-faint">저장하면 이 방만 따로 검수·발송합니다.</span>}
+            {gate.showGroupApprovalHint && (
+              <span className="text-[12px] text-faint">
+                이 방은 그룹 승인을 따릅니다 — 고치려면 위 카드에서 승인을 취소하세요.
+              </span>
+            )}
             {gate.showReadOnlyLocked && (
-              <span className="text-[11px] text-faint">
+              <span className="text-[12px] text-faint">
                 이 방이 실제로 받은 글입니다 — 이미 발송되어 고칠 수 없습니다.
               </span>
             )}
             {gate.showReadOnlyStale && (
-              <span className="text-[11px] text-faint">
+              <span className="text-[12px] text-faint">
                 이 방에 나간 글입니다 — 그룹 글이 그 뒤 바뀌었을 수 있습니다.
               </span>
             )}

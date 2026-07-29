@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { renderingKey, type Rendering } from "../types";
+import { type Rendering } from "../types";
 import { RenderingList } from "./RenderingList";
 import { OutletBoard } from "./OutletBoard";
 
 export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void }) {
   const { onDirtyChange } = props;
   const [items, setItems] = useState<Rendering[]>([]);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
 
@@ -22,11 +22,13 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
     onDirtyChange(dirty);
   }, [dirty, onDirtyChange]);
 
-  const selected = items.find((r) => renderingKey(r) === selectedKey) ?? null;
+  // The selection is an item, not a rendering: the board already opens every group an item has, so
+  // a per-rendering selection offered the same board under three different rows.
+  const selected = items.find((r) => r.itemId === selectedId) ?? null;
 
-  const handleSelect = (k: string) => {
+  const handleSelect = (itemId: string) => {
     if (dirty && !window.confirm("저장하지 않은 편집이 있습니다. 그래도 이동할까요?")) return;
-    setSelectedKey(k);
+    setSelectedId(itemId);
   };
 
   return (
@@ -36,7 +38,7 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
       )}
       <div className="flex min-h-0 flex-1">
         <aside className="w-80 shrink-0 overflow-y-auto border-r border-line bg-surface [scrollbar-gutter:stable]">
-          <RenderingList items={items} selectedKey={selectedKey} onSelect={handleSelect} />
+          <RenderingList items={items} selectedId={selectedId} onSelect={handleSelect} />
         </aside>
         <section className="min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
           {selected ? (
@@ -53,6 +55,8 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
               convertedByType={Object.fromEntries(
                 items.filter((r) => r.itemId === selected.itemId).map((r) => [r.type, r.convertedText]),
               )}
+              postedAt={selected.postedAt}
+              kind={selected.kind}
               onGroupChanged={refresh}
               onDirtyChange={setDirty}
             />
