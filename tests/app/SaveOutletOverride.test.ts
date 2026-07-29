@@ -76,3 +76,23 @@ describe("SaveOutletOverride — 승인 취소", () => {
     await expect(uc.run({ ...args, approve: false })).rejects.toThrow(/unapprove/);
   });
 });
+
+/**
+ * A fork is edited in the same box, by the same person, as the group's text — so it has to be
+ * stored the same way. It was not: the group ran through `toCanonical` and the fork did not, so the
+ * emitters read a fork exactly as typed.
+ */
+describe("SaveOutletOverride — canonical text", () => {
+  it("normalises a typed thread separator into a post boundary, as the group card does", async () => {
+    const s = fakeStore();
+    const saved = await new SaveOutletOverride(s, () => "T").run({ ...args, text: "첫 트윗.\n\n---\n\n둘째 트윗." });
+    expect(saved?.text).toBe("첫 트윗.\n\n\n둘째 트윗.");
+    expect(saved?.text).not.toContain("---"); // a literal separator would go out in the post
+  });
+
+  it("trims and collapses like the group card does", async () => {
+    const s = fakeStore();
+    const saved = await new SaveOutletOverride(s, () => "T").run({ ...args, text: "  본문\r\n\n\n\n\n다음 문단  " });
+    expect(saved?.text).toBe("본문\n\n\n다음 문단");
+  });
+});
