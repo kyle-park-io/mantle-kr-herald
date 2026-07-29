@@ -145,7 +145,7 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 | **H. 번역 메모리** | `@0xMantleKR`과 `Mantle_Official`의 실제 승인 EN↔KO 번역 쌍을 발굴해 사람 확인을 거쳐 번역 few-shot에 반영 | `pnpm collect:reference`, `pnpm tm:measure`, `pnpm tm:pair`, `pnpm tm:promote` | — |
 | **I. X 성과 지표** | 사람이 관리하는 `KOL list` 탭(X 행만)을 읽어 KR 공식 계정과 각 X KOL의 팔로워·해당 월 게시물을 조회하고, 원시 성과 숫자를 기계 전용 `x-performance` 탭에 월별로 upsert | `pnpm metrics:record [--month YYYY-MM]` | — |
 | **J. 채널 발송** | 승인된 채널 렌더링(텔레그램·X)을 실제 API로 발송 — 텔레그램은 봇 API, X는 Typefully 경유(공식 API·twitterapi.io 쓰기 없음). 로컬 원장으로 멱등 보장(단, `dropped`로 물러난 행은 예외 — 그 방을 다시 발송 대상으로 만듦, §8 참고), 어느 저장 모드에서도 동작 | `pnpm send:channels [--target telegram\|x\|both] [--ids]` | — |
-| **K. 항목 계보(lineage) 조회** | 번역·변환·포맷 각 단계에서 저장할 때마다(다듬기·재승인 포함) 그 시점 결과물을 항목별로 append — 나중 저장이 이전 값을 덮어써도 사라지지 않고, 어느 시점에 무엇이 어떻게 바뀌었는지 확인 가능. 항상 켜져 있고 best-effort(계보 기록 실패가 저장을 막지 않음) | `pnpm lineage [itemId]` | — |
+| **K. 항목 계보(lineage) 조회** | 번역·변환·포맷 각 단계에서 저장할 때마다(다듬기·재승인 포함) 그 시점 결과물을 항목별로 append — 나중 저장이 이전 값을 덮어써도 사라지지 않고, 어느 시점에 무엇이 어떻게 바뀌었는지 확인 가능. **방별로 갈라 쓴 글(`forked`, 구분자 `타입/방id`)도 저장·승인 시점은 물론 `그룹 글로 되돌리기`로 버리는 시점까지 남습니다** — 그 본문은 `overrides.json`에만 있고 다시 만들어낼 수 없기 때문입니다(되살리기는 자동이 아니라 사람이 복사해 붙여넣는 것). 항상 켜져 있고 best-effort(계보 기록 실패가 저장을 막지 않음) | `pnpm lineage [itemId]` | — |
 | **L. 설정 백업/공유** | git에 추적되지 않는 스티어링 설정(`translation/` + `conversion/`, `*.example.*` 제외 15개 파일)을 Google Drive에 타임스탬프 스냅샷(`steering-config-<시각>.json`)으로 백업하고, 팀원이 최신 스냅샷을 내려받아 복원 — 단일 관리자가 push(백업), 팀원은 pull(복원)만 하는 모델. `pull`은 덮어쓰기 전에 현재 로컬 설정을 `output/archive/`에 먼저 백업 | `pnpm config:push`, `pnpm config:pull [--dry-run]` | — |
 
 > **드라이브 스코프 주의(L):** `config:push`/`config:pull`로 팀원과 공유하려면, pull하는 사람도

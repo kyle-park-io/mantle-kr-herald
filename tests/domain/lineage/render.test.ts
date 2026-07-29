@@ -39,3 +39,56 @@ describe("renderLineage", () => {
     expect(out.indexOf("translated")).toBeLessThan(out.indexOf("converted"));
   });
 });
+
+/**
+ * A fork's `variant` is `type/outletId`, so it gets its own diff key and its first entry prints in
+ * full — which is what makes a discarded fork readable next to the group it diverged from. These
+ * are the assertions behind the decision to leave the viewer alone.
+ */
+describe("renderLineage — forked rooms", () => {
+  const group = e({ stage: "rendered", variant: "announcement/telegram", content: "그룹 글", status: "approved", at: "T1" });
+
+  it("prints a fork's text in full rather than diffing it against the group rendering", () => {
+    const out = renderLineage([group, e({ stage: "forked", variant: "announcement/tg-blockchain", content: "이 방 전용", status: "rendered", at: "T2" })]);
+    expect(out).toContain("forked(announcement/tg-blockchain)");
+    expect(out).toContain("내용:\n이 방 전용"); // not "변경:" against the group's text
+  });
+
+  it("says a revert happened even though the discarded text is identical to the previous entry", () => {
+    const out = renderLineage([
+      e({ stage: "forked", variant: "announcement/tg-blockchain", content: "이 방 전용", status: "rendered", at: "T2" }),
+      e({ stage: "forked", variant: "announcement/tg-blockchain", content: "이 방 전용", status: "reverted", at: "T3" }),
+    ]);
+    // Without the distinct status this entry would read as "(내용 동일)" and nothing else — the one
+    // moment a text was destroyed, rendered as a no-op.
+    expect(out).toContain("상태: rendered → reverted");
+  });
+
+  it("prints the discarded text in full when the revert is the fork's only entry", () => {
+    const out = renderLineage([group, e({ stage: "forked", variant: "announcement/tg-blockchain", content: "사라질 글", status: "reverted", at: "T2" })]);
+    expect(out).toContain("버린 내용:\n사라질 글"); // recovery is a copy-paste out of this output
+  });
+
+  /**
+   * The case that made this worth a viewer change: after a couple of revisions the discarded text
+   * exists nowhere as a whole, only as a first version plus a chain of diffs.
+   */
+  it("prints the discarded text in full even when the fork has a revision history", () => {
+    const out = renderLineage([
+      e({ stage: "forked", variant: "announcement/tg-blockchain", content: "v1 첫 줄\n둘째 줄", status: "rendered", at: "T1" }),
+      e({ stage: "forked", variant: "announcement/tg-blockchain", content: "v2 첫 줄\n둘째 줄", status: "rendered", at: "T2" }),
+      e({ stage: "forked", variant: "announcement/tg-blockchain", content: "v2 첫 줄\n둘째 줄", status: "reverted", at: "T3" }),
+    ]);
+    expect(out).toContain("버린 내용:\nv2 첫 줄\n둘째 줄");
+    expect(out).not.toContain("(내용 동일)"); // the destroyed text must never render as a no-op
+  });
+
+  it("still diffs a same-key revision that is not a removal", () => {
+    const out = renderLineage([
+      e({ stage: "forked", variant: "announcement/tg-blockchain", content: "v1", status: "rendered", at: "T1" }),
+      e({ stage: "forked", variant: "announcement/tg-blockchain", content: "v2", status: "rendered", at: "T2" }),
+    ]);
+    expect(out).toContain("변경:");
+    expect(out).not.toContain("버린 내용:");
+  });
+});

@@ -344,7 +344,9 @@ const deps: ApiDeps = {
   loadTranslations,
   xMaxWeighted: loadXMaxWeighted(),
   loadBoard,
-  saveOutletOverride: new SaveOutletOverride(overrideStore),
+  // The dashboard is the only writer of overrides, so this is the only place a fork's text can be
+  // captured — and `그룹 글로 되돌리기` is the only click in the pipeline that deletes an unrecoverable text.
+  saveOutletOverride: new SaveOutletOverride(overrideStore, undefined, buildLineage()),
   markDelivery: new MarkDelivery(deliveryLedger),
   prepareConversionRun,
   formatVariants,
