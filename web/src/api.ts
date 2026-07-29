@@ -43,6 +43,16 @@ const putOutlet = (itemId: string, type: ConversionType, outletId: string, body:
   }).then((r) => json<BoardReply>(r));
 
 export const api = {
+  /**
+   * Rejects with the server's own message, which is the same for a wrong id and a wrong password —
+   * the screen must not fill that in from the client side either.
+   */
+  login: (username: string, password: string) =>
+    fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    }).then((r) => json<{ ok: true }>(r)),
   list: () => fetch("/api/translations").then((r) => json<Translation[]>(r)),
   edit: (id: string, koreanText: string) =>
     fetch(`/api/translations/${encodeURIComponent(id)}`, {
