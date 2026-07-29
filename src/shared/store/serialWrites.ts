@@ -16,8 +16,17 @@
  * The send ledgers — `JsonDeliveryLedger` and `JsonXArticleLedger`, the two stores whose rows record
  * something irreversible — therefore wrap this in `withFileLock` (see `./fileLock`), which closes
  * that gap on disk. The two layers are complementary, not redundant: this one is a free in-process
- * queue, the lock is the cross-process one. Stores whose worst case is lost review work rather than
- * a duplicate live post use this serializer alone.
+ * queue, the lock is the cross-process one. Those two ledgers are also this function's only callers,
+ * so in practice every use of it is paired with the lock.
+ *
+ * Every other JSON store — `JsonFormattingStore`, `JsonOutletOverrideStore`, `JsonPublishStore`,
+ * `JsonTranslationStore` — does its own read-modify-write straight onto `writeJsonFileAtomic` with
+ * **neither** layer, and so can still lose a row to an overlapping write. That is a deliberate
+ * decision, not an oversight: what those stores hold is review work, which a human can redo, while a
+ * lost send row is a live post the ledger can no longer see and the next run publishes a second
+ * time. Adding either layer to them is a safe change if the cost of redoing review work ever
+ * outgrows the cost of the extra machinery — just do not read this comment as a claim that they are
+ * already protected.
  */
 export function createSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {
   let queue: Promise<void> = Promise.resolve();

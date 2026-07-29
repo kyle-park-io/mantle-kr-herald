@@ -1,10 +1,10 @@
 import "./registerErrorHandler";
-import { readdir, rm, stat } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { argValue } from "./args";
 import { OUTPUT_DIR, paths } from "../paths";
-import { LOCK_STALE_MS } from "../shared/store/fileLock";
-import { expiredArchiveDays, isLockFile, isStrandedTempFile } from "../storage/retention";
+import { expiredArchiveDays } from "../storage/retention";
+import { collectWriteDebris } from "../storage/sweep";
 
 const olderThanDays = Number(argValue("--older-than") ?? "30");
 if (!Number.isFinite(olderThanDays) || olderThanDays < 0) {
@@ -25,28 +25,8 @@ try {
 }
 
 // 2. Debris of an interrupted write: temp files from an atomic write, and lock files whose owner
-//    died. Live stores are never matched.
-async function sweepTemp(dir: string): Promise<void> {
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    const full = join(dir, name);
-    if (isStrandedTempFile(name)) {
-      // A lock younger than the staleness window may still be held by a running send. Removing it
-      // would let a second process interleave a read-modify-write of the same ledger and drop a
-      // row — and a dropped send row is a duplicate live post. Leave those to their owner.
-      if (isLockFile(name) && Date.now() - (await stat(full)).mtimeMs < LOCK_STALE_MS) continue;
-      targets.push(full);
-      continue;
-    }
-    if ((await stat(full)).isDirectory() && full !== paths.archiveDir) await sweepTemp(full);
-  }
-}
-await sweepTemp(OUTPUT_DIR);
+//    died. Live stores are never matched, and a lock young enough to still be held is left alone.
+targets.push(...(await collectWriteDebris(OUTPUT_DIR, { skipDir: paths.archiveDir })));
 
 if (targets.length === 0) {
   console.log("nothing to clean");
