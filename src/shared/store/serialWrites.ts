@@ -9,7 +9,15 @@
  *
  * Each call to `createSerializer()` returns a fresh, independent chain — jobs only serialize against
  * other jobs submitted through the *same* returned function. Two instances of the same store class
- * have two independent chains and do not protect each other.
+ * have two independent chains and do not protect each other, and two *processes* never can: this is
+ * an in-memory queue, so a `pnpm send:channels` run and the dashboard's `pnpm serve` see nothing of
+ * each other's writes.
+ *
+ * The send ledgers — `JsonDeliveryLedger` and `JsonXArticleLedger`, the two stores whose rows record
+ * something irreversible — therefore wrap this in `withFileLock` (see `./fileLock`), which closes
+ * that gap on disk. The two layers are complementary, not redundant: this one is a free in-process
+ * queue, the lock is the cross-process one. Stores whose worst case is lost review work rather than
+ * a duplicate live post use this serializer alone.
  */
 export function createSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {
   let queue: Promise<void> = Promise.resolve();

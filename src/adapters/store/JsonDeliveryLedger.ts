@@ -3,6 +3,7 @@ import type { ChannelSentEntry } from "../../domain/send/channels";
 import type { DeliveryEntry } from "../../domain/delivery/models";
 import { deliveredToRoom, deliveryKey, migrateLegacyEntry } from "../../domain/delivery/models";
 import type { DeliveryLedger } from "../../ports/DeliveryLedger";
+import { withFileLock } from "../../shared/store/fileLock";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
 import { createSerializer } from "../../shared/store/serialWrites";
 
@@ -46,18 +47,29 @@ export class JsonDeliveryLedger implements DeliveryLedger {
     return new Set((await this.loadAll()).filter(deliveredToRoom).map(deliveryKey));
   }
 
+  /**
+   * The two layers of protection are deliberate and not redundant. `serial` orders writes issued by
+   * this instance — cheap, in-memory, no syscalls. `withFileLock` orders them against *other
+   * processes*: a `pnpm send:channels` run while the dashboard `pnpm serve` is up has two ledgers
+   * over one file, and read-modify-write across two processes drops whichever row lost the rename.
+   * A dropped row here is a send the ledger can no longer see, which the next run publishes again.
+   */
   async add(entry: DeliveryEntry): Promise<void> {
-    return this.serial(async () => {
-      const byKey = new Map((await this.loadAll()).map((e) => [deliveryKey(e), e]));
-      byKey.set(deliveryKey(entry), entry);
-      await writeJsonFileAtomic(this.dir, this.path, [...byKey.values()]);
-    });
+    return this.serial(() =>
+      withFileLock(this.path, async () => {
+        const byKey = new Map((await this.loadAll()).map((e) => [deliveryKey(e), e]));
+        byKey.set(deliveryKey(entry), entry);
+        await writeJsonFileAtomic(this.dir, this.path, [...byKey.values()]);
+      }),
+    );
   }
 
   async remove(key: string): Promise<void> {
-    return this.serial(async () => {
-      const kept = (await this.loadAll()).filter((e) => deliveryKey(e) !== key);
-      await writeJsonFileAtomic(this.dir, this.path, kept);
-    });
+    return this.serial(() =>
+      withFileLock(this.path, async () => {
+        const kept = (await this.loadAll()).filter((e) => deliveryKey(e) !== key);
+        await writeJsonFileAtomic(this.dir, this.path, kept);
+      }),
+    );
   }
 }
