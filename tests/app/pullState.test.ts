@@ -126,6 +126,38 @@ describe("PullState — backup before write", () => {
   });
 });
 
+describe("PullState — a restore that fails part-way", () => {
+  it("names the backup directory, because a mixed tree is only recoverable from there", async () => {
+    const f = fakeFiles([{ path: DELIVERIES, content: '[{"a":1}]' }]);
+    const ok = f.store.write;
+    f.store.write = async (path, content) => {
+      if (path === OVERRIDES) throw new Error("EIO: i/o error");
+      await ok(path, content);
+    };
+
+    const run = new PullState(f.store, driveWith(snapshot), "/arch", () => "2026-07-29T00:00:00.000Z").run("FOLDER", {
+      apply: true,
+    });
+
+    // A bare `✖ EIO: i/o error` would leave the operator with a half-restored ledger and no idea
+    // their pre-pull copy still exists.
+    await expect(run).rejects.toThrow(new RegExp(join("/arch", "state-2026-07-29T00-00-00-000Z")));
+    await expect(run).rejects.toThrow(/섞인 상태/);
+    expect(f.written.map((w) => w.path)).toEqual([DELIVERIES]); // the tree really is mixed
+  });
+
+  it("keeps the underlying failure as the cause", async () => {
+    const f = fakeFiles([]);
+    f.store.write = async () => {
+      throw new Error("ENOSPC: no space left on device");
+    };
+    await new PullState(f.store, driveWith(snapshot), "/arch")
+      .run("FOLDER", { apply: true })
+      .then(() => expect.unreachable("should have thrown"))
+      .catch((err: Error) => expect((err.cause as Error).message).toMatch(/ENOSPC/));
+  });
+});
+
 describe("PullState — files present on only one side", () => {
   it("restores a file the local tree does not have", async () => {
     const f = fakeFiles([]);

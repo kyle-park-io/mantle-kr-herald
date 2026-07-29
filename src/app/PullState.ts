@@ -60,7 +60,20 @@ export class PullState {
 
     const backupDir = join(this.archiveDir, `state-${this.now().replace(/[:.]/g, "-")}`);
     await this.files.backup(backupDir); // before any write — a failure here aborts the pull
-    for (const f of incoming) await this.files.write(f.path, f.content);
+
+    // The one path where the mixed tree this command argues against is actually reachable: a write
+    // that fails part-way leaves some files on snapshot content and the rest on local. Nothing can
+    // undo that from here — the ledgers have no transaction — so the least this can do is refuse to
+    // let the operator learn about it as a bare `EIO`. The backup directory is their only route
+    // back, so it goes in the message they will actually read.
+    try {
+      for (const f of incoming) await this.files.write(f.path, f.content);
+    } catch (err: unknown) {
+      throw new Error(
+        `복원이 도중에 실패했습니다 — 지금 트리는 스냅샷과 로컬이 섞인 상태입니다. 복원 직전 파일은 ${backupDir} 에 그대로 있으니, 되돌리려면 거기서 복사해 오세요.`,
+        { cause: err },
+      );
+    }
     return { snapshot: latest.name, applied: true, diff, backupDir, backedUp: current.length, restored: incoming.length };
   }
 }

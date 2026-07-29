@@ -4,7 +4,7 @@ import { GoogleConfigDrive } from "../adapters/drive/GoogleConfigDrive";
 import { GoogleDriveProvisioner } from "../adapters/drive/GoogleDriveProvisioner";
 import { PushState } from "../app/PushState";
 import { loadGoogleAuthConfig, loadGoogleStateFolder } from "../config";
-import { createStateFileStore } from "./stateFiles";
+import { createStateFileStore, describeProvisionedFolder, DRIVE_LABEL } from "./stateFiles";
 
 // Sibling of steering-config under the same parent (review · approved · steering-config ·
 // operational-state), but a folder of its own: this one is a record of what THIS machine has sent,
@@ -17,14 +17,18 @@ let folderId = loadGoogleStateFolder();
 if (!folderId) {
   const prov = new GoogleDriveProvisioner(auth);
   const parent = await prov.findFolder(PARENT_FOLDER_NAME); // undefined → fall back to the drive root
-  const found =
-    (await prov.findFolder(STATE_FOLDER_NAME, parent?.id)) ?? (await prov.createFolder(STATE_FOLDER_NAME, parent?.id));
+  // Say which of the two actually happened. The found-not-created branch is the `.env`-lost-but-
+  // Drive-intact recovery, an ordinary path for this command — and being told a folder full of
+  // months of snapshots was just "created" is exactly the wrong signal there.
+  const existing = await prov.findFolder(STATE_FOLDER_NAME, parent?.id);
+  const found = existing ?? (await prov.createFolder(STATE_FOLDER_NAME, parent?.id));
   folderId = found.id;
-  console.log(`운영 상태 폴더 "${found.name}"${parent ? ` (상위: "${parent.name}")` : ""} 를 만들었습니다 — ${found.id}`);
+  console.log(describeProvisionedFolder({ created: !existing, name: found.name, id: found.id, parentName: parent?.name }));
   console.log(`.env 에 추가하세요:  GDRIVE_STATE_FOLDER_ID=${found.id}`);
 }
 
-const res = await new PushState(createStateFileStore(), new GoogleConfigDrive(auth)).run(folderId);
+const drive = new GoogleConfigDrive(auth, fetch, DRIVE_LABEL);
+const res = await new PushState(createStateFileStore(), drive).run(folderId);
 if (!res) {
   console.log("백업할 운영 상태 파일이 없습니다 — 아직 포크·발송 기록이 하나도 없는 작업 트리입니다. 올린 것 없음.");
 } else {

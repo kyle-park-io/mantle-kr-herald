@@ -35,9 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`pnpm state:push`를 한 번 돌리세요 — 손으로 백업하던 파일들을 이제 이 명령이 맡습니다.** 방별로
   갈라 쓴 글(`✎따로`)은 `output/formatted/overrides.json`에만 있고 다시 만들어낼 수 없습니다 —
   파일이 사라지면 갈라졌던 방이 전부 조용히 그룹 글로 되돌아가고, 화면에는 오류 하나 뜨지 않습니다.
-  발송 원장(`output/publish/deliveries.json`, `x-article.json`)과 동기화 원장
-  (`output/publish/state.json`)도 마찬가지입니다. 아래 `Added`의 `state:push`/`state:pull`이 이 네
-  개를 Drive 스냅샷으로 묶습니다.
+  발송 원장(`output/publish/deliveries.json`, 예전 형식 `channels.json`, `x-article.json`)과 동기화
+  원장(`output/publish/state.json`)도 마찬가지입니다. 아래 `Added`의 `state:push`/`state:pull`이
+  이들을 Drive 스냅샷으로 묶습니다.
 - **업그레이드 후 첫 `pnpm send:reconcile`(또는 대시보드가 2분마다 도는 배경 확인)에서 `발송됨`이던
   줄이 `예약 취소됨`으로 바뀔 수 있습니다 — 데이터가 사라진 게 아니라 고쳐진 것입니다.** X 발송은
   Typefully 큐에 예약으로 들어가고, 그 초안이 게시되기 전에 지워지면 그 방에는 **아무것도 올라가지
@@ -101,9 +101,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   글은 어디에도 없기 때문입니다. 설계는
   `docs/superpowers/specs/2026-07-29-fork-preservation-design.md`.
 - **`pnpm state:push` / `pnpm state:pull [--yes]` — 다시 만들 수 없는 운영 파일의 Drive 백업.**
-  `output/` 아래 대부분은 다시 만들 수 있지만(항목은 재수집, 번역·변환·렌더링은 재생성) **네 개는
+  `output/` 아래 대부분은 다시 만들 수 있지만(항목은 재수집, 번역·변환·렌더링은 재생성) **다음은
   아닙니다**: 방별 포크(`formatted/overrides.json`), 발송 원장(`publish/deliveries.json`,
-  `publish/x-article.json`), 동기화 원장(`publish/state.json`). `state:push`는 이 넷을 타임스탬프
+  그리고 그게 없을 때 읽히는 예전 형식 `publish/channels.json` — 발송처 축(PR #80) 이전 설치본에는
+  **이 파일이 발송 이력의 전부**입니다), X 아티클 원장(`publish/x-article.json`), 동기화 원장
+  (`publish/state.json`). `state:push`는 이들을 타임스탬프
   스냅샷(`operational-state-<시각>.json`) 하나로 묶어 Drive의 `operational-state` 폴더에 올립니다 —
   덮어쓰지 않고 쌓이므로 히스토리가 곧 롤백입니다. 폴더는 첫 실행 때 `steering-config`와 같은 상위
   폴더 아래에 자동으로 만들어지고 id를 알려줍니다(`GDRIVE_STATE_FOLDER_ID`).

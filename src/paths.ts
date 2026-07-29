@@ -35,6 +35,8 @@ export const paths = {
   publishDir: join(OUTPUT_DIR, "publish"),
   publishLocalDir: join(OUTPUT_DIR, "publish", "local"),
   publishDeliveries: join(OUTPUT_DIR, "publish", "deliveries.json"),
+  /** Pre-outlet send ledger. `JsonDeliveryLedger` still reads it when `deliveries.json` is absent. */
+  publishChannelsLegacy: join(OUTPUT_DIR, "publish", "channels.json"),
   publishXArticle: join(OUTPUT_DIR, "publish", "x-article.json"),
   publishState: join(OUTPUT_DIR, "publish", "state.json"),
   archiveDir: join(OUTPUT_DIR, "archive"),
