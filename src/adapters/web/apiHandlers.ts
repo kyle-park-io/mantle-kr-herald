@@ -110,7 +110,7 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
 
   // Account-wide, not per item — and deliberately not a field on BoardView: board loads are
   // frequent and the social-set bucket is the smallest rate limit we measured (500/hr).
-  if (method === "GET" && segments[1] === "typefully" && segments[2] === "quota") {
+  if (method === "GET" && segments.length === 3 && segments[1] === "typefully" && segments[2] === "quota") {
     return { status: 200, json: await deps.loadQuota() };
   }
 

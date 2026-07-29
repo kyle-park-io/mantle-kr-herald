@@ -170,7 +170,14 @@ if (live) {
       // Reporting "quota unreadable" for what is really a bad key would send the operator the wrong way.
       const me = await fetch("https://api.typefully.com/v2/me", { headers: { Authorization: `Bearer ${t.apiKey}` } });
       if (!me.ok) {
-        results.push({ name: "Typefully  live", status: "fail", detail: `GET /v2/me → HTTP ${me.status} — check TYPEFULLY_API_KEY` });
+        // 401/403 mean the key itself was rejected — anything else (5xx, 429, ...) is Typefully's
+        // side failing, and sending the operator to re-check a perfectly good key during an outage
+        // is the wrong remedy.
+        const detail =
+          me.status === 401 || me.status === 403
+            ? `GET /v2/me → HTTP ${me.status} — check TYPEFULLY_API_KEY`
+            : `GET /v2/me → HTTP ${me.status} — Typefully upstream failure, not necessarily your key`;
+        results.push({ name: "Typefully  live", status: "fail", detail });
       } else {
         try {
           results.push(quotaResult("Typefully  live", await new TypefullyQuota(t.apiKey, t.socialSetId).read()));

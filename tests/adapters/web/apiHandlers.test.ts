@@ -651,4 +651,12 @@ describe("GET /api/typefully/quota", () => {
     expect(res.status).toBe(200);
     expect(res.json).toEqual({ error: "HTTP 401" });
   });
+
+  // Every sibling route in this file bounds its segment length; this one didn't, and matched
+  // anything under /api/typefully/quota/... too.
+  it("404s on an extra path segment", async () => {
+    const d = makeDeps([]);
+    const res = await handleApi(d, "GET", "/api/typefully/quota/nope", undefined);
+    expect(res.status).toBe(404);
+  });
 });
