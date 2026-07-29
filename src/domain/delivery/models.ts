@@ -2,17 +2,27 @@ import type { ChannelSentEntry } from "../send/channels";
 import { PRIMARY_OUTLET_BY_CHANNEL } from "../outlet/models";
 
 /**
- * One piece of copy delivered to one room.
- *
  * `sent` is an observation — a bot or API call succeeded — and is never reversed.
  * `delivered` is a claim: a human ticked 전달함 after pasting it by hand, and can untick it.
  * `dropped` is a scheduled send that provably never reached the room: an X post goes out as a
  * Typefully draft first, and a draft can be deleted before it publishes. The row stays in
  * `loadAll()` — the board still explains what happened — but it must stop meaning "this room
  * already has this copy", or the room is stranded forever.
+ *
+ * The array is the source of truth, same shape as `ALL_TYPES`/`ConversionType` in
+ * `src/domain/conversion/models.ts` and `ALL_TARGETS`/`PublishTarget` in `src/cli/uploaders.ts`:
+ * `DeliveryStatus` is *derived* from `ALL_DELIVERY_STATUSES` rather than declared separately and
+ * checked against it. A separately-declared union plus a `satisfies`-checked literal both erase at
+ * runtime — `vitest` transpiles through esbuild, which strips `satisfies` without evaluating it, so a
+ * test iterating such a list would silently keep iterating the old members forever. Deriving the type
+ * from the array instead means there is only one place to edit, and any runtime consumer that walks
+ * `ALL_DELIVERY_STATUSES` — see `tests/web/typeMirror.test.ts` — sees a new member the moment it is
+ * added here, with no second step that can fall out of sync.
  */
-export type DeliveryStatus = "sent" | "delivered" | "dropped";
+export const ALL_DELIVERY_STATUSES = ["sent", "delivered", "dropped"] as const;
+export type DeliveryStatus = (typeof ALL_DELIVERY_STATUSES)[number];
 
+/** One piece of copy delivered to one room. */
 export interface DeliveryEntry {
   itemId: string;
   type: string;
@@ -24,19 +34,6 @@ export interface DeliveryEntry {
   url?: string;
   senderName?: string;
 }
-
-/**
- * Every `DeliveryStatus`, with TypeScript enforcing the list stays exhaustive: `satisfies
- * Record<DeliveryStatus, true>` fails to compile if a member is added to the union without a
- * matching key here. The one consumer is `tests/web/typeMirror.test.ts`, which walks this to prove
- * `deliveredToRoom` below and the dashboard's own copy of it (`web/src/types.ts`) classify *every*
- * member the same way — not just today's three — since nothing else ties the two together.
- */
-export const ALL_DELIVERY_STATUSES: readonly DeliveryStatus[] = Object.keys({
-  sent: true,
-  delivered: true,
-  dropped: true,
-} satisfies Record<DeliveryStatus, true>) as DeliveryStatus[];
 
 export function deliveryKey(e: Pick<DeliveryEntry, "itemId" | "type" | "outletId">): string {
   return `${e.itemId}:${e.type}:${e.outletId}`;
