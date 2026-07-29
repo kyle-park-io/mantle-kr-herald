@@ -6,12 +6,13 @@ import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
 import { JsonDeliveryLedger } from "../adapters/store/JsonDeliveryLedger";
 import { JsonOutletOverrideStore } from "../adapters/store/JsonOutletOverrideStore";
 import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
+import { JsonXArticleLedger } from "../adapters/store/JsonXArticleLedger";
 import { ALL_OUTLETS, deliveredByChannelSender, outletById, outletsForChannel } from "../domain/outlet/models";
 import { SendChannels } from "../app/SendChannels";
 import { resolveChannelTargets, createSenders } from "./channelSenders";
 import { buildRecorder } from "./recorder";
 import { buildArchiver } from "./archiver";
-import { quotaReader } from "./typefullyQuotaReader";
+import { headroomReader } from "./publishHeadroom";
 
 /** Usage/error text is interpolated from ALL_OUTLETS: a hardcoded list goes stale invisibly. */
 const OUTLETS_USAGE = ALL_OUTLETS.map((o) => o.id).join("|");
@@ -39,6 +40,9 @@ const ids = idsArg ? new Set(idsArg.split(",").map((s) => s.trim()).filter((s) =
 
 const store = new JsonFormattingStore(paths.formattedDir);
 const ledger = new JsonDeliveryLedger(paths.publishDir);
+// A one-shot CLI process, unlike serve.ts: no scheduler shares this instance, so there is no second
+// serializer chain to race against.
+const articleLedger = new JsonXArticleLedger(paths.publishDir);
 // The CLI has to honour forks too: a room that received its own copy from the dashboard must not
 // receive the group copy from here, or the two disagree about what that room was sent.
 const overrides = new JsonOutletOverrideStore(paths.formattedDir);
@@ -60,7 +64,7 @@ const result = await new SendChannels(
   outletsForChannel,
   loadTelegramChatIds(),
   overrides,
-  quotaReader(targets),
+  headroomReader(targets, ledger, articleLedger),
 ).run({ targets, ids, outletIds });
 // The extra segments appear only when they happened, so an ordinary run prints the line it always
 // printed. Both are kept out of `failed`: neither is a send that went wrong.
