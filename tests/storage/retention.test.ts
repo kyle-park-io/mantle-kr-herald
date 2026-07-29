@@ -80,6 +80,16 @@ describe("isStrandedTempFile", () => {
     expect(isStrandedTempFile("pnpm-lock.yaml")).toBe(false);
     expect(isStrandedTempFile("deliveries.json.lock.bak")).toBe(false);
   });
+
+  // A stale-lock reclaim renames the dead lock aside before deleting it. If a process dies in that
+  // one-syscall gap the scratch file survives, so it is named with writeJsonFileAtomic's temp
+  // suffix specifically to land here — otherwise it would be debris nothing ever sweeps.
+  it("matches the scratch file a stale-lock reclaim can leave behind", () => {
+    const scratch = "deliveries.json.lock.tmp-243374-1785337244178-028b43c9-d64b-4969-932e-86c3767575e1";
+    expect(isStrandedTempFile(scratch)).toBe(true);
+    // And it is a temp file, not a lock, so `pnpm clean`'s age gate does not hold it back.
+    expect(isLockFile(scratch)).toBe(false);
+  });
 });
 
 describe("isLockFile", () => {

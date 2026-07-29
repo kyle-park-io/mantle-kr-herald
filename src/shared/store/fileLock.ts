@@ -1,4 +1,5 @@
-import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isErrnoException } from "./jsonFile";
 
@@ -48,28 +49,51 @@ const ignoreMissing = (err: unknown): void => {
   throw err;
 };
 
-/** `wx` is `O_CREAT | O_EXCL`: the kernel decides the winner, so exactly one caller can succeed. */
-async function acquire(lockPath: string): Promise<boolean> {
+/**
+ * Takes the lock and returns the token identifying *this* acquisition, or null if someone holds it.
+ *
+ * `wx` is `O_CREAT | O_EXCL`: the kernel decides the winner, so exactly one caller can succeed.
+ *
+ * The token is `<pid>:<uuid>`. The pid alone would not do: pids are recycled, and one process
+ * acquires the same lock over and over, so "written by pid 4821" cannot distinguish the lock we are
+ * holding now from a later one taken by the same process after ours was reclaimed. Everything that
+ * deletes a lock compares this token first, which is what stops a holder from deleting its
+ * successor's lock. The pid stays in it because it is what an operator needs to see.
+ */
+async function acquire(lockPath: string): Promise<string | null> {
   let handle;
   try {
     handle = await open(lockPath, "wx");
   } catch (err: unknown) {
-    if (isErrnoException(err) && err.code === "EEXIST") return false;
+    if (isErrnoException(err) && err.code === "EEXIST") return null;
     throw err;
   }
+  const token = `${process.pid}:${randomUUID()}`;
   try {
-    // The owning pid costs nothing to record and turns "why is this stuck" into a one-line answer.
-    await handle.writeFile(`${process.pid}\n`, "utf8");
+    await handle.writeFile(`${token}\n`, "utf8");
   } finally {
     await handle.close();
   }
-  return true;
+  return token;
 }
 
 /**
- * Removes the lock if its owner has plainly died, reporting whether it did. Reclaiming is itself
- * racy — another waiter may reclaim the same lock, or the owner may release it, between the `stat`
- * and the `unlink` — so a missing file is a success, not an error.
+ * A unique scratch name for the reclaim hand-off below. It deliberately uses the same
+ * `.tmp-<pid>-<ms>-<uuid>` suffix `writeJsonFileAtomic` uses, so that if a process dies between the
+ * rename and the unlink, `pnpm clean` already recognises what it left behind (see
+ * `isStrandedTempFile`) instead of the tree accumulating debris nothing sweeps.
+ */
+const staleScratchPath = (lockPath: string) => `${lockPath}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
+
+/**
+ * Removes the lock if its owner has plainly died, reporting whether the path is now free to retry.
+ *
+ * The removal goes through `rename`, not a bare `unlink`, because `unlink` by path is not a
+ * compare-and-swap: two waiters that both judge the same lock stale would both delete it, and the
+ * second delete would land on a lock a *third* process had legitimately acquired in between —
+ * disarming the ledger while that third process is mid-write. `rename` is atomic, so exactly one
+ * reclaimer moves the file away and only that one deletes it; the loser gets ENOENT and simply
+ * retries. A missing file is therefore success, not an error.
  */
 async function reclaimIfStale(lockPath: string, staleMs: number): Promise<boolean> {
   let heldForMs: number;
@@ -81,12 +105,54 @@ async function reclaimIfStale(lockPath: string, staleMs: number): Promise<boolea
     throw err;
   }
   if (heldForMs <= staleMs) return false;
-  await unlink(lockPath).catch(ignoreMissing);
+
+  const scratch = staleScratchPath(lockPath);
+  try {
+    await rename(lockPath, scratch);
+  } catch (err: unknown) {
+    // Lost the reclaim to another waiter, or the owner released it. Either way it is not ours to
+    // delete, and the path is free to race for again.
+    if (isErrnoException(err) && err.code === "ENOENT") return true;
+    throw err;
+  }
+  await unlink(scratch).catch(ignoreMissing);
   return true;
 }
 
+/**
+ * Deletes the lock only if it is still the one we took.
+ *
+ * A holder stalled past `staleMs` — a suspended laptop, a debugger, a severe I/O stall — has its
+ * lock reclaimed underneath it and a new holder takes the path. An unconditional `unlink` here
+ * would then delete *that* holder's lock and leave the ledger disarmed for the rest of its critical
+ * section, letting arbitrarily many callers walk in on a plain acquire. That is the duplicate live
+ * post this whole module exists to prevent, so the token is checked first and a mismatch means:
+ * not ours, leave it alone.
+ *
+ * The read is by path, deliberately. Reading through the file handle we opened at acquisition would
+ * be cheaper but wrong — after a reclaim that handle refers to the unlinked inode and still holds
+ * our own token, so it would report "still ours" precisely when it is not. Comparing inode numbers
+ * instead would be cheaper again and also wrong: ext4 recycles inode numbers.
+ *
+ * A window remains, narrowed from "the entire critical section" to the gap between this read and
+ * this unlink, and only reachable if our lock goes stale inside that gap. Closing it completely
+ * needs an atomic compare-and-delete, which POSIX does not offer.
+ */
+async function releaseIfOwned(lockPath: string, token: string): Promise<void> {
+  let current: string;
+  try {
+    current = await readFile(lockPath, "utf8");
+  } catch (err: unknown) {
+    if (isErrnoException(err) && err.code === "ENOENT") return;
+    throw err;
+  }
+  if (current.trim() !== token) return;
+  await unlink(lockPath).catch(ignoreMissing);
+}
+
 async function holderDescription(lockPath: string): Promise<string> {
-  const pid = await readFile(lockPath, "utf8").then((t) => t.trim(), () => "");
+  const token = await readFile(lockPath, "utf8").then((t) => t.trim(), () => "");
+  const pid = token.split(":")[0];
   return pid ? `held by pid ${pid}` : "holder unknown";
 }
 
@@ -102,6 +168,10 @@ async function holderDescription(lockPath: string): Promise<string> {
  *
  * On acquisition timeout this **throws** rather than proceeding unprotected. Running the job anyway
  * would convert a delay — which the caller can retry — into a lost row, which nobody can undo.
+ *
+ * Every acquisition carries an ownership token, and nothing deletes a lock it does not own. That
+ * matters because a stalled holder's lock gets reclaimed underneath it: without the check, that
+ * holder's release would delete its successor's lock and disarm the ledger mid-write.
  */
 export async function withFileLock<T>(
   path: string,
@@ -116,13 +186,25 @@ export async function withFileLock<T>(
   await mkdir(dirname(lockPath), { recursive: true });
 
   const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (await acquire(lockPath)) break;
+  let token: string | null = null;
+  while (token === null) {
+    token = await acquire(lockPath);
+    if (token !== null) break;
     if (Date.now() >= deadline) {
+      // `timeoutMs` at or below `staleMs` is a real misconfiguration — it means this call can never
+      // outlive the staleness window, so it can never reclaim a lock whose owner died, and every
+      // run fails identically until someone deletes the file by hand. Saying so here is what keeps
+      // that silent: a deliberately short fail-fast timeout is legitimate, so this diagnoses rather
+      // than rejects it.
+      const misconfigured =
+        timeoutMs <= staleMs
+          ? ` This timeout is not longer than the ${staleMs}ms staleness window, so a lock left by a dead ` +
+            `process can never be reclaimed by this call — raise timeoutMs above staleMs.`
+          : "";
       throw new Error(
         `Timed out after ${timeoutMs}ms acquiring the lock on ${path} (${await holderDescription(lockPath)}). ` +
           `Refusing to write unprotected: a concurrent read-modify-write would drop a row, and a dropped ` +
-          `send row becomes a duplicate live post. If no such process is running, remove ${lockPath}.`,
+          `send row becomes a duplicate live post. If no such process is running, remove ${lockPath}.${misconfigured}`,
       );
     }
     // A lock we just reclaimed is free right now, so retry at once; otherwise wait for the holder.
@@ -133,7 +215,7 @@ export async function withFileLock<T>(
     return await fn();
   } finally {
     // Release even when the job threw, or one failed write would wedge every later one until the
-    // staleness window expires. The file may already be gone if a waiter judged us stale.
-    await unlink(lockPath).catch(ignoreMissing);
+    // staleness window expires — but only if the lock is still ours. See `releaseIfOwned`.
+    await releaseIfOwned(lockPath, token);
   }
 }
