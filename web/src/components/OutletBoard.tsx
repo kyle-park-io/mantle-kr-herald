@@ -9,8 +9,8 @@ import {
   type BoardView,
   type ConversionType,
   type ConvertPrepareReply,
-  type PublishingQuota,
-  type QuotaView,
+  type Headroom,
+  type HeadroomView,
 } from "../types";
 import { OutletCard } from "./OutletCard";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
@@ -40,9 +40,7 @@ export function OutletBoard(props: {
   const { itemId, onDirtyChange } = props;
   const [board, setBoard] = useState<BoardView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [quota, setQuota] = useState<PublishingQuota | null>(null);
-  /** Rooms already sent to but not yet confirmed published — see `loadQuota` below. */
-  const [inFlight, setInFlight] = useState(0);
+  const [headroom, setHeadroom] = useState<Headroom | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
   // §10 [변환 준비]: which not-yet-converted types the operator picked, and the last worksheet
@@ -63,17 +61,16 @@ export function OutletBoard(props: {
   }, [itemId]);
 
   /**
-   * The account-wide Typefully quota, for the banner above the group cards. An unreadable quota is
-   * not an empty one — show nothing rather than paint a healthy account as blocked at `0건`.
+   * How much Typefully publishing headroom is left, for the banner above the group cards. An
+   * unreadable headroom is not an empty one — show nothing rather than paint a healthy account as
+   * blocked at `0건`.
    *
-   * `inFlight` always lands alongside it (defaulting to 0 rather than being left stale) — the
-   * banner's headline number is `remaining − inFlight`, the same arithmetic the send gate applies,
-   * so the two must be set together or the banner could show a number the gate would refuse.
+   * The server computes `available` (and every other field) — this component no longer does that
+   * arithmetic itself, so the banner can never drift from what the send gate actually enforces.
    */
   const loadQuota = useCallback(async () => {
-    const r: QuotaView = await api.typefullyQuota();
-    setQuota(r.quota ?? null);
-    setInFlight(r.inFlight ?? 0);
+    const r: HeadroomView = await api.typefullyQuota();
+    setHeadroom(r.headroom ?? null);
   }, []);
 
   /**
@@ -141,7 +138,8 @@ export function OutletBoard(props: {
   const url = itemUrl(board.itemId);
   // The number the send gate (`SendChannels`) actually enforces, not the raw account total —
   // clamped because a stale `inFlight` count must read as "none left", not as a bug (`잔여 -2건`).
-  const availableQuota = quota ? Math.max(0, quota.remaining - inFlight) : 0;
+  // The server does NOT clamp `available` itself (see `Headroom` in types.ts) — only this display does.
+  const availableQuota = headroom ? Math.max(0, headroom.available) : 0;
 
   /**
    * Jump to a room's first row. A DOM query rather than a ref map because the rows live inside
@@ -214,7 +212,7 @@ export function OutletBoard(props: {
         )}
       </header>
 
-      {quota && (
+      {headroom && (
         <div
           className={`mb-4 rounded-lg border px-3 py-2 text-[13px] ${
             availableQuota <= LOW_PUBLISHING_QUOTA
@@ -223,8 +221,8 @@ export function OutletBoard(props: {
           }`}
         >
           X 발행 잔여 <strong className="font-semibold">{availableQuota}건</strong>
-          {inFlight > 0 ? ` (예약 ${inFlight}건 대기)` : ""} / {quota.used + quota.remaining}건
-          {quota.resetsAt ? ` · ${quota.resetsAt.slice(5, 10).replace("-", "/")} 리셋` : ""}
+          {headroom.inFlight > 0 ? ` (예약 ${headroom.inFlight}건 대기)` : ""} / {headroom.used + headroom.remaining}건
+          {headroom.resetsAt ? ` · ${headroom.resetsAt.slice(5, 10).replace("-", "/")} 리셋` : ""}
         </div>
       )}
 

@@ -320,22 +320,35 @@ export interface FormatReply {
   warnings: FormatWarning[];
 }
 
-// Mirrors src/adapters/send/TypefullyQuota.ts.
-export interface PublishingQuota {
-  used: number;
+/**
+ * Mirrors `Headroom` in src/cli/publishHeadroom.ts — how much Typefully publishing headroom is left.
+ * One module on the server computes this once, for both the send gate and this banner, so the two
+ * can never name two different numbers.
+ */
+export interface Headroom {
+  /** The account's raw remaining publishes, for display. */
   remaining: number;
+  /** Publishes already spent — the banner's denominator is `used + remaining`. */
+  used: number;
+  /** Scheduled but unconfirmed sends, across both the delivery and x-article ledgers. */
+  inFlight: number;
+  /**
+   * `remaining − inFlight`, as computed by the server. NOT clamped at the source — it may be
+   * negative when a stale in-flight row overcounts. Clamp only when displaying it (see
+   * `OutletBoard.tsx`); comparing the raw value is what the send gate does.
+   */
+  available: number;
   resetsAt: string;
 }
 
 /**
- * Mirrors `QuotaView` in src/cli/loadQuota.ts — the GET /api/typefully/quota payload. `inFlight` is
- * rooms already sent to but not yet confirmed published — the same count the send gate
- * (`SendChannels`) subtracts from `quota.remaining` — so the banner can show the number the gate
- * actually enforces rather than the raw account total.
+ * Mirrors `HeadroomView` in src/cli/publishHeadroom.ts — the GET /api/typefully/quota payload. An
+ * unreadable headroom answers `error` rather than a zero headroom: "unknown" and "exhausted" are
+ * different states, and only one of them means the account is actually blocked — rendering a failed
+ * read as an empty headroom would paint a healthy account as blocked at `0건`.
  */
-export interface QuotaView {
-  quota?: PublishingQuota;
-  inFlight?: number;
+export interface HeadroomView {
+  headroom?: Headroom;
   error?: string;
 }
 

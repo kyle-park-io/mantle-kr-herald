@@ -33,9 +33,8 @@ import { deliveredByChannelSender, outletById, outletsForChannel } from "../doma
 import { createSenders } from "./channelSenders";
 import { buildRecorder } from "./recorder";
 import { buildArchiver } from "./archiver";
-import { quotaReader } from "./typefullyQuotaReader";
 import { startReconcileScheduler } from "./reconcileScheduler";
-import { makeLoadQuota } from "./loadQuota";
+import { headroomReader, makeLoadHeadroom } from "./publishHeadroom";
 import type { SendableChannel } from "../domain/send/channels";
 import {
   loadStorageMode,
@@ -244,9 +243,10 @@ const loadBoard = async (itemId: string): Promise<BoardView> => {
 const isSendableChannel = (c: string): c is SendableChannel => c === "telegram" || c === "x";
 
 // The board's banner: the account-wide Typefully publishing quota plus the in-flight count that
-// turns it into the number the send gate actually enforces. See loadQuota.ts for the caching and
-// staleness rules — extracted so both are unit-tested rather than living in this closure.
-const loadQuota = makeLoadQuota(deliveryLedger);
+// turns it into the number the send gate actually enforces. See publishHeadroom.ts for the caching
+// and staleness rules — extracted so both are unit-tested rather than living in this closure, and so
+// the gate and the banner read the exact same arithmetic.
+const loadQuota = makeLoadHeadroom(deliveryLedger, xArticleLedger);
 
 /**
  * Ask Typefully whether the scheduled drafts have published, and write the real x.com urls back.
@@ -327,7 +327,7 @@ const sendToOutlet = async (itemId: string, type: string, outletId: string, rese
       // Without this a forked room receives the *group* text — the wrong copy, irreversibly, since
       // the ledger then records the room as `sent` and a `sent` row can never be unmarked.
       overrideStore,
-      quotaReader([channel]),
+      headroomReader([channel], deliveryLedger, xArticleLedger),
     ).run({ targets: [channel], ids: new Set([itemId]), types: [type], outletIds: [outletId] });
 
     // A quota refusal is not a plain zero-send: the operator needs to know the account is at its

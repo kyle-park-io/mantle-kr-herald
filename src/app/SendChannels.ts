@@ -18,8 +18,7 @@ import { matchesItemId } from "../domain/itemId";
 import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { PublishRecord } from "../domain/sheet/models";
 import { extractMedia } from "../domain/media/sourceMedia";
-import { awaitingPublish } from "../domain/send/awaitingPublish";
-import type { PublishingQuota } from "../adapters/send/TypefullyQuota";
+import type { Headroom } from "../cli/publishHeadroom";
 
 export type Recorder = (rec: PublishRecord) => Promise<void>;
 export type Archiver = (entry: SentArchiveEntry) => Promise<void>;
@@ -105,11 +104,13 @@ export class SendChannels {
      */
     private readonly overrides?: OutletOverrideStore,
     /**
-     * Reads the social set's monthly publishing quota. Optional: a Telegram-only install has no
-     * Typefully credentials, and every pre-quota call site stays valid without it. When absent the
-     * gate does not run, which is the pre-existing behaviour.
+     * Reads how much Typefully publishing headroom is left — the same reader the board's banner
+     * reads from (`publishHeadroom.ts`), so the gate and the screen can never name two different
+     * numbers. Optional: a Telegram-only install has no Typefully credentials, and every pre-headroom
+     * call site stays valid without it. When absent the gate does not run, which is the pre-existing
+     * behaviour.
      */
-    private readonly quota?: () => Promise<PublishingQuota>,
+    private readonly headroom?: () => Promise<Headroom>,
   ) {}
 
   async run(input: SendChannelsInput): Promise<SendChannelsResult> {
@@ -157,7 +158,7 @@ export class SendChannels {
     // it got from a room-by-room ledger, and the answer changes under them as the queue publishes.
     let quotaBlocked: SendChannelsResult["quotaBlocked"];
     const xCandidates = candidates.filter((r) => r.channel === "x");
-    if (this.quota && xCandidates.length > 0) {
+    if (this.headroom && xCandidates.length > 0) {
       // Unverified assumption, named on purpose: `needed` counts one pending room delivery as one
       // quota unit, i.e. one draft == one publish. `TypefullySender` puts a multi-segment thread
       // into a single draft's `posts[]`, so this assumes Typefully bills a whole thread as one
@@ -167,15 +168,11 @@ export class SendChannels {
       const needed = xCandidates.reduce((n, r) => n + this.roomsFor(r, blocked, already, deliverable).pending.length, 0);
       if (needed > 0) {
         try {
-          const q = await this.quota();
-          // A draft scheduled minutes ago has not published yet, so it is in neither `used` nor a
-          // lower `remaining`. These rows are already in memory, so the correction is free.
-          const inFlight = ledgered.filter((row) => awaitingPublish(row)).length;
-          const available = q.remaining - inFlight;
-          if (needed > available) {
-            quotaBlocked = { needed, available, resetsAt: q.resetsAt };
+          const h = await this.headroom();
+          if (needed > h.available) {
+            quotaBlocked = { needed, available: h.available, resetsAt: h.resetsAt };
             for (const o of this.outletsFor("x")) blocked.add(o.id);
-            console.warn(`[send] X withheld: the batch needs ${needed} publish(es), ${available} left before ${q.resetsAt || "the next reset"}`);
+            console.warn(`[send] X withheld: the batch needs ${needed} publish(es), ${h.available} left before ${h.resetsAt || "the next reset"}`);
           }
         } catch (err) {
           // A monitoring call must not become a new way for delivery to fail.
