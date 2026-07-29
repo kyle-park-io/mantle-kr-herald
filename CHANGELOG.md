@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading — action required for existing installs
+
+- **발송처 축(PR #80)을 건너뛰고 그 이전 버전에서 곧장 올라온 설치본은, 대시보드를 처음 열었을 때
+  맨틀 한국 데브방이 통째로 "한 번도 안 나감"으로 보입니다.** `output/publish/deliveries.json`이
+  없으면 원장은 예전 `channels.json`을 읽기 전용으로 이관하는데, 예전 행에는 방 정보가 없어
+  **채널의 대표 방 하나**에만 귀속됩니다(`telegram` → 맨틀 한국 커뮤니티). 그래서 **지금까지
+  텔레그램으로 나간 모든 과거 항목이 데브방 줄에서는 미발송으로 표시됩니다** — 승인 상태는 그대로라
+  줄이 잠기지도 않고, 확인 창 한 번이면 몇 달 전 글이 살아 있는 방으로 나갑니다. `send:channels`의
+  first-delivery 가드도 여기서는 도움이 되지 않습니다: **방을 지목하는 것 자체가 확인**이라, 보드의
+  방별 `발송`은 설계상 그 가드를 풉니다. 첫 사용 전에 데브방이 실제로 받은 과거 발송을
+  `deliveries.json`에 채워 넣거나(방마다
+  `{"itemId","type","outletId":"tg-dev","status":"sent","at":"<ISO>","by":"auto"}` 한 행 — `sent`로
+  적으면 보드에서도 `발송됨`으로 보이고 다시 누를 수 없습니다), 최소한 **과거 항목의 데브방 줄은
+  누르지 말라고 팀에 공지**하세요. PR #80을 이미 거쳐
+  `deliveries.json`이 있는 설치본은 해당 없습니다.
+- **`output/formatted/overrides.json`을 백업 대상에 넣으세요.** 방별로 갈라 쓴 글(`✎따로`)은 이
+  파일에만 있고, 다시 만들어낼 수 없습니다 — 파일이 사라지면 갈라졌던 방이 전부 조용히 그룹 글로
+  되돌아가고, 화면에는 오류 하나 뜨지 않습니다. 발송 원장(`output/publish/deliveries.json`)과 같이
+  다루면 됩니다.
+
 ### Added
 
 - **발송처(outlet) — `type`·`channel`과 나란한 세 번째 축.** 지금까지 "어디로 보냈는가"는 채널로만
