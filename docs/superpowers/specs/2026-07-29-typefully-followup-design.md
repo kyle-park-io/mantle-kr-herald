@@ -196,3 +196,17 @@ quietly start retrying it.
   wiring stays verified by Playwright.
 - Timeouts in `HttpClient`, which has the same gap for Lark and twitterapi. Same fix, different
   blast radius, and nothing on this branch depends on it.
+- **Cross-process ledger race.** Both ledgers now serialize *within* a process, but a CLI
+  `send:channels` run while `serve` is up gives two serializers over one file, and
+  `writeJsonFileAtomic` does not make a read-modify-write atomic. `serialWrites.ts:11-12` says so
+  honestly. Not introduced here.
+- **`inFlight` has no escape hatch.** A row that can never be reconciled — a draft deleted in
+  Typefully's UI, or one that failed at publish time — counts against `available` forever, across
+  monthly resets, and the only remedy is hand-editing JSON. Against a 15/month ceiling one stuck row
+  costs 1/15 of capacity indefinitely. The direction is conservative (blocks rather than
+  over-publishes), which is why it is not urgent.
+
+Two accepted behaviours the final review surfaced, recorded here rather than fixed: resending a row
+whose original draft is still queued consumes two publishes while the gate counted one (the original
+is deliberately not cancelled), and `TypefullyMedia`'s 120s budget covers `arrayBuffer()`, so a
+large-but-progressing download can now abort — safe direction, it throws before any draft exists.
