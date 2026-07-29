@@ -340,7 +340,7 @@ console.log(`Review dashboard on http://localhost:${port}  (build the UI first: 
 // sees real x.com links, a couple of minutes after the post goes out.
 //
 // Guarded: a Telegram-only install has no TYPEFULLY_* env. Every other Typefully-optional path on
-// this branch treats that as "nothing to do" (quotaReader returns undefined, doctor uses
+// this branch treats that as "nothing to do" (headroomReader returns undefined, doctor uses
 // optionalCheck) — without this guard, `reconcilePublished` would report the missing-key error as
 // `r.error` on every tick, forever, on an install that is not broken.
 try {

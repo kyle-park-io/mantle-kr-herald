@@ -14,9 +14,11 @@
 export function createSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {
   let queue: Promise<void> = Promise.resolve();
   return function serial<T>(fn: () => Promise<T>): Promise<T> {
-    // The second `fn` is deliberate: a rejected predecessor must not prevent the next job from
-    // running, or one failed job would wedge every job on this serializer after it.
-    const next = queue.then(fn, fn);
+    const next = queue.then(fn);
+    // A rejected predecessor must not prevent the next job from running, or one failed job would
+    // wedge every job on this serializer after it. Converting both outcomes of `next` to a resolved
+    // `void` is what keeps `queue` itself from ever rejecting, so the line above never needs an
+    // onRejected handler of its own.
     queue = next.then(() => {}, () => {});
     return next;
   };
