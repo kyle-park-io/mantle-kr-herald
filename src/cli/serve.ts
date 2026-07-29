@@ -22,20 +22,15 @@ import { SaveRendering } from "../app/SaveRendering";
 import { ApproveRendering } from "../app/ApproveRendering";
 import { SaveOutletOverride } from "../app/SaveOutletOverride";
 import { MarkDelivery } from "../app/MarkDelivery";
-import { SendChannels } from "../app/SendChannels";
 import { PrepareConversions, type PendingVariant } from "../app/PrepareConversions";
 import { PrepareConversionRun } from "../app/PrepareConversionRun";
 import { FormatVariants } from "../app/FormatVariants";
 import { archiveFile } from "../shared/store/archive";
 import { writeJsonFileAtomic } from "../shared/store/jsonFile";
 import { buildBoard, type BoardView } from "../adapters/web/board";
-import { deliveredByChannelSender, outletById, outletsForChannel } from "../domain/outlet/models";
-import { createSenders } from "./channelSenders";
-import { buildRecorder } from "./recorder";
-import { buildArchiver } from "./archiver";
 import { startReconcileScheduler } from "./reconcileScheduler";
-import { headroomReader, makeLoadHeadroom } from "./publishHeadroom";
-import type { SendableChannel } from "../domain/send/channels";
+import { makeLoadHeadroom } from "./publishHeadroom";
+import { makeSendToOutlet } from "./sendToOutlet";
 import {
   loadStorageMode,
   loadGoogleAuthConfig,
@@ -64,7 +59,6 @@ import type { Translation } from "../domain/translation/models";
 import { publishRowLinks, type PublishLinkConfig } from "../adapters/web/publishLinks";
 import { attachKind } from "../adapters/web/attachKind";
 import { resolveSheetTitles } from "../adapters/sheets/sheetTitles";
-import { deliveryKey } from "../domain/delivery/models";
 import { ReconcilePublished } from "../app/ReconcilePublished";
 import { JsonXArticleLedger } from "../adapters/store/JsonXArticleLedger";
 import { TypefullyDraftLookup } from "../adapters/send/TypefullyDraftLookup";
@@ -240,8 +234,6 @@ const loadBoard = async (itemId: string): Promise<BoardView> => {
   return buildBoard(itemId, renderings, overrides, deliveries, translations.find((t) => t.itemId === itemId));
 };
 
-const isSendableChannel = (c: string): c is SendableChannel => c === "telegram" || c === "x";
-
 // The board's banner: the account-wide Typefully publishing quota plus the in-flight count that
 // turns it into the number the send gate actually enforces. See publishHeadroom.ts for the caching
 // and staleness rules — extracted so both are unit-tested rather than living in this closure, and so
@@ -273,96 +265,10 @@ const reconcilePublished = async (): Promise<{ reconciled: number; pending: numb
   }
 };
 
-/**
- * The board's per-row [발송]: one item, one type, one room. `SendChannels` is the same use case the
- * CLI runs, narrowed on all three axes — the row the operator clicked must not also push the item's
- * other approved copy, or the same copy into the room next door.
- *
- * Every refusal comes back as `error` rather than as a throw: the dashboard has to name the reason,
- * and "the room has no chat id" is an install state, not a server fault. Naming the room explicitly
- * also lifts `SendChannels`' first-delivery guard, which is correct here — a human clicked it.
- */
-/**
- * `resend` posts to a room the ledger already records as `sent`.
- *
- * The ledger is what makes a send happen at most once, so a re-send has to take that row out of the
- * way first — and put it back if the send then fails, or the room would read as never-delivered
- * while a real post sits in it. The original post is NOT removed from the room by any of this: two
- * messages exist afterwards, and the row that survives describes the second one.
- */
-const sendToOutlet = async (itemId: string, type: string, outletId: string, resend = false): Promise<{ sent: number; failed: number; error?: string }> => {
-  const outlet = outletById(outletId);
-  if (!outlet) return { sent: 0, failed: 0, error: `unknown outlet: ${outletId}` };
-  if (!deliveredByChannelSender(outlet) || !isSendableChannel(outlet.channel)) {
-    return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}) is not posted by a bot — copy the text, paste it, and tick 전달함` };
-  }
-  const channel = outlet.channel;
-  const chatIds = loadTelegramChatIds();
-  if (outlet.chatIdEnv && !chatIds[outlet.id]) {
-    return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}): ${outlet.chatIdEnv} is not set` };
-  }
-
-  const key = deliveryKey({ itemId, type, outletId });
-  const previous = resend ? (await deliveryLedger.loadAll()).find((e) => deliveryKey(e) === key) : undefined;
-  if (resend) {
-    if (!previous) return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}): nothing has been sent to this room yet` };
-    await deliveryLedger.remove(key);
-  }
-
-  try {
-    const [record, archive] = await Promise.all([buildRecorder(), buildArchiver()]);
-    const result = await new SendChannels(
-      formattingStore,
-      createSenders([channel]),
-      deliveryLedger,
-      // The board paints this row's lock from `sendBlock`; the same store makes this call enforce
-      // it, so a row that looks sendable on screen is exactly a row that sends.
-      translationStore,
-      record,
-      archive,
-      undefined,
-      loadXMaxWeighted(),
-      outletsForChannel,
-      chatIds,
-      // Without this a forked room receives the *group* text — the wrong copy, irreversibly, since
-      // the ledger then records the room as `sent` and a `sent` row can never be unmarked.
-      overrideStore,
-      headroomReader([channel], deliveryLedger, xArticleLedger),
-    ).run({ targets: [channel], ids: new Set([itemId]), types: [type], outletIds: [outletId] });
-
-    // A quota refusal is not a plain zero-send: the operator needs to know the account is at its
-    // ceiling, not that this row failed to send for some ordinary reason.
-    if (result.quotaBlocked) {
-      const { needed, available, resetsAt } = result.quotaBlocked;
-      const when = resetsAt ? ` (${resetsAt.slice(0, 10)} 리셋)` : "";
-      if (previous) await deliveryLedger.add(previous); // nothing went out — the room is still on its first post
-      // `available` (remaining − inFlight) can be negative when a stale in-flight row overcounts —
-      // clamp only the displayed number; the refusal itself already happened on the raw comparison.
-      return { sent: 0, failed: 0, error: `Typefully 월간 발행 쿼터가 부족합니다 — 필요 ${needed}건, 잔여 ${Math.max(0, available)}건${when}` };
-    }
-
-    // `sent 0` on its own tells the reviewer nothing, so every zero-send outcome carries a reason.
-    // Kept in the same English as the `MarkDelivery` / `SaveOutletOverride` refusals, which surface
-    // through the same dashboard error path.
-    if (result.sent === 0) {
-      const reason =
-        // Never "check the server log": a dashboard operator has no terminal open. `failures`
-        // carries what the run actually hit (an over-limit segment, a sender's own error), which is
-        // the difference between "edit the rendering" and "try again".
-        result.failed > 0 ? result.failures.map((f) => f.error).join(" · ") || "the send failed"
-        : result.skipped > 0 ? "already delivered to this room"
-        : result.unconfigured > 0 ? `${result.unconfiguredEnv.join(", ")} is not set`
-        : result.withheld > 0 ? "withheld by the first-delivery guard"
-        : "no approved copy to send";
-      if (previous) await deliveryLedger.add(previous); // nothing went out — the room is still on its first post
-      return { sent: 0, failed: result.failed, error: `${outlet.label} (${outlet.id}): ${reason}` };
-    }
-    return { sent: result.sent, failed: result.failed };
-  } catch (err) {
-    if (previous) await deliveryLedger.add(previous); // the send threw before reaching the room
-    return { sent: 0, failed: 1, error: (err as Error).message };
-  }
-};
+// The board's per-row [발송] and its resend restore — see sendToOutlet.ts for both doc comments,
+// carried there verbatim. `articleLedger` here is the same singleton `reconcilePublished` reads
+// from, not a fresh instance, so headroom reads never disagree with it (see xArticleLedger above).
+const sendToOutlet = makeSendToOutlet({ formattingStore, deliveryLedger, translationStore, overrideStore, articleLedger: xArticleLedger });
 
 // Same construction as `src/cli/convert-prepare.ts`, so the board and the CLI read and write the
 // same worksheets and the same `output/variants/pending.json` batch.
