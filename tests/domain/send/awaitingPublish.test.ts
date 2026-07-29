@@ -39,6 +39,10 @@ describe("awaitingPublish", () => {
     expect(isXUrl("https://t.me/c/999/11")).toBe(false);
     expect(isXUrl(undefined)).toBe(false);
   });
+
+  it("a dropped delivery row is not awaiting publication", () => {
+    expect(awaitingPublish({ outletId: "x-post", status: "dropped", postId: "123" })).toBe(false);
+  });
 });
 
 describe("awaitingArticlePublish", () => {
@@ -55,5 +59,13 @@ describe("awaitingArticlePublish", () => {
 
   it("is false with no postId — nothing was scheduled", () => {
     expect(awaitingArticlePublish(row({ postId: undefined }))).toBe(false);
+  });
+
+  it("an article row marked dropped is not awaiting publication", () => {
+    expect(awaitingArticlePublish({ postId: "123", droppedAt: "2026-07-29T00:00:00.000Z" })).toBe(false);
+  });
+
+  it("an article row with no droppedAt is still awaiting publication", () => {
+    expect(awaitingArticlePublish({ postId: "123" })).toBe(true);
   });
 });

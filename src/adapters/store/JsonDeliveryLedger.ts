@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { ChannelSentEntry } from "../../domain/send/channels";
 import type { DeliveryEntry } from "../../domain/delivery/models";
-import { deliveryKey, migrateLegacyEntry } from "../../domain/delivery/models";
+import { deliveredToRoom, deliveryKey, migrateLegacyEntry } from "../../domain/delivery/models";
 import type { DeliveryLedger } from "../../ports/DeliveryLedger";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
 import { createSerializer } from "../../shared/store/serialWrites";
@@ -35,8 +35,15 @@ export class JsonDeliveryLedger implements DeliveryLedger {
     return legacy.map(migrateLegacyEntry);
   }
 
+  /**
+   * Excludes `dropped` rows via `deliveredToRoom` — the deliberate counterpart to the warning above.
+   * A row leaving `loadKeys()` is normally the live-resend hazard `loadAll()`'s legacy-aware read
+   * exists to prevent; here it is the intended outcome, decided in exactly one place (the shared
+   * predicate) rather than silently through a legacy-blind read, so `add()`/`remove()` above still
+   * cannot make an unrelated write forget a real send.
+   */
   async loadKeys(): Promise<Set<string>> {
-    return new Set((await this.loadAll()).map(deliveryKey));
+    return new Set((await this.loadAll()).filter(deliveredToRoom).map(deliveryKey));
   }
 
   async add(entry: DeliveryEntry): Promise<void> {

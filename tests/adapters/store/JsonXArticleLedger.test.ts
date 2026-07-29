@@ -34,4 +34,22 @@ describe("JsonXArticleLedger", () => {
     expect(ids.has("x:1")).toBe(true);
     expect(ids.has("x:2")).toBe(true);
   });
+
+  /**
+   * `droppedAt` marks a row whose Typefully draft was deleted before it published — nothing reached
+   * the room. `loadKeys()` gates `SendXArticle.run()`'s re-send check, so a dropped row must stop
+   * counting there, while `loadAll()` keeps it so the board can still explain what happened to it.
+   */
+  it("omits a row with droppedAt from loadKeys, but keeps it in loadAll", async () => {
+    const ledger = new JsonXArticleLedger(dir);
+    await ledger.add({ itemId: "x:1", postId: "111", sentAt: "2026-07-28T00:00:00Z", droppedAt: "2026-07-29T00:00:00Z" });
+    expect(await ledger.loadKeys()).toEqual(new Set());
+    expect(await ledger.loadAll()).toHaveLength(1);
+  });
+
+  it("keeps a row with no droppedAt in loadKeys", async () => {
+    const ledger = new JsonXArticleLedger(dir);
+    await ledger.add({ itemId: "x:1", postId: "111", sentAt: "2026-07-28T00:00:00Z" });
+    expect((await ledger.loadKeys()).has("x:1")).toBe(true);
+  });
 });

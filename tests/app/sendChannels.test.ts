@@ -414,6 +414,22 @@ describe("SendChannels", () => {
     expect(res).toEqual(result({ sent: 1 }));
     expect(added.map((e) => e.outletId)).toEqual(["x-post"]);
   });
+
+  it("sends to a room whose only ledger row was dropped", async () => {
+    // A dropped row means the draft was deleted before it published: nothing reached the room, so
+    // withholding here would strand it forever — the opposite of what retiring the row is for.
+    const store = fakeStore([rendering({ itemId: "x:1", type: "x", channel: "x", text: "트윗" })]);
+    const { ledger, added } = fakeLedger([
+      { itemId: "x:1", type: "x", outletId: "x-post", status: "dropped", at: "T0", by: "auto" },
+    ]);
+    let sends = 0;
+    const sender: ChannelSender = { name: "typefully", send: async () => { sends++; return { postId: "2" }; } };
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
+
+    expect(sends).toBe(1);
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(added.map((e) => [e.outletId, e.status])).toEqual([["x-post", "sent"]]);
+  });
 });
 
 /**

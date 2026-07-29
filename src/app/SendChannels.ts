@@ -3,7 +3,7 @@ import type { ChannelSender } from "../ports/ChannelSender";
 import type { DeliveryLedger } from "../ports/DeliveryLedger";
 import type { SendableChannel, SentArchiveEntry } from "../domain/send/channels";
 import { DELIVERY_DESTINATION } from "../domain/send/channels";
-import { deliveryKey } from "../domain/delivery/models";
+import { deliveredToRoom, deliveryKey } from "../domain/delivery/models";
 import type { Channel, ChannelRendering } from "../domain/formatting/models";
 import type { DeliveryEntry } from "../domain/delivery/models";
 import type { Outlet } from "../domain/outlet/models";
@@ -117,7 +117,11 @@ export class SendChannels {
   async run(input: SendChannelsInput): Promise<SendChannelsResult> {
     const rows = await this.store.loadAll();
     const ledgered = await this.ledger.loadAll();
-    const already = new Set(ledgered.map(deliveryKey));
+    // `deliveredToRoom`, not a raw map: this is the same "already delivered" question
+    // `DeliveryLedger.loadKeys()` answers, computed here instead of a second read because
+    // `planRooms` below also needs the raw `ledgered` rows. A `dropped` row must not count — the
+    // draft was deleted before it published, so the room never received anything.
+    const already = new Set(ledgered.filter(deliveredToRoom).map(deliveryKey));
     const wanted = new Set<SendableChannel>(input.targets);
     let sent = 0;
     let skipped = 0;
