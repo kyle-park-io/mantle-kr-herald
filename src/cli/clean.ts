@@ -25,7 +25,8 @@ try {
 }
 
 // 2. Debris of an interrupted write: temp files from an atomic write, and lock files whose owner
-//    died. Live stores are never matched, and a lock young enough to still be held is left alone.
+//    died. Live stores are never matched, and both a lock and a temp file young enough to still be
+//    in active use are left alone.
 targets.push(...(await collectWriteDebris(OUTPUT_DIR, { skipDir: paths.archiveDir })));
 
 if (targets.length === 0) {

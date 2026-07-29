@@ -34,7 +34,7 @@ export class JsonDeliveryLedger implements DeliveryLedger {
    * - `SendChannels.run()`'s `already` (`src/app/SendChannels.ts:124`) — the per-delivery gate,
    *   which recomputes the same question here rather than calling `loadKeys()`, because
    *   `planRooms` needs the raw rows too.
-   * - `SendChannels.planRooms()`'s `everDelivered` (`src/app/SendChannels.ts:321`) — the
+   * - `SendChannels.planRooms()`'s `everDelivered` (`src/app/SendChannels.ts:326`) — the
    *   first-delivery guard's "has this ROOM ever received anything", keyed by `outletId` rather
    *   than by delivery key.
    *

@@ -45,8 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   하므로). 화면에서는 `예약 취소됨` 배지가 붙고 그 방은 **다시 보낼 수 있는 상태**가 됩니다.
 - **⚠ 위 항목의 결과로, 문서가 약속해 온 멱등성이 더 이상 무조건적이지 않습니다 — 승인된 백로그가
   쌓여 있는 기존 설치본은 업그레이드 후 첫 배치 실행 전에 보드를 한 번 확인하세요.** 지금까지
-  [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §2, [`docs/ko/capabilities.md`](docs/ko/capabilities.md) §7,
-  [`docs/ko/setup/channels.md`](docs/ko/setup/channels.md) Y-3은 "이미 보낸 항목은 로컬 원장이
+  [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §2, [`docs/ko/capabilities.md`](docs/ko/capabilities.md) §8,
+  [`docs/ko/setup/channels.md`](docs/ko/setup/channels.md) §"함께 검증 / 참고"는 "이미 보낸 항목은 로컬 원장이
   걸러내므로 재실행은 항상 안전합니다(멱등)"라고 적어 왔습니다. 이제 **`예약 취소됨`으로 물러난 행은
   그 방을 다시 보낼 수 있는 상태로 만듭니다** — 그게 이 변경의 목적입니다(그 방은 실제로 아무것도 못
   받았으니까요). 하지만 그 방에 대해 `pnpm send:channels`를 다시 돌리면 그 항목은 **다시 나갑니다**.
