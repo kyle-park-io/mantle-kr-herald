@@ -52,6 +52,25 @@ describe("rowEditorGate", () => {
         hint: false,
       });
     });
+
+    // A forked row's stored text IS what the room received — the confident hint is true.
+    it("shows the confident hint on a forked send: the text on screen is the room's own locked copy", () => {
+      const gate = untouched(sent);
+      expect({ locked: gate.showReadOnlyLocked, stale: gate.showReadOnlyStale }).toEqual({
+        locked: true,
+        stale: false,
+      });
+    });
+
+    // An unforked row's displayed text is the group's *current* text, which the group textarea
+    // and re-render can still move after the send — the confident hint would be a false claim.
+    it("shows the hedged hint on an unforked send: the group text may have moved since", () => {
+      const gate = untouched(row({ forked: false, deliveryStatus: "sent" }));
+      expect({ locked: gate.showReadOnlyLocked, stale: gate.showReadOnlyStale }).toEqual({
+        locked: false,
+        stale: true,
+      });
+    });
   });
 
   // 전달함 is a human's own claim and can be unticked, so the copy is still a draft.
@@ -62,6 +81,14 @@ describe("rowEditorGate", () => {
       save: true,
       revert: true,
     });
+  });
+
+  // Both read-only hints are send-only claims — neither belongs on a row that has not gone out.
+  it("shows neither read-only hint before a send, forked or not", () => {
+    expect(untouched(row()).showReadOnlyLocked).toBe(false);
+    expect(untouched(row()).showReadOnlyStale).toBe(false);
+    expect(untouched(row({ forked: false })).showReadOnlyLocked).toBe(false);
+    expect(untouched(row({ forked: false })).showReadOnlyStale).toBe(false);
   });
 
   describe("a room nothing has gone out to", () => {

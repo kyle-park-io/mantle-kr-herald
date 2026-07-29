@@ -746,7 +746,11 @@ function Row(props: {
                 ? "cursor-default bg-bg text-muted"
                 : "bg-surface text-ink focus:border-mint focus:ring-4 focus:ring-mint/10"
             }`}
-            value={props.draft}
+            // A sent row shows the stored copy, never a local draft: if the room was sent from
+            // outside this tab (e.g. `pnpm send:channels`) while an unsaved draft sat in this
+            // editor, `props.draft` would repaint as "what the room received" and nothing short
+            // of collapsing the editor could clear it.
+            value={gate.readOnly ? row.text : props.draft}
             onChange={(e) => props.onDraft(e.target.value)}
             readOnly={gate.readOnly}
             spellCheck={false}
@@ -803,9 +807,14 @@ function Row(props: {
               </button>
             )}
             {gate.showForkHint && <span className="text-[11px] text-faint">저장하면 이 방만 따로 검수·발송합니다.</span>}
-            {gate.readOnly && (
+            {gate.showReadOnlyLocked && (
               <span className="text-[11px] text-faint">
                 이 방이 실제로 받은 글입니다 — 이미 발송되어 고칠 수 없습니다.
+              </span>
+            )}
+            {gate.showReadOnlyStale && (
+              <span className="text-[11px] text-faint">
+                이 방에 나간 글입니다 — 그룹 글이 그 뒤 바뀌었을 수 있습니다.
               </span>
             )}
           </div>

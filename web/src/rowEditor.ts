@@ -14,6 +14,17 @@ export interface RowEditorGate {
   showRevert: boolean;
   /** "saving forks this room" — only worth saying while saving is still possible. */
   showForkHint: boolean;
+  /**
+   * The room's own override, now locked. The text on screen is that override, so "this room
+   * received exactly this" is something the data backs.
+   */
+  showReadOnlyLocked: boolean;
+  /**
+   * No override of its own — the text on screen is the group's *current* text, standing in for
+   * what this room received. The group textarea and re-render can still move that text after the
+   * send, so the hint must not claim the room got what is showing now.
+   */
+  showReadOnlyStale: boolean;
 }
 
 /**
@@ -44,5 +55,7 @@ export function rowEditorGate(
     showApproved: row.forked && row.status === "approved",
     showRevert: !sent && row.forked,
     showForkHint: !sent && !row.forked,
+    showReadOnlyLocked: sent && row.forked,
+    showReadOnlyStale: sent && !row.forked,
   };
 }
