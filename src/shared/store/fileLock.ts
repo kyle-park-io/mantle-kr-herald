@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isErrnoException } from "./jsonFile";
 
@@ -78,22 +78,24 @@ async function acquire(lockPath: string): Promise<string | null> {
 }
 
 /**
- * A unique scratch name for the reclaim hand-off below. It deliberately uses the same
- * `.tmp-<pid>-<ms>-<uuid>` suffix `writeJsonFileAtomic` uses, so that if a process dies between the
- * rename and the unlink, `pnpm clean` already recognises what it left behind (see
- * `isStrandedTempFile`) instead of the tree accumulating debris nothing sweeps.
- */
-const staleScratchPath = (lockPath: string) => `${lockPath}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
-
-/**
  * Removes the lock if its owner has plainly died, reporting whether the path is now free to retry.
  *
- * The removal goes through `rename`, not a bare `unlink`, because `unlink` by path is not a
- * compare-and-swap: two waiters that both judge the same lock stale would both delete it, and the
- * second delete would land on a lock a *third* process had legitimately acquired in between —
- * disarming the ledger while that third process is mid-write. `rename` is atomic, so exactly one
- * reclaimer moves the file away and only that one deletes it; the loser gets ENOENT and simply
- * retries. A missing file is therefore success, not an error.
+ * **Reclaiming is racy and this does not fix that.** Between the `stat` that judges the lock stale
+ * and the `unlink` that removes it, the dead owner's file can be replaced by a live one: another
+ * waiter reclaims first and a third process legitimately acquires, and then this `unlink` deletes
+ * that third process's lock, leaving two holders running at once. `rename`-to-scratch was tried
+ * here and does not help — a rename is conditional on the path being *occupied*, not on *which*
+ * file occupies it, so it succeeds against the replacement exactly as `unlink` does, and the loser
+ * only gets ENOENT in the interleaving that was already harmless.
+ *
+ * Genuinely closing it needs a different shape: either the holder keeps proving it is alive (an
+ * mtime heartbeat refreshed through the critical section, so "stale" stops being a guess) or the
+ * kernel owns the lock's lifetime (advisory `flock(2)`, released automatically on process death, so
+ * nothing has to be reclaimed by hand at all). Both are larger design changes than this module
+ * carries today, and both are filed rather than smuggled in here.
+ *
+ * Reaching the window at all requires a holder stalled past `staleMs`. A missing file is success,
+ * not an error — someone else got there first.
  */
 async function reclaimIfStale(lockPath: string, staleMs: number): Promise<boolean> {
   let heldForMs: number;
@@ -105,17 +107,7 @@ async function reclaimIfStale(lockPath: string, staleMs: number): Promise<boolea
     throw err;
   }
   if (heldForMs <= staleMs) return false;
-
-  const scratch = staleScratchPath(lockPath);
-  try {
-    await rename(lockPath, scratch);
-  } catch (err: unknown) {
-    // Lost the reclaim to another waiter, or the owner released it. Either way it is not ours to
-    // delete, and the path is free to race for again.
-    if (isErrnoException(err) && err.code === "ENOENT") return true;
-    throw err;
-  }
-  await unlink(scratch).catch(ignoreMissing);
+  await unlink(lockPath).catch(ignoreMissing);
   return true;
 }
 
@@ -135,8 +127,13 @@ async function reclaimIfStale(lockPath: string, staleMs: number): Promise<boolea
  * instead would be cheaper again and also wrong: ext4 recycles inode numbers.
  *
  * A window remains, narrowed from "the entire critical section" to the gap between this read and
- * this unlink, and only reachable if our lock goes stale inside that gap. Closing it completely
- * needs an atomic compare-and-delete, which POSIX does not offer.
+ * this unlink. Its precondition is not that the lock turns stale inside those two syscalls: the
+ * mtime is stamped once at acquisition and never refreshed, so a long critical section can leave
+ * the lock already stale well before we get here — and this read runs at the very end of that
+ * section, which is exactly when staleness is most likely. What the window needs is for a reclaimer
+ * to remove our stale lock and a third process to acquire, both between the read and the unlink.
+ * Closing it completely needs an atomic compare-and-delete, which POSIX does not offer, or one of
+ * the two designs noted on `reclaimIfStale`.
  */
 async function releaseIfOwned(lockPath: string, token: string): Promise<void> {
   let current: string;

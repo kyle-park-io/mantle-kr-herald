@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { access, mkdtemp, readFile, readdir, utimes, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fork } from "node:child_process";
@@ -70,18 +70,6 @@ describe("withFileLock", () => {
     // Backdate it well past the staleness threshold.
     await backdate(`${path}.lock`, 60_000);
     expect(await withFileLock(path, async () => "ok", { staleMs: 1_000 })).toBe("ok");
-  });
-
-  // The reclaim moves the dead lock aside with an atomic rename before deleting it. The scratch
-  // file that hand-off creates must not survive the call, or every reclaim would litter the store
-  // directory next to the ledger it protects.
-  it("leaves nothing behind when it reclaims a stale lock", async () => {
-    const dir = await scratch();
-    const path = join(dir, "ledger.json");
-    await writeFile(`${path}.lock`, "4821:0f8b0a3c-dead-dead-dead-000000000000\n");
-    await backdate(`${path}.lock`, 60_000);
-    expect(await withFileLock(path, async () => "ok", { staleMs: 1_000 })).toBe("ok");
-    expect(await readdir(dir)).toEqual([]);
   });
 
   /**

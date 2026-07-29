@@ -19,14 +19,17 @@
  * queue, the lock is the cross-process one. Those two ledgers are also this function's only callers,
  * so in practice every use of it is paired with the lock.
  *
- * Every other JSON store — `JsonFormattingStore`, `JsonOutletOverrideStore`, `JsonPublishStore`,
- * `JsonTranslationStore` — does its own read-modify-write straight onto `writeJsonFileAtomic` with
- * **neither** layer, and so can still lose a row to an overlapping write. That is a deliberate
- * decision, not an oversight: what those stores hold is review work, which a human can redo, while a
- * lost send row is a live post the ledger can no longer see and the next run publishes a second
- * time. Adding either layer to them is a safe change if the cost of redoing review work ever
- * outgrows the cost of the extra machinery — just do not read this comment as a claim that they are
- * already protected.
+ * Which is the whole rule for what is protected: **those two ledgers, and nothing else.** Assume any
+ * other JSON store does its read-modify-write straight onto `writeJsonFileAtomic` with **neither**
+ * layer — `JsonConversionStore`, `JsonFormattingStore`, `JsonPublishStore`, `JsonTranslationStore`
+ * and several more are like this, and that list is an illustration, not an inventory; do not check a
+ * store against it, check the store's own write path for a call to this function. Any store without
+ * one can still lose a row to an overlapping write.
+ *
+ * That is a deliberate decision, not an oversight: what those stores hold is review work, which a
+ * human can redo, while a lost send row is a live post the ledger can no longer see and the next run
+ * publishes a second time. Adding either layer to them is a safe change if the cost of redoing
+ * review work ever outgrows the cost of the extra machinery.
  */
 export function createSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {
   let queue: Promise<void> = Promise.resolve();
