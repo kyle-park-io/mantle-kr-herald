@@ -154,15 +154,28 @@ In `JsonXArticleLedger`, hold a serializer instance and wrap the body of `add`.
 In `JsonDeliveryLedger`, delete the private `queue`/`serial` and use the shared helper for `add`
 and `remove` — behaviour unchanged, one implementation.
 
-- [ ] **Step 8: Run the full suite**
+- [ ] **Step 8: Hoist `serve.ts`'s article ledger to a module singleton**
+
+Serialization is per instance, so it only protects writers that share one. `src/cli/serve.ts:268`
+constructs a **new** `JsonXArticleLedger` inside `reconcilePublished`, i.e. a fresh chain on every
+two-minute pass — which would make Step 7 do nothing in the dashboard process, the one place the
+overlap actually happens.
+
+Hoist it to a module-level `const` beside `deliveryLedger` (`serve.ts:82`), which is already shaped
+that way for exactly this reason, and have `reconcilePublished` use that instance. Task 3 and Task 4
+both need this same instance.
+
+Leave `src/cli/send-reconcile.ts` alone — a short-lived CLI process has one writer and exits.
+
+- [ ] **Step 9: Run the full suite**
 
 Run: `pnpm test && pnpm typecheck`
 Expected: PASS, including the delivery-ledger concurrency test PR #86 added.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add src/shared/store/serialWrites.ts src/adapters/store/JsonDeliveryLedger.ts src/adapters/store/JsonXArticleLedger.ts tests/shared/store/serialWrites.test.ts tests/adapters/store/JsonXArticleLedger.test.ts
+git add src/shared/store/serialWrites.ts src/adapters/store/JsonDeliveryLedger.ts src/adapters/store/JsonXArticleLedger.ts src/cli/serve.ts tests/shared/store/serialWrites.test.ts tests/adapters/store/JsonXArticleLedger.test.ts
 git commit -m "fix(store): serialize article-ledger writes on a shared helper"
 ```
 
@@ -345,9 +358,9 @@ so make sure that test still fails if the arithmetic is wrong.
 - [ ] **Step 6: Rewire the callers**
 
 `serve.ts` and `send-channels.ts` build the reader with `headroomReader(...)` and now need a
-`JsonXArticleLedger` instance to pass it — `serve.ts` already constructs one for `reconcilePublished`;
-reuse that instance rather than making a second (a second instance means a second serializer chain,
-which defeats Task 1 inside this process).
+`JsonXArticleLedger` instance to pass it. In `serve.ts`, use the module-level singleton Task 1
+hoisted — do **not** construct a second one, because a second instance carries a second serializer
+chain and the two would race each other, undoing Task 1 inside the one process where it matters.
 
 The board dependency keeps the name `loadQuota` and its always-200 `{ …, error? }` contract; only the
 payload widens. Update `ApiDeps`, `web/src/api.ts`, the `web/src/types.ts` mirror and `OutletBoard.tsx`
