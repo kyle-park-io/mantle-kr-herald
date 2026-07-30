@@ -212,6 +212,18 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
   계약·비용 탭은 건드리지 않고**, 파생 지표(Cost per Impression 등)는 시트 수식이 계산합니다.
   Telegram KOL은 수기로 채웁니다. 현재 달은 정확하지만, 게시량이 많은 계정의 **과거 달 백필은
   과소집계**될 수 있어 CLI가 경고합니다.
+- **텔레그램 KOL 딜리버러블 동기화 (cloud 전용).** `pnpm kol-telegram:record [--month <YYYY-MM>]` —
+  `kol-map` 탭에 등록된 활성 텔레그램 KOL 채널을 그 달 구간으로 훑어 맨틀 언급 후보 게시물을 찾고,
+  승인된 텔레그램 렌더링과 매칭(제안)해 `kol-telegram-posts` 탭에 게시물 단위로 기록합니다. **처음
+  한 번만 하면 되는 셋업이 두 가지 있습니다**: ① `kol-map` 탭을 `Q3 조정 단가 표` 블록의 링크
+  컬럼에 있는 13개 t.me 핸들(kolId·tgHandle·sheetLabel·pricePerPost·active)로 채웁니다 — 이후에는
+  계약 채널이 늘거나 빠질 때만 이 탭을 고치면 됩니다. ② **7월분을 처음 돌리면 `itemId`/`topic`이
+  빈 채로 돌아온다는 점을 알아 두세요** — 승인된 렌더링이 2026-07-21부터만 존재해서 그 이전 게시물은
+  매칭할 후보가 아예 없기 때문입니다. 버그가 아니라 예상된 동작이며, 이런 행의 topic은 사람이 직접
+  채웁니다. 이 명령이 쓰는 탭은 `kol-telegram-posts` 하나뿐이고, `kol-map`/`KOL list`/계약
+  리스트/월별 탭은 건드리지 않습니다 — 각 행의 `confirmed`(빈 값/`paid`/`organic`/`reject`)는
+  사람이 채우는 유일한 컬럼이고, `paid`/`organic`으로 확정한 행을 `Jul.`/`Aug.`/`Sep.` 월별 탭으로
+  옮기는 것도 사람이 직접 합니다.
 
 ## 3. 검수 기준
 

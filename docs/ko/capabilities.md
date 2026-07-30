@@ -148,6 +148,7 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 | **K. 항목 계보(lineage) 조회** | 번역·변환·포맷 각 단계에서 저장할 때마다(다듬기·재승인 포함) 그 시점 결과물을 항목별로 append — 나중 저장이 이전 값을 덮어써도 사라지지 않고, 어느 시점에 무엇이 어떻게 바뀌었는지 확인 가능. **방별로 갈라 쓴 글(`forked`, 구분자 `타입/방id`)도 저장·승인 시점은 물론 `그룹 글로 되돌리기`로 버리는 시점까지 남습니다** — 그 본문은 `overrides.json`에만 있고 다시 만들어낼 수 없기 때문입니다(되살리기는 자동이 아니라 사람이 복사해 붙여넣는 것). 항상 켜져 있고 best-effort(계보 기록 실패가 저장을 막지 않음) — **단 되돌리기만은 예외로, 버릴 본문을 기록하지 못하면 되돌리기가 실패하고 포크는 지워지지 않습니다** | `pnpm lineage [itemId]` | — |
 | **L. 설정 백업/공유** | git에 추적되지 않는 스티어링 설정(`translation/` + `conversion/`, `*.example.*` 제외 15개 파일)을 Google Drive에 타임스탬프 스냅샷(`steering-config-<시각>.json`)으로 백업하고, 팀원이 최신 스냅샷을 내려받아 복원 — 단일 관리자가 push(백업), 팀원은 pull(복원)만 하는 모델. `pull`은 덮어쓰기 전에 현재 로컬 설정을 `output/archive/`에 먼저 백업 | `pnpm config:push`, `pnpm config:pull [--dry-run]` | — |
 | **M. 운영 상태 백업/복구** | `output/` 아래에서 **다시 만들 수 없는** 파일 — 방별 포크(`formatted/overrides.json`), 발송 원장(`publish/deliveries.json`, 예전 형식 `publish/channels.json`, `publish/x-article.json`), 동기화 원장(`publish/state.json`) — 을 Google Drive에 타임스탬프 스냅샷(`operational-state-<시각>.json`)으로 백업하고 되살림. L과 달리 **공유가 아니라 이 기기 한 대의 복구**이므로, `pull`은 `--yes` 없이는 미리보기만 하고 파일마다 **현재 행 수와 스냅샷 행 수를 나란히** 보여주며, 쓰기 전에 `output/archive/state-<시각>/`에 백업하고, 파싱·백업이 실패하면 아무것도 쓰지 않고 중단. 스냅샷에 없는 로컬 파일은 지우지 않고 그대로 둠 | `pnpm state:push`, `pnpm state:pull [--yes]` | — |
+| **N. 텔레그램 KOL 딜리버러블 동기화** | 사람이 관리하는 `kol-map` 탭(활성 채널만)을 읽어 각 텔레그램 KOL의 공개 채널을 그 달 구간으로 훑고, 맨틀 언급 후보 게시물을 찾아 승인된 텔레그램 렌더링과 매칭(제안)한 뒤 기계 전용 `kol-telegram-posts` 탭에 게시물 단위로 upsert | `pnpm kol-telegram:record [--month YYYY-MM]` | — |
 
 > **L과 M을 섞지 마세요:** L(스티어링 설정)은 관리자가 push하고 팀원이 pull하는 **공유**지만,
 > M(운영 상태)은 **이 기기가 무엇을 이미 보냈는가의 기록**입니다. 남의 운영 상태를 pull하면 자기
@@ -289,7 +290,50 @@ KOL list 읽기 → X 계정 조회 → 월간 집계 → x-performance 탭에 u
 `TYPEFULLY_API_KEY`/`TYPEFULLY_SOCIAL_SET_ID` 환경변수가 필요합니다(`--target`으로 요청한 채널의
 것만 있으면 됩니다). 값은 이 문서에 적지 않습니다 — `.env`에서 관리하세요.
 
-## 9. 다음으로
+## 9. 텔레그램 KOL 딜리버러블 동기화
+
+`pnpm kol-telegram:record [--month YYYY-MM]`는 계약된 텔레그램 KOL들의 공개 채널을 훑어 맨틀을
+언급한 게시물을 찾아 매달 워크북의 검수 탭에 기록합니다. `--month`를 생략하면 실행 시점이 속한
+달을 씁니다. 전체 흐름은 다음과 같습니다:
+
+```
+kol-map 읽기 → 채널별 텔레그램 프리뷰 스윕 → 맨틀 후보 판별 → 승인된 렌더링과 매칭(제안) → kol-telegram-posts 탭에 upsert
+```
+
+- **`kol-map` 읽기** — 사람이 관리하는 `kol-map` 탭에서 `active`가 참인 행만 골라 KOL id·텔레그램
+  핸들·건당 단가를 읽습니다. 최초 한 번 `Q3 조정 단가 표`의 13개 채널 핸들로 채워 두면 그 뒤로는
+  계속 재사용됩니다(셋업 절차는 [`team-runbook.md`](team-runbook.md) 참고).
+- **채널별 스윕** — 각 활성 채널의 공개 프리뷰 페이지(`https://t.me/s/<handle>`, 공식 API가 아님)를
+  `--month` 구간에 걸릴 때까지 페이지를 넘겨가며 읽습니다. 별도 API 키가 필요 없습니다.
+- **맨틀 후보 판별** — 게시물 본문에 `맨틀`·`mantle`·`MNT`(단어 경계 매칭)가 있으면 후보입니다.
+  일부러 넓게 잡습니다 — 결과는 검수 탭 한 줄로 남을 뿐이라 오탐의 비용은 사람이 한 번 걸러내는
+  키 입력이지만, 놓치면 정산 근거 자체가 사라지기 때문입니다.
+- **매칭(제안)** — 후보 게시물의 본문을 승인된 텔레그램 채널 렌더링(`status: "approved"`이고
+  `channel: "telegram"`인 것만)과 문자 3-그램 자카드 유사도로 비교해, 점수가 0.30 이상인 가장
+  가까운 것의 `itemId`를 제안합니다. 어디까지나 제안이며, 사람이 검수 탭에서 그대로 확정하거나
+  고칠 수 있습니다.
+- **`kol-telegram-posts` 탭에 upsert** — 텔레그램 permalink(`deliverableLink`)를 키로 기존 행을
+  찾아 없으면 추가하고, 있으면 `views`/`engagements`/`reactionsDetail`/`fetchedAt`만 갱신합니다.
+
+**이 명령이 쓰는 탭은 `kol-telegram-posts` 하나뿐입니다.** `kol-map`, `KOL list`, 계약 리스트,
+`Jul.`/`Aug.`/`Sep.` 월별 탭에는 절대 쓰지 않습니다. **`confirmed`(빈 값/`paid`/`organic`/`reject`)는
+사람이 직접 채우는 유일한 컬럼**이며, 이 명령은 그 값을 절대 덮어쓰지 않습니다 — `paid`/`organic`으로
+확정한 행을 월별 탭(`Jul.`/`Aug.`/`Sep.`)으로 옮기는 것도 사람의 몫입니다(자동 이관 없음).
+
+**채널 격리** — 채널 하나가 비공개로 바뀌었거나 삭제·개명됐으면 그 채널만 건너뛰고 경고를 남긴 뒤
+나머지를 계속 처리합니다(`metrics:record`와 같은 방식). 실행 요약은 스윕한 채널 수와 실패한 채널
+수를 항상 함께 보고하고, 실패가 하나라도 있으면 그 사실을 명시적으로 알립니다 — 그래야 조용한
+`0 created`가 "이번 달은 게시물이 없었다"로 오인되지 않습니다.
+
+**사전 조건** — `cloud` 저장 모드와 `GSHEET_ID` 환경변수가 필요합니다(`local` 모드에서는
+`skipIfLocal`에 의해 아무 것도 하지 않고 건너뜁니다). 텔레그램 프리뷰 페이지는 공개 웹페이지라
+별도의 API 키나 봇 토큰이 필요 없습니다.
+
+**7월 백필 주의** — 승인된 렌더링은 2026-07-21부터 존재합니다. 그보다 이른 게시물은 매칭 후보가
+없어 `itemId`/`matchScore`/`topic`이 빈 채로 기록됩니다 — 버그가 아니라 예상된 동작이며, 이런 행의
+topic은 사람이 직접 채웁니다.
+
+## 10. 다음으로
 
 - 처음 설치해서 로컬 모드로 써 보려면 → [`quickstart.md`](quickstart.md)
 - 팀 내부 운영자로서 주간 루틴·클라우드 전환·장애 대응이 궁금하면 → [`team-runbook.md`](team-runbook.md)
