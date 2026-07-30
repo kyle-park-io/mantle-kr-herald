@@ -1,12 +1,47 @@
 import type { ChannelPost } from "../../domain/kol/models";
 import type { FetchPostsInWindowResult, TelegramChannelGateway } from "../../ports/TelegramChannelGateway";
-import { parseChannelPreview } from "./parseChannelPreview";
+import { countMessageBlocks, parseChannelPreview } from "./parseChannelPreview";
 
 export type FetchText = (url: string) => Promise<string>;
 
-const DEFAULT_MAX_PAGES = 20;
+/**
+ * 50, for parity with the X gateway's cap rather than the 20 this started at.
+ *
+ * 20 pages x 20 posts/page reached only 400 posts, and the live dry-run measured **236 posts in one
+ * month** for a single channel. A re-run of `--month 2026-07` in September has to page through
+ * August just to *reach* July, so 20 pages could not get there at all and the retroactive
+ * attribution both `docs/ko/capabilities.md` and `docs/ko/team-runbook.md` promise would silently
+ * not happen. Truncation is still reported per channel, so an operator can see when even 50 is not
+ * enough instead of guessing.
+ */
+const DEFAULT_MAX_PAGES = 50;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+/**
+ * A channel whose preview page could not be read at all — the operational definition of spec §7's
+ * "unreachable": **the page contained no message blocks whatsoever**, not merely "the HTTP call
+ * failed".
+ *
+ * The HTTP throw is not enough on its own. A deleted, renamed, or preview-disabled handle answers
+ * `GET https://t.me/s/<handle>` with **302** to `https://t.me/<handle>`; `fetch` follows redirects
+ * by default and that contact page is a clean **HTTP 200**. Verified live on 2026-07-30 against a
+ * non-existent handle. So `res.ok` was true, the parser returned `[]`, and the sweep took its
+ * "nothing left to page through" exit — reporting a dead channel as swept clean, which reads as
+ * "this KOL posted nothing about Mantle this month" and quietly under-counts a deliverable.
+ *
+ * Thrown rather than returned so it lands in the caller's existing per-channel isolation, which
+ * already warns naming the channel and counts it as failed.
+ */
+export class ChannelUnreadableError extends Error {
+  constructor(readonly handle: string, url: string) {
+    super(
+      `no message blocks on ${url} — the channel is deleted, renamed, or has its public preview ` +
+        `disabled (t.me answers 302 -> a HTTP 200 contact page for these, so this is not an HTTP error)`,
+    );
+    this.name = "ChannelUnreadableError";
+  }
+}
 
 /**
  * Sweeps a public Telegram channel preview (`https://t.me/s/<handle>`) for posts inside a month
@@ -43,6 +78,9 @@ export class TmePreviewGateway implements TelegramChannelGateway {
 
     for (let page = 0; page < this.maxPages; page++) {
       const html = await this.fetchText(url);
+      // Checked on the first page only: a live channel's newest page always carries message
+      // blocks, whereas on a later page "no blocks" is the ordinary end of the archive.
+      if (page === 0 && countMessageBlocks(html) === 0) throw new ChannelUnreadableError(handle, url);
       const posts = parseChannelPreview(html, handle);
       if (posts.length === 0) {
         truncated = false; // nothing left to page through

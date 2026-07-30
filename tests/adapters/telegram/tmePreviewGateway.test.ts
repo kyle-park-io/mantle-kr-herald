@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TmePreviewGateway } from "../../../src/adapters/telegram/TmePreviewGateway";
+import { ChannelUnreadableError, TmePreviewGateway } from "../../../src/adapters/telegram/TmePreviewGateway";
 
 /**
  * Minimal but structurally real message block, matching the markup the fixtures contain. Must
@@ -96,5 +96,59 @@ describe("TmePreviewGateway", () => {
     await expect(
       new TmePreviewGateway(fetchText).fetchPostsInWindow("gone", ...JULY),
     ).rejects.toThrow("HTTP 404");
+  });
+
+  describe("a page with no message blocks at all", () => {
+    // The contact page a deleted, renamed, or preview-disabled handle lands on. Verified live on
+    // 2026-07-30: `GET https://t.me/s/<dead-handle>` answers **302** to `https://t.me/<dead-handle>`,
+    // fetch follows redirects by default, and that page is a clean **HTTP 200** with zero
+    // `tgme_widget_message_wrap` blocks — so `res.ok` was true and no HTTP throw ever fired.
+    const CONTACT_PAGE =
+      `<html><body><div class="tgme_page"><div class="tgme_page_title">Some Channel</div>` +
+      `<a class="tgme_action_button_new">Preview channel</a></div></body></html>`;
+
+    it("is reported as unreadable, not as a channel swept clean", async () => {
+      const fetchText = async () => CONTACT_PAGE;
+      const gw = new TmePreviewGateway(fetchText);
+      // Thrown, so it lands in the orchestrator's existing per-channel isolation — which warns
+      // naming the channel and counts it — instead of returning `{ posts: [], truncated: false }`,
+      // which reads as "this KOL posted nothing about Mantle this month".
+      await expect(gw.fetchPostsInWindow("dead_channel", ...JULY)).rejects.toThrow(ChannelUnreadableError);
+      await expect(gw.fetchPostsInWindow("dead_channel", ...JULY)).rejects.toThrow(/no message blocks/);
+    });
+
+    it("is distinguished from a page whose blocks are all outside the window", async () => {
+      // Blocks present, none in July: a real channel that simply did not post that month. That is a
+      // genuine clean sweep and must NOT be reported as unreadable.
+      const { fetchText } = pageServer({
+        "https://t.me/s/kolx": block("kolx", 10, "2026-06-01T00:00:00+00:00"),
+      });
+      const { posts, truncated } = await new TmePreviewGateway(fetchText).fetchPostsInWindow("kolx", ...JULY);
+      expect(posts).toEqual([]);
+      expect(truncated).toBe(false);
+    });
+
+    it("only judges the first page, since a later empty page is the end of the archive", async () => {
+      const { fetchText } = pageServer({
+        "https://t.me/s/kolx": block("kolx", 30, "2026-07-20T00:00:00+00:00"),
+        // page 2 falls through to pageServer's default "<html></html>" — no blocks
+      });
+      const { posts, truncated } = await new TmePreviewGateway(fetchText).fetchPostsInWindow("kolx", ...JULY);
+      expect(posts.map((p) => p.messageId)).toEqual([30]);
+      expect(truncated).toBe(false);
+    });
+  });
+
+  it("defaults to a 50-page cap, for parity with the X gateway", async () => {
+    // 20 pages x 20 posts reached only 400 posts, while the live dry-run measured 236 posts in one
+    // month for a single channel — so re-running a past month, which has to page through everything
+    // newer first, truncated before it even reached the month and the documented retroactive
+    // attribution silently did not happen.
+    let pages = 0;
+    let next = 100000;
+    const fetchText = async () => { pages += 1; return block("kolx", (next -= 10), "2026-07-15T00:00:00+00:00"); };
+    const { truncated } = await new TmePreviewGateway(fetchText).fetchPostsInWindow("kolx", ...JULY);
+    expect(pages).toBe(50);
+    expect(truncated).toBe(true);
   });
 });
