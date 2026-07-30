@@ -123,8 +123,23 @@ export function TranslationDetail(props: {
           readOnly={approved}
           spellCheck={false}
         />
-        <div className="mt-1.5">
-          <MediaEditNotice text={korean} where="원문" />
+        <div className="mt-1.5 grid" data-testid="media-edit-notice-slot">
+          {/*
+           * Reserves one line at the notice's own type scale so the button row below never moves as a
+           * marker starts or stops matching mid-edit — same problem the "편집 중" chip above solves, and
+           * the same fix: keep something in layout at all times instead of letting the row collapse to
+           * zero height. MediaEditNotice itself still returns null when the text carries no marker (Task
+           * 2's contract, and the other screen relies on that), so the strut lives here, not there: an
+           * invisible placeholder line shares this grid cell with the real notice (the same
+           * same-cell-overlap trick the 승인됨/승인 취소 button labels use above), so the slot is exactly
+           * one line tall whether or not anything renders inside it.
+           */}
+          <p aria-hidden="true" className="invisible col-start-1 row-start-1 text-[12px] leading-relaxed">
+            {" "}
+          </p>
+          <div className="col-start-1 row-start-1">
+            <MediaEditNotice text={korean} where="원문" />
+          </div>
         </div>
       </section>
 

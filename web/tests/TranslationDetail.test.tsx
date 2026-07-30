@@ -55,4 +55,19 @@ describe("TranslationDetail media", () => {
     const { container } = mount(translation());
     expect(container.querySelector("textarea")!.value).toBe(translation().koreanText);
   });
+
+  // jsdom has no layout engine, so these two pin the *structure* the height-reservation fix relies
+  // on rather than an actual pixel height: the same slot node must exist whether or not a marker is
+  // present, so nothing below it can ever collapse to zero height and jump on the very next keystroke.
+  it("reserves the notice's slot even when there is no marker to show", () => {
+    const { container } = mount(translation({ sourceText: "no media", koreanText: "미디어 없음" }));
+    expect(container.querySelector('[data-testid="media-edit-notice-slot"]')).not.toBeNull();
+  });
+
+  it("reuses that same slot to hold the notice once a marker is present", () => {
+    const { container } = mount(translation());
+    const slot = container.querySelector('[data-testid="media-edit-notice-slot"]');
+    expect(slot).not.toBeNull();
+    expect(slot!.textContent).toContain("이미지 미리보기는 원문에서 확인하세요");
+  });
 });
