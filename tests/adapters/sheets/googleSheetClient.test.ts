@@ -168,6 +168,60 @@ describe("GoogleSheetClient", () => {
       expect(timeoutMock).toHaveBeenCalledTimes(2); // no sleep after the final attempt
     });
 
+    describe("appendValues is not idempotent, so it retries only a definitive rejection", () => {
+      // A 429 means the request was refused before it was processed, so re-sending cannot double
+      // anything. A network throw or a 5xx leaves it open whether the append was committed
+      // server-side and lost on the way back — and retrying that ambiguity writes the rows twice.
+      // Up to 500 rows go in one call, so one blip after a ~200-row append would land ~200 duplicate
+      // rows in a tab that decides KOL payments, with the run still reporting a clean summary. The
+      // same shared client backs x-performance (RecordMetrics) and history (RecordPublish).
+
+      it("attempts a network-level failure exactly once and propagates it", async () => {
+        noSleep();
+        const fetchMock = vi.fn((async () => { throw new Error("ECONNRESET"); }) as unknown as typeof fetch);
+        const c = new GoogleSheetClient(auth, "SID", fetchMock as unknown as typeof fetch);
+
+        await expect(c.appendValues("kol-telegram-posts!A2:M", [["a"]])).rejects.toThrow(
+          /not retried.*may already have been committed/,
+        );
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("does not retry a 5xx either, since that is ambiguous too", async () => {
+        noSleep();
+        const fetchMock = vi.fn((async () => new Response("boom", { status: 503 })) as unknown as typeof fetch);
+        const c = new GoogleSheetClient(auth, "SID", fetchMock as unknown as typeof fetch);
+
+        await expect(c.appendValues("kol-telegram-posts!A2:M", [["a"]])).rejects.toThrow(/503/);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("still retries a 429, which is the quota case retry exists for", async () => {
+        noSleep();
+        const fetchMock = vi
+          .fn()
+          .mockResolvedValueOnce(new Response("slow down", { status: 429 }))
+          .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+        const c = new GoogleSheetClient(auth, "SID", fetchMock as unknown as typeof fetch);
+
+        await expect(c.appendValues("kol-telegram-posts!A2:M", [["a"]])).resolves.toBeUndefined();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+      });
+
+      it("leaves the idempotent overwrites retrying a network error as before", async () => {
+        noSleep();
+        for (const call of [
+          (c: GoogleSheetClient) => c.updateValues("h!A1:A1", [["a"]]),
+          (c: GoogleSheetClient) => c.batchUpdateValues([{ range: "h!A1:A1", rows: [["a"]] }]),
+        ]) {
+          const fetchMock = vi.fn((async () => { throw new Error("ECONNRESET"); }) as unknown as typeof fetch);
+          const c = new GoogleSheetClient(auth, "SID", fetchMock as unknown as typeof fetch);
+          await expect(call(c)).rejects.toThrow(/3 attempts.*network error/);
+          expect(fetchMock).toHaveBeenCalledTimes(3); // repeating an overwrite converges, so it is safe
+        }
+      });
+    });
+
     it("retries a network error and wraps it with context on exhaustion", async () => {
       noSleep();
       const fetchMock = vi.fn((async () => { throw new Error("ECONNRESET"); }) as unknown as typeof fetch);

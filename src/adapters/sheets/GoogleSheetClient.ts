@@ -18,6 +18,31 @@ const BASE = "https://sheets.googleapis.com/v4/spreadsheets";
 const MAX_ATTEMPTS = 3;
 const backoff = (attempt: number) => new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
 
+/**
+ * Which failures a call may safely be retried on. The distinction is whether a failure tells us the
+ * request was **not processed**, or leaves that open.
+ *
+ * - `ambiguous-ok` — retry 429, 5xx, and network-level throws. Correct for a read, and for an
+ *   idempotent overwrite (`updateValues`, `batchUpdateValues`, `ensureTab`): repeating the request
+ *   converges on the same state, so a repeat that turns out to have been unnecessary costs nothing.
+ *
+ * - `definitive-only` — retry **429 alone**. A 429 is a *rejection*: the server refused the request
+ *   before processing it, so re-sending cannot double anything. A 5xx or a dropped connection is
+ *   **ambiguous** — the request may well have been committed server-side and lost only on the way
+ *   back — and `appendValues` is not idempotent, so retrying that ambiguity appends the same rows a
+ *   second time.
+ *
+ * `appendValues` therefore uses `definitive-only` and lets an ambiguous failure propagate. The rows
+ * it writes decide KOL payments, and up to 500 of them go in a single call, so one blip after a
+ * ~200-row append would otherwise land ~200 duplicate rows while the run still reported a clean
+ * summary — visible only on a *later* run, via the keep-first duplicate warning. A thrown error a
+ * human re-runs is strictly safer than a silent duplicate in a tab that decides money. It is also
+ * not a trade this client used to make: before retry existed an append landed once or threw once,
+ * never ambiguously twice, and the same shared client backs `x-performance` (RecordMetrics) and
+ * `history` (RecordPublish).
+ */
+type RetryOn = "ambiguous-ok" | "definitive-only";
+
 export class GoogleSheetClient implements SheetClient {
   constructor(
     private readonly auth: TokenSource,
@@ -34,7 +59,12 @@ export class GoogleSheetClient implements SheetClient {
    * callers already match on (`LoadKolMap` reads `HTTP 400` out of a `getValues` failure to tell an
    * operator the `kol-map` tab does not exist).
    */
-  private async send(label: string, url: string, init: RequestInit): Promise<Response> {
+  private async send(
+    label: string,
+    url: string,
+    init: RequestInit,
+    retryOn: RetryOn = "ambiguous-ok",
+  ): Promise<Response> {
     let lastStatus = 0;
     let lastError: unknown;
 
@@ -43,14 +73,25 @@ export class GoogleSheetClient implements SheetClient {
       try {
         res = await this.fetchFn(url, init);
       } catch (err) {
-        // Network-level failure (DNS, reset, timeout) — retry like a 5xx.
+        // Network-level failure (DNS, reset, timeout). Whether the server processed the request
+        // before the connection dropped is unknowable from here, so a non-idempotent call must not
+        // guess: it surfaces the failure and a human re-runs.
+        if (retryOn === "definitive-only") {
+          throw new Error(
+            `Sheets ${label} failed (network error, not retried: the request is not idempotent and may already have been committed — re-run and check for duplicate rows)`,
+            { cause: err },
+          );
+        }
         lastError = err;
         lastStatus = 0;
         if (attempt < MAX_ATTEMPTS - 1) await backoff(attempt);
         continue;
       }
 
-      if (res.status === 429 || res.status >= 500) {
+      // A 429 is retried for every call: it means the request was refused, not processed. A 5xx is
+      // retried only where a repeat is harmless, for the same reason as the network throw above —
+      // it may have been committed.
+      if (res.status === 429 || (retryOn === "ambiguous-ok" && res.status >= 500)) {
         lastStatus = res.status;
         lastError = undefined;
         // Don't sleep after the final attempt — it just delays the throw.
@@ -77,11 +118,13 @@ export class GoogleSheetClient implements SheetClient {
 
   async appendValues(range: string, rows: string[][]): Promise<void> {
     const url = `${BASE}/${this.spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW`;
-    await this.send("appendValues", url, {
-      method: "POST",
-      headers: await this.headers(),
-      body: JSON.stringify({ values: rows }),
-    });
+    // The one non-idempotent call on this client: a repeat adds rows rather than converging.
+    await this.send(
+      "appendValues",
+      url,
+      { method: "POST", headers: await this.headers(), body: JSON.stringify({ values: rows }) },
+      "definitive-only",
+    );
   }
 
   async updateValues(range: string, rows: string[][]): Promise<void> {
