@@ -256,4 +256,24 @@ describe("media markers", () => {
     const { container } = mount(group({ text: "그룹 글", rows: [row()] }));
     expect(container.textContent).not.toContain("미리보기");
   });
+
+  /**
+   * A forked room's own copy carries its own markers, independent of the group's — and a forked row
+   * is open by default (`OutletCard`'s `isOpen` is true whenever `row.forked` and nothing collapsed
+   * it), so this reaches the fork textarea's notice with no click needed.
+   */
+  it("tells the fork editor where the preview is, for a room's own marker", () => {
+    const { container } = mount(group({ text: "그룹 글", rows: [row({ forked: true, text: `이 방 글\n\n${PHOTO}` })] }));
+    const own = container.querySelector('li[data-outlet="x-main"]');
+    expect(own).not.toBeNull();
+    expect(own!.textContent).toContain("이미지 미리보기는 변환 원문에서 확인하세요");
+  });
+
+  it("reserves the fork's notice slot with nothing to say when the room's own text has no marker", () => {
+    const { container } = mount(group({ text: "그룹 글", rows: [row({ forked: true, text: "이 방 글" })] }));
+    const own = container.querySelector('li[data-outlet="x-main"]');
+    expect(own).not.toBeNull();
+    expect(own!.querySelectorAll('[data-testid="media-edit-notice-slot"]').length).toBeGreaterThan(0);
+    expect(own!.textContent).not.toContain("미리보기");
+  });
 });

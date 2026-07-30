@@ -535,7 +535,14 @@ function Source({ convertedText }: { convertedText: string }) {
         변환 원문 · converted
       </summary>
       {convertedText ? (
-        <div className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap text-[14px] leading-relaxed text-muted">
+        // No height cap / scroll here on purpose: a photo marker is normally the LAST line of the
+        // converted text (`XContentSource.mediaMarkers()` appends it), so it sits near the bottom of
+        // whatever box this is — and a capped `overflow-y-auto` clips the absolutely-positioned
+        // hover-preview card in `PhotoMarker` right where it matters most, on nearly every card. The
+        // `<details>` this sits in is already collapsed by default, so the cap was a second
+        // space-saving mechanism inside a section the reviewer has deliberately expanded to read —
+        // and a preview that cannot be seen is worse than a taller expanded pane.
+        <div className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed text-muted">
           <MarkerText text={convertedText} />
         </div>
       ) : (
