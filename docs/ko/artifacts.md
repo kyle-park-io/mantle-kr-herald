@@ -140,7 +140,7 @@ HERALD_STORAGE_MODE=local|cloud
 | `pnpm doctor [--live]` | 모든 env 설정 로더; `translation/glossary.json`, `translation/style-guide.md`, `translation/locale.json`, `conversion/x.md`의 존재 여부(4개 파일만 확인) | 없음 | `--live`일 때만: Google OAuth tokeninfo, Google Drive/Sheets 파일 메타데이터 조회, Lark 인증 + 채팅 목록 조회 |
 | `pnpm status` | `output/x/items.json`, `output/lark/items.json`, `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json` | 없음 | 없음 |
 | `pnpm archive` | `output/translations/worksheets/`, `output/variants/worksheets/`, `output/formatted/worksheets/`의 `.md` 목록 | 대상 파일들을 `output/archive/<YYYY-MM-DD>/`로 이동 | 없음 |
-| `pnpm clean [--older-than <days>] [--yes]` | `output/archive/`의 날짜 폴더 목록; 좌초된 쓰기 잔해 탐지를 위해 `output/` 전체(`output/archive/` 내부는 제외)를 재귀 탐색 | 기본은 드라이런(삭제 대상만 출력). `--yes`일 때: 30일(기본값) 초과 경과한 `output/archive/<YYYY-MM-DD>/` 폴더 + `output/archive/`를 제외한 `output/` 안 어디에 있든 `*.tmp-<pid>-<ms>-<uuid>`(중단된 원자적 쓰기의 임시 파일) **또는 `*.lock`(죽은 프로세스가 남긴 원장 잠금)** 파일을 삭제 — 단 **마지막 수정이 30초 이내인 것은 두 종류 모두 건드리지 않습니다**(살아 있는 발송이 쓰고 있는 파일일 수 있으므로). **발송이나 `pnpm serve`가 도는 중에는 실행하지 마세요** | 없음 |
+| `pnpm clean [--older-than <days>] [--yes]` | `output/archive/`의 날짜 폴더 목록; 좌초된 쓰기 잔해 탐지를 위해 `output/` 전체(`output/archive/` 내부는 제외)를 재귀 탐색 | 기본은 드라이런(삭제 대상만 출력). `--yes`일 때: 30일(기본값) 초과 경과한 `output/archive/<YYYY-MM-DD>/` 폴더 + `output/archive/`를 제외한 `output/` 안 어디에 있든 `*.tmp-<pid>-<ms>-<uuid>`(중단된 원자적 쓰기의 임시 파일) **또는 `*.lock`(죽은 프로세스가 남긴 원장 잠금)** 파일을 삭제 — 단 **잠금 회수와 똑같은 판정을 통과한 것만**: `.lock`은 31초보다 오래되고 확인 구간에 수정 시각이 움직이지 않은 것, `*.tmp-…`는 그 원장의 잠금이 살아 있지 않은 것(살아 있는 발송이 쓰고 있는 파일일 수 있으므로 — §5). **발송이나 `pnpm serve`가 도는 중에는 실행하지 마세요** | 없음 |
 | `pnpm serve` | 대시보드 API를 통해 `output/translations/translations.json`, `output/variants/variants.json`, `output/formatted/renderings.json`, `output/publish/state.json`; `GET /api/renderings/:itemId/:type/:channel/emissions`는 저장된 canonical 텍스트를 요청 시점에 그 채널의 목적지(destination)별 텍스트로 변환해 돌려줍니다(파일로 저장되지 않고 그때그때 계산됨). **2차 검수(발송판) — `GET /api/items/:id/board`** 는 위 `renderings.json`에 더해 `output/formatted/overrides.json`(방별 override)과 `output/publish/deliveries.json`(없으면 예전 `channels.json`을 읽기 전용으로 이관 — `send:channels`와 동일한 이관 규칙)을 합쳐 카드·방 목록을 계산합니다 | 저장/승인/포맷 저장/게시 API 호출 시 위와 동일한 파일들; `local` 모드에서 게시하면 `output/publish/local/{review,approved}/*.md`도 포함(§2 참고). **발송판의 방별 API**: `PUT /api/outlets/:itemId/:type/:outletId`(글 저장 시 `overrides.json`에 그 방의 override를 쓰고, `승인`/`되돌리기`는 그 행을 갱신·삭제); `POST .../send`(자동 방 발송 — `output/publish/deliveries.json`에 `sent` 행을 씀, `pnpm send:channels`와 같은 원장); `POST .../mark`(수동 방 전달 체크/해제 — 같은 원장에 `delivered` 행); `POST /api/items/:id/convert-prepare`(체크한 유형의 워크시트 + `output/variants/pending.json` — `pnpm convert:prepare`와 동일); `POST /api/items/:id/format`(그 카드의 `output/formatted/renderings.json`을 그 자리에서 다시 씀 — 지금 저장된 문구와 승인 상태를 덮어씀, `✎따로` override는 건드리지 않음) | 게시 API 호출 시 모드에 따라 Google Drive API, Lark Drive API(`cloud`), 또는 없음(`local`); 발송판에서 자동 방에 `발송`을 누르면 CLI의 `pnpm send:channels`와 같은 Telegram Bot API / Typefully API 호출이 브라우저 조작만으로 즉시 일어남 |
 | `pnpm google:auth` | `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`/`GOOGLE_OAUTH_SCOPE`(env) | 로컬 파일 없음 — refresh token을 콘솔에 출력 | Google OAuth 2.0(로컬 루프백 서버로 인가 코드 교환) |
 
@@ -286,12 +286,20 @@ interface SyncEntry {
   - `*.tmp-<pid>-<ms>-<uuid>` — 중단된 원자적 쓰기가 남긴 임시 파일.
   - `*.lock` — 원장 쓰기를 프로세스 사이에서 직렬화하는 잠금 파일(`lockPathFor`). 쓰기가 끝나면
     지워지므로, 남아 있다는 것은 보통 프로세스가 도중에 죽었다는 뜻입니다.
-- **두 종류 모두 마지막 수정이 30초(`LOCK_STALE_MS`) 이내면 건너뜁니다.** 그만큼 최근이면 잔해가
-  아니라 **지금 돌고 있는 발송이 쓰고 있는 파일**일 수 있기 때문입니다 — 살아 있는 잠금을 지우면
-  두 프로세스가 같은 원장을 동시에 고쳐 써 행이 유실되고, 원자적 쓰기의 임시 파일을 `writeFile`과
-  `rename` 사이에서 지우면 **발송은 나갔는데 원장에는 남지 않습니다**. 둘 다 결과는 다음 실행의
-  중복 발송입니다. 이 문턱은 안전망이지 허가가 아니므로, **발송이나 `pnpm serve`가 도는 중에는
-  `--yes`로 실행하지 마세요.**
+- **두 종류 모두, 잠금 모듈(`withFileLock`)이 그 잠금을 회수해도 된다고 판단할 때만 지웁니다** —
+  같은 파일을 같은 규칙으로 보는 두 코드가 서로 다른 관대함을 가지면 안 되기 때문입니다:
+  - `*.lock` — 마지막 수정이 **31초(`LOCK_STALE_MS` 30초 + `RECLAIM_CONFIRM_MS` 1초)** 이내면
+    건너뜁니다. 그보다 오래됐어도, **확인 구간 동안 수정 시각이 움직이면** 건너뜁니다. 잠금을 든
+    프로세스는 살아 있는 동안 5초마다 그 시각을 갱신하므로(heartbeat), 움직인다는 것은 **살아 있다는
+    그 프로세스 자신의 증거**이고 시계가 틀려도 참입니다. 시계만 보는 판정으로는 부족합니다 — 이
+    컴퓨터의 시계는 실제로 ±22.7초를 오가고, 그러면 방금 찍은 잠금도 한순간 30초 넘게 오래돼 보입니다.
+  - `*.tmp-<pid>-<ms>-<uuid>` — 자기 시각이 아니라 **그 파일이 올라갈 원장의 잠금**으로 판정합니다.
+    둘은 한 번의 쓰기가 만든 짝인데 갱신되는 것은 잠금뿐이라, 따로 재면 느린 정상 쓰기의 임시 파일을
+    지우게 됩니다. 잠금이 없으면 예전과 같이 시각만 봅니다(잠금 없이 원자적으로 쓰는 저장소들).
+  - 살아 있는 잠금을 지우면 두 프로세스가 같은 원장을 동시에 고쳐 써 행이 유실되고, 원자적 쓰기의
+    임시 파일을 `writeFile`과 `rename` 사이에서 지우면 **발송은 나갔는데 원장에는 남지 않습니다**.
+    둘 다 결과는 다음 실행의 중복 발송입니다. 이 판정은 안전망이지 허가가 아니므로, **발송이나
+    `pnpm serve`가 도는 중에는 `--yes`로 실행하지 마세요.**
 - 기본은 **드라이런**입니다 — 무엇을 지울지 목록만 출력합니다. 실제 삭제는 `--yes`를 붙여야
   일어납니다.
 - 살아 있는 저장소(store) 파일은 절대 건드리지 않습니다. 대상은 만료된 아카이브 폴더와 임시 파일
