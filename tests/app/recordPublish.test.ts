@@ -22,6 +22,7 @@ function harness(existingData: string[][] = [], existingHeader: string[][] = [])
     getValues: async (range) => (range.startsWith("history!A1:") ? existingHeader : existingData),
     appendValues: async (_range, rows) => { calls.appended.push(rows); },
     updateValues: async (range, rows) => { calls.updated.push({ range, rows }); },
+    batchUpdateValues: async (updates) => { for (const u of updates) calls.updated.push({ range: u.range, rows: u.rows }); },
     createSpreadsheet: async () => ({ spreadsheetId: "x" }),
     ensureTab: async (title) => { calls.ensured.push(title); },
   };

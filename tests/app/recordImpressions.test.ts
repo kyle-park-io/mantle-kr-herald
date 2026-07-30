@@ -29,6 +29,7 @@ function sheetHarness(existing: string[][]) {
     updateValues: async (range, rows) => {
       updated.push({ range, rows });
     },
+    batchUpdateValues: async () => {},
     createSpreadsheet: async () => ({ spreadsheetId: "x" }),
     ensureTab: async () => {},
   };
@@ -145,6 +146,7 @@ describe("RecordImpressions", () => {
         if (range === "history!H2:I2") throw new Error("boom");
         updated.push({ range, rows });
       },
+      batchUpdateValues: async () => {},
       createSpreadsheet: async () => ({ spreadsheetId: "x" }),
       ensureTab: async () => {},
     };

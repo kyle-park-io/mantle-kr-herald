@@ -13,6 +13,7 @@
 | **팀 용어집·문체 규칙을 받아야 한다** | [`setup/steering.md`](setup/steering.md) | 필요 |
 | 자격 증명(Lark·Google)을 발급해야 한다 | [`setup/`](setup/) | 필요 |
 | 어떤 명령이 어떤 파일을 건드리는지 확인해야 한다 | [`artifacts.md`](artifacts.md) | 필요 |
+| **텔레그램 KOL 정산용 `kol-map` 탭을 처음 만들어야 한다** | [`kol-map-seed.md`](kol-map-seed.md) | 필요 |
 
 코드에 기여하려면 [`../architecture/`](../architecture/)를 보세요 (영어).
 
@@ -25,6 +26,8 @@ ko/
   quickstart.md      빠른 시작 — 자격 증명 없이 로컬 모드로 5분 안에
   team-runbook.md    팀 운영 매뉴얼 — 주간 루틴, 클라우드 모드, 사고 대응
   artifacts.md       산출물 지도 — 명령별 입출력 계약, 보존 정책
+  kol-map-seed.md    kol-telegram:record용 `kol-map` 탭 시딩 제안표 — 붙여넣기 전 확인할 점
+                     (단가 반올림 주의, sheetLabel 미확정 채널, active를 비워 둔 이유)
   setup/             자격 증명 발급 절차 (SSOT — 다른 문서는 여기로 링크만)
     README.md          어떤 가이드를 볼지
     steering.md        스티어링 설정(용어집·문체·변환 규칙) 받기 — git에 없음

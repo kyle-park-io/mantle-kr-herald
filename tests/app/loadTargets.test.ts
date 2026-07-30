@@ -7,6 +7,7 @@ function sheet(rows: string[][]): SheetClient {
     getValues: async () => rows,
     appendValues: async () => {},
     updateValues: async () => {},
+    batchUpdateValues: async () => {},
     createSpreadsheet: async () => ({ spreadsheetId: "x" }),
     ensureTab: async () => {},
   };

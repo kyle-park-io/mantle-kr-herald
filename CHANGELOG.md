@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading — action required for existing installs
+
+- **Before the first `pnpm kol-telegram:record`, create and seed the `kol-map` tab by hand — the
+  command cannot run without it, and the rows it writes decide KOL payments.** This is a new
+  human-maintained tab in the `GSHEET_ID` workbook with the header row
+  `kolId | tgHandle | sheetLabel | pricePerPost | active`. **Paste the table already prepared in
+  [`docs/ko/kol-map-seed.md`](docs/ko/kol-map-seed.md) rather than retyping from the `Q3 조정 단가 표`
+  block**, because two things in that block cannot be copied at face value: the sheet *displays*
+  `$63` for Enjoyhobby where the real rate is **`62.5`** (a rounded currency format — paste `63` and
+  every one of that KOL's rows carries a wrong price), and six of the thirteen channels have no
+  `sheetLabel` established in any monthly tab yet, so the seed table leaves those blank on purpose
+  rather than guessing a spelling that would silently break the `SUMIF`/`COUNTIF` join. If the tab is
+  missing the command now says so and points at that document, instead of the raw
+  `Sheets getValues failed: HTTP 400` it used to fail with.
+- **`active` in the seed table is blank for every row, which means a fresh paste sweeps nothing.**
+  That is deliberate — the rate table prices thirteen channels while only seven were contracted for
+  July, and which channels to sweep is a contract decision. Write `true` into `active` for the
+  channels currently under contract. A run that swept no channel now warns loudly rather than
+  printing five zeroes that look like a clean month.
+- **`tgHandle` accepts a URL or a bare handle, in any casing.** All of `https://t.me/marshallog`,
+  `t.me/marshallog`, `@marshallog`, and `marshallog` work, and `raoni1` finds `Raoni1`. A cell that
+  cannot be read is reported with its sheet row number and the KOL's id, and only that channel drops
+  out of the sweep. A currency-formatted rate (`$100.00`, `₩100`, `US$1,100`) is read as a number; a
+  rate that cannot be read is warned about and written **blank** rather than `0`, so fixing the cell
+  and re-running still repairs those rows.
+- **`kol-telegram-posts` is machine-owned, but `confirmed` is yours and the machine now provably
+  cannot reach it.** Fill `confirmed` with `paid`, `organic`, or `reject` as you review, and move
+  confirmed rows into `Jul.`/`Aug.`/`Sep.` yourself — there is no automatic transfer. You can edit
+  the tab **while a run is in progress** (a run takes minutes): a refresh writes only the cells whose
+  values actually changed, so `pricePerPost` and `confirmed` are not inside any range it writes.
+- **Read the summary line, not just the exit code.** `0 channel(s) swept` means nothing was read at
+  all. A non-zero `channel(s) failed` includes channels that answered HTTP 200 but had no posts on
+  the page — deleted, renamed, or preview-disabled. A non-zero `channel(s) truncated` on a past-month
+  re-run means that channel was never reached, so the retroactive attribution did not happen for it.
+
+### Added
+
+- **`pnpm kol-telegram:record [--month YYYY-MM]` — Telegram KOL deliverable sync.** Reads the active
+  rows of the new human-maintained `kol-map` tab, sweeps each KOL's public Telegram channel preview
+  (`https://t.me/s/<handle>`, no API key and no bot token — it is a public web page) across the
+  month, keeps posts mentioning `맨틀`/`mantle`/`MNT`, suggests an attribution against approved
+  Telegram renderings, and upserts one row per post into a new machine-owned `kol-telegram-posts`
+  review tab keyed by the Telegram permalink. This closes the gap the X performance tracker left
+  explicitly outside its boundary ("Telegram-based KOLs' metrics — twitterapi.io is X-only"). A human
+  then marks each row `paid`/`organic`/`reject`. `cloud` storage mode only, like `metrics:record`.
+  See [`docs/ko/capabilities.md`](docs/ko/capabilities.md) §9 and
+  `docs/superpowers/specs/2026-07-30-kol-telegram-deliverable-sync-design.md`.
+- **`SheetClient.batchUpdateValues` — many disjoint ranges in one Sheets request.** The API allows 60
+  write requests per minute per user, and a month's sweep can produce ~200 rows; one request per row
+  did not fit, and the 429 landed mid-run. Used by `kol-telegram:record`, which now buffers every
+  write and flushes it as one append plus one batch update.
+
 ### Changed
 
 - **`state:push` now backs up the reviewed text as well — seven files, not five.**
@@ -21,6 +73,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported `유지` and left alone, and the closing summary says the tree is now mixed. The list is in
   pipeline order (translate → convert → format → send), because that is the order `state:pull`'s
   preview prints for an operator deciding what to overwrite.
+
+### Fixed
+
+- **`GoogleSheetClient` retries 429/5xx and network errors** (three attempts, `1000 * 2^attempt`),
+  mirroring the policy `HttpClient` already used. It previously threw on the first non-2xx, so a
+  transient rate-limit or 503 failed the whole command. Shared by `metrics:record`,
+  `impressions:record`, `history:record`, `targets:list`, `sheet:init` and the new command.
 
 ## [0.3.0] - 2026-07-30
 
