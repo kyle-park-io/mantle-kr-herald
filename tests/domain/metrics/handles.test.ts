@@ -49,6 +49,37 @@ describe("extractTelegramHandle", () => {
     expect(extractTelegramHandle("@coinboys")).toBe("coinboys");
   });
 
+  // These are the forms the operator is actually told to use. `docs/ko/kol-map-seed.md`'s paste
+  // table lists bare handles, and `docs/ko/team-runbook.md` says to fill the tab with "13개 t.me
+  // 핸들". Rejecting them made the whole feature inert with no warning: LoadKolMap dropped every
+  // row and the CLI still printed "0 created, 0 channel(s) swept" — a clean-looking success.
+  it("accepts a bare handle, which is the form the seed table lists", () => {
+    expect(extractTelegramHandle("enjoymyhobby")).toBe("enjoymyhobby");
+    expect(extractTelegramHandle("GMBLABS")).toBe("GMBLABS");
+    expect(extractTelegramHandle(" Raoni1 ")).toBe("Raoni1");
+  });
+
+  it("accepts a protocol-less t.me reference, which is what copying a link's visible text gives", () => {
+    expect(extractTelegramHandle("t.me/enjoymyhobby")).toBe("enjoymyhobby");
+    expect(extractTelegramHandle("t.me/s/Raoni1")).toBe("Raoni1");
+    expect(extractTelegramHandle("www.t.me/GMBLABS/123")).toBe("GMBLABS");
+  });
+
+  it("still rejects a bare 'joinchat', which the widened bare rule would otherwise accept", () => {
+    // The trap in accepting bare handles: `joinchat` is 8 characters of [A-Za-z0-9_], so it
+    // satisfies the 5-32 rule exactly and would become a sweep of a channel that does not exist.
+    expect(extractTelegramHandle("joinchat")).toBeUndefined();
+    expect(extractTelegramHandle("@joinchat")).toBeUndefined();
+    expect(extractTelegramHandle("t.me/joinchat/AAAAAEhU37h3xx")).toBeUndefined();
+  });
+
+  it("rejects a bare word that is too short or has illegal characters", () => {
+    expect(extractTelegramHandle("abcd")).toBeUndefined(); // Telegram's minimum is 5
+    expect(extractTelegramHandle("has space")).toBeUndefined();
+    expect(extractTelegramHandle("bad-hyphen")).toBeUndefined();
+    expect(extractTelegramHandle("example.com/x")).toBeUndefined();
+  });
+
   it("ignores a trailing path, query, or fragment", () => {
     expect(extractTelegramHandle("https://t.me/GMBLABS/123")).toBe("GMBLABS");
     expect(extractTelegramHandle("https://t.me/GMBLABS?x=1")).toBe("GMBLABS");
