@@ -5,14 +5,20 @@ import { basename, join } from "node:path";
 import { describeKeptFiles, describeProvisionedFolder, describeStateDiff, trackedStateFiles } from "../../src/cli/stateFiles";
 import { diffRowCounts } from "../../src/domain/state/snapshot";
 import { paths } from "../../src/paths";
+import { JsonConversionStore } from "../../src/adapters/store/JsonConversionStore";
 import { JsonDeliveryLedger } from "../../src/adapters/store/JsonDeliveryLedger";
 import { JsonOutletOverrideStore } from "../../src/adapters/store/JsonOutletOverrideStore";
 import { JsonPublishStore } from "../../src/adapters/store/JsonPublishStore";
+import { JsonTranslationStore } from "../../src/adapters/store/JsonTranslationStore";
 import { JsonXArticleLedger } from "../../src/adapters/store/JsonXArticleLedger";
 
 describe("the operational-state manifest", () => {
+  // Pipeline order (translate → convert → format → send), because this is the order the dry-run
+  // preview prints for an operator deciding what to overwrite.
   it("tracks exactly the non-regenerable files, repo-relative", () => {
     expect(trackedStateFiles().map((f) => f.rel)).toEqual([
+      "output/translations/translations.json",
+      "output/variants/variants.json",
       "output/formatted/overrides.json",
       "output/publish/deliveries.json",
       "output/publish/channels.json",
@@ -23,6 +29,8 @@ describe("the operational-state manifest", () => {
 
   it("points at the same absolute paths as src/paths.ts", () => {
     expect(trackedStateFiles().map((f) => f.abs)).toEqual([
+      paths.translationsStore,
+      paths.variantsStore,
       paths.formattedOverrides,
       paths.publishDeliveries,
       paths.publishChannelsLegacy,
@@ -35,6 +43,24 @@ describe("the operational-state manifest", () => {
     // Omitting it means a pre-#80 machine pushes a snapshot with no send history in it at all, and
     // restores to a tree where every already-sent room reads as never-sent.
     expect(trackedStateFiles().map((f) => f.rel)).toContain("output/publish/channels.json");
+  });
+
+  /**
+   * The two authored-text stores, and the distinction that decides membership: `format` really does
+   * rebuild `renderings.json` from the variants (that is what the board's `[포맷 다시]` runs), but
+   * nothing rebuilds the variants themselves — they hold what an agent wrote and a human then
+   * approved. Re-running the pipeline produces *a* conversion, not *that* one, and drops every
+   * approval standing on the old text.
+   *
+   * Asserted as a pair with the exclusion, so "add renderings.json too, for symmetry" fails here
+   * with the reason attached rather than looking like an oversight.
+   */
+  it("tracks the authored text and not the text that regenerates from it", () => {
+    const rel = trackedStateFiles().map((f) => f.rel);
+    expect(rel).toContain("output/translations/translations.json");
+    expect(rel).toContain("output/variants/variants.json");
+    expect(rel).not.toContain("output/formatted/renderings.json");
+    expect(rel).not.toContain("output/x/items.json");
   });
 });
 
@@ -146,6 +172,30 @@ describe("the manifest matches what the stores actually write", () => {
   });
 
   const written = async (): Promise<string[]> => (await readdir(dir)).filter((n) => n.endsWith(".json"));
+
+  it("translations.json is what JsonTranslationStore writes", async () => {
+    await new JsonTranslationStore(dir).upsert({
+      itemId: "x:1",
+      source: "x",
+      sourceText: "source",
+      koreanText: "번역",
+      status: "approved",
+      translatedAt: "2026-07-29T00:00:00.000Z",
+    });
+    expect(await written()).toEqual([basename(paths.translationsStore)]);
+  });
+
+  it("variants.json is what JsonConversionStore writes", async () => {
+    await new JsonConversionStore(dir).upsert({
+      itemId: "x:1",
+      type: "explainer",
+      sourceKorean: "번역",
+      convertedText: "해설",
+      status: "converted",
+      createdAt: "2026-07-29T00:00:00.000Z",
+    });
+    expect(await written()).toEqual([basename(paths.variantsStore)]);
+  });
 
   it("overrides.json is what JsonOutletOverrideStore writes", async () => {
     await new JsonOutletOverrideStore(dir).upsert({

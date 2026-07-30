@@ -5,9 +5,29 @@ import { paths, REPO_ROOT } from "../paths";
 
 /**
  * The files `state:push` snapshots: everything under `output/` that cannot be rebuilt by re-running
- * the pipeline. Items re-collect; translations, variants and renderings regenerate; lineage is an
- * append-only view of stores that are themselves in here. These four are not:
+ * the pipeline.
  *
+ * **"Rebuildable" means the pipeline reproduces the same file, not that it can produce *a* file.**
+ * That distinction is the whole membership test, and getting it wrong in the permissive direction
+ * costs work nobody can recover:
+ *
+ * - `x/items.json` re-collects — same source, same output. Out.
+ * - `formatted/renderings.json` regenerates: `format` is pure code over the variants, which is why
+ *   the board can offer a per-card `[포맷 다시]` that really does re-render. Out.
+ * - `translations/translations.json` and `variants/variants.json` do **not**. They hold text an agent
+ *   wrote and a human then read and approved. Re-running `translate:save`/`convert:save` yields *a*
+ *   translation and *a* conversion — a different one, non-deterministically, at the cost of another
+ *   agent pass — and every 1차/2차 approval on top of the old text is gone with it. The pipeline can
+ *   redo the work; it cannot restore the artifact. In.
+ * - `lineage/` stays out, but the reason is narrower than it looks: it is an append-only record of
+ *   stores that are themselves in here, and it grows without bound. It does hold the only other copy
+ *   of an authored text, which is exactly why the two stores above must be tracked rather than left
+ *   leaning on it — the lineage is a record, not a rollback.
+ *
+ * The seven:
+ *
+ * - `translations/translations.json` — the 1차 Korean text plus its approval state. See above.
+ * - `variants/variants.json` — the per-type converted copy, and the source `format` renders from.
  * - `formatted/overrides.json` — per-room forked copy. `format` produces the group text, not a
  *   reviewer's fork, so a lost file silently reverts every forked room.
  * - `publish/deliveries.json` — the send ledger. Losing it makes sent items read as never-sent.
@@ -21,11 +41,21 @@ import { paths, REPO_ROOT } from "../paths";
  * - `publish/state.json` — the Drive sync ledger.
  *
  * Push and pull share this one list, so the two can never disagree about what a snapshot holds.
- * A tree that has no legacy file simply pushes four (`FsStateFileStore.list` skips what is absent),
+ * A tree that has no legacy file simply pushes six (`FsStateFileStore.list` skips what is absent),
  * and a snapshot that *does* carry one aborts `state:pull` on a checkout predating this list —
  * `unknownStatePaths` refusing rather than half-restoring, which is the designed behaviour.
+ *
+ * Restoring an OLDER snapshot is the mirror case and needs no special handling: a snapshot written
+ * before an entry joined this list simply has no key for it, so `diffRowCounts` marks the local file
+ * `유지` and `describeKeptFiles` says out loud that the tree is now mixed.
+ *
+ * Listed in pipeline order — translate → convert → format → send — because that is the order the
+ * dry-run preview prints, and an operator reading "what am I about to overwrite" is reading a
+ * pipeline, not an alphabet.
  */
 const TRACKED = [
+  paths.translationsStore,
+  paths.variantsStore,
   paths.formattedOverrides,
   paths.publishDeliveries,
   paths.publishChannelsLegacy,

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`state:push` now backs up the reviewed text as well — seven files, not five.**
+  `output/translations/translations.json` and `output/variants/variants.json` join the bundle. They
+  were classed as derivable on the grounds that the pipeline can produce a translation and a
+  conversion again, which conflates *a* file with *that* file: both hold text an agent wrote and a
+  human then read and approved, so re-running yields different copy, non-deterministically, at the
+  cost of another agent pass — and every 1차/2차 approval standing on the old text goes with it. The
+  pipeline can redo the work; it cannot restore the artifact. `renderings.json` stays out and that is
+  deliberate: `format` really does rebuild it from the variants, which is what the board's per-card
+  `[포맷 다시]` runs. Restoring an older snapshot needs no migration — a file the snapshot predates is
+  reported `유지` and left alone, and the closing summary says the tree is now mixed. The list is in
+  pipeline order (translate → convert → format → send), because that is the order `state:pull`'s
+  preview prints for an operator deciding what to overwrite.
+
 ## [0.3.0] - 2026-07-30
 
 ### Upgrading — action required for existing installs
