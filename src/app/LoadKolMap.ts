@@ -15,7 +15,12 @@ function isActive(raw: string): boolean {
 }
 
 function parsePrice(raw: string): number {
-  const n = parseFloat((raw ?? "").trim());
+  // A price is a clean number (commas allowed as thousands separators) or it is 0 — no partial
+  // parses. parseFloat alone would accept "1,000" as 1, silently shrinking a real price 1000x
+  // instead of failing loudly.
+  const s = (raw ?? "").trim().replace(/,/g, "");
+  if (!/^\d+(\.\d+)?$/.test(s)) return 0;
+  const n = parseFloat(s);
   return Number.isFinite(n) ? n : 0;
 }
 

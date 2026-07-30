@@ -71,6 +71,19 @@ describe("LoadKolMap", () => {
     expect((await new LoadKolMap(sheet).run())[0].pricePerPost).toBe(0);
   });
 
+  it("reads a comma-thousands price in full rather than stopping at the comma", async () => {
+    // parseFloat("1,000") would silently return 1 — a real price shrunk 1000x, not an obviously
+    // wrong one. The contract tab writes prices like "$1,100", so a human seeding kol-map from
+    // it typing "1,100" is realistic.
+    const { sheet } = sheetWith([HEADER, ["a", "https://t.me/aaaaa", "A", "1,000", "TRUE"]]);
+    expect((await new LoadKolMap(sheet).run())[0].pricePerPost).toBe(1000);
+  });
+
+  it("rejects a price with a non-numeric suffix rather than parsing its numeric prefix", async () => {
+    const { sheet } = sheetWith([HEADER, ["a", "https://t.me/aaaaa", "A", "100원", "TRUE"]]);
+    expect((await new LoadKolMap(sheet).run())[0].pricePerPost).toBe(0);
+  });
+
   it("returns [] for an empty tab", async () => {
     const { sheet } = sheetWith([]);
     expect(await new LoadKolMap(sheet).run()).toEqual([]);
