@@ -39,6 +39,7 @@
 | `src/ports/TelegramChannelGateway.ts` | Port interface |
 | `src/app/LoadKolMap.ts` | Reads the `kol-map` tab into `KolMapEntry[]` |
 | `src/app/RecordKolTelegramPosts.ts` | Orchestrates sweep → detect → attribute → upsert |
+| `src/app/telegramMatchCandidates.ts` | Selects which approved renderings are eligible match candidates |
 | `src/cli/kol-telegram-record.ts` | CLI entry |
 | `tests/adapters/telegram/fixtures/*.html` | Three unmodified captured pages — the parser's contract |
 
