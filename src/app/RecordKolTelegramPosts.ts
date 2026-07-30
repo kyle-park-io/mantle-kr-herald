@@ -129,7 +129,11 @@ export class RecordKolTelegramPosts {
         updated[IDX.itemId] = match?.itemId ?? "";
         updated[IDX.matchScore] = match ? match.score.toFixed(2) : "";
       }
-      // topic and confirmed are carried through unchanged (already copied above).
+      // confirmed is carried through unchanged (already copied above). topic is
+      // carried through too, unless it's still blank — then it may inherit,
+      // same as a brand-new row (e.g. a July-backfill row whose itemId only
+      // gets filled once real copy exists to match against).
+      this.applyInheritedTopic(updated, rows);
 
       rows[idx] = updated;
       const rowNumber = idx + 2; // data starts at sheet row 2
@@ -140,7 +144,6 @@ export class RecordKolTelegramPosts {
     const match = bestMatch(post.text, renderings);
     const itemId = match?.itemId ?? "";
     const matchScore = match ? match.score.toFixed(2) : "";
-    const topic = itemId ? (this.inheritedTopic(itemId, rows) ?? "") : "";
 
     const row = new Array(KOL_TELEGRAM_HEADER.length).fill("");
     row[IDX.kolId] = entry.kolId;
@@ -151,11 +154,11 @@ export class RecordKolTelegramPosts {
     row[IDX.engagements] = String(sumReactions(post.reactions));
     row[IDX.reactionsDetail] = formatReactions(post.reactions);
     row[IDX.itemId] = itemId;
-    row[IDX.topic] = topic;
     row[IDX.matchScore] = matchScore;
     row[IDX.pricePerPost] = String(entry.pricePerPost);
     row[IDX.fetchedAt] = this.now().toISOString();
     row[IDX.confirmed] = "";
+    this.applyInheritedTopic(row, rows);
 
     await this.sheet.appendValues(DATA_RANGE, [row]);
     rows.push(row);
@@ -163,11 +166,19 @@ export class RecordKolTelegramPosts {
     return "created";
   }
 
-  /** The topic a human already typed for `itemId` on another row — in the sheet, or earlier this run. */
-  private inheritedTopic(itemId: string, rows: string[][]): string | undefined {
+  /**
+   * Fill `row`'s topic from a sibling row that already carries the same
+   * itemId and a non-empty topic. A no-op unless the row has an itemId and
+   * no topic of its own — never overwrites a topic a human already typed,
+   * on a new row or an existing one.
+   */
+  private applyInheritedTopic(row: string[], rows: string[][]): void {
+    if (row[IDX.itemId] === "" || row[IDX.topic] !== "") return;
     for (const r of rows) {
-      if (r[IDX.itemId] === itemId && r[IDX.topic] !== "") return r[IDX.topic];
+      if (r[IDX.itemId] === row[IDX.itemId] && r[IDX.topic] !== "") {
+        row[IDX.topic] = r[IDX.topic];
+        return;
+      }
     }
-    return undefined;
   }
 }

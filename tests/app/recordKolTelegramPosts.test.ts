@@ -156,6 +156,99 @@ describe("RecordKolTelegramPosts", () => {
     expect(cell(row, "confirmed")).toBe("paid");
   });
 
+  it("inherits a topic on an existing row when attribution fills a previously blank itemId", async () => {
+    const { sheet, state } = fakeSheet();
+    state.rows.push(KOL_TELEGRAM_HEADER);
+
+    // The July-backfill row: created before any copy existed to match against,
+    // so itemId and topic are both still blank.
+    const existing = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+    existing[col("kolId")] = "marine";
+    existing[col("tgHandle")] = "marshallog";
+    existing[col("deliverableLink")] = "https://t.me/marshallog/22794";
+    existing[col("views")] = "2800";
+    state.rows.push(existing);
+
+    // A sibling row for the same itemId that already carries a human-typed topic.
+    const sibling = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+    sibling[col("deliverableLink")] = "https://t.me/enjoymyhobby/1";
+    sibling[col("itemId")] = "x:111";
+    sibling[col("topic")] = "USPXx Live on Mantle";
+    state.rows.push(sibling);
+
+    const ours = "맨틀에서 토큰화 주식 거래 지원";
+    const gw = gateway({ marshallog: [post("marshallog", 22794, { text: ours })] });
+    const res = await new RecordKolTelegramPosts(sheet, gw, AT).run({
+      month: "2026-07", map: MAP, renderings: [{ itemId: "x:111", text: ours }],
+    });
+
+    expect(res.refreshed).toBe(1);
+    const row = state.rows[1];
+    expect(cell(row, "itemId")).toBe("x:111");
+    expect(cell(row, "topic")).toBe("USPXx Live on Mantle");
+  });
+
+  it("does not overwrite an existing row's own topic, even when a sibling row's topic differs", async () => {
+    const { sheet, state } = fakeSheet();
+    state.rows.push(KOL_TELEGRAM_HEADER);
+
+    const existing = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+    existing[col("kolId")] = "marine";
+    existing[col("tgHandle")] = "marshallog";
+    existing[col("deliverableLink")] = "https://t.me/marshallog/22794";
+    existing[col("topic")] = "hand typed topic";
+    state.rows.push(existing);
+
+    const sibling = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+    sibling[col("deliverableLink")] = "https://t.me/enjoymyhobby/1";
+    sibling[col("itemId")] = "x:111";
+    sibling[col("topic")] = "a different topic";
+    state.rows.push(sibling);
+
+    const ours = "맨틀에서 토큰화 주식 거래 지원";
+    const gw = gateway({ marshallog: [post("marshallog", 22794, { text: ours })] });
+    await new RecordKolTelegramPosts(sheet, gw, AT).run({
+      month: "2026-07", map: MAP, renderings: [{ itemId: "x:111", text: ours }],
+    });
+
+    const row = state.rows[1];
+    expect(cell(row, "itemId")).toBe("x:111"); // still attributed, itemId was blank
+    expect(cell(row, "topic")).toBe("hand typed topic"); // but the human's topic is untouched
+  });
+
+  it("pads a row shorter than the header before upserting it, as the real Sheets API omits trailing empty cells", async () => {
+    const { sheet, state } = fakeSheet();
+    state.rows.push(KOL_TELEGRAM_HEADER);
+
+    // Simulate a real API response for a not-yet-confirmed row: `confirmed`
+    // is the last column and blank, so the API drops it from the row entirely.
+    const full = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+    full[col("kolId")] = "marine";
+    full[col("tgHandle")] = "marshallog";
+    full[col("deliverableLink")] = "https://t.me/marshallog/22794";
+    full[col("views")] = "2800";
+    full[col("engagements")] = "3";
+    full[col("pricePerPost")] = "100";
+    full[col("fetchedAt")] = "2026-07-03T00:00:00.000Z";
+    const short = full.slice(0, col("confirmed"));
+    expect(short.length).toBeLessThan(KOL_TELEGRAM_HEADER.length);
+    state.rows.push(short);
+
+    const gw = gateway({
+      marshallog: [post("marshallog", 22794, { views: 3100, reactions: [{ emoji: "🔥", count: 4 }] })],
+    });
+    const res = await new RecordKolTelegramPosts(sheet, gw, AT).run({
+      month: "2026-07", map: MAP, renderings: [],
+    });
+
+    expect(res).toEqual({ created: 0, refreshed: 1, channelsSwept: 1, channelsFailed: 0 });
+    const row = state.rows[1];
+    expect(row).toHaveLength(KOL_TELEGRAM_HEADER.length);
+    expect(cell(row, "views")).toBe("3100");
+    expect(cell(row, "engagements")).toBe("4");
+    expect(cell(row, "confirmed")).toBe("");
+  });
+
   it("does not touch a rejected row and does not count it as refreshed", async () => {
     const { sheet, state } = fakeSheet();
     state.rows.push(KOL_TELEGRAM_HEADER);
