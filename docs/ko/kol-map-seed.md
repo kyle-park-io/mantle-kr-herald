@@ -35,6 +35,12 @@ t.me 링크)입니다. 스펙(`2026-07-30-kol-telegram-deliverable-sync-design.m
 `kol-map` 탭의 헤더 행(1행)은 그대로 `kolId | tgHandle | sheetLabel | pricePerPost | active`
 다섯 컬럼이어야 합니다.
 
+위 표의 `tgHandle`은 **핸들만 적은 형태**인데 그대로 붙여넣으면 됩니다 —
+`https://t.me/<핸들>`·`t.me/<핸들>`·`@<핸들>`·`<핸들>` 네 형태를 모두 읽고, 대소문자도 구분하지
+않습니다(`raoni1`로 적어도 `Raoni1` 채널을 찾습니다). 읽을 수 없는 칸은 몇 번째 행인지와 함께
+경고로 남고 그 채널만 스윕에서 빠지므로, 첫 실행 뒤 경고와 요약 줄(`N channel(s) swept`)을
+확인하세요.
+
 ## 각 컬럼을 채운 방법과 확인할 점
 
 - **`tgHandle`** — `Q3 조정 단가 표`의 링크 컬럼(G열)에서 핸들만 뽑아 앞뒤 공백을 trim했습니다.
