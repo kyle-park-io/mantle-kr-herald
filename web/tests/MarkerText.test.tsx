@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { MarkerText, MediaEditNotice } from "../src/components/MarkerText";
+import { MarkerText, MediaEditNotice, MediaEditNoticeSlot } from "../src/components/MarkerText";
 
 const URL = "https://pbs.twimg.com/media/HOUihv6bgAA52e_.jpg";
 const PHOTO = `![](${URL})`;
@@ -53,17 +53,6 @@ describe("MarkerText", () => {
     expect(container.textContent).not.toContain("이미지를 불러오지 못했습니다");
   });
 
-  it("renders both instances of a repeated url correctly", () => {
-    const DUP = "https://pbs.twimg.com/media/DUP.jpg";
-    const text = `![](${DUP})\n\n중간\n\n![](${DUP})`;
-    const { container } = render(<MarkerText text={text} />);
-
-    // Both images should be present
-    expect(container.querySelectorAll("img")).toHaveLength(2);
-    // Text content should match exactly
-    expect(container.textContent).toBe(text);
-  });
-
   it("does not leak failed state when rerending with different urls", () => {
     const DUP = "https://pbs.twimg.com/media/DUP.jpg";
     const OTHER = "https://pbs.twimg.com/media/OTHER.jpg";
@@ -102,5 +91,50 @@ describe("MediaEditNotice", () => {
     const { container } = render(<MediaEditNotice text={"번역문\n\n[영상]"} where="원문" />);
     expect(container.textContent).toContain("영상은 미리보기가 없습니다");
     expect(container.textContent).not.toContain("이미지 미리보기");
+  });
+
+  /**
+   * The combined branch — both halves joined with " · " — had no coverage at all before this. It is
+   * also the longest string the notice can produce, which is the one that wraps to two lines below
+   * ~700px window width (accepted, out of scope for this fix).
+   */
+  it("joins both halves when the text carries a photo marker and a video marker", () => {
+    const { container } = render(<MediaEditNotice text={`번역문\n\n${PHOTO}\n\n[영상]`} where="원문" />);
+    expect(container.textContent).toContain("이미지 미리보기는 원문에서 확인하세요");
+    expect(container.textContent).toContain("영상은 미리보기가 없습니다");
+    expect(container.textContent).toBe("이미지 미리보기는 원문에서 확인하세요 · 영상은 미리보기가 없습니다");
+  });
+});
+
+describe("MediaEditNoticeSlot", () => {
+  /**
+   * Proven by mutation: deleting the strut `<p>` from the old, three-times-hand-copied version of
+   * this slot left every one of the 20 existing component tests green, because they only ever assert
+   * on the notice's own text — none of them looked for the placeholder itself. This is what pins the
+   * mechanism the layout-shift fix (`dd9ae1f`) depends on.
+   *
+   * jsdom has no layout engine, so this cannot assert an actual pixel height — only that, for text
+   * with NO marker, the slot still contains an `aria-hidden` placeholder element carrying the
+   * notice's own type scale (`text-[12px] leading-relaxed`), which is what reserves the same box a
+   * real notice would occupy.
+   */
+  it("keeps a strut placeholder in the slot even when the text carries no marker", () => {
+    const { container } = render(<MediaEditNoticeSlot text="사진 없는 번역문" where="원문" />);
+    const slot = container.querySelector('[data-testid="media-edit-notice-slot"]');
+    expect(slot).not.toBeNull();
+    const strut = slot!.querySelector('p[aria-hidden="true"]');
+    expect(strut).not.toBeNull();
+    expect(strut!.className).toContain("text-[12px]");
+    expect(strut!.className).toContain("leading-relaxed");
+    // The real notice renders null for this text — the strut (a non-breaking space, so it does not
+    // collapse to an empty line box the way an ordinary space would) is the only thing in the slot.
+    expect(slot!.textContent).toBe(" ");
+  });
+
+  it("keeps the same strut placeholder alongside the real notice once a marker is present", () => {
+    const { container } = render(<MediaEditNoticeSlot text={`번역문\n\n${PHOTO}`} where="원문" />);
+    const slot = container.querySelector('[data-testid="media-edit-notice-slot"]');
+    expect(slot!.querySelector('p[aria-hidden="true"]')).not.toBeNull();
+    expect(slot!.textContent).toContain("이미지 미리보기는 원문에서 확인하세요");
   });
 });

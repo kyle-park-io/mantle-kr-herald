@@ -61,16 +61,21 @@ function stubFetch(handler?: (url: string, init?: RequestInit) => unknown) {
   );
 }
 
-/** Renders one card and hands back the confirm requests it raised and the errors it reported. */
+/**
+ * Renders one card and hands back the confirm requests it raised and the errors it reported, plus a
+ * `rerender` that re-mounts with a new `group` — same component instance, same React state — for
+ * tests that need to simulate the board repainting under an editor the reviewer already has open
+ * (e.g. a room going `sent` from outside this tab while a draft still sits in its editor).
+ */
 function mount(g: BoardGroup, o: { convertedText?: string } = {}) {
   const confirms: ConfirmRequest[] = [];
   const errors: (string | null)[] = [];
   const boards: { board: BoardView; quotaMayHaveChanged?: boolean }[] = [];
-  const { container } = render(
+  const element = (group: BoardGroup, opts: { convertedText?: string }) => (
     <OutletCard
       itemId="2026-07-30-a"
-      group={g}
-      convertedText={o.convertedText ?? "변환 원문"}
+      group={group}
+      convertedText={opts.convertedText ?? "변환 원문"}
       hovered={null}
       onHover={() => {}}
       onBoard={(b, q) => boards.push({ board: b, quotaMayHaveChanged: q })}
@@ -78,9 +83,16 @@ function mount(g: BoardGroup, o: { convertedText?: string } = {}) {
       onError={(m) => errors.push(m)}
       onDirty={() => {}}
       onConfirm={(r) => confirms.push(r)}
-    />,
+    />
   );
-  return { confirms, errors, boards, container };
+  const { container, rerender } = render(element(g, o));
+  return {
+    confirms,
+    errors,
+    boards,
+    container,
+    rerender: (g2: BoardGroup, o2: { convertedText?: string } = o) => rerender(element(g2, o2)),
+  };
 }
 
 /** The lines the operator is shown, as one string — these assert sentences, not array shapes. */
@@ -257,6 +269,20 @@ describe("media markers", () => {
     expect(container.textContent).not.toContain("미리보기");
   });
 
+  // jsdom has no layout engine, so this pins the *structure* the layout-shift fix relies on rather
+  // than an actual pixel height. Proven by mutation: deleting just the strut placeholder from the
+  // (formerly hand-copied) slot left every other test in this describe block green, because none of
+  // them look for the placeholder itself — only for the notice's text.
+  it("reserves the group notice's slot with a strut, even when nothing on the card carries media", () => {
+    const { container } = mount(group({ text: "그룹 글", rows: [row()] }));
+    const slot = container.querySelector('[data-testid="media-edit-notice-slot"]');
+    expect(slot).not.toBeNull();
+    const strut = slot!.querySelector('p[aria-hidden="true"]');
+    expect(strut).not.toBeNull();
+    expect(strut!.className).toContain("text-[12px]");
+    expect(strut!.className).toContain("leading-relaxed");
+  });
+
   /**
    * A forked room's own copy carries its own markers, independent of the group's — and a forked row
    * is open by default (`OutletCard`'s `isOpen` is true whenever `row.forked` and nothing collapsed
@@ -273,7 +299,47 @@ describe("media markers", () => {
     const { container } = mount(group({ text: "그룹 글", rows: [row({ forked: true, text: "이 방 글" })] }));
     const own = container.querySelector('li[data-outlet="x-main"]');
     expect(own).not.toBeNull();
-    expect(own!.querySelectorAll('[data-testid="media-edit-notice-slot"]').length).toBeGreaterThan(0);
+    const slots = own!.querySelectorAll('[data-testid="media-edit-notice-slot"]');
+    expect(slots.length).toBeGreaterThan(0);
     expect(own!.textContent).not.toContain("미리보기");
+    // Same mutation-proofing as the group-level slot: the strut placeholder, not just the (empty)
+    // container div, has to be the thing under test, or deleting it leaves this green too.
+    const strut = slots[0].querySelector('p[aria-hidden="true"]');
+    expect(strut).not.toBeNull();
+    expect(strut!.className).toContain("text-[12px]");
+    expect(strut!.className).toContain("leading-relaxed");
+  });
+
+  /**
+   * The fork editor's notice must describe what the textarea above it is actually showing. On a
+   * `sent` (read-only) row the textarea falls back to the stored `row.text` rather than a stale
+   * local draft (see the comment beside that textarea in `OutletCard`) — reproduced here exactly as
+   * described: type a marker into the draft while the row is still editable, then have the board
+   * repaint the same row as `sent` out from under it (as if `pnpm send:channels` sent it from another
+   * tab). The notice must follow the textarea back to the stored text, not keep describing the stale
+   * draft.
+   */
+  it("keeps the fork notice reading what the read-only textarea shows, not a stale draft", () => {
+    const forkedRow = row({ forked: true, text: "이 방 글", status: "rendered" });
+    const { container, rerender } = mount(group({ text: "그룹 글", rows: [forkedRow] }));
+    const own = () => container.querySelector('li[data-outlet="x-main"]') as HTMLElement;
+
+    // Type a photo marker into the still-editable draft, without saving.
+    const textarea = within(own()).getByRole("textbox");
+    fireEvent.change(textarea, { target: { value: `이 방 글\n\n${PHOTO}` } });
+    expect(own().textContent).toContain("이미지 미리보기는 변환 원문에서 확인하세요");
+
+    // The row goes `sent` from outside this tab, with the ORIGINAL (marker-free) stored text — the
+    // draft above is now stale.
+    rerender(
+      group({
+        text: "그룹 글",
+        rows: [row({ forked: true, text: "이 방 글", status: "rendered", deliveryStatus: "sent", url: "https://x.com/a/1" })],
+      }),
+    );
+
+    // The textarea falls back to the stored text (no marker); the notice must agree with it.
+    expect((within(own()).getByRole("textbox") as HTMLTextAreaElement).value).toBe("이 방 글");
+    expect(own().textContent).not.toContain("미리보기");
   });
 });

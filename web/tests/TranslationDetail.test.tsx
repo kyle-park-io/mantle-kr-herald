@@ -61,7 +61,15 @@ describe("TranslationDetail media", () => {
   // present, so nothing below it can ever collapse to zero height and jump on the very next keystroke.
   it("reserves the notice's slot even when there is no marker to show", () => {
     const { container } = mount(translation({ sourceText: "no media", koreanText: "미디어 없음" }));
-    expect(container.querySelector('[data-testid="media-edit-notice-slot"]')).not.toBeNull();
+    const slot = container.querySelector('[data-testid="media-edit-notice-slot"]');
+    expect(slot).not.toBeNull();
+    // The slot node existing is not enough by itself — proven by mutation, deleting just the strut
+    // placeholder inside it left this assertion (as it stood before this fix) green. The placeholder
+    // itself, at the notice's own type scale, is what actually reserves the line.
+    const strut = slot!.querySelector('p[aria-hidden="true"]');
+    expect(strut).not.toBeNull();
+    expect(strut!.className).toContain("text-[12px]");
+    expect(strut!.className).toContain("leading-relaxed");
   });
 
   it("reuses that same slot to hold the notice once a marker is present", () => {

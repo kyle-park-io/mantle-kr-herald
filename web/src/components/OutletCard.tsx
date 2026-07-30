@@ -4,7 +4,7 @@ import { btn, btnApprove, btnApproved, btnApprovedHover, btnApprovedRest, btnDan
 import { reconcileOutcome, rowEditorGate, resendKind } from "../rowEditor";
 import { fromEditor, toEditor } from "../canonicalEditor";
 import { Tip, type ConfirmRequest } from "./ConfirmDialog";
-import { MarkerText, MediaEditNotice } from "./MarkerText";
+import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
 import {
   CHANNEL_FORMAT_NOTE,
   CHANNEL_LABEL,
@@ -317,19 +317,11 @@ export function OutletCard(props: {
             {CHANNEL_FORMAT_NOTE[channel]}
           </p>
           {/*
-            Grid-stacked so this line reserves its height whether or not the notice has anything to
-            say — the group textarea is edited character by character, and a marker starting or
-            stopping to match mid-keystroke must not shift the 저장/승인하기/복사 row directly below.
-            Same idiom as `TranslationDetail`'s `media-edit-notice-slot`.
+            The group textarea is edited character by character, and a marker starting or stopping to
+            match mid-keystroke must not shift the 저장/승인하기/복사 row directly below —
+            `MediaEditNoticeSlot` is what reserves that height.
           */}
-          <div className="grid" data-testid="media-edit-notice-slot">
-            <p aria-hidden="true" className="invisible col-start-1 row-start-1">
-              {" "}
-            </p>
-            <div className="col-start-1 row-start-1">
-              <MediaEditNotice text={fromEditor(text)} where="변환 원문" />
-            </div>
-          </div>
+          <MediaEditNoticeSlot text={fromEditor(text)} where="변환 원문" />
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           <button
@@ -680,6 +672,14 @@ function Row(props: {
   // What this room's editor may still do. A `sent` row is read-only: see `rowEditorGate`.
   const gate = rowEditorGate(row, { busy, draft: fromEditor(props.draft) });
   /**
+   * What the row's own textarea actually displays, in "shown" (editor) spelling — a read-only row
+   * falls back to the stored `row.text` rather than `props.draft` (see the comment beside the
+   * textarea below), and anything that describes what the box is showing, notice included, has to
+   * read this instead of `props.draft` unconditionally or it can describe a string the reviewer is
+   * not looking at.
+   */
+  const shownDraft = gate.readOnly ? toEditor(row.text) : props.draft;
+  /**
    * What this room actually receives, piece by piece — the confirm shows these rather than the
    * canonical text, so the operator approves the split as well as the words.
    */
@@ -1022,26 +1022,19 @@ function Row(props: {
             // outside this tab (e.g. `pnpm send:channels`) while an unsaved draft sat in this
             // editor, `props.draft` would repaint as "what the room received" and nothing short
             // of collapsing the editor could clear it.
-            value={gate.readOnly ? toEditor(row.text) : props.draft}
+            value={shownDraft}
             onChange={(e) => props.onDraft(e.target.value)}
             readOnly={gate.readOnly}
             spellCheck={false}
             aria-label={gate.readOnly ? `${row.label}에 발송된 글` : `${row.label} 전용 글`}
           />
           {/*
-            Same reserve-space idiom as the group textarea above and `TranslationDetail`'s
-            `media-edit-notice-slot`: a forked room's copy carries the same markers, so it earns the
-            same notice — and the same one-line strut, so the button row below never jumps as the
-            reviewer types a marker into or out of existence.
+            Reads `shownDraft` — the exact same source the textarea above renders — rather than
+            `props.draft` unconditionally: on a read-only row (see the comment above) the textarea
+            falls back to the stored `row.text`, and a notice built from the stale draft instead would
+            describe a string the reviewer is no longer looking at.
           */}
-          <div className="mt-1.5 grid" data-testid="media-edit-notice-slot">
-            <p aria-hidden="true" className="invisible col-start-1 row-start-1 text-[12px] leading-relaxed">
-              {" "}
-            </p>
-            <div className="col-start-1 row-start-1">
-              <MediaEditNotice text={fromEditor(props.draft)} where="변환 원문" />
-            </div>
-          </div>
+          <MediaEditNoticeSlot text={fromEditor(shownDraft)} where="변환 원문" className="mt-1.5" />
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {gate.showSave && (
               <button

@@ -65,3 +65,39 @@ export function MediaEditNotice({ text, where }: { text: string; where: string }
     </p>
   );
 }
+
+/**
+ * The slot every editing textarea on the board puts `MediaEditNotice` in — extracted so this idiom
+ * (and its reasoning) exists once instead of being hand-copied at every call site.
+ *
+ * Reserves one line at the notice's own type scale so whatever sits below never moves as a marker
+ * starts or stops matching mid-edit: an `aria-hidden` placeholder line and the real notice share one
+ * grid cell (the same same-cell-overlap trick the 승인됨/승인 취소 button labels elsewhere on the
+ * board use), so the slot is exactly one line tall whether or not `MediaEditNotice` has anything to
+ * render. `MediaEditNotice` itself still returns null on clean text — the strut lives here, not
+ * there, precisely so that contract stays untouched.
+ *
+ * The placeholder's content MUST be a non-breaking space (` `), not an ordinary one: an ordinary
+ * space is whitespace under `white-space: normal`, collapses to nothing, and a `<p>` with no content
+ * generates no line box — the slot silently goes back to 0px and the strut stops strutting.
+ */
+export function MediaEditNoticeSlot({
+  text,
+  where,
+  className = "",
+}: {
+  text: string;
+  where: string;
+  className?: string;
+}) {
+  return (
+    <div className={`grid ${className}`.trim()} data-testid="media-edit-notice-slot">
+      <p aria-hidden="true" className="invisible col-start-1 row-start-1 text-[12px] leading-relaxed">
+        {" "}
+      </p>
+      <div className="col-start-1 row-start-1">
+        <MediaEditNotice text={text} where={where} />
+      </div>
+    </div>
+  );
+}
