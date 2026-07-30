@@ -95,6 +95,20 @@ to Drive:
 Everything else under `output/` is derivable: items re-collect, translations and variants and
 renderings regenerate, lineage is an append-only view of stores that still exist.
 
+**Amended after implementation (2026-07-30) — two of those are not derivable, and the bundle is
+seven files.** The sentence above conflates "the pipeline can produce this kind of file again" with
+"the pipeline reproduces this file". It holds for `renderings.json` (`format` is pure code over the
+variants — the board's per-card `[포맷 다시]` runs exactly that) and for `items.json`. It does not
+hold for `translations/translations.json` or `variants/variants.json`: those hold text an agent wrote
+and a human then read and approved. Re-running yields *a* translation and *a* conversion — a
+different one, non-deterministically, at the cost of another agent pass — and every 1차/2차 approval
+resting on the old text is gone. Losing them costs human review work, which is the same class of
+loss as the fork this spec was written to protect, arrived at by a different route. Both are now
+tracked (`src/cli/stateFiles.ts`, listed in pipeline order). `lineage/` still stays out — it grows
+without bound — but the reason it *can* stay out is now weaker than the original wording implied: it
+holds the only other copy of an authored text, which is precisely why the stores must be tracked
+rather than left leaning on it.
+
 Reuse `GoogleConfigDrive` unchanged — multipart upload, `files.list` for the latest, `?alt=media`
 download. Only the folder differs: `operational-state`, auto-provisioned under the same
 `GDRIVE_PARENT_FOLDER_NAME` parent as `steering-config`, its id cached in `GDRIVE_STATE_FOLDER_ID`.

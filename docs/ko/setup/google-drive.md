@@ -113,10 +113,16 @@ pnpm google:auth
 `drive:init`이 폴더 구조를 만들고 팀에 **편집자**로 공유합니다. 구조:
 
 ```
-Mantle KR Herald   ← 상위 폴더 (이 하나만 팀 공유; 하위는 상속)
-├─ review          ← GDRIVE_REVIEW_FOLDER_ID
-└─ approved        ← GDRIVE_APPROVED_FOLDER_ID
+Mantle KR Herald        ← 상위 폴더 (이 하나만 팀 공유; 하위는 상속)
+├─ review               ← GDRIVE_REVIEW_FOLDER_ID
+├─ approved             ← GDRIVE_APPROVED_FOLDER_ID
+├─ steering-config      ← GDRIVE_CONFIG_FOLDER_ID   (drive:init이 아니라 `pnpm config:push`가 첫 실행 때 만듭니다)
+└─ operational-state    ← GDRIVE_STATE_FOLDER_ID    (`pnpm state:push`가 첫 실행 때 만듭니다)
 ```
+
+> 아래 두 폴더는 `drive:init`이 만들지 않습니다. 해당 명령을 처음 돌릴 때 자동으로 생기고 id를
+> 출력하니, 그 값을 `.env`에 넣으면 됩니다. **`operational-state`는 팀 공유 대상이 아닙니다** — 이
+> 기기가 무엇을 이미 보냈는지의 기록이라, 남의 스냅샷을 복원하면 이미 나간 방이 미발송으로 보입니다.
 
 > **`GDRIVE_REVIEW_FOLDER_ID`는 "경로"가 아니라 폴더 "ID"**(`1AbCdEf…`)입니다. 직접 타이핑하지 말고
 > `drive:init` 출력값을 붙여넣으세요.
