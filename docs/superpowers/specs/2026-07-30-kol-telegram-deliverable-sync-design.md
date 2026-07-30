@@ -115,6 +115,14 @@ A new human-maintained tab, `kol-map` (English name, consistent with `targets` a
 kolId | tgHandle | sheetLabel | pricePerPost | active
 ```
 
+**`tgHandle` accepts either a URL or a bare handle.** All four of
+`https://t.me/marshallog`, `t.me/marshallog`, `@marshallog`, and `marshallog` resolve to the same
+handle. This was left unsaid in the first draft of this section and that ambiguity was the root cause
+of a critical defect: the seed table in `docs/ko/kol-map-seed.md` lists **bare** handles, the code
+accepted only the URL and `@` forms, and the mismatch dropped every row with no warning while the run
+still reported a clean `0 created`. Both forms are now accepted and both are tested; a cell that
+matches neither is named in a warning rather than skipped in silence.
+
 `sheetLabel` is the spelling used in the monthly tabs' column A, so generated rows join to the
 existing summary formulas without editing them. Handles are seeded from the `Q3 조정 단가 표` block's
 link column — 13 channels: `enjoymyhobby`, `GMBLABS`, `Raoni1`, `airdr0p_lab`, `marshallog`,
@@ -170,6 +178,18 @@ positive was present to test that. **`MATCH_THRESHOLD` must not be changed on th
 run.** Calibrating it needs a case where the candidate and the rendering both come from the same
 campaign, which only exists from August onward (per the paragraph above).
 
+**The threshold's two failure directions are not symmetric.** Everything above reasons about
+`MATCH_THRESHOLD` being too *strict* — a genuine rewrite scoring below 0.30 and coming back blank. The
+cost of that is one human keystroke, and a later re-run repairs it, because the blank-only fill rule
+means a row whose `itemId` is still empty gets another chance every run. Too *permissive* is the
+expensive direction and it is not repairable. One false positive writes a wrong `itemId`, and topic
+inheritance then copies that row's topic onto every later row resolving to the same `itemId` — and
+since a topic is never overwritten once set, re-running cannot undo any of it. The wrong label spreads
+and sticks. So the threshold should only ever be lowered against evidence containing real true
+positives, and the same asymmetry is why text normalization must not discard information that
+distinguishes two campaigns: stripping every digit, for instance, would make "100 MNT" and "200 MNT"
+identical inputs.
+
 **Topic bootstraps itself.** In `Jul.`, the same Topic string repeats across every KOL row for one
 campaign (`USPXx Live on Mantle` appears three times), which shows Topic is a label per *content
 item*, not per post. So once a human types a topic for an `itemId` in the review tab, every later row
@@ -195,11 +215,25 @@ overwrite; the rest are machine-owned readings.
   same reason.
 - `confirmed` is the only column a human writes: blank, `paid`, `organic`, or `reject`.
 
-### 6. Idempotency: the machine never overwrites a human
+### 6. Idempotency: the machine's write must not include a column a human owns
 
-Re-running upserts by `deliverableLink`. On an existing row, only `views`, `engagements`,
-`reactionsDetail`, and `fetchedAt` are refreshed. `confirmed`, and any `topic` a human has edited,
-are never overwritten. Rows marked `reject` are not re-proposed on later runs.
+Re-running upserts by `deliverableLink`. On an existing row the machine refreshes `views`,
+`engagements`, `reactionsDetail` and `fetchedAt`, fills `itemId`/`topic`/`matchScore`/`pricePerPost`
+only while those cells are blank, and never touches `confirmed`. Rows marked `reject` are not
+re-proposed on later runs.
+
+**This is a requirement about the write, not about the resulting values.** The first draft of this
+section stated an outcome ("only these are refreshed"), and an implementation can satisfy that outcome
+while still writing every column — read the whole row, copy the untouched values forward, write the
+whole row back. That passes any test that checks the *values*, and it is not preservation. A run over
+7-13 channels takes minutes against a workbook people are editing, so a value read at t+0 and written
+back at t+90s silently discards whatever a human typed in between: a `paid` reverts to blank and the
+row is re-proposed, a `reject` becomes eligible again. Stated as a mechanism instead: **a column the
+machine does not own on this row must not be inside any range the machine writes for that row.** The
+column layout cooperates — the measurements are contiguous (`E:G`), the attribution suggestions are
+contiguous (`H:J`), and `pricePerPost` (`K`) and `confirmed` (`M`) fall outside both — so the common
+refresh writes `E:G` and `L` and cannot reach either. A new row is appended at full width, which is
+fine: it does not exist yet, so there is nothing on it to protect.
 
 ### 7. Error isolation per channel
 
@@ -207,6 +241,16 @@ A channel that goes private, gets deleted, or is renamed simply has no preview. 
 skipped with a warning and the run continues — the same per-account isolation `metrics:record` uses.
 The run summary must state how many of the 13 channels were unreachable, so a silent zero is never
 mistaken for "no posts this month".
+
+**"Unreachable" means the page contained no message blocks at all** — not merely "the HTTP call
+failed". Defining it as an HTTP failure, which the first draft of this section implied, misses the
+common case entirely: `GET https://t.me/s/<dead-handle>` answers **302** to
+`https://t.me/<dead-handle>`, and that contact page is a perfectly good **HTTP 200** carrying zero
+`tgme_widget_message_wrap` blocks (verified live 2026-07-30). Nothing throws, the parser returns `[]`,
+and a deleted channel reports as swept clean. So the count is driven by the block count of the first
+page, and it is deliberately distinct from "blocks present, none inside the window" — the latter is a
+real channel that genuinely did not post that month, and reporting *that* as unreachable would be its
+own false alarm.
 
 ### 8. The machine does not write the monthly tabs
 
