@@ -23,9 +23,13 @@ export const paths = {
   larkDir: join(OUTPUT_DIR, "lark"),
   larkItems: join(OUTPUT_DIR, "lark", "items.json"),
   translationsDir: join(OUTPUT_DIR, "translations"),
+  /** What `JsonTranslationStore` writes — the 1차 Korean text and its approval. Tracked by `state:push`. */
+  translationsStore: join(OUTPUT_DIR, "translations", "translations.json"),
   translationsPending: join(OUTPUT_DIR, "translations", "pending.json"),
   translationsWorksheets: join(OUTPUT_DIR, "translations", "worksheets"),
   variantsDir: join(OUTPUT_DIR, "variants"),
+  /** What `JsonConversionStore` writes — the per-type converted copy. Tracked by `state:push`. */
+  variantsStore: join(OUTPUT_DIR, "variants", "variants.json"),
   variantsPending: join(OUTPUT_DIR, "variants", "pending.json"),
   variantsWorksheets: join(OUTPUT_DIR, "variants", "worksheets"),
   formattedDir: join(OUTPUT_DIR, "formatted"),
