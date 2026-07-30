@@ -7,158 +7,193 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-30
+
 ### Upgrading — action required for existing installs
 
-- **`.env`가 아직 `TELEGRAM_CHAT_ID`를 쓰고 있다면 지금 옮기세요 — 안 옮기면 텔레그램 발송이 조용히
-  멈춥니다.** 그 값을 `TELEGRAM_CHAT_ID_COMMUNITY`(맨틀 한국 커뮤니티)로 복사하고 옛 줄은 지우면
-  됩니다. 데브방을 쓴다면 `TELEGRAM_CHAT_ID_DEV`도 채우세요. 확인은 `pnpm send:channels --target
-  telegram`의 요약 줄 — 미설정 방은 `· 미설정 N (TELEGRAM_CHAT_ID_DEV)`로 이름과 함께 나옵니다.
-- **보드에 `발송 · 잠김`이 늘어 보일 수 있습니다 — 대부분 정상입니다.** 발송이 원문 번역의 승인까지
-  확인하기 시작했으므로, 승인이 취소된 번역이나 **문구를 승인한 뒤에 다시 승인된** 번역에 딸린 방은
-  이제 잠깁니다. 줄 아래 노란 글씨가 어느 쪽인지 알려주고, 읽어보고 괜찮으면 `승인 ✓`를 다시 누르면
-  풀립니다. 지워지는 것은 없습니다. 다만 **`approvedAt`이 없는 오래된 승인 렌더링·포크**가 있다면 —
-  승인 시각을 비교할 수 없으므로 `원문이 이 문구를 승인한 뒤에 다시 승인됐습니다`로 잠깁니다. 이때도
-  고칠 것은 `승인 ✓` 한 번뿐입니다.
-- **발송처 축(PR #80)을 건너뛰고 그 이전 버전에서 곧장 올라온 설치본은, 대시보드를 처음 열었을 때
-  맨틀 한국 데브방이 통째로 "한 번도 안 나감"으로 보입니다.** `output/publish/deliveries.json`이
-  없으면 원장은 예전 `channels.json`을 읽기 전용으로 이관하는데, 예전 행에는 방 정보가 없어
-  **채널의 대표 방 하나**에만 귀속됩니다(`telegram` → 맨틀 한국 커뮤니티). 그래서 **지금까지
-  텔레그램으로 나간 모든 과거 항목이 데브방 줄에서는 미발송으로 표시됩니다** — 승인 상태는 그대로라
-  줄이 잠기지도 않고, 확인 창 한 번이면 몇 달 전 글이 살아 있는 방으로 나갑니다. `send:channels`의
-  first-delivery 가드도 여기서는 도움이 되지 않습니다: **방을 지목하는 것 자체가 확인**이라, 보드의
-  방별 `발송`은 설계상 그 가드를 풉니다. 첫 사용 전에 데브방이 실제로 받은 과거 발송을
-  `deliveries.json`에 채워 넣거나(방마다
-  `{"itemId","type","outletId":"tg-dev","status":"sent","at":"<ISO>","by":"auto"}` 한 행 — `sent`로
-  적으면 보드에서도 `발송됨`으로 보이고 다시 누를 수 없습니다), 최소한 **과거 항목의 데브방 줄은
-  누르지 말라고 팀에 공지**하세요. PR #80을 이미 거쳐
-  `deliveries.json`이 있는 설치본은 해당 없습니다.
-- **`pnpm state:push`를 한 번 돌리세요 — 손으로 백업하던 파일들을 이제 이 명령이 맡습니다.** 방별로
-  갈라 쓴 글(`✎따로`)은 `output/formatted/overrides.json`에만 있고 다시 만들어낼 수 없습니다 —
-  파일이 사라지면 갈라졌던 방이 전부 조용히 그룹 글로 되돌아가고, 화면에는 오류 하나 뜨지 않습니다.
-  발송 원장(`output/publish/deliveries.json`, 예전 형식 `channels.json`, `x-article.json`)과 동기화
-  원장(`output/publish/state.json`)도 마찬가지입니다. 아래 `Added`의 `state:push`/`state:pull`이
-  이들을 Drive 스냅샷으로 묶습니다.
-- **업그레이드 후 첫 `pnpm send:reconcile`(또는 대시보드가 2분마다 도는 배경 확인)에서 `발송됨`이던
-  줄이 `예약 취소됨`으로 바뀔 수 있습니다 — 데이터가 사라진 게 아니라 고쳐진 것입니다.** X 발송은
-  Typefully 큐에 예약으로 들어가고, 그 초안이 게시되기 전에 지워지면 그 방에는 **아무것도 올라가지
-  않습니다**. 지금까지는 그런 줄도 계속 `발송됨`으로 남아 있었습니다. 이제 확인 과정에서 초안이
-  사라진 것을 확인하면 그 행의 상태만 `dropped`로 바꿉니다 — 행 자체는 `deliveries.json`에 그대로
-  남고, `postId`와 시각도 보존됩니다(어느 초안이었는지 나중에 Typefully 기록과 대조할 수 있어야
-  하므로). 화면에서는 `예약 취소됨` 배지가 붙고 그 방은 **다시 보낼 수 있는 상태**가 됩니다.
-- **⚠ 위 항목의 결과로, 문서가 약속해 온 멱등성이 더 이상 무조건적이지 않습니다 — 승인된 백로그가
-  쌓여 있는 기존 설치본은 업그레이드 후 첫 배치 실행 전에 보드를 한 번 확인하세요.** 지금까지
-  [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §2, [`docs/ko/capabilities.md`](docs/ko/capabilities.md) §8,
-  [`docs/ko/setup/channels.md`](docs/ko/setup/channels.md) §"함께 검증 / 참고"는 "이미 보낸 항목은 로컬 원장이
-  걸러내므로 재실행은 항상 안전합니다(멱등)"라고 적어 왔습니다. 이제 **`예약 취소됨`으로 물러난 행은
-  그 방을 다시 보낼 수 있는 상태로 만듭니다** — 그게 이 변경의 목적입니다(그 방은 실제로 아무것도 못
-  받았으니까요). 하지만 그 방에 대해 `pnpm send:channels`를 다시 돌리면 그 항목은 **다시 나갑니다**.
-  의도한 동작이지만, 재실행이 아무 일도 하지 않는다고 가정해 온 습관과는 다릅니다. 세 문서 모두
-  고쳤습니다. 조치: 업그레이드 후 첫 배치 전에 보드에서 `예약 취소됨` 줄이 있는지 보고, 그중 실제로
-  다시 보내야 하는 것만 남기세요(`--ids`/`--outlets`로 좁혀 보내면 확실합니다).
-- **`pnpm clean`이 이제 `output/` 아래의 `*.lock` 파일도 지웁니다 — 단, 잠금 모듈 자신이 회수해도
-  된다고 판단하는 것만.** 발송 원장 쓰기는 프로세스 사이에서도 겹치지 않도록 `<파일>.lock`을 잡는데,
-  프로세스가 도중에 죽으면 그 파일이 남습니다. 문턱은 **살아 있는 발송이 들고 있는 잠금은 절대
-  건드리지 않기 위한 것**이고, 잠금 회수 규칙과 **똑같은 세 가지 판정**을 씁니다: 31초(30초 문턱 +
-  1초 확인)보다 오래됐고, 그 뒤 확인 구간 동안 **파일의 수정 시각이 움직이지 않아야** 지웁니다 —
-  움직였다면 그건 살아 있는 프로세스가 스스로 찍는 증거이고, 시계가 틀려도 참입니다. 임시
-  파일(`*.tmp-…`)은 자기 시각이 아니라 **그 파일이 올라갈 원장의 잠금**으로 판정합니다: 둘은 한 번의
-  쓰기가 만든 짝인데 잠금만 갱신되므로, 따로 재면 느린 정상 쓰기의 임시 파일을 지워 `rename`을
-  깨뜨립니다. 그래도 **발송이나 `pnpm serve`가 돌고 있는 동안에는 `pnpm clean --yes`를 돌리지
-  마세요**([`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §5) — 문턱은 안전망이지 허가가 아닙니다.
-  (잠금이 걸린 파일이 실제로 있으면 `clean`이 최대 1초 기다립니다.)
+- **If your `.env` still uses `TELEGRAM_CHAT_ID`, move it now — if you don't, Telegram delivery
+  stops silently.** Copy that value into `TELEGRAM_CHAT_ID_COMMUNITY` (맨틀 한국 커뮤니티) and delete the
+  old line. If you use the dev room, fill in `TELEGRAM_CHAT_ID_DEV` too. To check, read the summary
+  line of `pnpm send:channels --target telegram` — an unconfigured room appears there as
+  `· 미설정 N (TELEGRAM_CHAT_ID_DEV)`, named, not just counted.
+- **The board may show more `발송 · 잠김` (send · locked) than before — most of it is correct.** Sending
+  now checks the source translation's approval too, so a room hanging off a translation whose
+  approval was withdrawn, or off one that **was approved again after the copy was**, is locked from
+  now on. The yellow text under the row tells you which of the two it is; read it, and if it looks
+  fine, press `승인 ✓` again and it releases. Nothing gets deleted. That said, if you have **older
+  approved renderings or forks with no `approvedAt`** — the approval times cannot be compared, so
+  they lock with `원문이 이 문구를 승인한 뒤에 다시 승인됐습니다` ("the source was approved again after this copy was").
+  Here too the fix is nothing more than one `승인 ✓`.
+- **An install that skipped the outlet axis (PR #80) and came straight up from a version predating
+  it will show 맨틀 한국 데브방 as wholly "never sent to" the first time the dashboard is opened.** When
+  `output/publish/deliveries.json` is absent the ledger migrates the old `channels.json` read-only,
+  and an old row carries no room information, so it is attributed to **a single representative room
+  for the channel** (`telegram` → 맨틀 한국 커뮤니티). So **every past item that has ever gone out over
+  Telegram is marked unsent on the dev-room row** — the approval state is unchanged, so the row is
+  not locked either, and one confirmation dialog puts a post from months ago into a live room.
+  `send:channels`' first-delivery guard is no help here: **naming a room is itself the
+  confirmation**, so the board's per-room `발송` lifts that guard by design. Before first use, either
+  fill the past deliveries the dev room actually received into `deliveries.json` (one row per past
+  item — `{"itemId","type","outletId":"tg-dev","status":"sent","at":"<ISO>","by":"auto"}`; written as
+  `sent` it also reads as `발송됨` on the board and cannot be pressed again), or at the very least
+  **tell the team not to press the dev-room row on past items**. An install that already came
+  through PR #80 and has a `deliveries.json` is unaffected.
+- **Run `pnpm state:push` once — the files you have been backing up by hand are this command's job
+  now.** Copy forked per room (`✎따로`) exists only in `output/formatted/overrides.json` and cannot be
+  produced again — if that file disappears, every room that had forked quietly reverts to the group
+  copy, and not one error shows on screen. The same holds for the send ledgers
+  (`output/publish/deliveries.json`, the older-format `channels.json`, `x-article.json`) and the
+  sync ledger (`output/publish/state.json`). `state:push`/`state:pull` in `Added` below bundle these
+  into a Drive snapshot.
+- **On the first `pnpm send:reconcile` after the upgrade (or on the background check the dashboard
+  runs every 2 minutes), a row that read `발송됨` (sent) may turn into `예약 취소됨` — that is data being
+  corrected, not data disappearing.** An X send goes into the Typefully queue as a scheduled draft,
+  and if that draft is deleted before it publishes, **nothing goes up in that room at all**. Until
+  now a row like that stayed `발송됨` anyway. Now, when the check confirms the draft is gone, it
+  changes only that row's status to `dropped` — the row itself stays in `deliveries.json`, and
+  `postId` and the timestamp are preserved too (you have to be able to match which draft it was
+  against the Typefully record later). On screen it takes the `예약 취소됨` badge, and that room becomes
+  **sendable again**.
+- **⚠ As a consequence of the item above, the idempotence the docs have been promising is no longer
+  unconditional — an existing install with a backlog of approved items should check the board once
+  before its first batch run after the upgrade.** Up to now
+  [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §2,
+  [`docs/ko/capabilities.md`](docs/ko/capabilities.md) §8, and
+  [`docs/ko/setup/channels.md`](docs/ko/setup/channels.md) §"함께 검증 / 참고" have all said "an
+  already-sent item is filtered out by the local ledger, so a rerun is always safe (idempotent)".
+  Now **a row that has fallen back to `예약 취소됨` makes that room sendable again** — that is the
+  purpose of this change (that room really did receive nothing). But run `pnpm send:channels` again
+  for that room and the item **goes out again**. That is the intended behaviour, but it differs from
+  the habit of assuming a rerun does nothing. All three docs are fixed. Action: before the first
+  batch after the upgrade, look on the board for `예약 취소됨` rows and keep only the ones that genuinely
+  need re-sending (narrowing the send with `--ids`/`--outlets` makes it certain).
+- **`pnpm clean` now also deletes `*.lock` files under `output/` — but only the ones the lock module
+  itself judges safe to reclaim.** A send-ledger write takes a `<file>.lock` so writes cannot
+  overlap even across processes, and if the process dies partway through, that file is left behind.
+  The threshold exists **to never touch a lock a live send is holding**, so it now asks **the same
+  three-way question the lock-reclaim rule asks**: a path with no lock on it is judged by age alone,
+  as it always was; a lock younger than the window belongs to a live holder and everything it guards
+  is left alone; and an older lock is watched, and deleted only if its **mtime does not move** over
+  the confirmation window — a lock older than 31 seconds (the 30-second threshold + 1 second of
+  confirmation) whose mtime moves is a live process stamping its own proof of life, which holds true
+  even when the clock is wrong. A temp file (`*.tmp-…`) is judged not by its own timestamp but by
+  **the lock of the ledger it is about to become**: the two are a pair created by one write and only
+  the lock is refreshed, so measuring them separately deletes the temp file of a slow but healthy
+  write and breaks its `rename`. Even so, **do not run `pnpm clean --yes` while a
+  send or `pnpm serve` is running** ([`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §5) — the
+  threshold is a safety net, not a permission slip. (When a locked file really is present, `clean`
+  waits up to 1 second.)
 
 ### Added
 
-- **발송처(outlet) — `type`·`channel`과 나란한 세 번째 축.** 지금까지 "어디로 보냈는가"는 채널로만
-  구분됐지만, **맨틀 한국 커뮤니티와 맨틀 한국 데브방은 둘 다 `telegram`**입니다. 이제 방(room)
-  아홉 곳이 `src/domain/outlet/models.ts`의 `ALL_OUTLETS` 상수로 정의됩니다 — X 포스트·아티클,
-  텔레그램 4곳(커뮤니티·데브방·KOL방·블록체인 커뮤니티방), 오픈카톡 2곳, PR 메일. 각 방은 자동
-  (`auto`, 봇/API가 발송)인지 수동(`manual`, 사람이 붙여넣기)인지, 어떤 타입을 기본으로 받는지,
-  (자동 텔레그램 방이면) 어떤 chat id 환경변수를 쓰는지를 함께 들고 있습니다. `type`은 **무슨 성격의
-  글인지**, `channel`은 **어떤 형식으로 쓰는지**, `outlet`은 **어느 방으로 가는지**입니다.
-  `pnpm send:channels`는 채널이 아니라 방마다 한 번씩 발송하고, `--outlets <방 id[,방 id]>`로 방을
-  좁힐 수 있습니다. (대시보드 보드 UI는 바로 아래 두 항목 참고.) 설계는
+- **Outlet (발송처) — a third axis alongside `type` and `channel`.** "Where did this go" used to be
+  distinguished by channel alone, but **맨틀 한국 커뮤니티 and 맨틀 한국 데브방 are both `telegram`**.
+  Nine rooms are now defined as the `ALL_OUTLETS` constant in `src/domain/outlet/models.ts` — the X
+  post and the X article, four Telegram rooms (커뮤니티, 데브방, KOL방, 블록체인 커뮤니티방), two
+  KakaoTalk open chats, and PR mail. Each room carries whether it is automatic (`auto`, a bot/API
+  posts it) or manual (`manual`, a human pastes it), which types it receives by default, and (for an
+  auto Telegram room) which chat id env var it uses. `type` is **what kind of copy this is**,
+  `channel` is **what format it takes**, `outlet` is **which room it goes to**. `pnpm send:channels`
+  now sends once per room rather than once per channel, and `--outlets <room id[,room id]>` narrows
+  it to specific rooms. (For the dashboard board UI, see the next two entries.) See
   `docs/superpowers/specs/2026-07-29-outlet-board-design.md`.
-- **방 하나만 다른 문구를 쓸 수 있습니다 — 편집하면 갈라지는(fork-on-edit) 방별 override.** 한
-  그룹의 문구는 원래 그 문구를 받는 모든 방이 공유하지만, 검수자가 카드가 아니라 **한 방의 줄**을
-  고쳐 저장하면 그 방은 독립된 사본(`output/formatted/overrides.json`)을 갖고 `✎따로`로 표시되며
-  **따로 승인해야 발송됩니다** — 그룹을 승인해도 이 방은 빠집니다. 이미 승인된 그룹 아래에서 막
-  갈라져 나온 방은 **항상 미승인 상태(`rendered`)로 시작합니다** — 고친 글은 아직 그 형태로 검수받지
-  않았기 때문입니다. `그룹 글로 되돌리기`를 누르면 override가 삭제되고 그 방은 다시 그룹 글과 그룹
-  승인을 따릅니다 — 되돌아가는 유일한 방법입니다(문구가 우연히 그룹과 같아져도 override 자체는
-  남아 있는 한 별개의 행입니다). override가 있으면 그것을, 없으면 그룹 렌더링을 돌려주는 순수 함수
-  `textFor()` 하나가 이 해석을 담당합니다.
-- **방별로 갈라 쓴 글도 계보(`pnpm lineage`)에 남습니다 — `그룹 글로 되돌리기`로 버린 글까지.**
-  갈라 쓴 글은 `output/formatted/overrides.json`에만 있고 **다시 만들어낼 수 없습니다**(`format`을
-  다시 돌리면 나오는 건 그룹 글입니다). 그런데 `그룹 글로 되돌리기`는 그 유일한 사본을 확인 창도
-  오류도 없이 클릭 한 번에 지웁니다. 이제 `SaveOutletOverride`도 다른 저장 지점들과 똑같이 계보에
-  append합니다 — **① 글을 저장할 때**(정규화된 본문), **② 승인/승인 취소할 때**(상태 전이가
-  보이도록), 그리고 **③ 되돌리기로 버릴 때**(지우기 *전에* 읽어서, 버려지는 본문 그대로). 새 단계
-  이름은 `forked`, 구분자(`variant`)는 그룹의 `타입/채널`과 나란한 **`타입/방id`**입니다. 그래서
-  `pnpm lineage <itemId>`를 열면 어느 방이 언제 무엇으로 갈라졌고 무엇을 버렸는지가 그룹 문구
-  바로 옆에 나옵니다. 되돌리기 항목은 **`버린 내용:`으로 본문 전체가 그대로 찍힙니다** — 이 항목만
-  차이(diff)가 아니라 전문인데, 버린 글은 보통 직전 항목과 한 글자도 다르지 않아서 차이로 찍으면
-  `(내용 동일)` 한 줄이 되고, 몇 번 고친 뒤라면 버린 글이 어디에도 통째로는 남지 않기 때문입니다.
-  **되살리는 것은 자동이 아닙니다** — 계보는 기록이지 롤백이 아니라서, 복구는
-  그 본문을 복사해 다시 붙여넣는 사람의 판단입니다. **저장·승인은 다른 계보 기록과 같이
-  best-effort**(계보 기록이 실패해도 저장 자체는 됩니다 — 글은 override에 그대로 남으니 잃는 건
-  이력뿐입니다)**지만, 되돌리기만은 다릅니다**: 버릴 본문을 계보에 남기지 못하면 되돌리기는
-  **실패하고 override는 지워지지 않습니다**(보드에 400 오류로 뜹니다). 기록에 실패한 채 지우면 그
-  글은 어디에도 없기 때문입니다. 설계는
+- **One room can carry copy the others don't — a per-room override that forks on edit
+  (fork-on-edit).** A group's copy is shared by every room that receives it, but when a reviewer
+  edits and saves **one room's row** rather than the card, that room gets an independent copy of its
+  own (`output/formatted/overrides.json`), is marked `✎따로`, and **must be approved separately to
+  send** — approving the group leaves this room out. A room that has just forked out from under an
+  already-approved group **always starts unapproved (`rendered`)**, because the edited copy has not
+  been reviewed in that form yet. Pressing `그룹 글로 되돌리기` deletes the override and the room
+  follows the group's copy and the group's approval again — the only way back (even if the copy
+  happens to become identical to the group's, the override is a separate row for as long as it is
+  still there). One pure function, `textFor()`, owns this resolution: the override when there is one,
+  the group rendering when there isn't.
+- **A room's forked copy is recorded in the lineage (`pnpm lineage`) too — including the copy
+  discarded by `그룹 글로 되돌리기`.** A forked copy exists only in
+  `output/formatted/overrides.json` and **cannot be regenerated** (re-run `format` and what comes
+  out is the group copy). Yet `그룹 글로 되돌리기` deletes that sole copy in a single click, with no
+  confirmation dialog and no error. `SaveOutletOverride` now appends to the lineage exactly like the
+  other save sites — **① when the copy is saved** (the normalized body), **② when it is approved or
+  unapproved** (so the status transition is visible), and **③ when a revert discards it** (read
+  *before* the delete, the discarded body verbatim). The new stage name is `forked`, and the
+  discriminator (`variant`) is **`type/outletId`**, parallel to a group's `type/channel`. So opening
+  `pnpm lineage <itemId>` shows which room forked when, into what, and what it discarded, right
+  beside the group's copy. A revert entry **prints the whole body under `버린 내용:`** — the one
+  entry that is a full text rather than a diff, because a discarded copy is usually not one
+  character different from the entry before it, so as a diff it would render as a single
+  `(내용 동일)` line, and after a few edits the discarded copy survives nowhere in full.
+  **Restoring is not automatic** — the lineage is a record, not a rollback, so recovery is the
+  judgment of a human who copies that body and pastes it back. **Saves and approvals are
+  best-effort like every other lineage write** (the save itself still succeeds when the lineage
+  write fails — the copy stays in the override, so all that is lost is the history)**, but the
+  revert alone is different**: if the body about to be discarded cannot be written to the lineage,
+  the revert **fails and the override is not deleted** (surfacing as a 400 on the board). Deleting
+  after a failed record would leave that copy nowhere at all. See
   `docs/superpowers/specs/2026-07-29-fork-preservation-design.md`.
-- **`pnpm state:push` / `pnpm state:pull [--yes]` — 다시 만들 수 없는 운영 파일의 Drive 백업.**
-  `output/` 아래 대부분은 다시 만들 수 있지만(항목은 재수집, 번역·변환·렌더링은 재생성) **다음은
-  아닙니다**: 방별 포크(`formatted/overrides.json`), 발송 원장(`publish/deliveries.json`,
-  그리고 그게 없을 때 읽히는 예전 형식 `publish/channels.json` — 발송처 축(PR #80) 이전 설치본에는
-  **이 파일이 발송 이력의 전부**입니다), X 아티클 원장(`publish/x-article.json`), 동기화 원장
-  (`publish/state.json`). `state:push`는 이들을 타임스탬프
-  스냅샷(`operational-state-<시각>.json`) 하나로 묶어 Drive의 `operational-state` 폴더에 올립니다 —
-  덮어쓰지 않고 쌓이므로 히스토리가 곧 롤백입니다. 폴더는 첫 실행 때 `steering-config`와 같은 상위
-  폴더 아래에 자동으로 만들어지고 id를 알려줍니다(`GDRIVE_STATE_FOLDER_ID`).
-  **`state:pull`은 `config:pull`보다 일부러 더 조심스럽습니다.** 스티어링 설정은 관리자가 올리고
-  팀원이 내려받는 **공유**지만, 이쪽은 **이 기기가 무엇을 이미 보냈는가의 기록**입니다 — 남의
-  스냅샷을 받으면 이미 나간 방이 미발송으로 보이고, 확인 창 한 번이면 몇 달 전 글이 살아 있는 방으로
-  나갑니다. 그래서 (1) `--yes` 없이는 **미리보기만** 하고 아무것도 쓰지 않으며, 미리보기는 파일
-  이름이 아니라 **파일마다 현재 행 수와 스냅샷 행 수를 나란히** 보여줍니다(`현재 128행 → 스냅샷
-  3행`), (2) 쓰기 전에 현재 트리를 `output/archive/state-<시각>/`에 먼저 백업하고, (3) 스냅샷 파싱이나
-  백업이 실패하면 **한 글자도 쓰지 않고** 중단합니다. 스냅샷에 없는 로컬 파일은 **지우지 않고 그대로
-  둡니다**(`유지`로 표시) — 없는 걸 맞추겠다고 살아 있는 발송 원장을 지우는 것이야말로 이 기능이
-  막으려는 사고이기 때문입니다. 설계는
-  `docs/superpowers/specs/2026-07-29-fork-preservation-design.md`.
-- **2차 검수가 목록에서 발송판(board)으로 바뀌었습니다.** `(itemId, type, channel)` 렌더링을 나열하던
-  기존 화면 대신, 카드 하나가 `타입 · 채널` 문구 하나(그리고 승인 상태)를 담고 그 아래에 **그 문구를
-  받는 방들**이 한 줄씩 붙습니다. 자동 방은 `발송`(확인 창이 방 이름과 나갈 글을 함께 보여주고,
-  누르면 되돌릴 수 없음), 수동 방은 `복사` + `전달함`(사람이 스스로 남기는, 취소 가능한 기록)입니다.
-  방이 여러 카드에 걸쳐 있으면(예: 데브방이 공지·해설 둘 다 받음) `n/m`으로 표시되고 줄에 마우스를
-  올리면 같은 방의 다른 줄이 함께 밝아집니다. 목적지별 출력(실제로 나갈 바이트/글자 수)과 변환
-  원문 대조는 카드 안으로 옮겨 왔고, 별도 상세 화면(`RenderingDetail.tsx`)은 없앴습니다. **편집
-  중(저장 전)인 텍스트 단위만 잠깁니다, 카드 전체가 아니라.** 그룹 칸을 고치는 중이면 그룹 자신과
-  그 그룹 글을 그대로 쓰는(=갈라지지 않은) 방들의 `발송`·`복사`·`전달함`이 잠기고, 한 방의
-  `✎ 따로 쓰기` 칸을 고치는 중이면 **그 방만** 잠깁니다 — 옆방 줄은 그대로 눌립니다. 저장된 옛
-  글이 실수로 나가는 것은 여전히 막으면서, 한 방에서의 실수 편집이 상관없는 다른 방까지 얼려
-  버리지 않도록 나눈 것입니다(초기 구현은 카드 전체를 잠갔다가, 그러면 잠긴 줄을 풀려는 시도가
-  조용히 그 방을 그룹에서 갈라 버리는 부작용이 있어 지금 형태로 좁혔습니다). `[변환 준비]`(체크한
-  유형의 워크시트만 써 두는, `convert:prepare`와 동급 — 이 프로젝트에는 Claude API가 없어 실제 변환은 여전히 로컬
-  에이전트+`convert:save`의 몫)와 카드별 **`[포맷 다시]`**(그 카드를 `FormatVariants`로 그 자리에서
-  다시 렌더링하는 순수 코드라 정말로 실행됨)도 이 화면에서 트리거할 수 있습니다. `포맷 다시`는
-  **지금 저장된 문구와 승인 상태를 버립니다** — 확인 창이 무엇이 사라지는지 먼저 밝히고, 되돌릴 수
-  없으며, `✎따로`로 갈라진 방의 글은 영향받지 않습니다.
-- **수동 방 전달 기록(`전달함`).** 봇이 닿을 수 없는 방(오픈카톡 2곳, 텔레그램 KOL방·블록체인
-  커뮤니티방, PR 메일)의 전달 여부도 이제 원장에 남습니다. `MarkDelivery`가 `(아이템, 타입, 방)`에
-  `delivered` 행을 쓰고, 잘못 찍었으면 되돌릴 수 있습니다 — 사람이 "보냈다"고 **주장**한 기록이라
-  취소 가능합니다. 반면 봇이 실제로 보낸 `sent` 행은 되돌릴 수 없습니다(되돌리면 다음 실행이 살아 있는
-  방으로 같은 글을 다시 보냅니다). 자동 방에 `delivered`를 찍는 것도 거부됩니다 — 봇이 그 행을 보고
-  "이미 보냈다"고 판단해 조용히 건너뛰기 때문입니다.
-- **두 개의 새 변환 타입 — `explainer`(해설)과 `casual`(소통).** 지금까지 텔레그램으로 나가는 글은
-  `announcement`(공지) 하나뿐이라, 같은 소식을 데브방과 커뮤니티방에 성격을 달리해 보낼 방법이
-  없었습니다. `explainer`는 무슨 일이 있었는지에서 멈추지 않고 **왜 중요하고 어떻게 동작하는지**를
-  풀어 쓰는 글(맨틀 한국 데브방 기준), `casual`은 기념일·수상자 발표·초대처럼 커뮤니티가 함께
-  반응할 여지가 있는 **가벼운 소식**(맨틀 한국 커뮤니티 기준)입니다. 둘 다 존댓말과 규제 표현
-  규칙은 그대로 지키며, 차이는 문체가 아니라 **레지스터**에 있습니다. 각각
-  `conversion/explainer.md`·`conversion/casual.md` 지침으로 조종되고, 기본 채널은 `telegram`입니다.
-  `ConversionType`을 쓰는 곳(라벨·기본 채널·few-shot 스토어·`doctor` 스티어링 검사·CLI usage 문자열)은
-  모두 `ALL_TYPES`에서 파생되므로 별도 배선이 필요 없었습니다 — 기존 불변식 테스트가 누락을 잡습니다.
-  `conversion/{kol,pr}.md`도 이번에 스켈레톤(각 7줄)에서 실제 지침으로 채웠습니다.
+- **`pnpm state:push` / `pnpm state:pull [--yes]` — Drive backup for the operational files that
+  cannot be rebuilt.** Most of what lives under `output/` can be rebuilt (items re-collect;
+  translations, conversions and renderings regenerate), but **these cannot**: the per-room forks
+  (`formatted/overrides.json`), the send ledger (`publish/deliveries.json`, plus the legacy-format
+  `publish/channels.json` that is read when that one is absent — on installs predating the outlet
+  axis (PR #80) **that file is the entire send history**), the X article ledger
+  (`publish/x-article.json`), and the sync ledger (`publish/state.json`). `state:push` bundles them
+  into a single timestamped snapshot (`operational-state-<stamp>.json`) and uploads it to the
+  `operational-state` folder on Drive — snapshots accumulate rather than overwrite, so the history
+  is itself the rollback. The folder is created automatically on the first run, under the same
+  parent folder as `steering-config`, and its id is printed (`GDRIVE_STATE_FOLDER_ID`).
+  **`state:pull` is deliberately more careful than `config:pull`.** The steering config is a
+  **share** — the maintainer pushes, teammates pull — but this one is **a record of what this
+  machine has already sent**: take someone else's snapshot and a room that has already gone out
+  reads as unsent, and one confirmation dialog later a months-old post goes out to a live room. So
+  (1) without `--yes` it **only previews** and writes nothing, and the preview shows not file names
+  but **each file's current row count beside the snapshot's** (`현재 128행 → 스냅샷 3행`), (2) before
+  writing it first backs the current tree up to `output/archive/state-<stamp>/`, and (3) if parsing
+  the snapshot or the backup fails it aborts **without writing a single character**. A local file
+  the snapshot does not have is **left alone, not deleted** (marked `유지`) — deleting a live send
+  ledger to match something that isn't there is precisely the accident this feature exists to
+  prevent. See `docs/superpowers/specs/2026-07-29-fork-preservation-design.md`.
+- **2차 검수 is now a board (발송판) instead of a list.** In place of the old screen, which
+  enumerated `(itemId, type, channel)` renderings, one card now holds a single `type · channel` copy
+  (and its approval status), with **the rooms that receive that copy** attached below it, one row
+  each. An auto room gets `발송` (the confirmation dialog shows the room name together with the copy
+  that will go out; once pressed there is no undo); a manual room gets `복사` + `전달함` (a
+  cancellable record a human leaves themselves). A room that spans several cards (데브방, for
+  example, receives both 공지 and 해설) is marked `n/m`, and hovering a row lights up that same
+  room's other rows with it. Per-destination emission (the actual bytes/characters that will go out)
+  and the comparison against the conversion source moved inside the card, and the separate detail
+  screen (`RenderingDetail.tsx`) is gone. **Only the text unit being edited (before save) locks, not
+  the whole card.** While the group field is being edited, the group itself and the `발송` · `복사` ·
+  `전달함` of every room that uses the group copy as-is (= has not forked) lock; while one room's
+  `✎ 따로 쓰기` field is being edited, **only that room** locks — the neighbouring room's row stays
+  pressable. This still prevents an old saved copy from going out by accident, while keeping a stray
+  edit in one room from freezing unrelated rooms as well (the first implementation locked the whole
+  card, but then an attempt to unlock a locked row had the side effect of silently forking that room
+  out of the group, so it was narrowed to what it is now). `[변환 준비]` (writes out only the
+  worksheet for the checked types, the equivalent of `convert:prepare` — this project has no Claude
+  API, so the actual conversion is still the local agent + `convert:save`'s job) and a per-card
+  **`[포맷 다시]`** (pure code that re-renders that card in place through `FormatVariants`, so it
+  really does run) can be triggered from this screen too. `포맷 다시` **discards the currently saved
+  copy and approval status** — the confirmation dialog spells out what will disappear first, there
+  is no undo, and the copy of a room that has forked with `✎따로` is unaffected.
+- **A delivery record for manual rooms (`전달함`).** Whether a room a bot cannot reach (the two
+  KakaoTalk open chats, Telegram KOL방 and 블록체인 커뮤니티방, PR mail) was delivered to is now
+  recorded in the ledger as well. `MarkDelivery` writes a `delivered` row for `(item, type, room)`,
+  and a wrong tick can be undone — it is a record of a human **claiming** they sent it, so it is
+  cancellable. A `sent` row, which a bot actually sent, by contrast cannot be undone (undo it and
+  the next run sends the same copy to a live room again). Ticking `delivered` on an auto room is
+  refused too — the bot would read that row, decide "already sent", and silently skip.
+- **Two new conversion types — `explainer`(해설) and `casual`(소통).** Until now the only copy going
+  out over Telegram was `announcement`(공지), so there was no way to pitch the same news differently
+  to 데브방 and 커뮤니티방. `explainer` doesn't stop at what happened but spells out
+  **why it matters and how it works** (pitched at 맨틀 한국 데브방); `casual` is **light news** the
+  community has room to react to together — an anniversary, a winner announcement, an invitation
+  (pitched at 맨틀 한국 커뮤니티). Both keep the 존댓말 (polite form) and 규제 표현 (regulated-claim)
+  rules exactly as they are; the difference is not style but **register**. Each is steered by its own
+  `conversion/explainer.md` / `conversion/casual.md` guide, and the default channel for both is
+  `telegram`. Every place that uses `ConversionType` (labels, default channels, the few-shot store,
+  the `doctor` steering check, CLI usage strings) derives from `ALL_TYPES`, so no separate wiring was
+  needed — the existing invariant tests catch an omission. `conversion/{kol,pr}.md` were filled in
+  this time too, from skeletons (7 lines each) into real guides.
 
 - **`pnpm config:push` / `pnpm config:pull [--dry-run]` — steering config backup & share via
   Drive.** The git-ignored steering config (`translation/` + `conversion/`, 15 files,
@@ -276,86 +311,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **레거시 `TELEGRAM_CHAT_ID`를 완전히 제거했습니다.** 방이 하나뿐이던 시절의 단일 변수로, 방별 변수로
-  나뉜 뒤에는 `TELEGRAM_CHAT_ID_COMMUNITY`가 비었을 때의 폴백으로만 남아 있었습니다. 이제 코드가 아예
-  읽지 않습니다 — `.env`에 남아 있어도 무시됩니다. **폴백이 한 방(커뮤니티)만 가리켰다는 게 문제였습니다:**
-  절반만 옮긴 `.env`에서 데브방으로 갈 문구가 조용히 커뮤니티방으로 나갈 수 있었고, 발송은 되돌릴 수
-  없습니다. 같은 이유로 `TelegramConfig.chatId`와 `TelegramBotSender`의 기본 chat id 생성자 인자도
-  없앴습니다 — 방은 발송의 속성이지 발송기의 속성이 아니고, 기본값이 있으면 방을 빠뜨린 요청이 그
-  기본값이 가리키는 방으로 나갑니다. 이제 `loadTelegramConfig()`는 토큰만 돌려주고, 방 id가 없는 방은
-  그냥 미설정으로 남아 이름과 함께 보고됩니다. `.env.example`의 텔레그램 블록도 파일 관례(영어,
-  `[REQUIRED for …]` 태그)에 맞춰 다시 썼습니다.
+- **Legacy `TELEGRAM_CHAT_ID` is gone for good.** It was the single variable from the days when
+  there was only one room, and after the split into per-room variables it survived only as the
+  fallback for an empty `TELEGRAM_CHAT_ID_COMMUNITY`. The code no longer reads it at all — leaving
+  it in `.env` changes nothing. **The problem was that the fallback pointed at exactly one room
+  (community):** a half-migrated `.env` could quietly send copy meant for 맨틀 한국 데브방 out to
+  맨틀 한국 커뮤니티, and a send cannot be undone. For the same reason `TelegramConfig.chatId` and
+  `TelegramBotSender`'s default chat id constructor argument are gone too — a room is a property of
+  the send, not of the sender, and with a default in place a request that forgot to name a room goes
+  out to whatever room that default points at. `loadTelegramConfig()` now returns the token only,
+  and a room with no chat id simply stays unset and is reported by name. The Telegram block in
+  `.env.example` was rewritten to match the file's conventions (English, `[REQUIRED for …]` tags).
 
 ### Changed
 
-- **발송이 원문 번역의 승인까지 확인합니다 — 1차 승인 취소가 아래 단계까지 닿습니다.** 지금까지
-  `승인 취소`는 번역의 상태만 되돌렸습니다. 그 번역에서 나온 변환본·렌더링·방별 포크는 그대로 남았고,
-  `SendChannels`도 `buildBoard`도 번역을 쳐다보지 않았기 때문에 **내보내지 않기로 한 글이 보드에 그대로
-  뜨고 버튼 한 번에 나갔습니다.** 이제 방 하나가 나가려면 세 가지가 모두 맞아야 합니다 — 원문이 승인
-  상태이고, 이 방의 문구가 승인됐고, **그 승인이 원문의 마지막 승인보다 뒤**여야 합니다. 세 번째 조건이
-  `승인 취소 → 원문 수정 → 재승인` 흐름을 잡습니다: 재승인은 *한국어가 맞다*는 뜻이지 *그 한국어에서
-  나온 문구가 맞다*는 뜻이 아니므로, 방은 사람이 다시 볼 때까지 잠긴 채로 남습니다.
-  **아무것도 지우지 않습니다** — 다듬어 둔 글도, `✎따로` 포크도, 승인 기록도 그대로고 잠기기만 합니다.
-  판단은 기록하지 않고 `sendBlock`(`src/domain/send/sendBlock.ts`)이 매번 두 승인 시각을 비교해
-  계산하므로, 무효화 패스도 복구 경로도 없고 다시 승인하는 순간 저절로 풀립니다. **화면과 CLI가 같은
-  술어를 씁니다** — `isStale`이 `drive:publish`와 `pnpm status` 둘 다를 받치는 것과 같은 이유로, 보드가
-  `발송`을 칠하는데 CLI는 거부하는 상태가 생길 수 없습니다.
-  포크는 `[포맷 다시]`에도 살아남도록 설계돼 있어서, 원문 수정 뒤 재변환하면 **그룹은 새 글, 포크는 옛
-  글**이 되고 둘 다 `승인`으로 보입니다 — `textFor`가 이제 포크 **자신의** 승인 시각을 함께 돌려주므로
-  그 방만 잠깁니다. `SendChannels`는 `TranslationStore`를 **필수** 인자로 받습니다(빠뜨리면 검사 없이
-  나가므로 optional로 둘 수 없습니다).
-- **변환본 승인 단계가 없어졌습니다 — 사람의 검수 관문은 2차 하나입니다.** 예전에는 `format`이
-  `status === "approved"`인 변환본만 골라 썼기 때문에, 검수 관문이 세 개(1차 번역 → 변환본 승인 →
-  2차 채널)였습니다. 그런데 가운데 관문에는 **화면이 없었습니다** — `pnpm convert:save --approve`로만
-  통과할 수 있어서, 대시보드에서 `[변환 준비]` → `[포맷 다시]`를 누른 담당자는 아무 일도 일어나지 않는
-  이유를 알 길이 없었습니다. 이제 `format`과 `format --refine`은 변환본의 상태를 보지 않습니다. 포맷은
-  기계적인 변환이고 아무것도 밖으로 나가지 않으므로, 같은 글을 2차에서 또 읽게 하는 것 말고는 얻는 게
-  없었습니다. **실제 발송 잠금은 그대로입니다** — `send:channels`는 여전히 승인된 *렌더링*만 내보냅니다.
-  `convert:save`의 `--approve` 플래그는 제거됐고, 변환본은 항상 `converted`로 저장됩니다.
-- **변환 few-shot 승격이 2차 승인 시점으로 옮겨졌습니다.** 예전에는 `convert:save --approve`가
-  승격을 겸했는데, 그 시점의 글은 **에이전트가 막 쓴, 아무도 안 읽은 글**입니다. 위 변경으로 `--approve`가
-  사라지면 승격 경로도 같이 사라지므로, 이제 `ApproveRendering`(2차 승인)이 그 뒤의 변환본을
-  `conversion/few-shot.<type>.json`에 올리고 변환본 상태도 `approved`로 표시합니다 — 파이프라인에서 사람이
-  변환된 글을 실제로 읽는 유일한 지점이기 때문입니다. 같은 유형의 채널을 여러 개 승인해도 `itemId` 기준
-  upsert라 예시는 하나만 남습니다. 승격되는 예시의 대상 텍스트는 **변환본**이며, 2차에서 채널별로 고친
-  내용은 코퍼스에 반영되지 않습니다(승격이 `convert:save`에 있던 시절과 동일).
-- **발송 원장이 채널이 아니라 방 단위로 다시 매겨졌습니다 — `output/publish/deliveries.json`.**
-  예전 원장 `output/publish/channels.json`은 `(itemId, type, channel)`로 한 행이었는데, 커뮤니티방과
-  데브방은 **둘 다 `telegram`**입니다. 그래서 커뮤니티방으로 한 번 나가면 그 행이 채널 전체를 "보냄"으로
-  덮어버려, **데브방은 아무것도 받지 못한 채 다음 실행에서 조용히 건너뛰어졌습니다** — 이 재키잉은 그
-  버그 때문에 존재합니다. 새 원장은 `(itemId, type, outletId)`로 방마다 한 행을 남깁니다. 예전
-  `channels.json`이 있으면 **읽기 전용으로 이관**해 읽습니다(채널 → 그 채널의 대표 방: `telegram` →
-  커뮤니티, `x` → 포스트, `kakao` → 블록체인 커뮤니티방, `pr_mail` → PR 메일). 원본 파일은 고치지도
-  지우지도 않으므로 되돌려도 잃는 게 없습니다.
-- **Sheet `history` 탭도 같은 이유로 방 단위가 됐습니다 — 기존 시트는 한 번 수동 작업이 필요합니다.**
-  `history` 행의 식별자가 `(itemId, type, channel)`에서 `(itemId, type, outletId)`로 바뀌었습니다.
-  이전에는 두 방의 발송이 **같은 행을 공유해, 나중에 나간 데브방이 커뮤니티방의 `postId`와 `t.me`
-  링크를 덮어썼습니다** — 텔레그램으로 보낼 때마다 한 방의 기록이 사라졌습니다. 방 id는 **새 J 컬럼
-  (`outletId`)** 에 들어갑니다.
-  - **기존 시트에 해야 할 일:** `history` 탭의 **J1 셀에 `outletId`** 라고 직접 적어주세요.
-    헤더는 탭이 비어 있을 때만 자동으로 쓰이므로(`ensureHistoryTab`), 이미 쓰던 시트에는 라벨이
-    생기지 않습니다. 값 자체는 라벨이 없어도 J 컬럼에 정상적으로 쌓입니다 — 라벨은 사람이 읽기 위한
-    것입니다.
-  - **임프레션 컬럼 H·I는 건드리지 않았습니다.** `outletId`를 `channel` 옆이 아니라 맨 뒤(J)에 둔 이유가
-    이것입니다 — 중간에 컬럼을 끼우면 아직 손대지 않은 시트에서 기존 행의 임프레션 값이 한 칸씩
-    밀려 발송 값과 섞입니다. `impressions:record`는 그대로 H·I만 씁니다.
-  - 방 칸이 빈 **예전 행은 그대로 남습니다.** 업그레이드 후 같은 아이템을 다시 보내면 예전 행을 고치는
-    대신 방별 새 행이 추가됩니다.
-- **`TELEGRAM_CHAT_ID`는 방별 `TELEGRAM_CHAT_ID_COMMUNITY`/`TELEGRAM_CHAT_ID_DEV`로 대체됐습니다(deprecated).**
-  발송이 방 단위가 되면서 방마다 chat id가 필요합니다. `git pull` 직후 발송이 멈추지 않도록 폴백을
-  남겼습니다 — `TELEGRAM_CHAT_ID_COMMUNITY`가 비어 있으면 **맨틀 한국 커뮤니티 한 방에만** 레거시
-  `TELEGRAM_CHAT_ID`가 쓰이고 경고가 출력됩니다(데브방은 폴백 대상이 아닙니다). 값이 비어 있는 방으로는
-  발송하지 않으며, 그 방은 `failed`가 아니라 요약 줄의 `· 미설정 N (TELEGRAM_CHAT_ID_DEV)`로 따로
-  표시됩니다 — 레거시 설정 그대로 쓰는 설치본은 고장난 게 아니기 때문입니다. 설정 방법은
+- **Sending now checks the source translation's approval too — un-approving at 1차 reaches the stages
+  below it.** Until now `승인 취소` reverted the translation's status and nothing else. The conversions,
+  renderings, and per-room forks derived from that translation stayed exactly as they were, and
+  neither `SendChannels` nor `buildBoard` ever looked at the translation — so **copy you had decided
+  not to publish still appeared on the board and went out with one button press.** Now three things
+  must all hold before a single room can go out — the source is in the approved state, this room's
+  copy is approved, and **that approval is later than the source's last approval**. The third
+  condition is what catches the `승인 취소 → 원문 수정 → 재승인` flow: re-approving means *the Korean is
+  right*, not *the copy derived from that Korean is right*, so the room stays locked until a human
+  looks at it again. **Nothing is deleted** — refined copy, `✎따로` forks, and the approval record all
+  stay exactly as they are and are only locked. The verdict is never stored: `sendBlock`
+  (`src/domain/send/sendBlock.ts`) computes it every time by comparing the two approval timestamps,
+  so there is no invalidation pass and no recovery path, and the lock lifts by itself the moment you
+  approve again. **The screen and the CLI use the same predicate** — for the same reason `isStale`
+  backs both `drive:publish` and `pnpm status`, there is no state where the board paints `발송` while
+  the CLI refuses. A fork is designed to survive `[포맷 다시]`, so re-converting after a source edit
+  leaves **the group on the new copy and the fork on the old one**, both showing as `승인` — `textFor`
+  now returns the fork's **own** approval timestamp along with it, so only that room locks.
+  `SendChannels` takes `TranslationStore` as a **required** argument (it cannot be optional: leave
+  it out and the copy goes out unchecked).
+- **The conversion approval step is gone — there is one human review gate, 2차.** `format` used to
+  pick up only conversions with `status === "approved"`, which made three review gates (1차
+  translation → conversion approval → 2차 channel). But the middle gate **had no screen** — the only
+  way through it was `pnpm convert:save --approve`, so the operator who pressed `[변환 준비]` →
+  `[포맷 다시]` on the dashboard had no way to find out why nothing had happened. `format` and
+  `format --refine` no longer look at a conversion's status. Formatting is a mechanical transform
+  and nothing leaves the machine, so the gate bought nothing beyond making someone read the same
+  copy again at 2차. **The real send lock is unchanged** — `send:channels` still emits approved
+  *renderings* only. `convert:save`'s `--approve` flag is removed, and a conversion is always saved
+  as `converted`.
+- **Conversion few-shot promotion moved to the 2차 approval.** `convert:save --approve` used to
+  double as the promotion, but the copy at that moment is **something the agent has just written and
+  nobody has read**. With `--approve` gone under the change above, the promotion path would have
+  gone with it, so `ApproveRendering` (the 2차 approval) now promotes the conversion behind the
+  rendering into `conversion/few-shot.<type>.json` and marks the conversion `approved` as well — it
+  is the one point in the pipeline where a human actually reads the converted copy. Approving
+  several channels of the same type still leaves a single example, because the upsert is keyed on
+  `itemId`. The target text of the promoted example is the **conversion**, so the per-channel edits
+  made at 2차 do not reach the corpus (the same as when the promotion lived in `convert:save`).
+- **The send ledger is re-keyed by room rather than by channel — `output/publish/deliveries.json`.**
+  The old ledger `output/publish/channels.json` had one row per `(itemId, type, channel)`, but
+  맨틀 한국 커뮤니티 and 맨틀 한국 데브방 are **both `telegram`**. So one send to the community room overwrote that
+  row as "sent" for the entire channel, and **맨틀 한국 데브방 received nothing and was then silently
+  skipped on the next run** — this re-keying exists because of that bug. The new ledger leaves one
+  row per room, keyed `(itemId, type, outletId)`. An existing `channels.json` is **migrated
+  read-only** and read from, attributing each old row to that channel's primary room
+  (`PRIMARY_OUTLET_BY_CHANNEL`: `telegram` → `tg-community`, `x` → `x-post`, `kakao` →
+  `kakao-blockchain`, `pr_mail` → `pr-mail`). The original file is neither edited nor deleted, so a
+  rollback loses nothing.
+- **The Sheet `history` tab became per-room for the same reason — an existing sheet needs one manual
+  step.** A `history` row's identity changed from `(itemId, type, channel)` to
+  `(itemId, type, outletId)`. Before, sends to two rooms **shared one row, so whichever went out
+  later — 맨틀 한국 데브방 — overwrote 맨틀 한국 커뮤니티's `postId` and `t.me` link** — every Telegram send lost
+  one room's record. The room id goes in a **new column J (`outletId`)**.
+  - **What you have to do on an existing sheet:** type `outletId` into **cell J1** of the `history`
+    tab yourself. The header is written automatically only while the tab is empty
+    (`ensureHistoryTab`), so a sheet already in use never gets the label. The values themselves
+    accumulate in column J perfectly well without it — the label is there for a human to read.
+  - **Impression columns H and I were left untouched.** That is exactly why `outletId` sits at the
+    end (J) rather than next to `channel` — inserting a column in the middle would shift the
+    existing rows' impression values over by one cell on a sheet nobody has touched yet, mixing them
+    into the send values. `impressions:record` still writes H and I only.
+  - **Old rows with an empty room cell stay as they are.** Send the same item again after the
+    upgrade and a new per-room row is appended instead of the old row being edited.
+- **`TELEGRAM_CHAT_ID` is superseded by the per-room
+  `TELEGRAM_CHAT_ID_COMMUNITY`/`TELEGRAM_CHAT_ID_DEV` (deprecated).** Now that sending is per room,
+  every room needs its own chat id. A fallback is kept so that sending does not stop the moment you
+  `git pull` — when `TELEGRAM_CHAT_ID_COMMUNITY` is empty the legacy `TELEGRAM_CHAT_ID` is used
+  **for the one room 맨틀 한국 커뮤니티** and a warning is printed (맨틀 한국 데브방 is not covered by the
+  fallback). A room whose value is empty is not sent to, and it is reported not as `failed` but
+  separately, as `· 미설정 N (TELEGRAM_CHAT_ID_DEV)` on the summary line — an install still running the
+  legacy setup is not broken. How to configure it:
   [`docs/ko/setup/channels.md`](docs/ko/setup/channels.md) T-3.
-- **한 번도 발송한 적 없는 방에는 백로그를 자동으로 내보내지 않습니다.** `renderings.json`은 지워지지
-  않고 승인 상태도 그대로라, 방을 새로 설정하면 **그동안 승인된 렌더링 전부**가 그 방으로 미발송
-  상태입니다. 그대로 두면 다음 `pnpm send:channels` 한 번에 살아 있는 방으로 백로그가 통째로
-  쏟아집니다. 이제 원장이 빈 방에 2건 이상이 대기 중이면 방 이름과 건수를 경고로 남기고 **보류**하며,
-  `--outlets <방 id>`로 그 방을 직접 지정해야 나갑니다.
-- **`pr-mail`은 수동(`manual`) 방이 됐습니다.** 메일 발송기가 아직 없어 `send:channels`가 닿을 수 없는데
-  `auto`라는 이유로 `전달함` 체크까지 거부돼, **보낼 수도 없고 보냈다고 기록할 수도 없는** 방이었습니다.
-  메일 발송기가 생기면 다시 `auto`로 돌립니다.
+- **A room that has never been delivered to does not get the backlog pushed out to it
+  automatically.** `renderings.json` is never cleared and approval states stay put, so configuring a
+  new room leaves **every rendering approved up to that point** undelivered for it. Left alone, the
+  next single `pnpm send:channels` dumps the whole backlog into a live room. Now, when a room with
+  an empty ledger has 2 or more items waiting, the run logs a warning with the room's name and the
+  count and **withholds** them; they go out only once you name that room explicitly with
+  `--outlets <room id>`.
+- **`pr-mail` became a manual (`manual`) room.** With no mail sender yet `send:channels` cannot
+  reach it, and because it was `auto` it was refused even the `전달함` tick — **a room you could
+  neither send to nor record as sent**. It goes back to `auto` the day a mail sender exists.
 - **`history` auto-creates its tab, so one workbook can hold every machine tab.** `RecordPublish`
   (behind `history:record` and `send:channels`) now ensures the `history` tab + header before
   writing, mirroring how `metrics:record` handles `x-performance`. You can point `GSHEET_ID` at your
@@ -369,107 +421,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **월말 쿼터 초기화가 재발송 가드를 통째로 무력화하던 마지막 경로를 막았습니다 — 한 달에 한 번,
-  몇 초 폭으로 열려 있었습니다.** 재발송 가드는 "예약을 취소했다"와 "이미 올라간 글의 기록을
-  지웠다"를 **월간 발행 쿼터의 앞뒤 비교**로 가려냅니다(Typefully가 둘 다 `204`로 답하기 때문 —
-  같은 절의 `재발송`의 예약 취소 항목 참고). 그 비교가 `사용량이 늘었는가` 한 줄이었는데, **사용량은 단조 증가가 아닙니다**:
-  매월 1일(KST) 쿼터가 초기화되면 **내려갑니다**. 그래서 가드의 확인 구간에 달이 바뀌면 `14 → 1`이
-  "아무것도 안 올라갔다"로 읽히고, 그 `1`이 바로 우리 초안이 방금 게시된 것이어도 재발송이 그대로
-  나갔습니다. 이제 `사용량`과 `남은 수`를 **둘 다** 읽고, 숫자가 뒤로 갔으면 **거절**합니다 —
-  화해시킬 수 없기 때문입니다: `사용량 + 남은 수`는 요금제 상한이라 초기화에서도, 게시에서도 그대로
-  보존되므로 "초기화만 됐다"와 "초기화됐고 우리 글이 곧바로 올라갔다"를 어떤 산수로도 구분할 수
-  없습니다(`사용량 0`도 알리바이가 못 됩니다 — 지난달에 차감된 게시는 초기화가 지워버리므로, 0 뒤에
-  살아 있는 글이 있을 수 있습니다). `resetsAt`을 보고 판단하지 않는 것도 의도한 선택입니다: 이
-  컴퓨터의 시계는 실제로 틀리고(아래 항목), 로컬 비교로 달이 바뀌었는지 따지면 한 달 내내 거절하거나
-  한 번도 거절하지 못합니다. **숫자가 뒤로 간다는 것 자체가 계정이 초기화됐다고 말해 주는 증거이고,
-  거기에는 시계가 필요하지 않습니다.** 두 숫자가 서로 반대 방향으로 같은 폭만큼 움직이지 않는
-  응답도 이제 거절합니다 — 옛 한 줄 비교가 그대로 발송했던 또 하나의 경우입니다. 거절 메시지는 셋 중
-  무엇이었는지(읽기 실패 · 월 초기화 · 숫자 불일치) 구분해 적습니다. 잠깐의 오류는 다시 눌러볼 만하고,
-  달이 바뀐 것은 이번 분에 다시 일어나지 않으며, 숫자가 안 맞는 것은 보고할 만한 일이라, 운영자가
-  그 차이로 다른 판단을 할 수 있기 때문입니다. 세 경우 모두 초안 번호를 줄에서 떼어냅니다(그대로
-  두면 다음 확인 과정이 그 줄을 `예약 취소됨`으로 물러나게 해 방이 다시 열리고, 방금 막은 중복이
-  다음 배치로 나갑니다).
-- **"이 글뿐이었습니다"라고 단정하던 재발송 거절 메시지가, 이제 그 판단의 한계와 빠져나갈 길을 같이
-  적습니다.** 대기 중 예약 수는 **우리 원장 기준**이라, Typefully 화면에서 손으로 잡아 둔 예약은
-  거기 없습니다 — 줄어든 한 칸이 그쪽일 수도 있다는 뜻이고, 이제 그 문장이 주장과 같은 호흡에
-  붙습니다. 더 중요한 것은 그 갈래가 **"실제로 안 올라갔으면 재발송을 한 번 더 누르세요"를 빼고
-  있었다**는 점입니다. 확실하다고 봤기 때문인데, 대기 수가 그만큼을 보장하지 못합니다. 글이 실제로
-  안 올라간 운영자는 닫힌 방과 아무 안내 없이 남았습니다.
-- **`게시 확인`이 옆방 결과를 이 방 결과로 알려주던 문제.** 확인 과정은 두 원장의 대기 행을 **전부**
-  훑고 합계만 돌려줍니다(`확인 n건 · 물러남 n건`). 버튼은 그 합계로 이 줄의 메시지를 골랐으므로,
-  한 배치가 Typefully 큐에 방을 둘 이상 걸어 둔 흔한 상황에서 양쪽으로 틀렸습니다 — **다른 방**의
-  초안이 지워지면 이 방이 "예약이 취소되었습니다"라는 말을 들었고(방금 같은 클릭이 `예약됨`으로
-  칠해 놓은 배지 바로 아래에서), **다른 방**이 게시되면 "아직 게시되지 않았습니다"가 빠져서 클릭이
-  아무 말도 하지 않았습니다 — 화면이 스스로 다시 그려지는 보드에서 그건 성공처럼 읽힙니다. 이제
-  응답에 함께 오는 **그 줄 자신의 상태**에서 메시지를 뽑습니다. 쿼터 다시 읽기는 그대로 원장 전체
-  기준입니다 — 쿼터는 계정 단위라 어느 줄이 올라갔든 움직이기 때문입니다.
-- **원장 잠금이 "오래됐다"는 추측 대신 살아 있음의 증거로 판정합니다 — 이 컴퓨터의 시계가 실제로
-  틀렸기 때문입니다.** 발송 원장 쓰기는 프로세스 사이에서도 겹치지 않도록 `<파일>.lock`을 잡고, 그
-  파일의 수정 시각이 30초보다 오래되면 죽은 프로세스가 남긴 것으로 보고 회수합니다. 두 가지가
-  문제였습니다. (1) 30초보다 오래 걸리는 **정상** 작업의 잠금도 빼앗을 수 있었고, (2) 이 개발
-  컴퓨터(WSL2)의 시스템 시계는 `systemd-timesyncd`와 Hyper-V 호스트 시계 동기화가 **동시에** 시계를
-  밀어서 ±22.7초를 오갑니다(약 5초 주기, 두 번 독립 측정, 단조 시계로는 0ms). 방금 잡은 잠금이 22초
-  전 것으로 읽힐 수 있다는 뜻입니다. 이제 잠금을 든 쪽이 일하는 동안 5초마다 자기 잠금 파일의 시각을
-  갱신하고(heartbeat), 회수는 그 갱신이 멈춘 것을 **1초 동안 계속 확인한 뒤에만** 합니다 — 그 1초는
-  시계 점프에 흔들리지 않는 단조 시계로 잽니다. 그리고 확인 구간은 **자기가 지켜보던 그 수정 시각에
-  매여 있습니다**: 시각이 움직이면(=상대가 살아서 찍었으면) 구간을 처음부터 다시 셉니다. 시계가
-  틀려서 계속 오래돼 보이더라도, 파일이 움직인다는 사실만은 시계 없이 참이기 때문입니다. 이게 없으면
-  죽은 잠금을 지켜보며 쌓은 1초가 **그 사이에 새로 들어온 산 잠금을 지우는 데** 쓰일 수 있었습니다
-  (재현: 64ms만 오래돼 보였던 후속 잠금이 1초를 광고하는 확인 구간에 지워짐). 짧은 CLI가 heartbeat
-  타이머 때문에 종료되지 못하는 일은 없습니다(`unref`). 함께: **작업이 끝난 뒤 잠금 해제가 실패하면
-  경고만 남기고 작업의 성공은 그대로 유지**합니다. 다 나간 발송이 잠금 정리 실패 때문에 실패로
-  보고되면, 다음 실행이 같은 글을 살아 있는 방에 한 번 더 올립니다. **다만 이것으로 닫히지 않는
-  위험이 하나 남습니다**: 잠금을 든 프로세스가 절전·정지로 30초 넘게 멈추면 heartbeat도 멈추므로, 그
-  잠금은 여전히 회수될 수 있습니다. 발송 중에는 컴퓨터를 재우지 마세요.
-- **한 번도 받은 적 없는 방에 승인 백로그가 통째로 나가는 경로를 막았습니다.** 새로 설정한 방에
-  `renderings.json`의 승인 이력이 전부 "미발송"으로 남아 있으므로, `send:channels`는 **처음 받는
-  방에 2건 이상이 대기 중이면 전량 보류**하고 `--outlets <방 id>`로 지목할 것을 요구합니다(first-delivery
-  가드). 그런데 이 가드가 "이 방이 뭔가 받은 적 있는가"를 판단할 때 **`예약 취소됨`(`dropped`) 행까지
-  발송 이력으로 세고 있었습니다.** `dropped`는 예약된 초안이 게시 전에 지워졌다는 뜻, 즉 그 방이
-  **아무것도 받지 못했다**는 뜻인데도 그렇습니다. 그래서 취소된 예약 한 건만 있어도 가드가 풀려,
-  승인된 백로그 전체가 살아 있는 방으로 한 번에 나갔습니다(실제 확인: 원장이 비어 있으면 `보류 3건`,
-  `dropped` 한 행이 있으면 `발송 3건`). 이제 가드도 나머지 판정과 같은 규칙(`deliveredToRoom`)을
-  씁니다.
-- **`pnpm clean --yes`가 발송 중인 원장 쓰기를 깨뜨릴 수 있던 문제.** 원자적 쓰기는 임시 파일을 쓴 뒤
-  이름을 바꾸는데, 그 사이에 `clean`이 임시 파일을 지우면 이름 바꾸기가 실패하고 **발송은 나갔는데
-  원장에는 안 남는** 상태가 됩니다(`⚠ … was SENT but could NOT be recorded in the ledger — a rerun
-  will re-send it`). 그 다음 실행은 같은 글을 살아 있는 방에 한 번 더 올립니다. 잠금 파일에만 걸려
-  있던 30초 문턱을 임시 파일에도 똑같이 적용했습니다. 그래도 **발송 중에는 `clean --yes`를 돌리지
-  마세요** — 문턱은 안전망이지 허가가 아닙니다.
-- **재발송이 예약을 취소한 뒤 실패하면, 이제 그 줄을 `발송됨`이 아니라 `예약 취소됨`으로 되돌립니다.**
-  아직 게시 전인 X 글에 `재발송`을 누르면 예약된 원본을 먼저 취소하는데, 그 뒤의 발송이 쿼터 부족·
-  발송 오류 등으로 실패하면 원래 행을 **그대로** 되돌려 놓고 있었습니다 — 이미 지워진 초안을 가리키는
-  `발송됨` 행입니다. 그러면 보드는 없는 예약을 `예약됨`으로 그리고, 월 15건 중 한 칸이 계속 잡혀
-  있고, 그 방은 확인 과정이 한 번 돌 때까지(대시보드는 2분, CLI만 쓰는 설치본은 **영영**) 이미 보낸
-  방으로 취급돼 건너뛰어집니다. 이제 실제로 일어난 일 그대로 `예약 취소됨`으로 되돌리므로, 방과
-  쿼터 한 칸이 즉시 풀립니다.
-- **`재발송`의 예약 취소가 "취소"가 아니라 "이미 올라간 글의 기록 삭제"였을 수 있는 구멍을
-  막았습니다 — X 중복 게시로 이어지던 마지막 경로입니다.** 2026-07-30 실측: Typefully는 **예약을
-  취소했을 때와 이미 게시된 초안을 지웠을 때 똑같이 `204`**를 주고, 이어서 조회하면 어느 쪽이든
-  `404`입니다. 응답만으로는 구분할 수 없다는 뜻이고, 확인과 취소 사이(둘 다 실제 네트워크 요청이라
-  재시도까지 하면 몇 초입니다)에 원본이 올라가 버리면 그때까지의 코드는 취소가 됐다고 믿고 새 글을
-  보냈습니다 — 브랜드 계정에 같은 글이 두 번, 되돌릴 수 없이. 같은 실측에서 **발행 쿼터는 예약할
-  때가 아니라 게시되는 순간에 차감된다**는 것도 확인했으므로, 이제 **확인을 시작하기 전과 취소
-  직후의 월간 쿼터를 비교**해서 그 사이에 무언가 게시됐는지를 판정합니다(쿼터 반영이 늦을 수 있어
-  1.5초 기다린 뒤 다시 읽습니다 — 재발송 응답이 그만큼 늦어집니다). 그 사이 쿼터가 줄었으면
-  **거절**, 쿼터를 읽지 못해 판정 자체가 불가능하면 **역시 거절**합니다(모르는 것은 안전한 쪽으로).
-  거절된 줄은 링크 없는 `발송됨`으로 남고 `게시 확인`이 더는 손대지 않습니다 — 초안 번호를 남겨 두면
-  다음 확인 과정이 `예약 취소됨`으로 물러나게 만들고, 그러면 그 방이 다시 열려 **다음 배치가 방금
-  막은 중복을 그대로 올립니다.** 대신 지운 초안 번호는 **거절 메시지에 적어** 계정·Typefully 기록과
-  대조할 단서를 남깁니다. 실제로 안 올라갔다면 `재발송`을 한 번 더 누르면 나갑니다 — 그때 뜨는 확인
-  창도 이 상태에 맞게 "첫 글일 수도, 두 번째 글일 수도 있습니다"라고 묻습니다(예전에는 이 줄에
-  대해서도 "이미 나간 글이 있고 하나 더 올라갑니다"라고 — 한 문장도 사실이 아닌 채로 — 물었습니다).
-  자세한 조치는 [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §2 11단계. 쿼터가 계정 단위라
-  **같은 배치의 다른 예약이 올라가서 줄었을 가능성**이 있을 때는 메시지가 그렇게 말하고, 반대로 "이
-  글뿐이었다"는 판단도 **우리 원장 기준**이라는 단서를 함께 답니다 — 확실할 때만 확실하게 적습니다.
-  덧붙여 `publishing_quota.used`가 없는 응답은 이제 조용히 `0`으로 읽지 않고 오류로 올립니다: 양쪽
-  다 `0`이면 비교가 항상 "안 바뀜"이 되어, 가드가 스스로 확인했다고 믿으면서 중복을 내보내게 됩니다.
-- **아직 게시 전인 줄의 `재발송` 확인 창이 사실과 반대로 말하던 문제.** 그 줄의 배지는 두 줄 위에서
-  `예약됨`이라고 말하는데, 확인 창은 "이 방에는 …에 나간 글이 있습니다. 그 글은 지워지지 않고, 이
-  방에 글이 하나 더 올라갑니다"라고 했습니다. 셋 다 틀렸습니다 — 그 시각은 **예약한** 시각이고,
-  예약된 원본은 취소되므로 글은 **하나만** 올라가며, 먼저 보낸 링크라는 것도 없습니다. 이제 예약
-  상태인 줄에는 실제로 일어날 일(원본 예약을 취소하고 하나만 올림, 원본이 이미 게시됐거나 취소가
-  실패하면 발송을 멈춤)을 적습니다. 마우스를 올렸을 때 뜨는 설명도 같이 고쳤습니다.
+- **Closed the last route by which a month-end quota reset defeated the resend guard outright — it
+  was open once a month, in a window a few seconds wide.** The resend guard tells "the schedule was
+  cancelled" apart from "the record of a post that had already gone live was deleted" by **comparing
+  the monthly publishing quota before and after** (because Typefully answers `204` to both — see the
+  `재발송` cancel entry in this same section). That comparison was one line, `did used go up`, and
+  **`used` is not monotonic**: when the quota resets on the 1st of the month (KST) it **goes down**.
+  So when the month rolled over inside the guard's check window, `14 → 1` read as "nothing
+  published", and the resend went out even when that `1` was our own draft having just published.
+  Now **both** `used` and `remaining` are read, and if the numbers went backwards the guard
+  **refuses** — because it cannot be reconciled: `used + remaining` is the plan's ceiling and is
+  preserved across a reset as well as across a publish, so no arithmetic separates "only a reset
+  happened" from "a reset happened and our post published straight after" (`used 0` is no alibi
+  either — a publish charged in the old month is wiped by the reset, so a live post can sit behind a
+  zero). Not deciding from `resetsAt` is a deliberate choice too: this machine's clock is measurably
+  wrong (see the entry below), and working out whether the month rolled over from a local comparison
+  would either refuse all month or never refuse once. **That the numbers go backwards is itself the
+  account's evidence that it reset, and that needs no clock.** A response whose two numbers do not
+  move in opposite directions by the same amount is now refused as well — another case the old
+  one-line comparison sent straight through. The refusal names which of the three it was (read
+  failure · month reset · numbers that do not square). A momentary error is worth clicking again, a
+  month rollover will not happen again this minute, and numbers that do not square are worth
+  reporting — because the operator can make a different call on that difference. All three drop the
+  draft id from the row (leave it there and the next reconcile pass retires that row to `예약 취소됨`,
+  which reopens the room, and the duplicate just prevented goes out with the next batch).
+- **The resend refusal that flatly asserted "이 글뿐이었습니다" — this was the only post pending — now
+  writes the limit of that judgement and the way out alongside it.** The count of pending scheduled
+  drafts is **counted from our own ledger**, so a draft held by hand in Typefully's own UI is not in
+  it — meaning the slot that was spent could have been that one, and that sentence now sits in the
+  same breath as the claim. More importantly, that branch **was leaving out
+  "실제로 안 올라갔으면 재발송을 한 번 더 누르세요"** (if it really did not go up, press 재발송 once more). It did so
+  because it took the case to be certain, and the pending count does not guarantee that much. An
+  operator whose post did not in fact go up was left with a closed room and no guidance at all.
+- **`게시 확인` reported the room next door's outcome as this room's.** The reconcile pass sweeps
+  **every** pending row in both ledgers and answers with totals only (`reconciled n · retired n`).
+  The button picked this row's message from those totals, so in the common case where one batch has
+  left more than one room queued at Typefully it was wrong in both directions — when **another
+  room's** draft was deleted, this room was told "예약된 게시물이 게시되기 전에 취소되었습니다" (the
+  scheduled post was cancelled before it published),
+  right under a badge the same click had just painted `예약됨`; and when **another room** published,
+  "아직 게시되지 않았습니다" (not published yet) was left out so the click said nothing at all — which, on a
+  board that redraws itself, reads as success. The message now comes from **that row's own status**,
+  which arrives with the response. The quota re-read stays ledger-wide — the quota is per account,
+  so it moves whichever row published.
+- **A ledger lock now decides by proof that its holder is alive instead of guessing that it "looks
+  old" — because this machine's clock really is wrong.** A write to the send ledger takes a
+  `<file>.lock` so writes cannot overlap even across processes, and if that file's mtime is older
+  than 30s it is presumed left behind by a dead process and reclaimed. Two things were wrong. (1) It
+  could steal the lock of a **legitimate** job that took longer than 30s, and (2) this development
+  machine's (WSL2) system clock swings ±22.7s because `systemd-timesyncd` and Hyper-V host clock
+  sync are **both** stepping it (a ~5s period, two independent measurements, 0ms on the monotonic
+  clock). Which means a lock taken a moment ago can read as 22s old. Now the side holding the lock
+  re-stamps its own lock file's time every 5s while it works (a heartbeat), and a reclaim happens
+  **only after confirming that the stamping has stopped for a continuous 1s** — that 1s is measured
+  on the monotonic clock, which a clock jump cannot shake. And the confirmation window is **bound to
+  the very mtime it was watching**: if the time moves (= the other side is alive and stamped it),
+  the window is counted again from the start. Because even if a wrong clock keeps making the lock
+  look old, the fact that the file moved is true without a clock. Without this, the 1s accumulated
+  while watching a dead lock could be spent **deleting a live lock that arrived in the meantime**
+  (reproduced: a follow-up lock that looked stale by only 64ms was deleted by a confirmation window
+  that advertises 1s). A short CLI is never kept from exiting by the heartbeat timer (`unref`).
+  Alongside: **if releasing the lock fails after the job finished, it now only warns and the job
+  keeps its success**. A send that fully went out but is reported as a failure because lock cleanup
+  failed makes the next run post the same copy into a live room a second time. **One hazard this
+  does not close remains**: if the process holding the lock stops for more than 30s through a
+  suspend or a freeze, the heartbeat stops with it, so that lock can still be reclaimed. Do not put
+  the machine to sleep mid-send.
+- **Closed a route by which the whole approved backlog went out to a room that had never received
+  anything.** For a newly configured room, every approval in `renderings.json` sits there as "not
+  sent", so `send:channels` **withholds all of them when a room receiving for the first time has two
+  or more pending** and requires the room to be named with `--outlets <room id>` (the first-delivery
+  guard). But when this guard judged "has this room ever received anything", it **was counting
+  `예약 취소됨` (`dropped`) rows as delivery history too.** And that is so even though `dropped` means
+  the scheduled draft was deleted before it published — that is, that the room received **nothing**.
+  So a single cancelled schedule lifted the guard, and the entire approved backlog went into a live
+  room at once (verified: with an empty ledger, `보류 3건` (3 withheld); with one `dropped` row,
+  `발송 3건` (3 sent)). The guard now uses the same rule as every other such judgement
+  (`deliveredToRoom`).
+- **`pnpm clean --yes` could break a ledger write mid-send.** An atomic write writes a temp file and
+  then renames it, and if `clean` deletes the temp file in between, the rename fails and you get
+  **the send went out but the ledger has no record of it**
+  (`⚠ … was SENT but could NOT be recorded in the ledger — a rerun will re-send it`). The next run
+  posts the same copy into a live room a second time. The 30s threshold that applied only to lock
+  files was extended to temp files in exactly the same way — and later in this same release the rule
+  became sharper still: a temp file is judged by the lock on the ledger it is about to become, not by
+  its own age (see the ledger-lock entry above, and `Upgrading`). Even so, **do not run `clean --yes`
+  mid-send** — the threshold is a safety net, not a permission.
+- **When a resend fails after cancelling the schedule, that row is now restored as `예약 취소됨` rather
+  than `발송됨`.** Pressing `재발송` on an X post that has not published yet cancels the scheduled
+  original first, and if the send after it then failed — quota exhausted, a send error — the
+  original row was being restored **as it was**: a `발송됨` row pointing at a draft that has already
+  been deleted. The board then draws a schedule that does not exist as `예약됨`, one of the month's 15
+  slots stays held, and that room is treated as already delivered and skipped until a reconcile pass
+  runs once (2 minutes on the dashboard, **never** on a CLI-only install). It now restores the row
+  as `예약 취소됨`, exactly what actually happened, so the room and the one quota slot are freed
+  immediately.
+- **Closed the hole where `재발송`'s cancel may not have been a "cancel" but a "deletion of the record
+  of a post already live" — the last route to a duplicate X post.** Measured live 2026-07-30:
+  Typefully gives **the same `204` when it cancelled a schedule and when it deleted a draft that had
+  already published**, and a follow-up read is `404` either way. Which means the response alone
+  cannot tell them apart, and if the original published between the check and the cancel (both are
+  real network requests, a few seconds once retries are counted), the code up to then believed the
+  cancel had taken and sent the new post — the same post twice on a brand account, irreversibly. The
+  same measurement also confirmed that **the publishing quota is charged at the moment of
+  publication, not when the draft is scheduled**, so the guard now **compares the monthly quota from
+  before the check begins with the one from right after the cancel** to judge whether anything
+  published in between (the quota can be slow to reflect it, so the second read waits 1.5s — the
+  resend's response is that much slower). If the quota fell in between it **refuses**, and if the
+  quota could not be read so the judgement is impossible at all it **refuses as well** (what is
+  unknown goes the safe way). A refused row is left as `발송됨` with no link and `게시 확인` no longer
+  touches it — leaving the draft id on it would make the next reconcile pass retire it to `예약 취소됨`,
+  and then that room reopens and **the next batch posts the very duplicate just prevented.** Instead
+  the deleted draft id is **named in the refusal**, leaving a handle to match against the account
+  and Typefully's own record. If it truly did not go up, pressing `재발송` once more sends it — and the
+  confirmation dialog that comes up then asks in terms that fit this state:
+  "첫 글일 수도, 두 번째 글일 수도 있습니다" (this may be the first post, or it may be the second) (it used to ask
+  about this row too as "이미 나간 글이 있고 하나 더 올라갑니다" — a post has already gone out and one more will go
+  up — without one true sentence in it). Detailed remediation in
+  [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §2 step 11. The quota being per account, when
+  there is a **possibility that another schedule from the same batch published and spent it**, the
+  message says so; and conversely the judgement that "이 글뿐이었다" (this was the only one) carries the
+  caveat that it is **counted from our own ledger** — written as certain only when it is certain. In
+  addition, a response with no `publishing_quota.used` is no longer quietly read as `0` but raised
+  as an error: with `0` on both sides the comparison always comes out "unchanged", so the guard
+  would send a duplicate while believing it had checked for itself.
+- **The `재발송` confirmation dialog said the opposite of the facts for a row that had not published
+  yet.** That row's badge says `예약됨` two lines above, while the dialog said "이 방에는 …에 나간 글이 있습니다.
+  그 글은 지워지지 않고, 이 방에 글이 하나 더 올라갑니다" (this room has a post that went out at …; that post will not be
+  deleted, and one more post will go up in this room). All three were wrong — that time is when it
+  was **scheduled**, the scheduled original is cancelled so **only one** post goes up, and there is
+  no earlier-sent link either. A row in the scheduled state now states what will actually happen
+  (cancel the original schedule and post only one; stop the send if the original has already
+  published or the cancel fails). The explanation that appears on hover was fixed along with it.
 - **Collection now expands `t.co` shortlinks instead of storing the redirect.** `normalizeTweet`
   replaces each `t.co` link in a tweet's `text` with its real `expanded_url` (from `entities.urls`)
   and removes a tweet's own photo/video `t.co` self-links — that media stays on
@@ -748,6 +831,7 @@ Initial release: the end-to-end Mantle KR content pipeline
   closing (`server.address()` returned `null`).
 - Dashboard server returns 500 safely instead of crashing when a response fails to serialize.
 
-[Unreleased]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kyle-park-io/mantle-kr-herald/releases/tag/v0.1.0
