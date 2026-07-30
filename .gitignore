@@ -34,6 +34,10 @@ web/node_modules/
 # Playwright MCP session dumps (console logs + page snapshots, timestamped per run)
 .playwright-mcp/
 
+# Subagent-driven-development scratch (per-plan ledger, briefs, review packages).
+# Working notes for an in-flight plan; git history is the record once the plan lands.
+.superpowers/
+
 # Local team work files — NEVER commit (real PII: KOL emails, contract prices, payout tx).
 # Public repo; the canonical copy of these belongs outside the repo (Drive), like steering config.
 *.xlsx
