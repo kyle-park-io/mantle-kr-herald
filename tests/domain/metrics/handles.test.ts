@@ -59,4 +59,8 @@ describe("extractTelegramHandle", () => {
     expect(extractTelegramHandle("https://t.me/+AbCdEf")).toBeUndefined();
     expect(extractTelegramHandle("")).toBeUndefined();
   });
+
+  it("rejects a joinchat invite link rather than reading 'joinchat' as the handle", () => {
+    expect(extractTelegramHandle("https://t.me/joinchat/AAAAAEhU37h3xx")).toBeUndefined();
+  });
 });
