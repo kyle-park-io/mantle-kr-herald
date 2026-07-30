@@ -9,7 +9,7 @@
  * the send path does not treat as media, which is worse than not previewing at all.
  */
 const PHOTO_LINE = /^!\[\]\(([^)]+)\)[ \t]*$/;
-const VIDEO_LINE = /^\[영상\](?:[ \t]+\S+)?[ \t]*$/;
+const VIDEO_LINE = /^\[영상\](?:[ \t]+(\S+))?[ \t]*$/;
 
 export type MediaSegment =
   | { kind: "text"; text: string }
