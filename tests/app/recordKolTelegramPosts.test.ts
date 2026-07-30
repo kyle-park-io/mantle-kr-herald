@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { RecordKolTelegramPosts } from "../../src/app/RecordKolTelegramPosts";
 import { KOL_TELEGRAM_HEADER } from "../../src/domain/kol/models";
 import type { ChannelPost, KolMapEntry } from "../../src/domain/kol/models";
@@ -7,17 +7,60 @@ import type { TelegramChannelGateway } from "../../src/ports/TelegramChannelGate
 
 const TAB = "kol-telegram-posts";
 
+/** "A" → 0, "M" → 12. */
+function colIndex(letters: string): number {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+/** Parse "kol-telegram-posts!E5:G5" into the cells it covers. */
+function parseRange(range: string): { first: number; last: number; rowNumber: number } {
+  const m = /!([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(range);
+  if (!m) throw new Error(`fake sheet cannot parse range ${range}`);
+  return { first: colIndex(m[1]), last: colIndex(m[3]), rowNumber: Number(m[2]) };
+}
+
+/**
+ * A fake that reconstructs sheet state **and records which ranges it was asked to write**.
+ *
+ * Recording the ranges is the point. The previous fake rebuilt every row from a whole-width
+ * `A{n}:M{n}` write and never looked at the range, so a writer that rewrote a human's `confirmed`
+ * and `pricePerPost` on every refresh passed a green suite: the values were copied forward, so the
+ * *outcome* was right even though the *mechanism* was to write those columns. Under concurrent
+ * editing — a run takes minutes — copying forward a value read at t+0 and writing it at t+90s is
+ * not preservation. So these tests assert on `state.writes`.
+ */
 function fakeSheet() {
-  const state: { rows: string[][]; ensured: string[] } = { rows: [], ensured: [] };
+  const state: {
+    rows: string[][];
+    ensured: string[];
+    /** Every range written, in order, whether via updateValues or batchUpdateValues. */
+    writes: string[];
+    appendedBatches: string[][][];
+    batchCalls: number;
+  } = { rows: [], ensured: [], writes: [], appendedBatches: [], batchCalls: 0 };
+
+  const applyRange = (range: string, values: string[]) => {
+    const { first, rowNumber } = parseRange(range);
+    state.writes.push(range);
+    const target = state.rows[rowNumber - 1] ?? [];
+    for (let i = 0; i < values.length; i++) target[first + i] = values[i];
+    state.rows[rowNumber - 1] = target;
+  };
+
   const sheet: SheetClient = {
     ensureTab: async (t) => { state.ensured.push(t); },
     getValues: async (range) =>
-      range.endsWith("A1:M1") ? (state.rows[0] ? [state.rows[0]] : []) : state.rows.slice(1),
-    appendValues: async (_r, rows) => { for (const row of rows) state.rows.push(row); },
-    updateValues: async (range, rows) => {
-      if (range.endsWith("A1:M1")) { state.rows[0] = rows[0]; return; }
-      const m = /A(\d+):M\1$/.exec(range);
-      if (m) state.rows[Number(m[1]) - 1] = rows[0];
+      /!A1:[A-Z]+1$/.test(range) ? (state.rows[0] ? [state.rows[0]] : []) : state.rows.slice(1),
+    appendValues: async (_r, rows) => {
+      state.appendedBatches.push(rows.map((r) => [...r]));
+      for (const row of rows) state.rows.push(row);
+    },
+    updateValues: async (range, rows) => { applyRange(range, rows[0]); },
+    batchUpdateValues: async (updates) => {
+      state.batchCalls += 1;
+      for (const u of updates) applyRange(u.range, u.rows[0]);
     },
     createSpreadsheet: async () => ({ spreadsheetId: "x" }),
   };
@@ -26,6 +69,20 @@ function fakeSheet() {
 
 const col = (name: string) => KOL_TELEGRAM_HEADER.indexOf(name);
 const cell = (row: string[], name: string) => row[col(name)];
+
+/** The header's own write is not a row write; these tests only care about data rows. */
+const dataWrites = (writes: string[]) => writes.filter((r) => !/!A1:[A-Z]+1$/.test(r));
+
+/** Does any recorded write range cover the column holding `field`? */
+function wroteColumnOf(writes: string[], field: string): boolean {
+  const target = col(field);
+  return dataWrites(writes).some((range) => {
+    const { first, last } = parseRange(range);
+    return first <= target && target <= last;
+  });
+}
+
+afterEach(() => vi.restoreAllMocks());
 
 const post = (handle: string, id: number, over: Partial<ChannelPost> = {}): ChannelPost => ({
   handle,
@@ -225,17 +282,18 @@ describe("RecordKolTelegramPosts", () => {
     const { sheet, state } = fakeSheet();
     state.rows.push(KOL_TELEGRAM_HEADER);
 
-    // Simulate a real API response for a not-yet-confirmed row: `confirmed`
-    // is the last column and blank, so the API drops it from the row entirely.
+    // Simulate a real API response for a row whose trailing cells are blank: `pricePerPost`,
+    // `fetchedAt` and `confirmed` are the last three columns, so the API drops them entirely.
+    // Without padding, `existing[pricePerPost]` would be `undefined` rather than `""` and every
+    // blank-only rule below would compare against the wrong thing — the price would never be
+    // backfilled and a `reject` check would read `undefined`.
     const full = new Array(KOL_TELEGRAM_HEADER.length).fill("");
     full[col("kolId")] = "marine";
     full[col("tgHandle")] = "marshallog";
     full[col("deliverableLink")] = "https://t.me/marshallog/22794";
     full[col("views")] = "2800";
     full[col("engagements")] = "3";
-    full[col("pricePerPost")] = "100";
-    full[col("fetchedAt")] = "2026-07-03T00:00:00.000Z";
-    const short = full.slice(0, col("confirmed"));
+    const short = full.slice(0, col("pricePerPost"));
     expect(short.length).toBeLessThan(KOL_TELEGRAM_HEADER.length);
     state.rows.push(short);
 
@@ -248,10 +306,268 @@ describe("RecordKolTelegramPosts", () => {
 
     expect(res).toEqual({ created: 0, refreshed: 1, channelsSwept: 1, channelsFailed: 0, channelsTruncated: 0 });
     const row = state.rows[1];
-    expect(row).toHaveLength(KOL_TELEGRAM_HEADER.length);
     expect(cell(row, "views")).toBe("3100");
     expect(cell(row, "engagements")).toBe("4");
-    expect(cell(row, "confirmed")).toBe("");
+    expect(cell(row, "pricePerPost")).toBe("100"); // the ragged blank was recognised as blank
+    // `confirmed` is the human's column: it is never in a written range, so a ragged row simply
+    // keeps its absent trailing cell rather than being filled in by the machine.
+    expect(wroteColumnOf(state.writes, "confirmed")).toBe(false);
+  });
+
+  describe("write mechanism — never writes a column a human owns", () => {
+    /** An existing row that is complete: priced, attributed, and confirmed by a human. */
+    function settledRow(over: Record<string, string> = {}): string[] {
+      const row = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+      row[col("kolId")] = "marine";
+      row[col("tgHandle")] = "marshallog";
+      row[col("postedAt")] = "2026-07-10T00:00:00.000Z";
+      row[col("deliverableLink")] = "https://t.me/marshallog/22794";
+      row[col("views")] = "2800";
+      row[col("engagements")] = "3";
+      row[col("reactionsDetail")] = "👍3";
+      row[col("itemId")] = "x:111";
+      row[col("topic")] = "USPXx Live on Mantle";
+      row[col("matchScore")] = "0.44";
+      row[col("pricePerPost")] = "100";
+      row[col("fetchedAt")] = "2026-07-03T00:00:00.000Z";
+      row[col("confirmed")] = "paid";
+      for (const [k, v] of Object.entries(over)) row[col(k)] = v;
+      return row;
+    }
+
+    it("writes only the measurement columns and fetchedAt on a measurement-only refresh", async () => {
+      const { sheet, state } = fakeSheet();
+      state.rows.push(KOL_TELEGRAM_HEADER, settledRow());
+
+      const gw = gateway({ marshallog: [post("marshallog", 22794, { views: 2930, reactions: [{ emoji: "👍", count: 9 }] })] });
+      const res = await new RecordKolTelegramPosts(sheet, gw, AT).run({
+        month: "2026-07", map: MAP, renderings: [],
+      });
+
+      expect(res.refreshed).toBe(1);
+      // E:G is views/engagements/reactionsDetail; L is fetchedAt. K (pricePerPost) sits between
+      // them and M (confirmed) after them, so neither can be inside a range this run wrote.
+      expect(dataWrites(state.writes)).toEqual([`${TAB}!E2:G2`, `${TAB}!L2:L2`]);
+      expect(wroteColumnOf(state.writes, "pricePerPost")).toBe(false);
+      expect(wroteColumnOf(state.writes, "confirmed")).toBe(false);
+      expect(wroteColumnOf(state.writes, "topic")).toBe(false);
+      expect(wroteColumnOf(state.writes, "kolId")).toBe(false);
+    });
+
+    it("issues no write at all when a re-run finds nothing changed", async () => {
+      const { sheet, state } = fakeSheet();
+      // fetchedAt already equals this run's clock and the measurements match, so there is nothing
+      // to say. A no-op write would still be a chance to clobber a concurrent edit.
+      state.rows.push(
+        KOL_TELEGRAM_HEADER,
+        settledRow({ views: "2800", engagements: "3", reactionsDetail: "👍3", fetchedAt: AT().toISOString() }),
+      );
+
+      const gw = gateway({ marshallog: [post("marshallog", 22794, { views: 2800, reactions: [{ emoji: "👍", count: 3 }] })] });
+      const res = await new RecordKolTelegramPosts(sheet, gw, AT).run({
+        month: "2026-07", map: MAP, renderings: [],
+      });
+
+      expect(res.refreshed).toBe(1);
+      expect(dataWrites(state.writes)).toEqual([]);
+      expect(state.batchCalls).toBe(0);
+    });
+
+    it("widens to the attribution columns only when attribution newly fills a blank itemId", async () => {
+      const { sheet, state } = fakeSheet();
+      const ours = "맨틀에서 토큰화 주식 거래 지원";
+      state.rows.push(
+        KOL_TELEGRAM_HEADER,
+        settledRow({ itemId: "", topic: "", matchScore: "", confirmed: "" }),
+      );
+
+      const gw = gateway({ marshallog: [post("marshallog", 22794, { text: ours, views: 2930 })] });
+      await new RecordKolTelegramPosts(sheet, gw, AT).run({
+        month: "2026-07", map: MAP, renderings: [{ itemId: "x:111", text: ours }],
+      });
+
+      const row = state.rows[1];
+      expect(cell(row, "itemId")).toBe("x:111");
+      // The measurements (E:G) run straight into itemId (H) as one range, and matchScore (J) is its
+      // own. `topic` (I) splits them precisely *because* no sibling row had a topic to inherit, so
+      // it did not change — the machine writes what it changed and nothing else. K is excluded too,
+      // the row already carrying a price.
+      expect(dataWrites(state.writes)).toEqual([`${TAB}!E2:H2`, `${TAB}!J2:J2`, `${TAB}!L2:L2`]);
+      expect(wroteColumnOf(state.writes, "topic")).toBe(false);
+      expect(wroteColumnOf(state.writes, "pricePerPost")).toBe(false);
+      expect(wroteColumnOf(state.writes, "confirmed")).toBe(false);
+    });
+
+    it("collapses every new row of a run into one append call", async () => {
+      const { sheet, state } = fakeSheet();
+      const map: KolMapEntry[] = [
+        ...MAP,
+        { kolId: "raoni", tgHandle: "Raoni1", sheetLabel: "Raoni", pricePerPost: 60, active: true },
+      ];
+      const gw = gateway({
+        marshallog: [post("marshallog", 1), post("marshallog", 2), post("marshallog", 3)],
+        Raoni1: [post("Raoni1", 4), post("Raoni1", 5)],
+      });
+      const res = await new RecordKolTelegramPosts(sheet, gw, AT).run({
+        month: "2026-07", map, renderings: [],
+      });
+
+      // Five rows, one API call — not five. At ~16 candidate rows per channel over 13 channels a
+      // write per row does not fit in Sheets' 60-per-minute quota.
+      expect(res.created).toBe(5);
+      expect(state.appendedBatches).toHaveLength(1);
+      expect(state.appendedBatches[0]).toHaveLength(5);
+    });
+  });
+
+  it("records the canonical handle the page reported, not the casing kol-map was typed with", async () => {
+    const { sheet, state } = fakeSheet();
+    const map: KolMapEntry[] = [{ ...MAP[0], kolId: "raoni", tgHandle: "raoni1" }];
+    // t.me resolves the handle case-insensitively and answers with the canonical casing, so the
+    // gateway hands back a post whose handle and url are canonical.
+    const gw = gateway({ raoni1: [post("Raoni1", 20914)] });
+    await new RecordKolTelegramPosts(sheet, gw, AT).run({ month: "2026-07", map, renderings: [] });
+
+    const row = state.rows[1];
+    expect(cell(row, "tgHandle")).toBe("Raoni1");
+    expect(cell(row, "deliverableLink")).toBe("https://t.me/Raoni1/20914");
+  });
+
+  it("keeps the first of two rows sharing a deliverableLink and warns, so one post cannot be billed twice", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { sheet, state } = fakeSheet();
+    state.rows.push(KOL_TELEGRAM_HEADER);
+    for (const views of ["2800", "2900"]) {
+      const dup = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+      dup[col("deliverableLink")] = "https://t.me/marshallog/22794";
+      dup[col("views")] = views;
+      state.rows.push(dup);
+    }
+
+    const gw = gateway({ marshallog: [post("marshallog", 22794, { views: 3000 })] });
+    const res = await new RecordKolTelegramPosts(sheet, gw, AT).run({
+      month: "2026-07", map: MAP, renderings: [],
+    });
+
+    expect(res).toEqual({ created: 0, refreshed: 1, channelsSwept: 1, channelsFailed: 0, channelsTruncated: 0 });
+    // The FIRST row is the maintained one, so which row a run keeps current is stable across runs;
+    // keeping the last would have frozen this row at stale numbers forever.
+    expect(cell(state.rows[1], "views")).toBe("3000");
+    expect(cell(state.rows[2], "views")).toBe("2900");
+    expect(warn.mock.calls.flat().join(" ")).toMatch(/duplicate deliverableLink.*22794/);
+  });
+
+  it("does not inherit a topic from a row a human rejected", async () => {
+    const { sheet, state } = fakeSheet();
+    state.rows.push(KOL_TELEGRAM_HEADER);
+
+    // Rejected precisely because the attribution was wrong. Topic is never overwritten once set, so
+    // seeding from this row would spread the wrong label to every row sharing the itemId, for good.
+    const rejected = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+    rejected[col("deliverableLink")] = "https://t.me/enjoymyhobby/1";
+    rejected[col("itemId")] = "x:111";
+    rejected[col("topic")] = "wrong topic";
+    rejected[col("confirmed")] = "reject";
+    state.rows.push(rejected);
+
+    const ours = "맨틀에서 토큰화 주식 거래 지원";
+    const gw = gateway({ marshallog: [post("marshallog", 5, { text: ours })] });
+    await new RecordKolTelegramPosts(sheet, gw, AT).run({
+      month: "2026-07", map: MAP, renderings: [{ itemId: "x:111", text: ours }],
+    });
+
+    const added = state.rows[2];
+    expect(cell(added, "itemId")).toBe("x:111");
+    expect(cell(added, "topic")).toBe("");
+  });
+
+  describe("matchScore stays coherent with itemId", () => {
+    function rowWith(over: Record<string, string>): string[] {
+      const row = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+      row[col("deliverableLink")] = "https://t.me/marshallog/22794";
+      row[col("views")] = "2800";
+      row[col("pricePerPost")] = "100";
+      for (const [k, v] of Object.entries(over)) row[col(k)] = v;
+      return row;
+    }
+
+    it("does not clear an existing matchScore when itemId is blank and nothing matches now", async () => {
+      const { sheet, state } = fakeSheet();
+      state.rows.push(KOL_TELEGRAM_HEADER, rowWith({ itemId: "", matchScore: "0.42" }));
+
+      const gw = gateway({ marshallog: [post("marshallog", 22794, { views: 2930 })] });
+      await new RecordKolTelegramPosts(sheet, gw, AT).run({
+        month: "2026-07", map: MAP, renderings: [], // nothing to match against
+      });
+
+      // The rule is fill-while-blank, not clear-when-blank.
+      expect(cell(state.rows[1], "matchScore")).toBe("0.42");
+      expect(wroteColumnOf(state.writes, "matchScore")).toBe(false);
+    });
+
+    it("clears a stale matchScore once a human's itemId differs from the machine's match", async () => {
+      const { sheet, state } = fakeSheet();
+      // A human corrected itemId to x:222; the 0.44 was scored against x:111 and describes a
+      // different item, so leaving it would read as evidence for an attribution it never scored.
+      state.rows.push(KOL_TELEGRAM_HEADER, rowWith({ itemId: "x:222", matchScore: "0.44" }));
+
+      const ours = "맨틀에서 토큰화 주식 거래 지원";
+      const gw = gateway({ marshallog: [post("marshallog", 22794, { text: ours, views: 2930 })] });
+      await new RecordKolTelegramPosts(sheet, gw, AT).run({
+        month: "2026-07", map: MAP, renderings: [{ itemId: "x:111", text: ours }],
+      });
+
+      expect(cell(state.rows[1], "itemId")).toBe("x:222"); // the human's id is untouched
+      expect(cell(state.rows[1], "matchScore")).toBe("");
+    });
+  });
+
+  describe("pricePerPost", () => {
+    it("leaves a new row's price blank rather than 0 when kol-map has no usable rate", async () => {
+      const { sheet, state } = fakeSheet();
+      const gw = gateway({ marshallog: [post("marshallog", 22794)] });
+      await new RecordKolTelegramPosts(sheet, gw, AT).run({
+        month: "2026-07",
+        map: [{ ...MAP[0], pricePerPost: 0 }],
+        renderings: [],
+      });
+      // A written "0" would be sticky: pricePerPost is only ever filled while blank, so fixing
+      // kol-map later could never repair the row.
+      expect(cell(state.rows[1], "pricePerPost")).toBe("");
+    });
+
+    it("backfills a blank price on an existing row once kol-map carries one", async () => {
+      const { sheet, state } = fakeSheet();
+      const existing = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+      existing[col("deliverableLink")] = "https://t.me/marshallog/22794";
+      existing[col("views")] = "2800";
+      existing[col("pricePerPost")] = "";
+      state.rows.push(KOL_TELEGRAM_HEADER, existing);
+
+      const gw = gateway({ marshallog: [post("marshallog", 22794, { views: 2930 })] });
+      await new RecordKolTelegramPosts(sheet, gw, AT).run({
+        month: "2026-07", map: MAP, renderings: [],
+      });
+
+      expect(cell(state.rows[1], "pricePerPost")).toBe("100");
+    });
+
+    it("does not touch a price that is already on the row", async () => {
+      const { sheet, state } = fakeSheet();
+      const existing = new Array(KOL_TELEGRAM_HEADER.length).fill("");
+      existing[col("deliverableLink")] = "https://t.me/marshallog/22794";
+      existing[col("views")] = "2800";
+      existing[col("pricePerPost")] = "62.5"; // a human's correction
+      state.rows.push(KOL_TELEGRAM_HEADER, existing);
+
+      const gw = gateway({ marshallog: [post("marshallog", 22794, { views: 2930 })] });
+      await new RecordKolTelegramPosts(sheet, gw, AT).run({
+        month: "2026-07", map: MAP, renderings: [], // kol-map says 100
+      });
+
+      expect(cell(state.rows[1], "pricePerPost")).toBe("62.5");
+      expect(wroteColumnOf(state.writes, "pricePerPost")).toBe(false);
+    });
   });
 
   it("does not touch a rejected row and does not count it as refreshed", async () => {
