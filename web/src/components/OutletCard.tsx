@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { btn, btnApprove, btnApproved, btnApprovedHover, btnApprovedRest, btnDanger, btnPrimary } from "../buttonStyles";
-import { rowEditorGate, resendKind } from "../rowEditor";
+import { reconcileOutcome, rowEditorGate, resendKind } from "../rowEditor";
 import { fromEditor, toEditor } from "../canonicalEditor";
 import { Tip, type ConfirmRequest } from "./ConfirmDialog";
 import {
@@ -843,17 +843,25 @@ function Row(props: {
                       // A scheduled draft that reconcile now finds published is the moment Typefully
                       // actually counts it against the monthly quota — not when it was queued — so
                       // this is the other real trigger for a refetch, alongside a successful send.
+                      // Unconditional, and ledger-wide on purpose: the quota is account-wide, so ANY
+                      // row publishing in that pass moved it, not only this room's.
                       props.onBoard(res.board, true);
-                      // `res.retired > 0` and `res.reconciled === 0` are mutually exclusive outcomes
-                      // for *this* row's draft, but must be checked in this order: a retired draft
-                      // never counts as reconciled either, so the generic "not published yet, try
-                      // later" message would otherwise fire for it too — contradicting the badge the
-                      // refetch above just painted ("예약 취소됨") in the very same click.
-                      if (res.retired > 0) {
-                        props.onError("예약된 게시물이 게시되기 전에 취소되었습니다 — 이 방은 다시 보낼 수 있습니다.");
-                      } else if (res.reconciled === 0) {
-                        props.onError("아직 게시되지 않았습니다 — 잠시 뒤 다시 눌러보세요.");
-                      }
+                      /**
+                       * The message, on the other hand, is about THIS room — read off the row in the
+                       * reply rather than off the pass's counts, which tally every awaiting row in
+                       * both ledgers. See `reconcileOutcome` for the two ways the counts misreport a
+                       * batch that had siblings in the queue.
+                       */
+                      const said = {
+                        retired: "예약된 게시물이 게시되기 전에 취소되었습니다 — 이 방은 다시 보낼 수 있습니다.",
+                        pending: "아직 게시되지 않았습니다 — 잠시 뒤 다시 눌러보세요.",
+                        // Says what it does know: the row moved, the screen is current, and this
+                        // button is no longer the way to find out. Guessing between "게시됨" and
+                        // "아직" here is the misreport, one step quieter.
+                        unknown: "이 줄이 예약 상태에서 벗어났지만 링크가 없어, 게시 여부를 이 화면에서 확인할 수 없습니다 — 줄의 상태를 확인하세요.",
+                        published: undefined, // the link is on screen now; a message would just repeat it
+                      }[reconcileOutcome(res.board, { type: group.type, channel: group.channel, outletId: row.outletId })];
+                      if (said !== undefined) props.onError(said);
                     })
                   }
                 >

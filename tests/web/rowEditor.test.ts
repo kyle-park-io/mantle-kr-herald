@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { rowEditorGate, resendKind } from "../../web/src/rowEditor";
-import { deliveredToRoom, type BoardRow } from "../../web/src/types";
+import { reconcileOutcome, rowEditorGate, resendKind } from "../../web/src/rowEditor";
+import { deliveredToRoom, type BoardGroup, type BoardRow, type BoardView } from "../../web/src/types";
 
 const row = (o: Partial<BoardRow> = {}): BoardRow => ({
   outletId: "tg-dev",
@@ -263,5 +263,98 @@ describe("resendKind", () => {
   it("never calls a telegram row unlinked, link or no link", () => {
     expect(resendKind(row({ deliveryStatus: "sent" }), "telegram")).toBe("posted");
     expect(resendKind(row({ deliveryStatus: "sent", url: "https://t.me/x/1" }), "telegram")).toBe("posted");
+  });
+});
+
+/**
+ * The message [게시 확인] shows has to be about the room that was clicked. The route's counts are
+ * ledger-wide — `ReconcilePublished` walks every awaiting row in both ledgers — so a batch with two
+ * rooms in Typefully's queue at once (the normal case) can have one room's outcome reported on
+ * another's row. Both directions of that misreport have a test below.
+ */
+describe("reconcileOutcome", () => {
+  /** The clicked row's own group: 공지 · x, holding the room the operator pressed 게시 확인 on. */
+  const clicked = { type: "announcement" as const, channel: "x" as const, outletId: "x-main" };
+  const inQueue = row({ outletId: "x-main", deliveryStatus: "sent", awaitingPublish: true });
+
+  const board = (...groups: BoardGroup[]): BoardView => ({ itemId: "2026-07-30-a", groups, unconverted: [] });
+  const group = (o: Partial<BoardGroup> & { rows: BoardRow[] }): BoardGroup => ({
+    type: "announcement",
+    channel: "x",
+    text: "그룹 글",
+    status: "approved",
+    addableOutletIds: [],
+    ...o,
+  });
+
+  it("reads a row that came back with a link as published", () => {
+    const done = row({ outletId: "x-main", deliveryStatus: "sent", url: "https://x.com/a/status/777" });
+    expect(reconcileOutcome(board(group({ rows: [done] })), clicked)).toBe("published");
+  });
+
+  it("reads a dropped row as retired — the draft was deleted before it published", () => {
+    const gone = row({ outletId: "x-main", deliveryStatus: "dropped" });
+    expect(reconcileOutcome(board(group({ rows: [gone] })), clicked)).toBe("retired");
+  });
+
+  it("reads a row still holding its draft as pending", () => {
+    expect(reconcileOutcome(board(group({ rows: [inQueue] })), clicked)).toBe("pending");
+  });
+
+  /**
+   * The first misreport: a SIBLING's draft was deleted, so the pass answers `retired: 1` — and the
+   * clicked room, whose own draft is still queued, used to be told its post had been cancelled, one
+   * line under a badge the same click had just repainted as `예약됨`.
+   */
+  it("stays pending when it was a sibling's draft that got deleted", () => {
+    const sibling = row({ outletId: "x-alt", deliveryStatus: "dropped" });
+    expect(reconcileOutcome(board(group({ rows: [inQueue, sibling] })), clicked)).toBe("pending");
+  });
+
+  /**
+   * The second, and the quieter one: a SIBLING published, so `reconciled` is not zero and the "아직
+   * 게시되지 않았습니다" line was withheld. The click then answered with nothing at all, which on a
+   * board that repaints itself reads as success.
+   */
+  it("still says pending when a sibling published and this row did not", () => {
+    const sibling = row({ outletId: "x-alt", deliveryStatus: "sent", url: "https://x.com/a/status/778" });
+    expect(reconcileOutcome(board(group({ rows: [inQueue, sibling] })), clicked)).toBe("pending");
+  });
+
+  /**
+   * A room can be rowed under several cards — 데브방 takes both 공지 and 해설 — so the group has to be
+   * narrowed by `channel` as well as `type`. Matching on `type` alone picks whichever group comes
+   * first and reports the wrong row's fate for the same room.
+   */
+  it("looks in the clicked row's own group, not the first one holding that room", () => {
+    const otherChannel = group({ channel: "telegram", rows: [row({ outletId: "x-main", deliveryStatus: "dropped" })] });
+    const ours = group({ rows: [inQueue] });
+    expect(reconcileOutcome(board(otherChannel, ours), clicked)).toBe("pending");
+  });
+
+  it("looks in the clicked row's own type too", () => {
+    const otherType = group({ type: "explainer", rows: [row({ outletId: "x-main", deliveryStatus: "dropped" })] });
+    const ours = group({ rows: [inQueue] });
+    expect(reconcileOutcome(board(otherType, ours), clicked)).toBe("pending");
+  });
+
+  describe("a row this screen can no longer speak for", () => {
+    it("is unknown when the row left the board", () => {
+      expect(reconcileOutcome(board(group({ rows: [row({ outletId: "x-alt" })] })), clicked)).toBe("unknown");
+    });
+
+    it("is unknown when the group left the board", () => {
+      expect(reconcileOutcome(board(), clicked)).toBe("unknown");
+    });
+
+    /**
+     * The `unlinked` shape the server's resend guard writes: `sent`, no draft id, no url. Nothing
+     * knows whether a post exists — so it must not be reported as published just because it stopped
+     * waiting.
+     */
+    it("is unknown when the row stopped waiting without gaining a link", () => {
+      const unlinked = row({ outletId: "x-main", deliveryStatus: "sent" });
+      expect(reconcileOutcome(board(group({ rows: [unlinked] })), clicked)).toBe("unknown");
+    });
   });
 });
