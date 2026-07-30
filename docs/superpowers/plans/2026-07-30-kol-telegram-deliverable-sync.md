@@ -1177,7 +1177,7 @@ Invariants:
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `pnpm vitest run tests/app/recordKolTelegramPosts.test.ts`
-Expected: PASS, all eleven tests.
+Expected: PASS, all ten tests.
 
 - [ ] **Step 5: Commit**
 
