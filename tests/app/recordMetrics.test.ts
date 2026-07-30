@@ -17,6 +17,7 @@ function fakeSheet() {
       const m = /A(\d+):I\1$/.exec(range);
       if (m) state.rows[Number(m[1]) - 1] = rows[0];
     },
+    batchUpdateValues: async () => {},
     createSpreadsheet: async () => ({ spreadsheetId: "x" }),
   };
   return { sheet, state };
