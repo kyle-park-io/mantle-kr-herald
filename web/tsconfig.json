@@ -9,5 +9,9 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  // `tests` holds the component tests, which have to be typechecked under THIS config rather than the
+  // root one: they render JSX and touch `document`, and the root tsconfig has neither `jsx` nor the DOM
+  // lib (deliberately — `src/` is a Node pipeline). It is also why they live here instead of beside the
+  // pure frontend tests in `/tests/web/`, which import plain modules and need neither.
+  "include": ["src", "tests"]
 }

@@ -1,4 +1,4 @@
-import type { BoardRow, Channel } from "./types";
+import type { BoardRow, BoardView, Channel, ConversionType } from "./types";
 
 /**
  * Which story the 재발송 confirm dialog has to tell. The three shapes a resendable row can have
@@ -27,6 +27,53 @@ export function resendKind(
   if (row.awaitingPublish) return "queued";
   if (channel === "x" && row.deliveryStatus === "sent" && !row.url) return "unlinked";
   return "posted";
+}
+
+/**
+ * What [게시 확인] found out about THE ROW IT WAS CLICKED ON.
+ *
+ * The counts the reconcile route answers with (`reconciled`/`retired`/`pending`) are ledger-wide:
+ * `ReconcilePublished.run()` walks every awaiting row in both ledgers, not the one room the operator
+ * clicked. Reading a per-row message off them misreports in both directions, and both are reachable
+ * whenever a batch has more than one room in Typefully's queue at once — which is the normal case:
+ *
+ * - a SIBLING's draft was deleted (`retired > 0`) and this room is told its own post was cancelled,
+ *   beside a badge that still reads `예약됨`;
+ * - a SIBLING published (`reconciled > 0`) while this row did not, and "아직 게시되지 않았습니다" is
+ *   withheld — the click answers with nothing at all, which reads as success.
+ *
+ * The row's own post-pass state is right there in the reply: every mutating route answers with the
+ * rebuilt board, and the button already repaints from it. So the outcome is DERIVED from that row
+ * rather than inferred from a tally — the same move as `deliveredToRoom`, one predicate instead of two
+ * places guessing.
+ *
+ * - `published` — the row now carries an x.com url. The link is on screen; there is nothing to say.
+ * - `retired`   — the draft was deleted before it published (`dropped`). This room got nothing and is
+ *                 sendable again.
+ * - `pending`   — still a scheduled draft. Typefully has not published it yet.
+ * - `unknown`   — the row is no longer a scheduled draft this screen can speak for: it left the board,
+ *                 or it lost its draft id without gaining a url (the `unlinked` shape a resend guard
+ *                 writes). Rare, and only reachable when something else moved the row during the
+ *                 click — so it is reported as unknown rather than dressed up as one of the three.
+ */
+export type ReconcileOutcome = "published" | "retired" | "pending" | "unknown";
+
+/**
+ * `type` AND `channel` both narrow the group, not just `type`: a room can appear under several cards
+ * (데브방 takes 공지 and 해설), and one type can render to more than one channel. Matching on `type`
+ * alone would pick the first group that happens to hold the room — a different row's fate, which is
+ * the exact class of bug this function exists to remove.
+ */
+export function reconcileOutcome(
+  board: BoardView,
+  at: { type: ConversionType; channel: Channel; outletId: string },
+): ReconcileOutcome {
+  const group = board.groups.find((g) => g.type === at.type && g.channel === at.channel);
+  const row = group?.rows.find((r) => r.outletId === at.outletId);
+  if (row === undefined) return "unknown";
+  if (row.deliveryStatus === "dropped") return "retired";
+  if (row.awaitingPublish) return "pending";
+  return row.url ? "published" : "unknown";
 }
 
 /** What a room's own editor may do, and which of its buttons exist at all. */

@@ -320,12 +320,16 @@ const queuedRow = (itemId: string, postId = "draft-777"): DeliveryEntry =>
  * `expect(counter.sends).toBe(0)` in the refusal tests mean something, and what the two proceeding
  * tests below assert directly.
  */
-/** The `Headroom` the real reader would answer for a 15/month account at `used`, with `inFlight` open. */
-const headroomAt = (used: number, inFlight: number): Headroom => ({
-  remaining: 15 - used,
+/**
+ * The `Headroom` the real reader would answer for a 15/month account at `used`, with `inFlight`
+ * open. `remaining` is derived, because `used + remaining` is the plan's ceiling on the live API —
+ * a test that wants the two to disagree passes it explicitly (see `quotaReadings`).
+ */
+const headroomAt = (used: number, inFlight: number, remaining = 15 - used): Headroom => ({
+  remaining,
   used,
   inFlight,
-  available: 15 - used - inFlight,
+  available: remaining - inFlight,
   resetsAt: "2026-08-01T00:00:00+09:00",
 });
 
@@ -347,6 +351,24 @@ function quotaSequence(used: (number | undefined)[], inFlight = 1): SendToOutlet
           const u = used[Math.min(i++, used.length - 1)];
           if (u === undefined) throw new Error("quota read failed");
           return headroomAt(u, inFlight);
+        }
+      : undefined;
+}
+
+/**
+ * The same staging as `quotaSequence`, but spelling BOTH numbers out — for the pairs its
+ * `remaining = 15 - used` shortcut cannot express: a `remaining` that moved without `used`, or two
+ * numbers that do not add up to one ceiling. The guard reads both, so a test has to be able to move
+ * them independently or the second half of the comparison is unpinnable.
+ */
+function quotaReadings(readings: ({ used: number; remaining: number } | undefined)[], inFlight = 1): SendToOutletDeps["headroom"] {
+  let i = 0;
+  return (targets: SendableChannel[]) =>
+    targets.includes("x")
+      ? async () => {
+          const r = readings[Math.min(i++, readings.length - 1)];
+          if (r === undefined) throw new Error("quota read failed");
+          return headroomAt(r.used, inFlight, r.remaining);
         }
       : undefined;
 }
@@ -458,8 +480,22 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     // This row was the only draft in flight *that our ledgers know of*, so the increase cannot
     // belong to a sibling — as far as the count can see. (The ambiguous case is the next test.)
     expect(result.error).toContain("원장이 아는 한 그때 게시를 기다리던 예약은 이 글뿐이었습니다");
-    // "계정에서 방금 올라간 글을 확인하세요" is not followable without something to match on, and the
-    // row is about to lose its draft id — the one handle onto Typefully's own history.
+    /**
+     * And the limit of that count, said in the same breath as the claim rather than left for the
+     * operator to know: `inFlight` is counted from OUR two ledgers while `used` is account-wide, so a
+     * draft scheduled by hand in Typefully's own UI publishes inside this window and never appears in
+     * it. "이 글뿐이었습니다" on its own reads as certainty the number cannot carry.
+     */
+    expect(result.error).toContain("Typefully에서 직접 예약한 초안은 원장에 없어서");
+    /**
+     * The way out, which this branch used to withhold on the strength of that same certainty. The row
+     * it leaves is `발송됨` with no link — the `unlinked` shape whose whole premise on the dashboard is
+     * that a second 재발송 goes straight out — so an operator whose post did NOT go up was left with a
+     * closed room and no told way to reopen it.
+     */
+    expect(result.error).toContain("재발송을 한 번 더 누르세요");
+    // Not followable without something to match on, and the row is about to lose its draft id — the
+    // one handle onto Typefully's own history.
     expect(result.error).toContain("draft-raced");
 
     // The row must survive in a shape no reconcile will retire: its draft 404s now, so `gone` would
@@ -595,9 +631,14 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     expect(counter.sends).toBe(1);
   });
 
-  it("resends when `used` DROPPED across the cancel — a monthly reset is not a publish", async () => {
-    // The quota resets on the 1st, and `used` goes down when it does. Only an increase is evidence
-    // that something published; refusing on any change would strand a room over a calendar rollover.
+  it("refuses when the counters went BACKWARDS across the cancel — a monthly reset hides a publish inside its own drop", async () => {
+    /**
+     * The one path left to a double post after the guard shipped. The quota resets on the 1st (KST)
+     * and `used` DROPS when it does, so the old `after.used > before.used` read a rollover as
+     * "nothing published" — while `14 → 0` is equally the rollover with this very draft publishing
+     * straight after it. `used + remaining` is the plan ceiling and holds across a reset exactly as
+     * it holds across a publish, so nothing in the pair separates the two: see `publishEvidence`.
+     */
     const ledger = fakeDeliveryLedger([queuedRow("x:18", "draft-month-turn")]);
     const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
     const { sendToOutlet, counter } = sendableX("x:18", ledger, lookup.lookup, quotaSequence([14, 0]));
@@ -605,8 +646,48 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const result = await sendToOutlet("x:18", "x", "x-post", true);
 
     expect(lookup.cancels).toEqual(["draft-month-turn"]);
-    expect(result.sent).toBe(1);
+    expect(counter.sends).toBe(0); // THE assertion: this used to send, on top of a post that may be live
+    expect(result.sent).toBe(0);
+    // Named as the rollover, not as an unread quota: the operator can act on the difference — a blip
+    // is worth retrying in a moment, a month turning over will not recur this minute.
+    expect(result.error).toContain("월간 발행 쿼터가 새 달로 초기화돼");
+    // And NOT as a proven publish. A reset is unproven either way; claiming the post went up would
+    // send the operator hunting for something that may not exist.
+    expect(result.error).not.toContain("게시된 것으로 보입니다");
+    expect(result.error).toContain("draft-month-turn"); // the handle onto Typefully's own history
+
+    // Retired for the same reason every other refusal here retires: a row still holding its draft id
+    // is retired to `dropped` by the next reconcile pass, which reopens the room and undoes this.
+    const [row] = await ledger.loadAll();
+    expect(row.status).toBe("sent");
+    expect(row.postId).toBeUndefined();
+    expect(deliveredToRoom(row)).toBe(true);
+
+    // The way out — and the whole reason refusing is affordable. This window is a few seconds wide
+    // once a month, and it costs the operator one more click, not a room.
+    const second = await sendToOutlet("x:18", "x", "x-post", true);
+    expect(second.sent).toBe(1);
     expect(counter.sends).toBe(1);
+  });
+
+  it("refuses when `remaining` moved and `used` did not — two readings that cannot both be true", async () => {
+    /**
+     * The other pair the one-line `after.used > before.used` sent on, and the reason `remaining` is
+     * read at all rather than being decorative. `used` standing still while `remaining` drops
+     * describes an account this arithmetic does not understand; the guard refuses instead of picking
+     * the reading that happens to be convenient.
+     */
+    const ledger = fakeDeliveryLedger([queuedRow("x:19", "draft-mismatched")]);
+    const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
+    const readings = quotaReadings([{ used: 9, remaining: 6 }, { used: 9, remaining: 5 }]);
+    const { sendToOutlet, counter } = sendableX("x:19", ledger, lookup.lookup, readings);
+
+    const result = await sendToOutlet("x:19", "x", "x-post", true);
+
+    expect(counter.sends).toBe(0);
+    expect(result.error).toContain("앞뒤 숫자가 서로 맞지 않습니다");
+    const [row] = await ledger.loadAll();
+    expect(row.postId).toBeUndefined();
   });
 
   it("refuses the resend when the lookup itself throws", async () => {

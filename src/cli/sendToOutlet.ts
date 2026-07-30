@@ -7,7 +7,7 @@ import type { ChannelSender } from "../ports/ChannelSender";
 import type { DraftLookup } from "../ports/DraftLookup";
 import type { SendableChannel } from "../domain/send/channels";
 import type { DraftState } from "../domain/send/draftState";
-import type { Headroom } from "../domain/send/headroom";
+import { publishEvidence, type Headroom, type PublishEvidence } from "../domain/send/headroom";
 import { awaitingPublish } from "../domain/send/awaitingPublish";
 import { deliveryKey, type DeliveryEntry } from "../domain/delivery/models";
 import { outletById, deliveredByChannelSender, outletsForChannel, type Outlet } from "../domain/outlet/models";
@@ -33,6 +33,24 @@ const isSendableChannel = (c: string): c is SendableChannel => c === "telegram" 
  * social-set read itself takes, which is the only propagation delay there is room for.
  */
 const QUOTA_SETTLE_MS = 1_500;
+
+/**
+ * Why the two quota readings either side of a cancel could not settle whether the original
+ * published — named in the refusal, because the three are not the same fault and the operator can
+ * act on the difference. A blip is worth retrying in a moment; a month rollover will not recur this
+ * minute; numbers that do not square are worth reporting rather than clicking through.
+ *
+ * Keyed on every `PublishEvidence` verdict except the two that decide something, so a verdict added
+ * to that union without a sentence here is a compile error rather than an `undefined` in a message
+ * an operator reads at the moment they are deciding whether a post went live twice.
+ */
+const UNPROVEN_REASON: Record<Exclude<PublishEvidence, "published" | "still">, string> = {
+  unreadable: "월간 발행 쿼터를 읽지 못했습니다",
+  // Not "쿼터가 초기화됐습니다" on its own: a reset is good news on any other screen, and the reason
+  // this refusal exists is the one thing a reset does here — it hides a publish inside its own drop.
+  reset: "확인하는 사이 월간 발행 쿼터가 새 달로 초기화돼, 그 직전이나 직후의 게시 한 건이 초기화에 가려졌는지를 가려낼 수 없습니다",
+  incoherent: "월간 발행 쿼터의 앞뒤 숫자가 서로 맞지 않습니다",
+};
 
 export interface SendToOutletDeps {
   formattingStore: FormattingStore;
@@ -146,8 +164,9 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
    * A confirmed cancel is not the end of it: Typefully answers the same `204` whether it cancelled a
    * queued draft or deleted the record of one that just published, so the quota is read across the
    * cancel to tell those apart (see the `scheduled` branch). That adds two more refusals — the quota
-   * moved (it published anyway), and the quota could not be read (unproven either way) — for four in
-   * all. Both of those rewrite the row into an honest `sent` with NO draft id, because a row that
+   * moved (it published anyway), and the comparison could not be made at all (a read that failed, a
+   * month reset landing inside the window, or two numbers that do not square) — for four in all.
+   * Both of those rewrite the row into an honest `sent` with NO draft id, because a row that
    * keeps its draft id is a row `ReconcilePublished` will retire to `dropped` within two minutes,
    * which frees the room and hands the next batch run the second copy the refusal just prevented.
    *
@@ -261,60 +280,85 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
       // (`ReconcilePublished` calls it "the only record of which Typefully draft this was").
       const draftId = previous.postId;
 
-      if (before !== undefined && after !== undefined && after.used > before.used) {
+      /**
+       * The cancel took, but the two readings cannot settle whether the original published on the
+       * way through, so it is unproven EITHER way. Refuse — a resend is irreversible and an
+       * unusable quota comparison is not evidence — and retire the draft id for the same reason the
+       * proven branch does: an unverifiable row left holding its `postId` is retired to `dropped`
+       * by the next reconcile pass, which reopens the room and undoes this refusal without anyone
+       * deciding to.
+       */
+      const unproven = async (why: string): Promise<{ refusal: { sent: number; failed: number; error: string }; cancelled: boolean }> => {
+        await forgetDraft();
+        return { cancelled: false, refusal: { sent: 0, failed: 0, error: `${who}: 취소 요청은 받아들여졌지만, 그 사이 원본이 게시됐는지는 확인하지 못했습니다 (${why}) — 두 번 올라갈 수 있어 재발송을 멈췄습니다. 계정을 확인하고, 이 글이 실제로 올라가지 않았다면 재발송을 한 번 더 누르세요. 이 줄은 링크 없는 발송됨으로 남습니다 (취소한 초안 ${draftId})` } };
+      };
+
+      // Hoisted above the comparison so the rest of this block reads two real numbers rather than
+      // two maybe-numbers. `publishEvidence` answers `unreadable` for exactly this case too — the
+      // check is here as well because it is what narrows `before` for the count below.
+      if (before === undefined || after === undefined) return await unproven(UNPROVEN_REASON.unreadable);
+
+      /**
+       * What the pair actually proves — `publishEvidence` in the domain, which reads BOTH `used` and
+       * `remaining` and refuses to guess when they cannot be squared. It is not the one-line
+       * `after.used > before.used` this used to be: `used` drops on the 1st when the quota resets,
+       * so a reset landing inside this window used to read as "nothing published" while it was in
+       * fact hiding one (`14 → 1`). See that function for why no arithmetic recovers the answer.
+       */
+      const evidence = publishEvidence(before, after);
+
+      if (evidence === "published") {
         /**
          * A publish was charged across this call — the `204` was Typefully deleting the record of a
          * post that had already gone live, not cancelling a queued draft.
          *
-         * `>`, not `!==`: `used` also moves DOWN, on the 1st of the month when the quota resets, and
-         * a reset is not a publish. Refusing on it would strand a room for no reason.
-         *
-         * How strongly it proves it depends on what else was in the air. `used` is account-wide, and
-         * the one window this branch is reachable in is exactly when a batch's sibling drafts
-         * publish. `inFlight` from the BEFORE read is the honest test: it counts every draft that
-         * could have published inside the window (a sibling that published during it was already
-         * queued when the window opened), and this row is one of them. Exactly one, and the increase
-         * cannot belong to anything else. More than one, and it can — so the message says so rather
-         * than telling the operator to go and find a post that may not exist. Attributing it for
-         * real would mean asking Typefully about every sibling draft, and the answer is "refuse"
-         * either way, so it does not buy a decision.
+         * How strongly it proves it belongs to THIS post depends on what else was in the air. `used`
+         * is account-wide, and the one window this branch is reachable in is exactly when a batch's
+         * sibling drafts publish. `inFlight` from the BEFORE read is the honest test: it counts
+         * every draft that could have published inside the window (a sibling that published during
+         * it was already queued when the window opened), and this row is one of them. More than one,
+         * and the increase can belong to a sibling — so the message says so rather than sending the
+         * operator after a post that may not exist. Attributing it for real would mean asking
+         * Typefully about every sibling draft, and the answer is "refuse" either way, so it does not
+         * buy a decision.
          */
         await forgetDraft();
         /**
-         * Two things this message must not overclaim, both of them limits of the numbers it has.
+         * Three things this message must not overclaim, all of them limits of the numbers it has.
          *
          * `inFlight` is counted from OUR two ledgers while `used` is account-wide, so "only this one
          * was pending" is really "only this one that we know of" — a draft scheduled by hand in
-         * Typefully would publish inside the window and never appear in the count. And the branch
-         * fires on ANY increase, so naming a size ("한 칸") would misreport a `+2`.
+         * Typefully's own UI would publish inside this window and never appear in the count. That is
+         * why the sole-draft wording names the gap in the same breath as the claim, instead of
+         * tucking it into a parenthesis after telling the operator the answer.
+         *
+         * It is also why BOTH branches end with the way out. This refusal is a judgement call on
+         * incomplete information, and the row it leaves behind (`발송됨` with no link) is exactly the
+         * `unlinked` shape `resendKind` describes on the dashboard — whose whole premise is that the
+         * server "tells the operator to press 재발송 once more if the post never appeared". The
+         * sole-draft branch used to withhold that sentence, on the strength of a certainty the count
+         * cannot support: an operator whose post did NOT go up was left with a closed room and no
+         * told way to reopen it.
+         *
+         * And the branch fires on ANY increase, so naming a size ("한 칸") would misreport a `+2`.
          */
         const others = Math.max(0, before.inFlight - 1);
         const lead = others === 0
           ? `${who}: 취소하는 사이에 원본이 게시된 것으로 보입니다 — 재발송하면 같은 글이 두 번 올라가므로 멈췄습니다.`
           : `${who}: 취소하는 사이에 원본이 게시됐을 수 있습니다 — 재발송하면 같은 글이 두 번 올라갈 수 있어 멈췄습니다.`;
         const proof = others === 0
-          ? "월간 발행 쿼터가 방금 줄었고, 원장이 아는 한 그때 게시를 기다리던 예약은 이 글뿐이었습니다 (Typefully에서 직접 예약한 초안까지는 알 수 없습니다)."
+          ? "월간 발행 쿼터가 방금 줄었고, 원장이 아는 한 그때 게시를 기다리던 예약은 이 글뿐이었습니다 — 다만 Typefully에서 직접 예약한 초안은 원장에 없어서, 줄어든 한 칸이 그쪽일 가능성까지 지울 수는 없습니다."
           : `월간 발행 쿼터가 방금 줄었습니다 — 다만 그때 게시를 기다리던 예약이 이 글 말고도 ${others}건 있어서, 그중 다른 글이 올라간 것일 수도 있습니다.`;
-        const next = others === 0
-          ? "계정에서 방금 올라간 글을 확인하세요."
-          : "계정을 확인하고, 이 글이 실제로 올라가지 않았다면 재발송을 한 번 더 누르세요.";
+        const next = "계정을 확인하고, 이 글이 실제로 올라가지 않았다면 재발송을 한 번 더 누르세요.";
         // The draft id, named before `forgetDraft` takes it off the row: it is the only handle the
-        // operator has to match this room against Typefully's own history, and "계정에서 방금 올라간
-        // 글을 확인하세요" with nothing to match on is not an instruction anyone can follow.
+        // operator has to match this room against Typefully's own history, and "계정을 확인하고"
+        // with nothing to match on is not an instruction anyone can follow.
         return { cancelled: false, refusal: { sent: 0, failed: 0, error: `${lead} ${proof} ${next} 이 줄은 링크 없는 발송됨으로 남습니다 (취소한 초안 ${draftId}) — 초안이 지워져 주소를 받아올 수 없어 게시 확인도 더는 손대지 않습니다` } };
       }
 
-      if (before === undefined || after === undefined) {
-        /**
-         * The cancel took, but the quota could not be read on one side, so "it published while we
-         * cancelled" is unproven either way. Refuse — a resend is irreversible and an unread quota
-         * is not evidence — and retire the draft id for the same reason the proven branch does: an
-         * unverifiable row left holding its `postId` is retired to `dropped` by the next reconcile
-         * pass, which reopens the room and undoes this refusal without anyone deciding to.
-         */
-        await forgetDraft();
-        return { cancelled: false, refusal: { sent: 0, failed: 0, error: `${who}: 취소 요청은 받아들여졌지만, 그 사이 원본이 게시됐는지는 확인하지 못했습니다 (월간 발행 쿼터를 읽지 못했습니다) — 두 번 올라갈 수 있어 재발송을 멈췄습니다. 계정을 확인하고, 이 글이 실제로 올라가지 않았다면 재발송을 한 번 더 누르세요. 이 줄은 링크 없는 발송됨으로 남습니다 (취소한 초안 ${draftId})` } };
-      }
+      // `reset` and `incoherent`. Both refuse for the same reason the unreadable case does, and each
+      // says which one it was — see `UNPROVEN_REASON`.
+      if (evidence !== "still") return await unproven(UNPROVEN_REASON[evidence]);
 
       return { cancelled: true }; // the queue no longer holds it, and the caller has to say so
     }
