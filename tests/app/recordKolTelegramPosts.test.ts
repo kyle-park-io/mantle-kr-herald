@@ -398,6 +398,44 @@ describe("RecordKolTelegramPosts", () => {
       expect(wroteColumnOf(state.writes, "confirmed")).toBe(false);
     });
 
+    it("never writes confirmed, and never writes a price already on the row, over many shapes", async () => {
+      // The example tests above pin the common shapes. This one sweeps the combinations, because the
+      // claim is load-bearing for money: `confirmed` must be outside every range the machine writes,
+      // for every row state and every post, not just the ones someone thought to write a test for.
+      const CONFIRMED = ["", "paid", "organic"]; // "reject" returns before any write
+      const PRICES = ["", "100", "62.5"];
+      const ITEM_IDS = ["", "x:111", "x:222"];
+      const TOPICS = ["", "hand typed topic"];
+      const SCORES = ["", "0.44"];
+      let checked = 0;
+
+      for (const confirmed of CONFIRMED)
+        for (const price of PRICES)
+          for (const itemId of ITEM_IDS)
+            for (const topic of TOPICS)
+              for (const matchScore of SCORES)
+                for (const renderings of [[], [{ itemId: "x:111", text: "맨틀에서 토큰화 주식 거래 지원" }]]) {
+                  const { sheet, state } = fakeSheet();
+                  state.rows.push(KOL_TELEGRAM_HEADER, settledRow({ confirmed, pricePerPost: price, itemId, topic, matchScore }));
+
+                  const gw = gateway({
+                    marshallog: [post("marshallog", 22794, { views: 9999, text: "맨틀에서 토큰화 주식 거래 지원" })],
+                  });
+                  await new RecordKolTelegramPosts(sheet, gw, AT).run({ month: "2026-07", map: MAP, renderings });
+
+                  const shape = JSON.stringify({ confirmed, price, itemId, topic, matchScore, r: renderings.length });
+                  expect(wroteColumnOf(state.writes, "confirmed"), `confirmed written for ${shape}`).toBe(false);
+                  if (price !== "") {
+                    expect(wroteColumnOf(state.writes, "pricePerPost"), `price overwritten for ${shape}`).toBe(false);
+                  }
+                  // The human's verdict must also survive in value, not only in mechanism.
+                  expect(cell(state.rows[1], "confirmed"), `confirmed changed for ${shape}`).toBe(confirmed);
+                  checked += 1;
+                }
+
+      expect(checked).toBe(216);
+    });
+
     it("collapses every new row of a run into one append call", async () => {
       const { sheet, state } = fakeSheet();
       const map: KolMapEntry[] = [
