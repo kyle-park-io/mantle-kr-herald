@@ -52,6 +52,39 @@ describe("MarkerText", () => {
     expect(imgs[0].getAttribute("src")).toBe(urlB);
     expect(container.textContent).not.toContain("이미지를 불러오지 못했습니다");
   });
+
+  it("renders both instances of a repeated url correctly", () => {
+    const DUP = "https://pbs.twimg.com/media/DUP.jpg";
+    const text = `![](${DUP})\n\n중간\n\n![](${DUP})`;
+    const { container } = render(<MarkerText text={text} />);
+
+    // Both images should be present
+    expect(container.querySelectorAll("img")).toHaveLength(2);
+    // Text content should match exactly
+    expect(container.textContent).toBe(text);
+  });
+
+  it("does not leak failed state when rerending with different urls", () => {
+    const DUP = "https://pbs.twimg.com/media/DUP.jpg";
+    const OTHER = "https://pbs.twimg.com/media/OTHER.jpg";
+
+    // Item A: DUP appears twice
+    const textA = `![](${DUP})\n\n중간\n\n![](${DUP})`;
+    const { container, rerender } = render(<MarkerText text={textA} />);
+
+    // First image in item A fails
+    fireEvent.error(container.querySelectorAll("img")[0]!);
+    expect(container.querySelectorAll("img")).toHaveLength(1); // Only second DUP remains
+
+    // Item B: DUP once + OTHER
+    const textB = `![](${OTHER})\n\n중간\n\n![](${DUP})`;
+    rerender(<MarkerText text={textB} />);
+
+    // No orphaned failure message from item A
+    expect(container.textContent).toBe(textB);
+    expect(container.querySelectorAll("img")).toHaveLength(2);
+    expect([...container.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual([OTHER, DUP]);
+  });
 });
 
 describe("MediaEditNotice", () => {

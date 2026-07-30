@@ -35,7 +35,7 @@ export function MarkerText({ text }: { text: string }) {
   return (
     <>
       {segments.map((segment, i) => (
-        <Fragment key={segment.kind === "photo" ? segment.url : `text:${i}`}>
+        <Fragment key={segment.kind === "photo" ? `photo-${i}-${segment.url}` : `text:${i}`}>
           {/* The split is line-aligned, so the newline between two segments belongs back here. */}
           {i > 0 && "\n"}
           {segment.kind === "photo" ? (
