@@ -32,6 +32,26 @@ describe("MarkerText", () => {
     expect(container.querySelectorAll("img")).toHaveLength(0);
     expect(container.textContent).toContain("이미지를 불러오지 못했습니다");
   });
+
+  it("clears the failed state when a different photo url is rendered at the same position", () => {
+    const urlA = "https://pbs.twimg.com/media/A.jpg";
+    const urlB = "https://pbs.twimg.com/media/B.jpg";
+    const { container, rerender } = render(<MarkerText text={`![](${urlA})`} />);
+
+    // First image fails
+    fireEvent.error(container.querySelector("img")!);
+    expect(container.querySelectorAll("img")).toHaveLength(0);
+    expect(container.textContent).toContain("이미지를 불러오지 못했습니다");
+
+    // Rerender with a different url at the same position
+    rerender(<MarkerText text={`![](${urlB})`} />);
+
+    // New image should be present, failure message should be gone
+    const imgs = container.querySelectorAll("img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].getAttribute("src")).toBe(urlB);
+    expect(container.textContent).not.toContain("이미지를 불러오지 못했습니다");
+  });
 });
 
 describe("MediaEditNotice", () => {
