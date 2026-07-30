@@ -15,6 +15,45 @@ describe("normalizeForMatch", () => {
   it("is stable under reordered whitespace and newlines", () => {
     expect(normalizeForMatch("a b\n\nc")).toBe(normalizeForMatch("a  b c"));
   });
+
+  describe("emoji leave no residue at the trigram seam", () => {
+    // \p{Extended_Pictographic} alone removed the pictograph and left the glue behind: U+FE0F
+    // (variation selector), U+200D (ZWJ), and the skin-tone modifiers. Each survivor is an invisible
+    // character sitting mid-string, and at 3-grams one stray codepoint corrupts up to three of them —
+    // so the same sentence scored differently depending on which emoji decorated it.
+    const PLAIN = "맨틀출시";
+
+    it("strips a skin-toned emoji whole", () => {
+      expect(normalizeForMatch("👍🏽 맨틀 출시")).toBe(PLAIN);
+    });
+
+    it("strips a ZWJ-compound emoji whole", () => {
+      expect(normalizeForMatch("👨‍👩‍👦 맨틀 출시")).toBe(PLAIN);
+    });
+
+    it("strips a variation-selector emoji whole", () => {
+      expect(normalizeForMatch("❤️ 맨틀 출시")).toBe(PLAIN);
+    });
+
+    it("strips a flag, whose halves are meaningless as text", () => {
+      expect(normalizeForMatch("🇰🇷 맨틀 출시")).toBe(PLAIN);
+    });
+
+    it("leaves the same text identically normalized however it is decorated", () => {
+      const decorated = ["👍🏽", "👍🏿", "👨‍👩‍👦", "❤️", "🇰🇷", ""].map((e) => normalizeForMatch(`${e} 맨틀 출시`));
+      expect(new Set(decorated).size).toBe(1);
+    });
+
+    it("keeps digits and '#', which \\p{Emoji_Component} would have eaten", () => {
+      // \p{Emoji_Component} covers exactly the residue above, but it also matches ASCII 0-9, '#' and
+      // '*' (they are keycap-emoji bases). Stripping those would make "100 MNT" and "200 MNT"
+      // normalize identically and delete every hashtag's '#' — inflating similarity between posts
+      // that differ precisely in their numbers. A false positive is the expensive direction: it
+      // plants a wrong topic that inheritance spreads and re-running cannot repair.
+      expect(normalizeForMatch("100 MNT #mantle")).toBe("100mnt#mantle");
+      expect(normalizeForMatch("100 MNT")).not.toBe(normalizeForMatch("200 MNT"));
+    });
+  });
 });
 
 describe("similarity", () => {

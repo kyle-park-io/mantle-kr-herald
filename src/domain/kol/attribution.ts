@@ -28,9 +28,29 @@ export interface MatchResult {
 export const MATCH_THRESHOLD = 0.3;
 
 const URL_PATTERN = /https?:\/\/\S+/gu;
-// Emoji and other symbol/pictograph codepoints, stripped so they cannot
-// contribute to (or dilute) the 3-gram set.
-const EMOJI_PATTERN = /\p{Extended_Pictographic}/gu;
+/**
+ * Emoji, stripped whole so they cannot contribute to (or dilute) the 3-gram set.
+ *
+ * `\p{Extended_Pictographic}` alone removed only the pictograph itself and left the codepoints that
+ * glue a sequence together behind: U+FE0F (variation selector), U+200D (ZWJ), and the U+1F3FB-1F3FF
+ * skin-tone modifiers. Each survivor is an invisible character sitting in the middle of the
+ * normalized string, and at 3-grams one stray codepoint corrupts up to three of them — so the same
+ * sentence scored differently depending on which emoji a KOL happened to decorate it with. Fixed
+ * *before* anyone calibrates `MATCH_THRESHOLD` on a real August run, since calibrating first would
+ * have baked the residue into the constant.
+ *
+ * Regional indicators are included: they are the halves of a flag, meaningless as text on their own.
+ *
+ * `\p{Emoji_Component}` is deliberately **not** used, despite covering exactly these codepoints. It
+ * also matches ASCII `0`-`9`, `#`, and `*` (verified: `/\p{Emoji_Component}/u.test("7") === true`),
+ * because those are the bases of keycap emoji. Stripping every digit would make "100 MNT" and
+ * "200 MNT" normalize identically and delete `#` from every hashtag — inflating similarity between
+ * posts that differ precisely in their numbers. A false positive is the expensive direction here
+ * (see §4 of the design): it plants a wrong topic that inheritance then spreads to every row sharing
+ * the itemId, and re-running cannot repair it.
+ */
+const EMOJI_PATTERN =
+  /[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u{FE0F}\u{200D}]/gu;
 const WHITESPACE_PATTERN = /\s+/gu;
 
 /**
