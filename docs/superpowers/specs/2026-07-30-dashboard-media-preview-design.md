@@ -52,7 +52,7 @@ without changing how the text is stored, sent, or edited.
 
 Both are `whitespace-pre-wrap` divs rendering a plain string, so one component serves both.
 
-**In scope — a notice above the editing textareas** (1차 한글, 2차 채널 텍스트), shown *only* when
+**In scope — a notice below the editing textareas** (1차 한글, 2차 채널/방 텍스트), shown *only* when
 that text contains at least one marker: preview is available in the 원문 pane, not here.
 
 **Explicitly out of scope:**
@@ -99,13 +99,29 @@ An image url can 404, be rate-limited, or be blocked. The card must not collapse
 `onError` the card shows a short failure line instead of the broken image. Nothing else on the page
 depends on the image loading.
 
-### Notice above the editing textareas
+### Notice below the editing textareas
 
 A one-line hint, rendered only when the edited text contains at least one marker, so a text without
-media stays visually unchanged. It sits outside the textarea and does not alter its size, value, or
-event handlers.
+media stays visually unchanged. It sits outside the textarea, below it, and does not alter the
+textarea's size, value, or event handlers. Grid-stacked with an invisible placeholder line in the
+same cell so the slot reserves that one line of height whether or not the notice has anything to say
+— otherwise a marker starting or stopping to match mid-keystroke shifts every control below it.
 
-Wording (a default, cheap to change during implementation):
+Wording (as shipped — updated from the pre-implementation default below):
+
+- photo markers only — `이미지 미리보기는 {where}에서 확인하세요`
+- `[영상]` markers only — `영상은 미리보기가 없습니다`
+- both — `이미지 미리보기는 {where}에서 확인하세요 · 영상은 미리보기가 없습니다` (the longest string the
+  notice can produce, and the one that wraps to two lines below ~700px window width — accepted)
+
+`{where}` names the pane that actually has the preview — `원문` on 1차, `변환 원문` on 2차 — with no
+"위" (above)/"아래" (below) direction word. That is deliberate, not an oversight: on the 2차 board
+`변환 원문` is a *collapsed* `<details>` section below the editing textarea, not an always-visible pane
+above it, so a directional word would be wrong on that screen even though it would have been correct
+on 1차's. The pre-implementation default below assumed "above" for both screens, which the layout
+(원문 pane above the 1차 textarea, `변환 원문` collapsed below the 2차 textarea) never actually was.
+
+Pre-implementation default (superseded by the above — kept for history):
 
 - photo markers only — `이미지 미리보기는 위 원문에서 확인하세요`
 - any `[영상]` marker present — `이미지 미리보기는 위 원문에서 확인하세요 · 영상은 미리보기가 없습니다`
@@ -139,9 +155,12 @@ hover shows the image; typing in the textarea behaves exactly as before.
 
 - `web/src/components/` — new `MarkerText` component (+ the notice, which is small enough to live
   beside it).
-- `web/src/components/TranslationDetail.tsx` — source pane uses `MarkerText`; notice above the
+- `web/src/components/TranslationDetail.tsx` — source pane uses `MarkerText`; notice below the
   textarea.
-- `web/src/components/OutletCard.tsx` — `Source` uses `MarkerText`; notice above the channel textarea.
+- `web/src/components/OutletCard.tsx` — `Source` uses `MarkerText`; notice below the group textarea
+  and below each forked room's own textarea.
+- `web/src/components/MarkerText.tsx` — also exports `MediaEditNoticeSlot`, the shared
+  strut-plus-notice slot every one of the three call sites above uses, so the idiom exists once.
 - `web/tests/` — component tests.
 
 No `src/` (backend) file changes.

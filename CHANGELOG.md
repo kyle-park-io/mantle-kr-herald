@@ -44,6 +44,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The two read-only "원문" panes now show a hover preview for every photo marker.** A post's photos
+  ride through the pipeline as `![](url)` markers inside the reviewed text (video as `[영상]`, which
+  carries no url); 1차's `원문` pane (`TranslationDetail`) and 2차's `변환 원문` pane
+  (`OutletCard > Source`) both render the marker's literal text unchanged and put the image one hover
+  away, CSS-only, no new dependency. A failed image load shows "이미지를 불러오지 못했습니다" instead
+  of a broken box. Each editing textarea that carries a marker (1차 한글, 2차 그룹/방 텍스트) gets a
+  small notice below it — never inside the textarea itself, since a `<textarea>` cannot host a hover
+  target on a substring — saying the preview lives in the pane beside it, and that video has no
+  preview at all. See `web/src/components/MarkerText.tsx`, `web/src/media.ts` (a frontend-only mirror
+  of `src/domain/media/sourceMedia.ts`'s marker regexes, kept honest by a test asserting the two stay
+  byte-for-byte identical) and
+  `docs/superpowers/specs/2026-07-30-dashboard-media-preview-design.md`.
 - **`pnpm kol-telegram:record [--month YYYY-MM]` — Telegram KOL deliverable sync.** Reads the active
   rows of the new human-maintained `kol-map` tab, sweeps each KOL's public Telegram channel preview
   (`https://t.me/s/<handle>`, no API key and no bot token — it is a public web page) across the
