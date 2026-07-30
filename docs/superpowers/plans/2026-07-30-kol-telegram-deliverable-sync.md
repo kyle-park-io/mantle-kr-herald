@@ -15,7 +15,7 @@
 - **No new dependency.** No HTML-parsing library. Regex over the captured markup, in one file, locked by fixtures. The repo already establishes this pattern — `src/adapters/twitterapi/expandUrls.ts` is regex over markup with a pure-function test.
 - **Code, comments, commits, and PR titles in English.** Docs under `docs/ko/` in Korean.
 - **The machine never writes a human tab.** `Jul.`/`Aug.`/`Sep.`, ` Q3 KOL 계약 리스트`, and `KOL list` are read-only to this feature. Only `kol-telegram-posts` is written.
-- **The machine never overwrites a human's cell.** On re-run, only `views`, `engagements`, `reactionsDetail`, `fetchedAt` are refreshed. `topic` and `confirmed` are preserved once non-empty.
+- **The machine never overwrites a human's cell.** On re-run, `views`, `engagements`, `reactionsDetail`, and `fetchedAt` are always refreshed. `itemId`, `matchScore`, and `topic` are filled **only while still blank** — that blank-only backfill is what lets a later sweep attribute a July row once approved copy exists. `topic` and `confirmed` are never overwritten once non-empty.
 - **Similarity threshold is `0.30`**, character 3-gram Jaccard, on text normalized to strip whitespace, emoji, and URLs.
 - **Candidate keywords** are `맨틀`, `mantle` (case-insensitive), and `MNT` word-boundary matched.
 - **Tab and column names are load-bearing.** `kol-telegram-posts` columns A–M in the order given in Task 1. `kol-map` columns A–E. Renaming a column silently breaks the upsert key or a human's confirmed verdict.
