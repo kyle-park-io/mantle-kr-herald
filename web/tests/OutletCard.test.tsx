@@ -62,15 +62,15 @@ function stubFetch(handler?: (url: string, init?: RequestInit) => unknown) {
 }
 
 /** Renders one card and hands back the confirm requests it raised and the errors it reported. */
-function mount(g: BoardGroup) {
+function mount(g: BoardGroup, o: { convertedText?: string } = {}) {
   const confirms: ConfirmRequest[] = [];
   const errors: (string | null)[] = [];
   const boards: { board: BoardView; quotaMayHaveChanged?: boolean }[] = [];
-  render(
+  const { container } = render(
     <OutletCard
       itemId="2026-07-30-a"
       group={g}
-      convertedText="변환 원문"
+      convertedText={o.convertedText ?? "변환 원문"}
       hovered={null}
       onHover={() => {}}
       onBoard={(b, q) => boards.push({ board: b, quotaMayHaveChanged: q })}
@@ -80,7 +80,7 @@ function mount(g: BoardGroup) {
       onConfirm={(r) => confirms.push(r)}
     />,
   );
-  return { confirms, errors, boards };
+  return { confirms, errors, boards, container };
 }
 
 /** The lines the operator is shown, as one string — these assert sentences, not array shapes. */
@@ -233,5 +233,27 @@ describe("OutletCard — [게시 확인] reports this row, not the ledger", () =
     const { boards } = await press(group({ rows: [queued] }));
 
     expect(boards[0].quotaMayHaveChanged).toBe(true);
+  });
+});
+
+describe("media markers", () => {
+  const URL = "https://pbs.twimg.com/media/HOZMXqPbIAALIE8.jpg";
+  const PHOTO = `![](${URL})`;
+
+  beforeEach(() => stubFetch());
+
+  it("previews the photo in the converted source", () => {
+    const { container } = mount(group({ text: "그룹 글", rows: [row()] }), { convertedText: `변환 원문\n\n${PHOTO}` });
+    expect([...container.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual([URL]);
+  });
+
+  it("tells the group editor where the preview is", () => {
+    const { container } = mount(group({ text: `그룹 글\n\n${PHOTO}`, rows: [row()] }));
+    expect(container.textContent).toContain("이미지 미리보기는 변환 원문에서 확인하세요");
+  });
+
+  it("says nothing when no text on the card carries media", () => {
+    const { container } = mount(group({ text: "그룹 글", rows: [row()] }));
+    expect(container.textContent).not.toContain("미리보기");
   });
 });

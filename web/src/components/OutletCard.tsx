@@ -4,6 +4,7 @@ import { btn, btnApprove, btnApproved, btnApprovedHover, btnApprovedRest, btnDan
 import { reconcileOutcome, rowEditorGate, resendKind } from "../rowEditor";
 import { fromEditor, toEditor } from "../canonicalEditor";
 import { Tip, type ConfirmRequest } from "./ConfirmDialog";
+import { MarkerText, MediaEditNotice } from "./MarkerText";
 import {
   CHANNEL_FORMAT_NOTE,
   CHANNEL_LABEL,
@@ -315,6 +316,20 @@ export function OutletCard(props: {
             {CHANNEL_RENDERS_BOLD[channel] ? "✓ " : "· "}
             {CHANNEL_FORMAT_NOTE[channel]}
           </p>
+          {/*
+            Grid-stacked so this line reserves its height whether or not the notice has anything to
+            say — the group textarea is edited character by character, and a marker starting or
+            stopping to match mid-keystroke must not shift the 저장/승인하기/복사 row directly below.
+            Same idiom as `TranslationDetail`'s `media-edit-notice-slot`.
+          */}
+          <div className="grid" data-testid="media-edit-notice-slot">
+            <p aria-hidden="true" className="invisible col-start-1 row-start-1">
+              {" "}
+            </p>
+            <div className="col-start-1 row-start-1">
+              <MediaEditNotice text={fromEditor(text)} where="변환 원문" />
+            </div>
+          </div>
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           <button
@@ -521,7 +536,7 @@ function Source({ convertedText }: { convertedText: string }) {
       </summary>
       {convertedText ? (
         <div className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap text-[14px] leading-relaxed text-muted">
-          {convertedText}
+          <MarkerText text={convertedText} />
         </div>
       ) : (
         <p className="mt-2 text-[13px] leading-relaxed text-faint">
@@ -1006,6 +1021,20 @@ function Row(props: {
             spellCheck={false}
             aria-label={gate.readOnly ? `${row.label}에 발송된 글` : `${row.label} 전용 글`}
           />
+          {/*
+            Same reserve-space idiom as the group textarea above and `TranslationDetail`'s
+            `media-edit-notice-slot`: a forked room's copy carries the same markers, so it earns the
+            same notice — and the same one-line strut, so the button row below never jumps as the
+            reviewer types a marker into or out of existence.
+          */}
+          <div className="mt-1.5 grid" data-testid="media-edit-notice-slot">
+            <p aria-hidden="true" className="invisible col-start-1 row-start-1 text-[12px] leading-relaxed">
+              {" "}
+            </p>
+            <div className="col-start-1 row-start-1">
+              <MediaEditNotice text={fromEditor(props.draft)} where="변환 원문" />
+            </div>
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {gate.showSave && (
               <button
