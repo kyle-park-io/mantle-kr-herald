@@ -36,3 +36,19 @@ export function expiredArchiveDays(names: string[], olderThanDays: number, now: 
 export function isStrandedTempFile(name: string): boolean {
   return TEMP_FILE.test(name) || LOCK_FILE.test(name);
 }
+
+/**
+ * The lock file whose liveness decides whether this debris is still in use.
+ *
+ * A lock answers for itself. A `.tmp-*` answers to the lock on the store it is being renamed onto,
+ * because the two are produced by ONE write: `withFileLock(path, …)` takes `<store>.lock` and the
+ * atomic write inside it creates `<store>.tmp-…`. Judging them separately is what the sweep's age
+ * gate used to avoid by accident — both were stamped once and aged together — and what the lock's
+ * heartbeat broke, since only the lock is refreshed while the write runs.
+ *
+ * Names only, no paths: debris and its lock always sit in the same directory, and keeping this
+ * pure keeps it beside the patterns it is derived from.
+ */
+export function lockGuarding(name: string): string {
+  return LOCK_FILE.test(name) ? name : `${name.replace(TEMP_FILE, "")}.lock`;
+}

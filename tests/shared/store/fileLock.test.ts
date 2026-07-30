@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fork } from "node:child_process";
-import { withFileLock } from "../../../src/shared/store/fileLock";
+import {
+  LOCK_STALE_MS,
+  LOCK_TIMEOUT_MS,
+  RECLAIM_CONFIRM_MS,
+  withFileLock,
+} from "../../../src/shared/store/fileLock";
 
 const scratch = () => mkdtemp(join(tmpdir(), "lock-"));
 
@@ -166,8 +171,19 @@ describe("withFileLock", () => {
     const path = join(dir, "ledger.json");
     await writeFile(`${path}.lock`, "");
     await expect(
+      // 60_000 + RECLAIM_CONFIRM_MS — the advice has to name the bound a caller can act on. "above
+      // staleMs" was the first version, and following it literally (`staleMs + 1`) earns the same
+      // error again, because a reclaim needs the confirmation window on top.
       withFileLock(path, async () => "never", { staleMs: 60_000, timeoutMs: 50 }),
-    ).rejects.toThrow(/raise timeoutMs above staleMs/);
+    ).rejects.toThrow(/raise timeoutMs above 61000ms/);
+  });
+
+  // The ordering the whole recovery path rests on: a waiter that arrives just after a holder crashes
+  // must be able to outlive the staleness window AND the confirmation window on top of it. Lower the
+  // timeout past their sum and every command fails identically until someone deletes the lock by
+  // hand — a silent, permanent breakage, and until now nothing but a doc comment held it.
+  it("keeps the default timeout longer than a reclaim can take", () => {
+    expect(LOCK_TIMEOUT_MS).toBeGreaterThan(LOCK_STALE_MS + RECLAIM_CONFIRM_MS);
   });
 
   it("gives up rather than proceeding unprotected when the lock is held", async () => {
@@ -277,6 +293,49 @@ describe("withFileLock", () => {
       mayExit.resolve();
       await holder;
     });
+
+    /**
+     * The beat RATE, which nothing pinned — the divisor could be changed to 1 with the whole suite
+     * still green, and 1 collapses the entire lateness budget.
+     *
+     * The bound comes from the module's own arithmetic, and it is the one that survives a stepped
+     * clock: a live holder's worst apparent age is one beat interval plus one clock step, and it has
+     * to stay inside the window. With the step measured on this machine (22.71s against a 30s
+     * window), `interval + 22710 < 30000` leaves `interval < 0.243 · staleMs` — so divisor 5 or more,
+     * and 4 (0.25) is out. Expressed as a ratio because that is how the implementation expresses it;
+     * a shorter `staleMs` here scales the interval with it.
+     *
+     * Measured as a mean over several beats rather than a single gap, since Node timers fire late and
+     * one unlucky gap says nothing. The margin at divisor 6 is 46%, which is far more than timer
+     * lateness at this scale.
+     */
+    it("beats often enough that one clock step cannot age a live lock out of the window", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const lock = `${path}.lock`;
+      const staleMs = 1_200; // divisor 6 → a beat every 200ms
+      const mayExit = deferred();
+      const holder = withFileLock(path, () => mayExit.promise, { staleMs });
+      await waitFor(() => exists(lock));
+
+      const stamps: number[] = [];
+      let last = await mtimeOf(lock);
+      const startedAt = performance.now();
+      while (stamps.length < 4 && performance.now() - startedAt < 6_000) {
+        await sleep(10);
+        const now = await mtimeOf(lock);
+        if (now !== last) {
+          stamps.push(performance.now());
+          last = now;
+        }
+      }
+      mayExit.resolve();
+      await holder;
+
+      expect(stamps.length).toBe(4); // it beat at all, four times, inside six seconds
+      const mean = (stamps[3] - stamps[0]) / 3;
+      expect(mean).toBeLessThanOrEqual(staleMs * 0.243);
+    }, 20_000);
 
     /**
      * THE reason the heartbeat exists. A holder that works for longer than the staleness window used
@@ -427,6 +486,81 @@ describe("withFileLock", () => {
         const now = new Date();
         void utimes(lock, now, now).catch(() => {});
       }, 400);
+      try {
+        await expect(
+          withFileLock(path, async () => "walked in", { staleMs: 200, timeoutMs: 2_000 }),
+        ).rejects.toThrow(/Timed out/);
+      } finally {
+        clearInterval(flicker);
+      }
+    }, 15_000);
+
+    /**
+     * A confirmation window earned against one lock may not be spent unlinking a different one.
+     *
+     * `staleSince` used to record only *when* staleness began, not *which* lock was stale — so a
+     * waiter that spent its second watching a corpse would then unlink whatever occupied the path
+     * when the window elapsed. The successor here stands in for the three-step interleaving that
+     * produces it in the wild: this waiter starts confirming a dead lock, another waiter reclaims it
+     * and a third process legitimately acquires, and this waiter reads the new holder's lock as stale
+     * (a clock step, or a beat that has not landed yet). One look, and a live holder's lock is gone.
+     *
+     * The successor is written by hand and left looking stale on purpose: a real holder would beat and
+     * heal itself, which is the *other* protection. This isolates the one under test.
+     */
+    it("does not spend one lock's confirmation window on the lock that replaced it", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const lock = `${path}.lock`;
+      await writeFile(lock, "999999:long-dead\n");
+      await backdate(lock, 60_000);
+
+      const waiter = withFileLock(path, async () => "walked in", { staleMs: 200, timeoutMs: 5_000 });
+      // Two thirds of the way through the dead lock's window — enough that a run anchored to the
+      // clock alone is nearly satisfied, not enough to have reclaimed anything yet.
+      await sleep(700);
+      await writeFile(lock, "111111:the-successor\n");
+      await backdate(lock, 50_000); // a different mtime, still older than staleMs
+
+      // The buggy version unlinks at ~1000ms from the waiter's start, i.e. ~300ms from here. The
+      // fixed one starts a fresh window at the replacement, so the successor is untouched for a
+      // second past it.
+      await sleep(600);
+      expect(await exists(lock)).toBe(true);
+      expect((await readFile(lock, "utf8")).trim()).toBe("111111:the-successor");
+
+      // And it is not deadlocked either: the successor earns its own window and is then reclaimed,
+      // because by construction nothing is beating for it.
+      expect(await waiter).toBe("walked in");
+    }, 15_000);
+
+    /**
+     * An mtime that MOVES is proof of life, whatever the apparent age says — and that is the only
+     * proof available on a machine whose clock steps.
+     *
+     * A forward step inflates every lock's apparent age at once, so a live holder's lock can read
+     * older than the window on every single look for as long as the step lasts. Waiting a second does
+     * not help if the step lasts longer; what does help is that the holder keeps stamping the file,
+     * which no clock can fake. The flicker below is exactly that: a holder beating every 250ms whose
+     * stamps all land 60s in the past, so age never drops under `staleMs` and the mtime never stops
+     * changing. Before the run was anchored to the mtime this reclaimed a live holder's lock after
+     * 1s and let the waiter walk into a read-modify-write in progress.
+     */
+    it("does not reclaim a lock whose mtime keeps moving, even while it looks old", async () => {
+      const dir = await scratch();
+      const path = join(dir, "ledger.json");
+      const lock = `${path}.lock`;
+      await writeFile(lock, "999999:beating-under-a-stepped-clock\n");
+      let beat = 0;
+      const stamp = () => {
+        beat += 1;
+        // Each stamp differs from the last (so it reads as a beat) and stays 60s old (so it reads as
+        // stale). That pair is what a forward clock step does to a healthy holder.
+        const at = new Date(Date.now() - 60_000 + beat);
+        void utimes(lock, at, at).catch(() => {});
+      };
+      stamp();
+      const flicker = setInterval(stamp, 250);
       try {
         await expect(
           withFileLock(path, async () => "walked in", { staleMs: 200, timeoutMs: 2_000 }),

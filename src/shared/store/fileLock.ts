@@ -72,27 +72,30 @@ const RETRY_INTERVAL_MS = 25;
  *   the two numbers are far apart.** On a machine whose clock only moves forward at one second per
  *   second, a lock is judged by `Date.now() - mtime` and the budget is the whole window minus one
  *   interval: 25s, i.e. five consecutive beats may be lost. On the machine this was developed on the
- *   budget is **2186ms — 0.44 of a single interval**, and no beat may be missed at all. That machine
- *   steps `CLOCK_REALTIME` back and forth by ~22.81s in a 5.01s square wave (~0.26s high, ~4.75s
- *   low, `dMono = 1ms` across every edge), because WSL2's Hyper-V host time sync and an active
+ *   budget is **2292ms — 0.46 of a single interval**, and no beat may be missed at all. That machine
+ *   steps `CLOCK_REALTIME` back and forth by ~22.71s in a 5.00s square wave (~0.26s high, ~4.74s
+ *   low, `dMono ≈ 0` across every edge), because WSL2's Hyper-V host time sync and an active
  *   `systemd-timesyncd` are both stepping it while `timedatectl` reports the clock unsynchronised.
  *   A forward step adds its whole size to every lock's apparent age until the next beat re-stamps
  *   it, so the live holder's worst apparent age is one interval plus one step:
  *
  *   | divisor | interval | + step | vs 30s window |
  *   | ---     | ---      | ---    | ---           |
- *   | 4       | 7.5s     | 30.3s  | reclaims a working process |
- *   | **6**   | **5s**   | 27.8s  | inside, by 2.19s |
- *   | 10      | 3s       | 25.8s  | inside, by 4.19s |
+ *   | 4       | 7.5s     | 30.2s  | reclaims a working process |
+ *   | **6**   | **5s**   | 27.7s  | inside, by 2.29s |
+ *   | 10      | 3s       | 25.7s  | inside, by 4.29s |
  *
  *   That is a local misconfiguration, not a property of dev laptops in general, and the honest
  *   reading is not "6 guarantees five missed beats" — it does not — but "6 was the smallest divisor
  *   that still held up under an observed pathological clock, and 4 was not". The margin that
- *   survives *both* cases is the 2186ms one. Size any change to this number against that, not
+ *   survives *both* cases is the 2292ms one. Size any change to this number against that, not
  *   against the 25s.
  *
- *   The dependence on that amplitude staying at 22.81s is deliberately not load-bearing on its own:
- *   {@link RECLAIM_CONFIRM_MS} is the mitigation that does not care how big the step is.
+ *   The dependence on that amplitude staying at 22.71s is deliberately not the only thing standing
+ *   between a live holder and a reclaim, and neither is this divisor. {@link RECLAIM_CONFIRM_MS}
+ *   outlasts a step of *any* size (it depends on how long the excursion lasts, not how big it is),
+ *   and `createReclaimer` additionally resets its window whenever the mtime MOVES — a beat landing
+ *   at all is proof of life that needs no clock to read, whatever the apparent age says.
  * - **From above.** The interval must be large enough that the common case pays nothing. A real
  *   critical section is ~10ms, so at 5s the timer is cleared before it ever fires on roughly 499 of
  *   every 500 holds: zero extra syscalls on the fast path (measured: 200 holds, 0 callbacks, 0 mtime
@@ -135,8 +138,18 @@ const HEARTBEAT_BEATS_PER_STALE_WINDOW = 6;
  * {@link RETRY_INTERVAL_MS} would be 3 x 25ms = 75ms — comfortably *inside* a 260ms excursion, and
  * therefore no protection at all. The cost is 1s added to a genuine reclaim, once, against a 45s
  * timeout; and nothing whatsoever when the lock is simply held.
+ *
+ * **Sized against the excursion's DURATION, not its amplitude.** That is the right dependency to
+ * have — a step's size is arbitrary while a mitigation that outlasts the step needs only to be
+ * longer than it lasts — but it is a dependency, so it is stated: invert the observed wave to 4.75s
+ * high and 0.26s low and one second would confirm straight through it. The measurement it is sized
+ * against (~0.26s high, 5.3% duty cycle over 4884 samples) is on `LOCK_STALE_MS`.
+ *
+ * Exported for `src/storage/sweep.ts`, which judges the same lock files by the same predicate and
+ * must not be more permissive than this module: `pnpm clean` deleting a lock the reclaimer here
+ * still refuses to touch is the same two-writer bug arriving through the cleanup command.
  */
-const RECLAIM_CONFIRM_MS = 1_000;
+export const RECLAIM_CONFIRM_MS = 1_000;
 
 /** The lock guarding `path`. Each file gets its own — never one shared lock, which would serialize unrelated ledgers. */
 export function lockPathFor(path: string): string {
@@ -194,6 +207,15 @@ async function acquire(lockPath: string): Promise<string | null> {
  * resurrecting a released lock and wedging the ledger for a full staleness window. And it never
  * makes the contents momentarily unreadable, which a truncating write would — `releaseIfOwned` and
  * `holderDescription` read this file by path and would see an empty token.
+ *
+ * **No test pins that choice, and one cannot be written from outside this module.** Swapping `utimes`
+ * for a `writeFile` of the same token leaves the whole suite green, because the `readFile` above
+ * already turns the ordinary "released while we beat" case into an ENOENT before the stamp is
+ * reached. The interleaving the choice actually protects against needs the release to land *between*
+ * that read and the stamp, which no caller can arrange. So it is written down here instead: the
+ * failure it prevents is a lock file holding a dead process's token that nothing will ever release,
+ * i.e. every later ledger write waiting out the full reclaim (31s) — recoverable, but a self-inflicted
+ * stall on every send, and invisible in review if this is ever "simplified".
  *
  * A race survives *inside* this function — the lock can change owner between the read and the
  * `utimes`, so we can bump a stranger's lock by one beat. That one is harmless in a way the module's
@@ -268,8 +290,9 @@ function startHeartbeat(lockPath: string, token: string, intervalMs: number): ()
  *
  * It is a factory because the verdict is no longer a function of a single observation — it needs to
  * remember how long the lock has looked stale *without interruption* (see
- * {@link RECLAIM_CONFIRM_MS}). One reclaimer per `withFileLock` call; a fresh observation at any
- * point resets the run, so a lock has to be consistently dead, not momentarily unlucky.
+ * {@link RECLAIM_CONFIRM_MS}). One reclaimer per `withFileLock` call; the run resets on a fresh
+ * observation **or on an mtime that moved**, so a lock has to be consistently dead, not momentarily
+ * unlucky, and a window earned against one lock is never spent on another.
  *
  * **What "stale" now means, and what it still gets wrong.** `withFileLock` refreshes its own lock's
  * mtime on a heartbeat for as long as `fn()` runs, so an untouched lock no longer means "held for a
@@ -303,29 +326,54 @@ function startHeartbeat(lockPath: string, token: string, intervalMs: number): ()
  * A missing file is success, not an error — someone else got there first.
  */
 function createReclaimer(lockPath: string, staleMs: number): () => Promise<boolean> {
-  // Monotonic, so the confirmation window cannot be satisfied by the same clock step it exists to
-  // outlast. Null means "the last look said fresh".
-  let staleSince: number | null = null;
+  /**
+   * The confirmation run in progress: when it started (monotonic, so the window cannot be satisfied
+   * by the same clock step it exists to outlast) and **the exact mtime it is watching**. Null means
+   * the last look said fresh.
+   *
+   * The two travel together deliberately — the run is anchored to a fact about the file, not to a
+   * clock reading.
+   *
+   * Without it, `staleSince` says only *when staleness started* — not which lock was stale — so a
+   * window opened against a dead lock could be spent unlinking whatever occupied the path when it
+   * elapsed. Reachable in three steps: this waiter starts confirming a corpse, another waiter
+   * reclaims it and a third process legitimately acquires, and this waiter's next look reads the new
+   * holder's lock as stale (a clock step, or a beat that has not landed yet). The window is already
+   * satisfied, so the live holder's lock is unlinked and a fourth process walks in — two holders, the
+   * exact outcome the confirmation window was added to prevent. Reproduced: a successor observed
+   * stale for 64ms was unlinked by a run that advertises 1000ms.
+   *
+   * Keying the run on the mtime makes a *different* lock start its own window, and makes a MOVED
+   * mtime — a beat — reset the run even while apparent age still exceeds `staleMs`. That second half
+   * matters as much as the first: on a stepped clock a live holder's lock can read old on every
+   * single look, and a moving mtime is the holder's own proof of life, true without reference to any
+   * clock.
+   */
+  let run: { since: number; mtimeMs: number } | null = null;
 
   return async function reclaimIfStale(): Promise<boolean> {
-    let heldForMs: number;
+    let mtimeMs: number;
     try {
-      heldForMs = Date.now() - (await stat(lockPath)).mtimeMs;
+      mtimeMs = (await stat(lockPath)).mtimeMs;
     } catch (err: unknown) {
       // Already gone: the next acquisition attempt will find it free.
       if (isErrnoException(err) && err.code === "ENOENT") return true;
       throw err;
     }
-    if (heldForMs <= staleMs) {
+    if (Date.now() - mtimeMs <= staleMs) {
       // One sight of a living holder discards the whole run. A dead owner will never do this.
-      staleSince = null;
+      run = null;
       return false;
     }
-    staleSince ??= performance.now();
+    if (run === null || run.mtimeMs !== mtimeMs) {
+      // A lock we have not been watching — a successor, or the same one that just beat. Either way
+      // this is look one of ITS window, not the last look of somebody else's.
+      run = { since: performance.now(), mtimeMs };
+    }
     // Still inside the confirmation window: report "held" so the caller waits and looks again.
-    if (performance.now() - staleSince < RECLAIM_CONFIRM_MS) return false;
+    if (performance.now() - run.since < RECLAIM_CONFIRM_MS) return false;
     await unlink(lockPath).catch(ignoreMissing);
-    staleSince = null;
+    run = null;
     return true;
   };
 }
@@ -427,7 +475,7 @@ export async function withFileLock<T>(
         timeoutMs <= reclaimableAfterMs
           ? ` This timeout is not longer than the ${reclaimableAfterMs}ms a reclaim needs (${staleMs}ms staleness ` +
             `window plus ${RECLAIM_CONFIRM_MS}ms confirming it), so a lock left by a dead process can never be ` +
-            `reclaimed by this call — raise timeoutMs above staleMs.`
+            `reclaimed by this call — raise timeoutMs above ${reclaimableAfterMs}ms.`
           : "";
       throw new Error(
         `Timed out after ${timeoutMs}ms acquiring the lock on ${path} (${await holderDescription(lockPath)}). ` +
