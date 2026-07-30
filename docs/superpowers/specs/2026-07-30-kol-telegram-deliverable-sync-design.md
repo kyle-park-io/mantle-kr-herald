@@ -156,6 +156,20 @@ back blank and a human labels topics — which is what already happened by hand.
 unaffected, and attribution works from August onward. The threshold above is therefore an initial
 value to be calibrated on the first real August run, not a tuned one.
 
+**What the live dry-run measured, and what it did not.** Before this feature shipped, a dry run
+scored eight real KOL posts against our approved copy and got scores of `0.0023`–`0.0177`, all far
+below `MATCH_THRESHOLD` (0.30). Read on its own that result looks like reassuring evidence that the
+threshold is conservative and could safely be lowered. It is not that. The only approved Telegram
+rendering available to match against at the time was approved on `2026-07-29`, and all eight
+candidate posts were published `07-03`–`07-22`, before that rendering existed, on an unrelated topic.
+By construction, none of the eight could possibly match — the sample contains **zero true positives**.
+What the run measured is that eight guaranteed true negatives were correctly rejected, which the
+threshold was always going to do at any reasonable value. It says nothing about **threshold
+sensitivity** — whether a genuine KOL rewrite of our copy would still clear 0.30 — because no true
+positive was present to test that. **`MATCH_THRESHOLD` must not be changed on the strength of this
+run.** Calibrating it needs a case where the candidate and the rendering both come from the same
+campaign, which only exists from August onward (per the paragraph above).
+
 **Topic bootstraps itself.** In `Jul.`, the same Topic string repeats across every KOL row for one
 campaign (`USPXx Live on Mantle` appears three times), which shows Topic is a label per *content
 item*, not per post. So once a human types a topic for an `itemId` in the review tab, every later row
@@ -227,6 +241,11 @@ Confirmed present in the live sheet on 2026-07-30, not just in the downloaded co
 the code's scope but the per-post rows this feature generates feed the broken summary block, so they
 should be fixed alongside it.
 
+**Re-confirmed against the live sheet on 2026-07-30.** The four defects below are still present
+exactly as described. A fifth defect previously listed here — a stray `G10` cell holding `=75*8` — is
+no longer present; someone cleaned it up between the original check and this re-check, so it has been
+removed from this list.
+
 **The summary block's SUMIFs reference the wrong columns.** Correct targets are F (Content Views),
 G (Engagements), I (Price per posting).
 
@@ -253,5 +272,3 @@ inconsistent with the sibling `SUMIF`s, which start at row 12. Start at `A12`.
 shows `0` on a `10000` budget while only two rows carry a payout Tx. It is measuring committed
 amounts, not spend. Split into per-month subtotals, or restrict the range to rows with a settled
 contract status.
-
-**A stray cell sits outside the July table.** `G10` holds `=75*8`, left over from a calculation.
