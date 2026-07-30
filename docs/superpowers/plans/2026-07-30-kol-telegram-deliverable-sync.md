@@ -828,12 +828,15 @@ describe("LoadKolMap", () => {
     expect((await new LoadKolMap(sheet).run())[0].pricePerPost).toBe(62.5);
   });
 
+  // Placeholder handles must be at least 5 characters: `extractTelegramHandle` enforces
+  // Telegram's real 5-32 rule, so a 3-letter stand-in would be dropped as unusable and the
+  // test would pass for the wrong reason.
   it("drops inactive rows so a channel can leave the sweep without losing its row", async () => {
     const { sheet } = sheetWith([
       HEADER,
-      ["a", "https://t.me/aaa", "A", "10", "TRUE"],
-      ["b", "https://t.me/bbb", "B", "10", "FALSE"],
-      ["c", "https://t.me/ccc", "C", "10", ""],
+      ["a", "https://t.me/aaaaa", "A", "10", "TRUE"],
+      ["b", "https://t.me/bbbbb", "B", "10", "FALSE"],
+      ["c", "https://t.me/ccccc", "C", "10", ""],
     ]);
     expect((await new LoadKolMap(sheet).run()).map((e) => e.kolId)).toEqual(["a"]);
   });
@@ -843,13 +846,13 @@ describe("LoadKolMap", () => {
       HEADER,
       ["a", "https://x.com/aaa", "A", "10", "TRUE"],
       ["b", "", "B", "10", "TRUE"],
-      ["c", "https://t.me/ccc", "C", "10", "TRUE"],
+      ["c", "https://t.me/ccccc", "C", "10", "TRUE"],
     ]);
     expect((await new LoadKolMap(sheet).run()).map((e) => e.kolId)).toEqual(["c"]);
   });
 
   it("treats a missing or unreadable price as 0 rather than NaN", async () => {
-    const { sheet } = sheetWith([HEADER, ["a", "https://t.me/aaa", "A", "", "TRUE"]]);
+    const { sheet } = sheetWith([HEADER, ["a", "https://t.me/aaaaa", "A", "", "TRUE"]]);
     expect((await new LoadKolMap(sheet).run())[0].pricePerPost).toBe(0);
   });
 
