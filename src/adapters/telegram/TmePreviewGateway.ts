@@ -1,5 +1,5 @@
 import type { ChannelPost } from "../../domain/kol/models";
-import type { TelegramChannelGateway } from "../../ports/TelegramChannelGateway";
+import type { FetchPostsInWindowResult, TelegramChannelGateway } from "../../ports/TelegramChannelGateway";
 import { parseChannelPreview } from "./parseChannelPreview";
 
 export type FetchText = (url: string) => Promise<string>;
@@ -13,7 +13,9 @@ const USER_AGENT =
  * window. There is no official API for this page, so coverage comes from paging backwards with
  * `?before=<messageId>` until one of three stops is hit: an empty page, a page whose oldest post
  * predates `startISO`, or `maxPages` (the guard against a channel that posts hundreds of times a
- * month). All three are required — the first two are the normal exits.
+ * month). All three are required — the first two are the normal exits, and only the third is
+ * reported back as `truncated: true` (see `TelegramChannelGateway`): it means the sweep gave up
+ * before covering the month, not that the channel simply posted less.
  */
 export class TmePreviewGateway implements TelegramChannelGateway {
   private readonly fetchText: FetchText;
@@ -28,17 +30,24 @@ export class TmePreviewGateway implements TelegramChannelGateway {
     handle: string,
     startISO: string,
     endExclusiveISO: string,
-  ): Promise<ChannelPost[]> {
+  ): Promise<FetchPostsInWindowResult> {
     const base = `https://t.me/s/${handle}`;
     // Keyed by messageId: overlapping pages can repeat a post, and a duplicated row would become
     // a duplicated deliverable downstream.
     const collected = new Map<number, ChannelPost>();
     let url = base;
+    // Starts true and is cleared the instant either normal exit fires. If the loop runs out of
+    // pages before either of those `break`s executes, this is the only value left standing — so it
+    // is true if and only if the `maxPages` cap, not the data, ended the sweep.
+    let truncated = true;
 
     for (let page = 0; page < this.maxPages; page++) {
       const html = await this.fetchText(url);
       const posts = parseChannelPreview(html, handle);
-      if (posts.length === 0) break; // nothing left to page through
+      if (posts.length === 0) {
+        truncated = false; // nothing left to page through
+        break;
+      }
 
       let lowestId = posts[0].messageId;
       let oldestPostedAt = posts[0].postedAt;
@@ -50,12 +59,18 @@ export class TmePreviewGateway implements TelegramChannelGateway {
         }
       }
 
-      if (oldestPostedAt < startISO) break; // paged past the window start
+      if (oldestPostedAt < startISO) {
+        truncated = false; // paged past the window start
+        break;
+      }
 
       url = `${base}?before=${lowestId}`;
     }
 
-    return [...collected.values()].sort((a, b) => a.postedAt.localeCompare(b.postedAt));
+    return {
+      posts: [...collected.values()].sort((a, b) => a.postedAt.localeCompare(b.postedAt)),
+      truncated,
+    };
   }
 }
 

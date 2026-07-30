@@ -38,12 +38,17 @@ const post = (handle: string, id: number, over: Partial<ChannelPost> = {}): Chan
   ...over,
 });
 
-function gateway(byHandle: Record<string, ChannelPost[] | Error>): TelegramChannelGateway {
+// A bare array is shorthand for a normal, non-truncated sweep — most tests don't care about
+// truncation, so they pass posts directly rather than the full `{ posts, truncated }` shape.
+function gateway(
+  byHandle: Record<string, ChannelPost[] | Error | { posts: ChannelPost[]; truncated: boolean }>,
+): TelegramChannelGateway {
   return {
     fetchPostsInWindow: async (handle) => {
       const v = byHandle[handle];
       if (v instanceof Error) throw v;
-      return v ?? [];
+      if (Array.isArray(v)) return { posts: v, truncated: false };
+      return v ?? { posts: [], truncated: false };
     },
   };
 }
@@ -61,7 +66,7 @@ describe("RecordKolTelegramPosts", () => {
       month: "2026-07", map: MAP, renderings: [],
     });
 
-    expect(res).toEqual({ created: 1, refreshed: 0, channelsSwept: 1, channelsFailed: 0 });
+    expect(res).toEqual({ created: 1, refreshed: 0, channelsSwept: 1, channelsFailed: 0, channelsTruncated: 0 });
     expect(state.ensured).toContain(TAB);
     expect(state.rows[0]).toEqual(KOL_TELEGRAM_HEADER);
 
@@ -146,7 +151,7 @@ describe("RecordKolTelegramPosts", () => {
       month: "2026-07", map: MAP, renderings: [],
     });
 
-    expect(res).toEqual({ created: 0, refreshed: 1, channelsSwept: 1, channelsFailed: 0 });
+    expect(res).toEqual({ created: 0, refreshed: 1, channelsSwept: 1, channelsFailed: 0, channelsTruncated: 0 });
     expect(state.rows).toHaveLength(2);
     const row = state.rows[1];
     expect(cell(row, "views")).toBe("2930");
@@ -241,7 +246,7 @@ describe("RecordKolTelegramPosts", () => {
       month: "2026-07", map: MAP, renderings: [],
     });
 
-    expect(res).toEqual({ created: 0, refreshed: 1, channelsSwept: 1, channelsFailed: 0 });
+    expect(res).toEqual({ created: 0, refreshed: 1, channelsSwept: 1, channelsFailed: 0, channelsTruncated: 0 });
     const row = state.rows[1];
     expect(row).toHaveLength(KOL_TELEGRAM_HEADER.length);
     expect(cell(row, "views")).toBe("3100");
@@ -263,7 +268,7 @@ describe("RecordKolTelegramPosts", () => {
       month: "2026-07", map: MAP, renderings: [],
     });
 
-    expect(res).toEqual({ created: 0, refreshed: 0, channelsSwept: 1, channelsFailed: 0 });
+    expect(res).toEqual({ created: 0, refreshed: 0, channelsSwept: 1, channelsFailed: 0, channelsTruncated: 0 });
     expect(cell(state.rows[1], "views")).toBe("2800");
   });
 
@@ -283,7 +288,7 @@ describe("RecordKolTelegramPosts", () => {
       month: "2026-07", map, renderings: [],
     });
 
-    expect(res).toEqual({ created: 2, refreshed: 0, channelsSwept: 3, channelsFailed: 1 });
+    expect(res).toEqual({ created: 2, refreshed: 0, channelsSwept: 3, channelsFailed: 1, channelsTruncated: 0 });
     expect(state.rows.slice(1).map((r) => cell(r, "kolId")).sort()).toEqual(["marine", "raoni"]);
   });
 
@@ -291,7 +296,7 @@ describe("RecordKolTelegramPosts", () => {
     const { sheet } = fakeSheet();
     let asked = 0;
     const gw: TelegramChannelGateway = {
-      fetchPostsInWindow: async () => { asked += 1; return []; },
+      fetchPostsInWindow: async () => { asked += 1; return { posts: [], truncated: false }; },
     };
     const res = await new RecordKolTelegramPosts(sheet, gw, AT).run({
       month: "2026-07",
@@ -300,6 +305,37 @@ describe("RecordKolTelegramPosts", () => {
     });
     expect(asked).toBe(0);
     expect(res.channelsSwept).toBe(0);
+  });
+
+  it("counts a truncated channel while still recording the rows it did collect", async () => {
+    const { sheet, state } = fakeSheet();
+    const gw = gateway({
+      marshallog: { posts: [post("marshallog", 1)], truncated: true },
+    });
+    const res = await new RecordKolTelegramPosts(sheet, gw, AT).run({
+      month: "2026-07", map: MAP, renderings: [],
+    });
+
+    expect(res).toEqual({ created: 1, refreshed: 0, channelsSwept: 1, channelsFailed: 0, channelsTruncated: 1 });
+    expect(state.rows.slice(1)).toHaveLength(1);
+  });
+
+  it("counts truncation independently of failure — a truncated channel is not a failed one", async () => {
+    const { sheet, state } = fakeSheet();
+    const map: KolMapEntry[] = [
+      ...MAP,
+      { kolId: "gone", tgHandle: "gone", sheetLabel: "Gone", pricePerPost: 10, active: true },
+    ];
+    const gw = gateway({
+      marshallog: { posts: [post("marshallog", 1)], truncated: true },
+      gone: new Error("HTTP 404"),
+    });
+    const res = await new RecordKolTelegramPosts(sheet, gw, AT).run({
+      month: "2026-07", map, renderings: [],
+    });
+
+    expect(res).toEqual({ created: 1, refreshed: 0, channelsSwept: 2, channelsFailed: 1, channelsTruncated: 1 });
+    expect(state.rows.slice(1)).toHaveLength(1);
   });
 
   it("rejects an invalid month before writing anything", async () => {

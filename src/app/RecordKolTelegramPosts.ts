@@ -46,6 +46,7 @@ export interface RecordKolTelegramResult {
   refreshed: number;
   channelsSwept: number;
   channelsFailed: number;
+  channelsTruncated: number;
 }
 
 export class RecordKolTelegramPosts {
@@ -82,12 +83,23 @@ export class RecordKolTelegramPosts {
     let refreshed = 0;
     let channelsSwept = 0;
     let channelsFailed = 0;
+    let channelsTruncated = 0;
 
     for (const entry of input.map) {
       if (!entry.active) continue;
       channelsSwept += 1;
       try {
-        const posts = await this.gateway.fetchPostsInWindow(entry.tgHandle, window.startISO, window.endExclusiveISO);
+        const { posts, truncated } = await this.gateway.fetchPostsInWindow(
+          entry.tgHandle,
+          window.startISO,
+          window.endExclusiveISO,
+        );
+        // A truncated sweep still produced real rows worth keeping, so this warns and continues
+        // rather than throwing — the same posture as a channel failure, just not one.
+        if (truncated) {
+          console.warn(`[kol-telegram] ${entry.tgHandle} truncated: hit the page cap before covering the month`);
+          channelsTruncated += 1;
+        }
         for (const post of posts) {
           if (!isMantleCandidate(post.text)) continue;
           const outcome = await this.upsert(entry, post, input.renderings, rows, linkIndex);
@@ -101,7 +113,7 @@ export class RecordKolTelegramPosts {
       }
     }
 
-    return { created, refreshed, channelsSwept, channelsFailed };
+    return { created, refreshed, channelsSwept, channelsFailed, channelsTruncated };
   }
 
   private async upsert(

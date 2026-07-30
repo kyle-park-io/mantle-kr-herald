@@ -26,10 +26,13 @@ const candidates = telegramMatchCandidates(renderings);
 
 const result = await new RecordKolTelegramPosts(sheet, gateway).run({ month, map, renderings: candidates });
 
-// All four counters are always printed — a silent zero (e.g. channelsFailed omitted when 0) must
-// never be mistaken for "no posts this month" when the real story is "every channel failed".
+// All five counters are always printed — a silent zero (e.g. channelsFailed or channelsTruncated
+// omitted when 0) must never be mistaken for "no posts this month" when the real story is "every
+// channel failed" or "a channel's sweep gave up before covering the month".
 const failureCallout = result.channelsFailed > 0 ? " — see warnings above" : "";
+const truncationCallout = result.channelsTruncated > 0 ? " — see warnings above" : "";
 console.log(
   `kol-telegram posts recorded for ${month}: ${result.created} created, ${result.refreshed} refreshed, ` +
-    `${result.channelsSwept} channel(s) swept, ${result.channelsFailed} channel(s) failed${failureCallout}.`,
+    `${result.channelsSwept} channel(s) swept, ${result.channelsFailed} channel(s) failed${failureCallout}, ` +
+    `${result.channelsTruncated} channel(s) truncated${truncationCallout}.`,
 );
