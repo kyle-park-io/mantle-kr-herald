@@ -9,13 +9,25 @@ export interface Headroom {
   remaining: number;
   /** Publishes already spent — the banner's denominator is `used + remaining`. */
   used: number;
-  /** Scheduled but unconfirmed sends, across BOTH ledgers (x-post rooms and x-article). */
+  /**
+   * Scheduled but unconfirmed sends, across BOTH ledgers (x-post rooms and x-article).
+   *
+   * Counted from OUR ledgers, which is the limit of what this number means. A draft scheduled by
+   * hand in Typefully's own UI is charged at publication like any other (measured live 2026-07-30),
+   * but until then it appears in neither `used` nor here — so `available` below is one slot
+   * optimistic per hand-scheduled draft, and the guard in `sendToOutlet` cannot rule out that a
+   * publish it saw belonged to one. Both places say so where it matters: the guard's refusal names
+   * the gap in the message an operator reads, and the gate's overshoot surfaces as a draft Typefully
+   * declines to publish — a room stuck on `예약됨`, not a second post. Closing it for real would mean
+   * asking Typefully to enumerate scheduled drafts on every gate read, and neither caller's decision
+   * changes if the answer is "one more than we thought".
+   */
   inFlight: number;
   /**
    * `remaining − inFlight`. Deliberately NOT clamped at zero: a stale in-flight row can overcount and
    * drive this negative, and clamping here would silently turn "we are over-committed" into "we are
    * exactly at zero" for the gate that compares against it. Callers clamp only when they *display*
-   * the number.
+   * the number. (It can also be optimistic in the other direction — see `inFlight`.)
    */
   available: number;
   resetsAt: string;
