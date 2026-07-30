@@ -15,15 +15,35 @@ import type { ChannelPost } from "../../domain/kol/models";
  */
 export function parseChannelPreview(html: string, handle: string): ChannelPost[] {
   const posts: ChannelPost[] = [];
-  // Every message lives inside its own `tgme_widget_message_wrap` div; splitting on that
-  // boundary lets each block be parsed independently, so one unreadable block cannot lose the
-  // rest of the page. The first chunk (before the first boundary) is page chrome, not a message.
-  const blocks = html.split(MESSAGE_WRAP_BOUNDARY).slice(1);
-  for (const block of blocks) {
+  for (const block of messageBlocks(html)) {
     const post = parseBlock(block, handle);
     if (post) posts.push(post);
   }
   return posts;
+}
+
+/**
+ * How many message blocks the page contains at all, regardless of which channel they belong to or
+ * whether they parse.
+ *
+ * This is the difference between "the channel posted nothing in the window" and "there is no
+ * channel here to read". A deleted, renamed, or preview-disabled handle does **not** produce an
+ * HTTP error: `GET https://t.me/s/<dead-handle>` answers **302** to `https://t.me/<dead-handle>`,
+ * `fetch` follows that by default, and the contact page it lands on is a perfectly good **HTTP
+ * 200** with zero message blocks. Verified live on 2026-07-30. Without this counter the gateway
+ * takes its "nothing left to page through" exit and the channel is reported as swept clean.
+ */
+export function countMessageBlocks(html: string): number {
+  return messageBlocks(html).length;
+}
+
+/**
+ * Every message lives inside its own `tgme_widget_message_wrap` div; splitting on that boundary
+ * lets each block be parsed independently, so one unreadable block cannot lose the rest of the
+ * page. The first chunk (before the first boundary) is page chrome, not a message.
+ */
+function messageBlocks(html: string): string[] {
+  return html.split(MESSAGE_WRAP_BOUNDARY).slice(1);
 }
 
 /**
@@ -46,10 +66,23 @@ export function parseViewCount(raw: string): number {
 const MESSAGE_WRAP_BOUNDARY = /<div class="tgme_widget_message_wrap js-widget_message_wrap">/;
 const DATA_POST_RE = /data-post="([^"/]+)\/(\d+)"/;
 const TIME_RE = /<time datetime="([^"]+)"/;
-const VIEWS_RE = /<span class="tgme_widget_message_views">([^<]*)<\/span>/;
+// `[^"]*` on both sides of the class name, matching REACTIONS_CONTAINER_RE below: Telegram
+// appending or reordering a class must not make a post's views unreadable (which would silently
+// record 0) or its text unreadable (which would silently drop the post from the candidate net
+// entirely, since `isMantleCandidate("")` is false — a missed payment obligation, not a flagged
+// row). The two class tokens are still both required, and required as whole tokens, so this
+// cannot start matching the sibling `tgme_widget_message_text js-message_reply_text` div that
+// carries a *quoted* message rather than this post's own text.
+const VIEWS_RE = /<span class="[^"]*\btgme_widget_message_views\b[^"]*"[^>]*>([^<]*)<\/span>/;
 const REACTIONS_CONTAINER_RE = /<div class="tgme_widget_message_reactions[^"]*"[^>]*>([\s\S]*?)<\/div>/;
-const REACTION_ITEM_RE = /<span class="tgme_reaction[^"]*">[\s\S]*?<b>([^<]*)<\/b><\/i>(\d*)<\/span>/g;
-const TEXT_RE = /<div class="tgme_widget_message_text js-message_text"[^>]*>([\s\S]*?)<\/div>/;
+// The count is `([^<]*)`, not `(\d*)`: above 1,000 the page abbreviates it ("1.2K"), and `(\d*)`
+// could only match the "1" before failing on `.2K</span>`. The engine then backtracked out of the
+// whole span and paired *this* reaction's emoji with the **next** reaction's count — so the
+// 1,200-reaction entry vanished and `engagements` undercounted by 1200. The captured text goes
+// through `parseViewCount`, which already handles the same abbreviation for views.
+const REACTION_ITEM_RE = /<span class="tgme_reaction[^"]*">[\s\S]*?<b>([^<]*)<\/b><\/i>([^<]*)<\/span>/g;
+const TEXT_RE =
+  /<div class="(?=[^"]*\btgme_widget_message_text\b)(?=[^"]*\bjs-message_text\b)[^"]*"[^>]*>([\s\S]*?)<\/div>/;
 const VIEW_COUNT_RE = /^(\d+(?:\.\d+)?)([KM]?)$/i;
 const BR_RE = /<br\s*\/?>/gi;
 const TAG_RE = /<[^>]+>/g;
@@ -65,7 +98,22 @@ const NAMED_ENTITIES: Record<string, string> = {
 
 function parseBlock(block: string, handle: string): ChannelPost | null {
   const dataPost = DATA_POST_RE.exec(block);
-  if (!dataPost || dataPost[1] !== handle) return null;
+  if (!dataPost) return null;
+
+  // t.me resolves a handle case-insensitively but always renders the channel's *canonical* casing
+  // in `data-post`: verified live on 2026-07-30, `GET /s/raoni1` and `GET /s/RAONI1` both answer
+  // with `data-post="Raoni1/…"`. So the comparison has to be case-insensitive — a case-sensitive
+  // one made a `kol-map` cell reading `raoni1` parse zero posts from a perfectly healthy channel,
+  // silently, and five of the thirteen seeded handles are mixed-case.
+  //
+  // The canonical handle is then what the permalink is built from, **not** the requested one, and
+  // the two halves of that are one fix, not two: matching case-insensitively while still building
+  // the URL from the requested casing would mint a different `deliverableLink` for every post of a
+  // channel the moment a human retyped its handle differently — a duplicate row per post and a
+  // doubled deliverable count. `deliverableLink` is the row identity, so it must not depend on how
+  // the handle was typed.
+  const canonicalHandle = dataPost[1];
+  if (canonicalHandle.toLowerCase() !== handle.toLowerCase()) return null;
 
   const messageId = Number(dataPost[2]);
   if (!Number.isInteger(messageId)) return null;
@@ -81,9 +129,9 @@ function parseBlock(block: string, handle: string): ChannelPost | null {
   const views = parseViewCount(viewsMatch ? viewsMatch[1] : "");
 
   return {
-    handle,
+    handle: canonicalHandle,
     messageId,
-    url: `https://t.me/${handle}/${messageId}`,
+    url: `https://t.me/${canonicalHandle}/${messageId}`,
     postedAt: parsedDate.toISOString(),
     views,
     reactions: parseReactions(block),
@@ -97,9 +145,11 @@ function parseReactions(block: string): { emoji: string; count: number }[] {
   const reactions: { emoji: string; count: number }[] = [];
   for (const item of container[1].matchAll(REACTION_ITEM_RE)) {
     const emoji = unescapeEntities(item[1]);
-    // A reaction span with no trailing digits counts as 1, which is how the page renders a
-    // single reaction in some layouts.
-    const count = item[2] ? Number(item[2]) : 1;
+    // A reaction span with no trailing count renders as 1, which is how the page shows a single
+    // reaction in some layouts. Anything else goes through parseViewCount so "1.2K" is 1200 rather
+    // than a dropped entry.
+    const raw = item[2].trim();
+    const count = raw === "" ? 1 : parseViewCount(raw);
     reactions.push({ emoji, count });
   }
   return reactions;
