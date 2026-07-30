@@ -44,6 +44,17 @@ describe("normalizeForMatch", () => {
       expect(new Set(decorated).size).toBe(1);
     });
 
+    it("strips a keycap's combining mark but keeps the digit it encloses", () => {
+      // U+20E3 (COMBINING ENCLOSING KEYCAP) is covered by none of Extended_Pictographic,
+      // Emoji_Modifier or Regional_Indicator, so "1️⃣" used to normalize to "1⃣" — the variation
+      // selector went and the keycap mark stayed, corrupting up to three trigrams. KOL promo copy
+      // numbers its lists this way, so it is a real shape of input. Stripping it does not reopen the
+      // digit problem below: U+20E3 is the decoration, never the digit.
+      expect(normalizeForMatch("1️⃣ 첫번째 2️⃣ 두번째")).toBe("1첫번째2두번째");
+      expect(normalizeForMatch("1️⃣ 첫번째")).toBe(normalizeForMatch("1 첫번째"));
+      expect([...normalizeForMatch("1️⃣")].map((c) => c.codePointAt(0))).toEqual([0x31]);
+    });
+
     it("keeps digits and '#', which \\p{Emoji_Component} would have eaten", () => {
       // \p{Emoji_Component} covers exactly the residue above, but it also matches ASCII 0-9, '#' and
       // '*' (they are keycap-emoji bases). Stripping those would make "100 MNT" and "200 MNT"

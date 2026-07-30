@@ -40,6 +40,11 @@ const URL_PATTERN = /https?:\/\/\S+/gu;
  * have baked the residue into the constant.
  *
  * Regional indicators are included: they are the halves of a flag, meaningless as text on their own.
+ * So is U+20E3 (COMBINING ENCLOSING KEYCAP), which none of the three properties above covers —
+ * `"1️⃣"` normalized to `"1⃣"`, losing the variation selector and keeping the keycap mark. KOL promo
+ * copy numbers its lists with these (`1️⃣ 첫번째`, `2️⃣ 두번째`), so it is a real shape of input. Note
+ * this does not reopen the digit problem below: U+20E3 is only the combining decoration, never the
+ * `1`, `#`, or `*` it encloses, so the digit itself still survives normalization.
  *
  * `\p{Emoji_Component}` is deliberately **not** used, despite covering exactly these codepoints. It
  * also matches ASCII `0`-`9`, `#`, and `*` (verified: `/\p{Emoji_Component}/u.test("7") === true`),
@@ -50,7 +55,7 @@ const URL_PATTERN = /https?:\/\/\S+/gu;
  * the itemId, and re-running cannot repair it.
  */
 const EMOJI_PATTERN =
-  /[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u{FE0F}\u{200D}]/gu;
+  /[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u{FE0F}\u{200D}\u{20E3}]/gu;
 const WHITESPACE_PATTERN = /\s+/gu;
 
 /**
