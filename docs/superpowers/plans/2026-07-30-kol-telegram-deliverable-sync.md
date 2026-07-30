@@ -644,13 +644,17 @@ git commit -m "feat(kol): attribute a KOL post to our copy by 3-gram similarity"
 import { describe, it, expect } from "vitest";
 import { TmePreviewGateway } from "../../../src/adapters/telegram/TmePreviewGateway";
 
-/** Minimal but structurally real message block, matching the markup the fixtures contain. */
+/**
+ * Minimal but structurally real message block, matching the markup the fixtures contain.
+ * The `tgme_widget_message_wrap` wrapper is load-bearing, not decoration: the Task 2 parser
+ * splits pages on that boundary, so a block without it yields zero posts.
+ */
 function block(handle: string, id: number, iso: string, views = "1.0K"): string {
-  return `<div class="tgme_widget_message" data-post="${handle}/${id}">
+  return `<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message" data-post="${handle}/${id}">
     <div class="tgme_widget_message_text js-message_text" dir="auto">post ${id}</div>
     <time datetime="${iso}"></time>
     <span class="tgme_widget_message_views">${views}</span>
-  </div>`;
+  </div></div>`;
 }
 
 function pageServer(pages: Record<string, string>) {
