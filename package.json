@@ -15,7 +15,7 @@
     "lark:chats": "tsx --env-file-if-exists=.env src/cli/lark-chats.ts",
     "lark:send": "tsx --env-file-if-exists=.env src/cli/lark-send.ts",
     "translate:prepare": "tsx --env-file-if-exists=.env src/cli/translate-prepare.ts",
-    "translate:save": "tsx src/cli/translate-save.ts",
+    "translate:save": "tsx --env-file-if-exists=.env src/cli/translate-save.ts",
     "translate:align": "tsx --env-file-if-exists=.env src/cli/translate-align.ts",
     "convert:prepare": "tsx src/cli/convert-prepare.ts",
     "convert:save": "tsx src/cli/convert-save.ts",
