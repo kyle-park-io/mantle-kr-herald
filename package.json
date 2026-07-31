@@ -18,7 +18,7 @@
     "translate:save": "tsx --env-file-if-exists=.env src/cli/translate-save.ts",
     "translate:align": "tsx --env-file-if-exists=.env src/cli/translate-align.ts",
     "convert:prepare": "tsx --env-file-if-exists=.env src/cli/convert-prepare.ts",
-    "convert:save": "tsx src/cli/convert-save.ts",
+    "convert:save": "tsx --env-file-if-exists=.env src/cli/convert-save.ts",
     "format": "tsx --env-file-if-exists=.env src/cli/format.ts",
     "format:save": "tsx src/cli/format-save.ts",
     "drive:publish": "tsx --env-file-if-exists=.env src/cli/publish.ts",
