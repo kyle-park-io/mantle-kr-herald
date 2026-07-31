@@ -394,7 +394,14 @@ Port `src/ports/LineageStore.ts`. Existing test: `tests/adapters/jsonlLineageSto
 ### Task 12: PgCollectionRepository
 Port `src/ports/CollectionRepository.ts`. Existing test: `tests/adapters/localJsonStore.test.ts`.
 
-This is the subtlest one. `LocalJsonStore.upsert` merges threads and tweets with rules that exist because of real data loss — read `mergeTweet`'s doc comment about an article's `blocks` regressing to a bare t.co link, and **port that rule and its test**. Store `tweets` as a `jsonb` column; the merge stays in TypeScript rather than becoming SQL, because it is domain logic and is already tested.
+This is the subtlest one. `LocalJsonStore.upsert` merges threads and tweets with rules that exist because of real data loss — read `mergeTweet`'s doc comment about an article's `blocks` regressing to a bare t.co link, and **port that rule and its test**. The merge stays in TypeScript rather than becoming SQL, because it is domain logic and is already tested.
+
+`tweets` is a **`json` column, not `jsonb`** — Task 1 changed it after review. `jsonb` parses to a binary form that normalizes key order and whitespace, so it cannot reproduce the original bytes, and Task 16 asserts exactly that. Do not change the column type.
+
+Two hazards specific to this store:
+
+- `upsert(threads)` takes an **array**. "One statement per write" here means one per thread, not a read-modify-write of the table. `loadAll()` inside `upsert` is the anti-pattern; a targeted read of only the rows being merged is what the merge needs and is fine. Wrap the batch in `Db.tx` so a partial merge cannot be observed.
+- **Always `JSON.stringify` the tweets array before passing it as a parameter.** `pg` serializes a raw JS array as a Postgres *array literal*, while PGlite does not — so relying on the driver would pass every test here and corrupt the column in production. This divergence was found empirically during implementation; it is the one place in this plan where PGlite and `pg` genuinely disagree.
 
 `LocalJsonStore` also implements `WatermarkStore` (`get`/`set` over `x/state.json`). Watermarks stay on disk — `collect` is a local job per the spec — so `PgCollectionRepository` implements `CollectionRepository` **only**. Leave `LocalJsonStore` in place for the watermark half and note it in the commit body.
 
