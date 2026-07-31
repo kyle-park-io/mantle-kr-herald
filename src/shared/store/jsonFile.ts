@@ -24,7 +24,14 @@ export async function writeTextFileAtomic(dir: string, path: string, text: strin
   await rename(tmpPath, path);
 }
 
+/** 2-space `JSON.stringify` plus a trailing newline — the exact bytes every `Json*` store writes.
+ *  Pulled out of `writeJsonFileAtomic` so an in-memory consumer (`state:push`'s database-backed
+ *  snapshot, `src/cli/stateFiles.ts`) can produce the identical text without touching disk. */
+export function jsonFileText(data: unknown): string {
+  return `${JSON.stringify(data, null, 2)}\n`;
+}
+
 /** Atomic write of 2-space JSON with a trailing newline. */
 export async function writeJsonFileAtomic(dir: string, path: string, data: unknown): Promise<void> {
-  await writeTextFileAtomic(dir, path, `${JSON.stringify(data, null, 2)}\n`);
+  await writeTextFileAtomic(dir, path, jsonFileText(data));
 }

@@ -1,66 +1,192 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
-import { describeKeptFiles, describeProvisionedFolder, describeStateDiff, trackedStateFiles } from "../../src/cli/stateFiles";
+import { describe, it, expect, afterEach } from "vitest";
+import {
+  describeKeptFiles,
+  describeProvisionedFolder,
+  describeStateDiff,
+  snapshotFromDb,
+  DbStateFileStore,
+  createStateFileStore,
+} from "../../src/cli/stateFiles";
 import { diffRowCounts } from "../../src/domain/state/snapshot";
-import { paths } from "../../src/paths";
-import { JsonConversionStore } from "../../src/adapters/store/JsonConversionStore";
-import { JsonDeliveryLedger } from "../../src/adapters/store/JsonDeliveryLedger";
-import { JsonOutletOverrideStore } from "../../src/adapters/store/JsonOutletOverrideStore";
-import { JsonPublishStore } from "../../src/adapters/store/JsonPublishStore";
-import { JsonTranslationStore } from "../../src/adapters/store/JsonTranslationStore";
-import { JsonXArticleLedger } from "../../src/adapters/store/JsonXArticleLedger";
+import { createTestDb } from "../support/testDb";
+import { PgTranslationStore } from "../../src/adapters/store/PgTranslationStore";
+import { PgConversionStore } from "../../src/adapters/store/PgConversionStore";
+import { PgFormattingStore } from "../../src/adapters/store/PgFormattingStore";
+import { PgOutletOverrideStore } from "../../src/adapters/store/PgOutletOverrideStore";
+import { PgDeliveryLedger } from "../../src/adapters/store/PgDeliveryLedger";
+import { PgXArticleLedger } from "../../src/adapters/store/PgXArticleLedger";
+import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
+
+let db: Awaited<ReturnType<typeof createTestDb>> | undefined;
+afterEach(async () => {
+  await db?.close();
+  db = undefined;
+});
 
 describe("the operational-state manifest", () => {
   // Pipeline order (translate → convert → format → send), because this is the order the dry-run
   // preview prints for an operator deciding what to overwrite.
-  it("tracks exactly the non-regenerable files, repo-relative", () => {
-    expect(trackedStateFiles().map((f) => f.rel)).toEqual([
+  it("tracks exactly the non-regenerable stores, repo-relative", async () => {
+    db = await createTestDb();
+    expect(new DbStateFileStore(db).tracked()).toEqual([
       "output/translations/translations.json",
       "output/variants/variants.json",
+      "output/formatted/renderings.json",
       "output/formatted/overrides.json",
       "output/publish/deliveries.json",
-      "output/publish/channels.json",
       "output/publish/x-article.json",
       "output/publish/state.json",
     ]);
   });
 
-  it("points at the same absolute paths as src/paths.ts", () => {
-    expect(trackedStateFiles().map((f) => f.abs)).toEqual([
-      paths.translationsStore,
-      paths.variantsStore,
-      paths.formattedOverrides,
-      paths.publishDeliveries,
-      paths.publishChannelsLegacy,
-      paths.publishXArticle,
-      paths.publishState,
-    ]);
-  });
-
-  it("includes the legacy channels.json — a pre-outlet install's only send history", () => {
-    // Omitting it means a pre-#80 machine pushes a snapshot with no send history in it at all, and
-    // restores to a tree where every already-sent room reads as never-sent.
-    expect(trackedStateFiles().map((f) => f.rel)).toContain("output/publish/channels.json");
+  it("does not carry the pre-outlet publish/channels.json forward — its rows are already inside deliveries by the time a database exists to snapshot", async () => {
+    // Unlike the old file-based manifest, channels.json is never produced by this store and is not
+    // in its tracked() list: db:import already folded any legacy row into `deliveries` (via
+    // JsonDeliveryLedger's own exclusive-or), so there is no separate legacy shape left in Postgres.
+    // An old snapshot that still names it hits `unknownStatePaths`'s "upgrade before restoring"
+    // refusal instead — the correct outcome for a pre-cutover snapshot, not a gap to route around.
+    db = await createTestDb();
+    expect(new DbStateFileStore(db).tracked()).not.toContain("output/publish/channels.json");
   });
 
   /**
-   * The two authored-text stores, and the distinction that decides membership: `format` really does
-   * rebuild `renderings.json` from the variants (that is what the board's `[포맷 다시]` runs), but
-   * nothing rebuilds the variants themselves — they hold what an agent wrote and a human then
-   * approved. Re-running the pipeline produces *a* conversion, not *that* one, and drops every
-   * approval standing on the old text.
-   *
-   * Asserted as a pair with the exclusion, so "add renderings.json too, for symmetry" fails here
-   * with the reason attached rather than looking like an oversight.
+   * `renderings.json` now joins the tracked set, reversing this file's own former exclusion: the
+   * regeneration argument ("format is pure code over variants") only ever covered the rendered
+   * *text*, never `ChannelRendering.status`/`approvedAt` (the §7 second-review approval gate) or
+   * `refined` — real reviewer work a fresh `format` run cannot reproduce.
    */
-  it("tracks the authored text and not the text that regenerates from it", () => {
-    const rel = trackedStateFiles().map((f) => f.rel);
+  it("tracks the authored text and the reviewer's rendering approval alike", async () => {
+    db = await createTestDb();
+    const rel = new DbStateFileStore(db).tracked();
     expect(rel).toContain("output/translations/translations.json");
     expect(rel).toContain("output/variants/variants.json");
-    expect(rel).not.toContain("output/formatted/renderings.json");
-    expect(rel).not.toContain("output/x/items.json");
+    expect(rel).toContain("output/formatted/renderings.json");
+  });
+});
+
+describe("snapshotFromDb", () => {
+  it("snapshots the database through the same seven-file bundle", async () => {
+    db = await createTestDb();
+    await new PgTranslationStore(db).upsert({
+      itemId: "x:1", source: "x", sourceText: "s", koreanText: "ko",
+      status: "approved", translatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const files = await snapshotFromDb(db);
+    const translations = files.find((f) => f.rel === "output/translations/translations.json");
+    expect(translations).toBeDefined();
+    expect(JSON.parse(translations!.body)).toHaveLength(1);
+  });
+
+  it("returns [] for a freshly provisioned, still-empty database — nothing to push", async () => {
+    db = await createTestDb();
+    expect(await snapshotFromDb(db)).toEqual([]);
+  });
+
+  it("omits a store with zero rows rather than writing an empty shape", async () => {
+    db = await createTestDb();
+    await new PgTranslationStore(db).upsert({
+      itemId: "x:1", source: "x", sourceText: "s", koreanText: "ko",
+      status: "approved", translatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const files = await snapshotFromDb(db);
+    expect(files.map((f) => f.rel)).toEqual(["output/translations/translations.json"]);
+  });
+
+  it("serialises each tracked store to the exact bytes its Json* store would have written", async () => {
+    db = await createTestDb();
+    await new PgTranslationStore(db).upsert({
+      itemId: "x:1", source: "x", sourceText: "s", koreanText: "ko",
+      status: "approved", translatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await new PgConversionStore(db).upsert({
+      itemId: "x:1", type: "explainer", sourceKorean: "ko", convertedText: "conv",
+      status: "converted", createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    await new PgFormattingStore(db).upsert({
+      itemId: "x:1", type: "explainer", channel: "telegram", text: "t",
+      refined: false, createdAt: "2026-01-01T00:00:00.000Z", status: "approved",
+    });
+    await new PgOutletOverrideStore(db).upsert({
+      itemId: "x:1", type: "announcement", outletId: "tg-dev", text: "fork",
+      status: "rendered", createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    await new PgDeliveryLedger(db).add({
+      itemId: "x:1", type: "announcement", outletId: "tg-dev",
+      status: "sent", at: "2026-01-01T00:00:00.000Z", by: "auto",
+    });
+    await new PgXArticleLedger(db).add({ itemId: "x:1", sentAt: "2026-01-01T00:00:00.000Z" });
+    await new PgPublishStore(db).record({ itemId: "x:1", stage: "translation", status: "approved", target: "gdrive" });
+
+    const files = await snapshotFromDb(db);
+    const byRel = new Map(files.map((f) => [f.rel, f.body]));
+
+    expect(JSON.parse(byRel.get("output/translations/translations.json")!)).toEqual(
+      await new PgTranslationStore(db).loadAll(),
+    );
+    expect(JSON.parse(byRel.get("output/variants/variants.json")!)).toEqual(await new PgConversionStore(db).loadAll());
+    expect(JSON.parse(byRel.get("output/formatted/renderings.json")!)).toEqual(await new PgFormattingStore(db).loadAll());
+    expect(JSON.parse(byRel.get("output/formatted/overrides.json")!)).toEqual(await new PgOutletOverrideStore(db).loadAll());
+    expect(JSON.parse(byRel.get("output/publish/deliveries.json")!)).toEqual(await new PgDeliveryLedger(db).loadAll());
+    expect(JSON.parse(byRel.get("output/publish/x-article.json")!)).toEqual(await new PgXArticleLedger(db).loadAll());
+    expect(JSON.parse(byRel.get("output/publish/state.json")!)).toEqual({
+      entries: await new PgPublishStore(db).listEntries(),
+    });
+    // 2-space indent, trailing newline — the same shape writeJsonFileAtomic produces on disk.
+    expect(byRel.get("output/translations/translations.json")!.endsWith("\n")).toBe(true);
+  });
+});
+
+describe("DbStateFileStore.write", () => {
+  it("upserts each row into its store, by the store's own natural key", async () => {
+    db = await createTestDb();
+    const store = new DbStateFileStore(db);
+    await store.write(
+      "output/translations/translations.json",
+      JSON.stringify([
+        { itemId: "x:1", source: "x", sourceText: "s", koreanText: "ko", status: "approved", translatedAt: "2026-01-01T00:00:00.000Z" },
+      ]),
+    );
+    expect(await new PgTranslationStore(db).loadAll()).toHaveLength(1);
+
+    // A second write with the same itemId upserts rather than duplicating.
+    await store.write(
+      "output/translations/translations.json",
+      JSON.stringify([
+        { itemId: "x:1", source: "x", sourceText: "s", koreanText: "ko2", status: "approved", translatedAt: "2026-01-01T00:00:00.000Z" },
+      ]),
+    );
+    const all = await new PgTranslationStore(db).loadAll();
+    expect(all).toHaveLength(1);
+    expect(all[0].koreanText).toBe("ko2");
+  });
+
+  it("does not delete a row that exists in the database but not in the incoming content — import, not replace", async () => {
+    db = await createTestDb();
+    await new PgDeliveryLedger(db).add({
+      itemId: "x:99", type: "announcement", outletId: "tg-dev",
+      status: "sent", at: "2026-01-01T00:00:00.000Z", by: "auto",
+    });
+    const store = new DbStateFileStore(db);
+    await store.write(
+      "output/publish/deliveries.json",
+      JSON.stringify([
+        { itemId: "x:1", type: "announcement", outletId: "tg-community", status: "sent", at: "2026-01-02T00:00:00.000Z", by: "auto" },
+      ]),
+    );
+    const all = await new PgDeliveryLedger(db).loadAll();
+    expect(all.map((e) => e.itemId).sort()).toEqual(["x:1", "x:99"]);
+  });
+
+  it("refuses to write an untracked path", async () => {
+    db = await createTestDb();
+    await expect(new DbStateFileStore(db).write("output/publish/channels.json", "[]")).rejects.toThrow(/untracked/);
+  });
+});
+
+describe("createStateFileStore", () => {
+  it("builds a DbStateFileStore bound to the given db", async () => {
+    db = await createTestDb();
+    expect(createStateFileStore(db)).toBeInstanceOf(DbStateFileStore);
   });
 });
 
@@ -154,95 +280,5 @@ describe("what state:push says about the folder it provisioned", () => {
   it("mentions the parent only when there is one (drive-root fallback)", () => {
     expect(describeProvisionedFolder({ created: true, name: "operational-state", id: "F1" })).not.toContain("상위");
     expect(describeProvisionedFolder({ created: true, name: "operational-state", id: "F1", parentName: "P" })).toContain('상위: "P"');
-  });
-});
-
-/**
- * The manifest names files by hand; the stores name them independently. If a store is ever renamed,
- * `state:push` would keep succeeding and quietly back up nothing — the exact silent-loss failure
- * this feature exists to close. So drive each store for real and compare file names.
- */
-describe("the manifest matches what the stores actually write", () => {
-  let dir: string;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "herald-manifest-"));
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  const written = async (): Promise<string[]> => (await readdir(dir)).filter((n) => n.endsWith(".json"));
-
-  it("translations.json is what JsonTranslationStore writes", async () => {
-    await new JsonTranslationStore(dir).upsert({
-      itemId: "x:1",
-      source: "x",
-      sourceText: "source",
-      koreanText: "번역",
-      status: "approved",
-      translatedAt: "2026-07-29T00:00:00.000Z",
-    });
-    expect(await written()).toEqual([basename(paths.translationsStore)]);
-  });
-
-  it("variants.json is what JsonConversionStore writes", async () => {
-    await new JsonConversionStore(dir).upsert({
-      itemId: "x:1",
-      type: "explainer",
-      sourceKorean: "번역",
-      convertedText: "해설",
-      status: "converted",
-      createdAt: "2026-07-29T00:00:00.000Z",
-    });
-    expect(await written()).toEqual([basename(paths.variantsStore)]);
-  });
-
-  it("overrides.json is what JsonOutletOverrideStore writes", async () => {
-    await new JsonOutletOverrideStore(dir).upsert({
-      itemId: "x:1",
-      type: "announcement",
-      outletId: "tg-dev",
-      text: "포크",
-      status: "rendered",
-      createdAt: "2026-07-29T00:00:00.000Z",
-    });
-    expect(await written()).toEqual([basename(paths.formattedOverrides)]);
-  });
-
-  it("deliveries.json is what JsonDeliveryLedger writes", async () => {
-    await new JsonDeliveryLedger(dir).add({
-      itemId: "x:1",
-      type: "announcement",
-      outletId: "tg-dev",
-      status: "sent",
-      at: "2026-07-29T00:00:00.000Z",
-      by: "auto",
-    });
-    expect(await written()).toEqual([basename(paths.publishDeliveries)]);
-  });
-
-  it("x-article.json is what JsonXArticleLedger writes", async () => {
-    await new JsonXArticleLedger(dir).add({ itemId: "x:1", sentAt: "2026-07-29T00:00:00.000Z" });
-    expect(await written()).toEqual([basename(paths.publishXArticle)]);
-  });
-
-  it("channels.json is the file JsonDeliveryLedger still falls back to", async () => {
-    // Nothing writes this any more, so it cannot be checked by driving a store. Drive the *read*
-    // instead: a legacy row placed at the manifest's path must come back migrated, which is only
-    // true if the ledger's private legacy path is that same file name.
-    await writeFile(
-      join(dir, basename(paths.publishChannelsLegacy)),
-      JSON.stringify([{ itemId: "x:1", type: "announcement", channel: "telegram", senderName: "bot", sentAt: "2026-07-29T00:00:00.000Z" }]),
-      "utf8",
-    );
-    const rows = await new JsonDeliveryLedger(dir).loadAll();
-    expect(rows).toHaveLength(1);
-    expect(rows[0].status).toBe("sent");
-    expect(rows[0].itemId).toBe("x:1");
-  });
-
-  it("state.json is what JsonPublishStore writes", async () => {
-    await new JsonPublishStore(dir).record({ itemId: "x:1", stage: "translation", status: "approved", target: "gdrive" });
-    expect(await written()).toEqual([basename(paths.publishState)]);
   });
 });

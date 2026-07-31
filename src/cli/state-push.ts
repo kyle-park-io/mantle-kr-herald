@@ -2,8 +2,9 @@ import "./registerErrorHandler";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { GoogleConfigDrive } from "../adapters/drive/GoogleConfigDrive";
 import { GoogleDriveProvisioner } from "../adapters/drive/GoogleDriveProvisioner";
+import { createDb } from "../adapters/db/createDb";
 import { PushState } from "../app/PushState";
-import { loadGoogleAuthConfig, loadGoogleStateFolder } from "../config";
+import { loadGoogleAuthConfig, loadGoogleStateFolder, loadDbConfig } from "../config";
 import { createStateFileStore, describeProvisionedFolder, DRIVE_LABEL } from "./stateFiles";
 
 // Sibling of steering-config under the same parent (review · approved · steering-config ·
@@ -28,10 +29,15 @@ if (!folderId) {
 }
 
 const drive = new GoogleConfigDrive(auth, fetch, DRIVE_LABEL);
-const res = await new PushState(createStateFileStore(), drive).run(folderId);
-if (!res) {
-  console.log("백업할 운영 상태 파일이 없습니다 — 아직 포크·발송 기록이 하나도 없는 작업 트리입니다. 올린 것 없음.");
-} else {
-  console.log(`${res.files.length}개 파일을 올렸습니다 → ${res.name} (${res.id})`);
-  for (const f of res.files) console.log(`  ${f.path} — ${f.rows === undefined ? "행 수 알 수 없음" : `${f.rows}행`}`);
+const db = createDb(loadDbConfig());
+try {
+  const res = await new PushState(createStateFileStore(db), drive).run(folderId);
+  if (!res) {
+    console.log("백업할 운영 상태 데이터가 없습니다 — 아직 포크·발송 기록이 하나도 없는 데이터베이스입니다. 올린 것 없음.");
+  } else {
+    console.log(`${res.files.length}개 파일을 올렸습니다 → ${res.name} (${res.id})`);
+    for (const f of res.files) console.log(`  ${f.path} — ${f.rows === undefined ? "행 수 알 수 없음" : `${f.rows}행`}`);
+  }
+} finally {
+  await db.close();
 }
