@@ -79,6 +79,16 @@ function isLoopbackOrigin(origin: string): boolean {
  * is loopback and browsers treat `localhost`/`127.0.0.1` as a secure context regardless of scheme —
  * listed here because this comment is written for the hosted future, where serving this over plain
  * HTTP to a real hostname would be exactly this failure, not proof it is already a problem.
+ * The login lockout and the single-flight guard combine into a free denial of service on signing in,
+ * not on anything behind the gate: a caller who alternates a wrong guess (tripping
+ * `PgAttemptLimiter`'s lockout) with a flood of concurrent `POST /api/login`s (occupying
+ * `singleFlight`'s one derivation slot in `serve.ts`) can keep the whole team out indefinitely at no
+ * cost to themselves — a busy refusal never reaches the limiter, and a lockout refusal never reaches
+ * scrypt, so neither guard ever pays for the other's refusal. This is deliberately not fixed here; see
+ * `attemptLimiter.ts`'s own comment for why the lockout is not redesigned, and
+ * `docs/ko/team-runbook.md`'s entry for a locked-out login for the escape hatch a locked-out team
+ * actually has now that the lockout survives a restart (`delete from auth_attempts where id =
+ * 'singleton'`).
  */
 export function refusalReason(method: string, origin?: string, contentType?: string): string | undefined {
   if (!STATE_CHANGING.has(method.toUpperCase())) return undefined;

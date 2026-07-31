@@ -15,7 +15,12 @@ export interface AttemptLimiter {
  * One counter, not one per client: there is a single credential, so every attempt is an attempt on
  * the same thing and keying by IP would only tell an attacker to rotate addresses. The cost is that
  * a stranger guessing can lock the team out for `lockoutMs` — acceptable at this size, and the
- * reason the window is a minute rather than an hour.
+ * reason the window is a minute rather than an hour. That tradeoff was first accepted back when the
+ * only implementation was this one, in-memory one, so restarting the process was always the fallback
+ * escape hatch even in the worst case. `PgAttemptLimiter` deliberately gave that up — the whole point
+ * of moving the lockout into the database is that it survives a restart — so for whichever
+ * implementation an install is actually running, do not assume a restart clears a lockout; see
+ * `docs/ko/team-runbook.md`'s entry for a locked-out login for the real recovery.
  *
  * State is in memory, so it resets when the process does. Adequate for a long-lived server; a
  * serverless deployment gets a fresh limiter per instance and would need a shared store to be
