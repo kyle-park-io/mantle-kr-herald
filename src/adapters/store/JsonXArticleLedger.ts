@@ -1,19 +1,13 @@
 import { join } from "node:path";
 import { deliveredToRoom } from "../../domain/delivery/models";
+import type { XArticleLedger, XArticleSentEntry } from "../../ports/XArticleLedger";
 import { withFileLock } from "../../shared/store/fileLock";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
 import { createSerializer } from "../../shared/store/serialWrites";
 
-export interface XArticleSentEntry {
-  itemId: string;
-  postId?: string;
-  url?: string;
-  sentAt: string;
-  /** Set when the scheduled Typefully draft was deleted before it published — see `deliveredToRoom`. */
-  droppedAt?: string;
-}
+export type { XArticleSentEntry };
 
-export class JsonXArticleLedger {
+export class JsonXArticleLedger implements XArticleLedger {
   private readonly path: string;
   private readonly serial = createSerializer();
   constructor(private readonly dir: string) {
