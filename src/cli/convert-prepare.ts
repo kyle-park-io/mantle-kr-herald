@@ -3,12 +3,12 @@ import { argValue, parseList } from "./args";
 // src/cli/convert-prepare.ts
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
+import { createDb } from "../adapters/db/createDb";
+import { loadDbConfig } from "../config";
+import { createStores } from "./stores";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
-import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
-import { fewShotStoresByType } from "../adapters/store/JsonTypedFewShotStore";
 import { PrepareConversions, type ConversionSelector } from "../app/PrepareConversions";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import { archiveFile } from "../shared/store/archive";
@@ -32,29 +32,33 @@ if (typesArg) {
   selector.types = typesArg as ConversionType[];
 }
 
-const fewShotByType = fewShotStoresByType(paths.conversionConfigDir);
+const db = createDb(loadDbConfig());
+try {
+  const stores = createStores(db);
+  const usecase = new PrepareConversions(
+    stores.translationStore,
+    new JsonGlossaryStore(paths.translationConfigDir),
+    new FileTranslationConfig(paths.translationConfigDir),
+    new FileConversionConfig(paths.conversionConfigDir),
+    stores.fewShotStoresByType,
+    stores.conversionStore,
+  );
 
-const usecase = new PrepareConversions(
-  new JsonTranslationStore(paths.translationsDir),
-  new JsonGlossaryStore(paths.translationConfigDir),
-  new FileTranslationConfig(paths.translationConfigDir),
-  new FileConversionConfig(paths.conversionConfigDir),
-  fewShotByType,
-  new JsonConversionStore(paths.variantsDir),
-);
+  const { worksheet, pending } = await usecase.run(selector);
 
-const { worksheet, pending } = await usecase.run(selector);
+  await mkdir(paths.variantsWorksheets, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const worksheetPath = join(paths.variantsWorksheets, `batch-${stamp}.md`);
+  await writeFile(worksheetPath, worksheet, "utf8");
 
-await mkdir(paths.variantsWorksheets, { recursive: true });
-const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const worksheetPath = join(paths.variantsWorksheets, `batch-${stamp}.md`);
-await writeFile(worksheetPath, worksheet, "utf8");
+  const archived = await archiveFile(paths.variantsPending, paths.archiveDir, "pending-variants");
+  if (archived) console.log(`  archived the previous unsaved batch → ${archived}`);
+  await writeJsonFileAtomic(paths.variantsDir, paths.variantsPending, pending);
 
-const archived = await archiveFile(paths.variantsPending, paths.archiveDir, "pending-variants");
-if (archived) console.log(`  archived the previous unsaved batch → ${archived}`);
-await writeJsonFileAtomic(paths.variantsDir, paths.variantsPending, pending);
-
-console.log(`prepared ${pending.length} variant(s) → ${worksheetPath}`);
-console.log(
-  `Fill each 변환 section, then run: pnpm convert:save --id <id> --type <${ALL_TYPES.join("|")}> --file <ko.txt>`,
-);
+  console.log(`prepared ${pending.length} variant(s) → ${worksheetPath}`);
+  console.log(
+    `Fill each 변환 section, then run: pnpm convert:save --id <id> --type <${ALL_TYPES.join("|")}> --file <ko.txt>`,
+  );
+} finally {
+  await db.close();
+}
