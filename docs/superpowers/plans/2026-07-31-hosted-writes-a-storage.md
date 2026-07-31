@@ -566,6 +566,8 @@ Invariants:
 - Absent file → import zero rows for that store, never throw. A tree that predates a feature is normal.
 - Returns per-store counts. The entry script prints them in pipeline order (translate → convert → format → send), the order `state:pull` already uses (`stateFiles.ts` `describeStateDiff`).
 - Refuses to run when `HERALD_DB_ENV=production` unless `--yes` is passed, and prints which database it is about to write to first. Model the prompt on `state:pull`'s preview — an operator must see what they are about to change before they change it.
+- **The legacy ledger is exclusive-or, not a union.** `JsonDeliveryLedger.loadAll()` returns `channels.json` only when `deliveries.json` is **absent** — when both exist the legacy file is ignored entirely. Importing both would resurrect rows a `remove()` deleted (undoing an untick of 전달함) and could overwrite a current `dropped` row back to `sent`. Reading through `JsonDeliveryLedger.loadAll()` rather than parsing the files yourself inherits this for free, which is the main reason that invariant is stated above.
+- **Import is not idempotent against a stale tree.** Re-running it against an unchanged tree is safe (upsert on the natural key). Re-running it after cutover, against an `output/` tree that has since gone stale, is not: import never deletes, so it resurrects post-cutover removals and clobbers post-cutover edits with file values. Say this in the command's own refusal text, not only here.
 
 - [ ] **Step 4: Run tests, typecheck, commit**
 
@@ -673,7 +675,38 @@ Work through the inventory. For each: swap construction, run that command's test
 
 Commands that take no `--env-file` today now need database config; add `--env-file-if-exists=.env` to any `package.json` script that lacks it.
 
-- [ ] **Step 4: Full suite green**
+- [ ] **Step 4: Refuse to serve an empty ledger as "nothing was ever sent"**
+
+This is the one new safety requirement in this task, and it exists because moving the ledger into Postgres silently changed a guarantee.
+
+`JsonDeliveryLedger` protected the send history automatically, on every read: if `deliveries.json` was missing it fell back to `channels.json`, so an install could not accidentally present itself as having sent nothing. The database has no such fallback — `loadKeys()` on an empty table returns the empty set, and it looks exactly like a genuinely fresh install.
+
+If the cutover happens without `db:import` having run, `SendChannels.run()`'s `already` and `planRooms()`'s `everDelivered` both read "never sent" for the entire backlog, and the next send re-posts all of it to live Telegram rooms and the brand's X account. Every guard in the send path is downstream of this read, so none of them catch it.
+
+Add a startup guard on the send path: when the deliveries table is **empty** but the tree still has an `output/publish/deliveries.json` or `channels.json` with rows in it, refuse and say that `db:import` has not been run. An empty table with no legacy file present is a legitimately fresh install and proceeds silently.
+
+- [ ] **Step 5: Test the guard**
+
+```typescript
+it("refuses to send when the ledger is empty but a populated legacy file is still on disk", async () => {
+  db = await createTestDb();
+  const root = await mkdtemp(join(tmpdir(), "cutover-"));
+  await mkdir(join(root, "publish"), { recursive: true });
+  await writeFile(join(root, "publish", "deliveries.json"), JSON.stringify([
+    { itemId: "x:1", type: "announcement", outletId: "tg-community",
+      status: "sent", at: "2026-07-29T00:00:00.000Z", by: "auto" },
+  ]), "utf8");
+  await expect(assertLedgerMigrated(db, root)).rejects.toThrow(/db:import/);
+});
+
+it("stays silent for a genuinely fresh install — empty table, no legacy file", async () => {
+  db = await createTestDb();
+  const root = await mkdtemp(join(tmpdir(), "fresh-"));
+  await expect(assertLedgerMigrated(db, root)).resolves.not.toThrow();
+});
+```
+
+- [ ] **Step 6: Full suite green**
 
 Run: `pnpm test && pnpm typecheck`
 Expected: PASS.
