@@ -1,12 +1,15 @@
 import "./registerErrorHandler";
 import { createDb } from "../adapters/db/createDb";
-import { loadDbConfig } from "../config";
+import { loadDbConfig, describeDbTarget } from "../config";
 import { createStores } from "./stores";
 import { pipelineStages, formatStatus } from "../status/pipeline";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { syncSummary, formatSyncSummary } from "../status/sync";
 
-const db = createDb(loadDbConfig());
+const cfg = loadDbConfig();
+console.log(`database: ${cfg.env} · ${describeDbTarget(cfg)}`);
+
+const db = createDb(cfg);
 try {
   const stores = createStores(db);
 

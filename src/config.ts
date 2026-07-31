@@ -265,3 +265,11 @@ export function loadDbConfig(): DbConfig {
   }
   return { url, env: env as "production" | "development" };
 }
+
+/** `"host[:port]/dbname"` — never the credentials embedded in `DATABASE_URL`. Shared by `doctor`
+ *  and `status` so the two can never print the target two different ways. */
+export function describeDbTarget(cfg: DbConfig): string {
+  const url = new URL(cfg.url);
+  const database = url.pathname.replace(/^\//, "");
+  return `${url.hostname}${url.port ? `:${url.port}` : ""}/${database}`;
+}

@@ -101,6 +101,7 @@ function makeDeps(
       availableTargets: ["local"],
       integrations: [],
       sheetLinks: {},
+      dbEnv: "development" as const,
     }),
     loadPublishState: async () => [
       { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
@@ -262,6 +263,7 @@ describe("handleApi", () => {
       availableTargets: ["local"],
       integrations: [],
       sheetLinks: {},
+      dbEnv: "development",
     });
   });
 

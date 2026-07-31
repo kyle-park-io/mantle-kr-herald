@@ -36,6 +36,10 @@ export interface StatusView {
   integrations: IntegrationStatus[];
   /** Header links to the team workbooks. A key is absent when its id is not configured. */
   sheetLinks: { data?: SheetLink; qa?: SheetLink };
+  /** The attached database's stated `HERALD_DB_ENV`. Consumed by the dashboard banner that warns
+   *  when this is not "production" (Plan C's work) — carried here so the two plans do not edit this
+   *  interface independently. */
+  dbEnv: "production" | "development";
 }
 
 export interface PublishStateRow {

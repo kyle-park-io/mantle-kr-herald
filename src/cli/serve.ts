@@ -57,9 +57,10 @@ import type { DraftLookup } from "../ports/DraftLookup";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 
 const port = Number(process.env.PORT) || 5757;
+const dbConfig = loadDbConfig();
 // One pool for the life of this process — a long-running server, unlike the one-shot CLI commands,
 // which each open and close their own.
-const db = createDb(loadDbConfig());
+const db = createDb(dbConfig);
 // Refuses to start the dashboard — and therefore ReconcilePublished's scheduler and every
 // [발송] click — against a database that looks unmigrated. See assertLedgerMigrated's own doc
 // comment for why an empty deliveries table is not, by itself, proof of a fresh install.
@@ -182,6 +183,7 @@ const loadStatus = async (): Promise<StatusView> => {
     availableTargets: usableTargets,
     integrations,
     sheetLinks: await withSheetTitles(loadSheetLinks()),
+    dbEnv: dbConfig.env,
   };
 };
 

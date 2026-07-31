@@ -8,6 +8,7 @@ import {
   accessResult,
   sheetAccessResult,
   quotaResult,
+  runDbCheck,
 } from "../../src/doctor/checks";
 
 const DRIVE = "https://www.googleapis.com/auth/drive.file";
@@ -144,6 +145,35 @@ describe("sheetAccessResult", () => {
 
   it("other status → HTTP N", () => {
     expect(sheetAccessResult("Sheet", { ok: false, status: 500 }).detail).toBe("HTTP 500");
+  });
+});
+
+describe("runDbCheck", () => {
+  it("reports the attached database and its stated environment", async () => {
+    const result = await runDbCheck({ url: "postgres://localhost/herald", env: "development" }, async () => true);
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain("development");
+  });
+
+  it("fails the check when the database is unreachable", async () => {
+    const result = await runDbCheck({ url: "postgres://localhost/herald", env: "production" }, async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("names the host and database, but never the credentials", async () => {
+    const result = await runDbCheck({ url: "postgres://user:s3cret@db.internal:5432/herald_prod", env: "production" }, async () => true);
+    expect(result.detail).toContain("db.internal:5432/herald_prod");
+    expect(result.detail).not.toContain("user");
+    expect(result.detail).not.toContain("s3cret");
+  });
+
+  it("includes the probe's error message on failure", async () => {
+    const result = await runDbCheck({ url: "postgres://localhost/herald", env: "development" }, async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    expect(result.detail).toContain("ECONNREFUSED");
   });
 });
 

@@ -1,4 +1,5 @@
 import type { CheckResult } from "./report";
+import { describeDbTarget, type DbConfig } from "../config";
 
 /** Run a config loader: ok if it doesn't throw, fail with its own message otherwise. */
 export function configCheck(name: string, run: () => void, okDetail = "configured"): CheckResult {
@@ -43,6 +44,25 @@ export function optionalCheck(name: string, run: () => void, absentDetail: strin
     return { name, status: "warn", detail: `${absentDetail} (${result.detail})` };
   }
   return result;
+}
+
+/**
+ * Runs `probe` (a real connectivity check, e.g. `select 1`) against the configured database and
+ * reports it — `ok`/`detail` rather than the `CheckResult` shape above, since this also backs
+ * `status.ts`'s first line, which is not a check report. The caller wraps this into a `CheckResult`
+ * for `doctor`.
+ *
+ * Never prints the password: `detail` is built from `describeDbTarget` (host and database name
+ * only) plus `cfg.env`, never `cfg.url` itself.
+ */
+export async function runDbCheck(cfg: DbConfig, probe: () => Promise<boolean>): Promise<{ ok: boolean; detail: string }> {
+  const target = `${cfg.env} · ${describeDbTarget(cfg)}`;
+  try {
+    await probe();
+    return { ok: true, detail: target };
+  } catch (err) {
+    return { ok: false, detail: `${target} — ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 /** A space-separated OAuth scope string → array (empties dropped). */

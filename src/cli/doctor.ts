@@ -9,7 +9,10 @@ import {
   loadGoogleSheetConfig,
   loadStorageMode,
   loadTypefullyConfig,
+  loadDbConfig,
+  type DbConfig,
 } from "../config";
+import { createDb } from "../adapters/db/createDb";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { TypefullyQuota } from "../adapters/send/TypefullyQuota";
@@ -25,6 +28,7 @@ import {
   accessResult,
   sheetAccessResult,
   quotaResult,
+  runDbCheck,
 } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
@@ -48,8 +52,32 @@ function authMode(): string {
   }
 }
 
+/** Real connectivity, not gated by `--live`: unlike the third-party integrations below, every
+ *  command now needs a working database connection to do anything at all, so this is core
+ *  infrastructure rather than an optional network check. Never prints the password — see
+ *  `runDbCheck`. */
+async function runDatabaseCheck(): Promise<CheckResult> {
+  let cfg: DbConfig;
+  try {
+    cfg = loadDbConfig();
+  } catch (err) {
+    return { name: "Database", status: "fail", detail: err instanceof Error ? err.message : String(err) };
+  }
+  const db = createDb(cfg);
+  try {
+    const check = await runDbCheck(cfg, async () => {
+      await db.query("select 1");
+      return true;
+    });
+    return { name: "Database", status: check.ok ? "ok" : "fail", detail: check.detail };
+  } finally {
+    await db.close();
+  }
+}
+
 // --- config checks (offline) ---
 results.push(configCheck("Storage mode", () => loadStorageMode(), `mode: ${process.env.HERALD_STORAGE_MODE?.trim() ?? "(unset)"}`));
+results.push(await runDatabaseCheck());
 // twitterapi.io / Lark app are source credentials — you need one only if you collect from that
 // source, in either mode. Absence is a warn, never a fail: a Google+X operator has no Lark, and a
 // Lark-only operator has no twitterapi, and both are valid.
