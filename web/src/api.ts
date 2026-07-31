@@ -3,9 +3,16 @@ import type {
   BoardView, BoardReply, SendReply, ConvertPrepareReply, FormatReply, HeadroomView,
 } from "./types";
 
-async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
-  return res.json() as Promise<T>;
+/**
+ * What `json()` does when the server answers 401 — by default nothing, since a call made before
+ * `main.tsx` has installed the real handler (below) has nowhere sensible to go. `main.tsx` installs
+ * the real one once, at startup, before any request that could hit this path; `installUnauthenticatedHandler`
+ * exists so tests can install their own and observe the call without touching `window.location`.
+ */
+let notifyUnauthenticated: () => void = () => {};
+
+export function installUnauthenticatedHandler(handler: () => void): void {
+  notifyUnauthenticated = handler;
 }
 
 /**
@@ -26,6 +33,28 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The one fetch every API call in this module goes through — `reconcile` and `sendOutlet` included,
+ * even though they interpret their own response bodies further. `notifyUnauthenticated` is invoked
+ * here, and only here, on a 401, so no call site — present or future — can add an endpoint and forget
+ * the redirect a lost session needs: the same reasoning the server's own gate applies to
+ * `refusalReason()`, done once before every request rather than per call site.
+ *
+ * A non-401, non-ok response throws `ApiError` (message + the `board` the server may have attached),
+ * so it does not redirect anyone on its own — a domain refusal like `이미 발송된 방입니다` is not a
+ * lost session, and `OutletCard` needs the board it carries to repaint in place, not a bounce to
+ * `#login`.
+ */
+export async function json<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  if (res.status === 401) notifyUnauthenticated();
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string; board?: BoardView };
+    throw new ApiError(body.error ?? `HTTP ${res.status}`, body.board);
+  }
+  return res.json() as Promise<T>;
+}
+
 const rPath = (itemId: string, type: ConversionType, channel: Channel) =>
   `/api/renderings/${encodeURIComponent(itemId)}/${type}/${channel}`;
 
@@ -36,11 +65,11 @@ const oPath = (itemId: string, type: ConversionType, outletId: string) =>
   `/api/outlets/${encodeURIComponent(itemId)}/${type}/${outletId}`;
 
 const putOutlet = (itemId: string, type: ConversionType, outletId: string, body: unknown) =>
-  fetch(oPath(itemId, type, outletId), {
+  json<BoardReply>(oPath(itemId, type, outletId), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  }).then((r) => json<BoardReply>(r));
+  });
 
 export const api = {
   /**
@@ -48,57 +77,62 @@ export const api = {
    * the screen must not fill that in from the client side either.
    */
   login: (username: string, password: string) =>
-    fetch("/api/login", {
+    json<{ ok: true }>("/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
-    }).then((r) => json<{ ok: true }>(r)),
-  list: () => fetch("/api/translations").then((r) => json<Translation[]>(r)),
+    }),
+  /** Ends the session server-side. The dashboard's sign-out control; see `App.tsx`. */
+  logout: () => json<{ ok: true }>("/api/logout", { method: "POST" }),
+  list: () => json<Translation[]>("/api/translations"),
   edit: (id: string, koreanText: string) =>
-    fetch(`/api/translations/${encodeURIComponent(id)}`, {
+    json<Translation>(`/api/translations/${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ koreanText }),
-    }).then((r) => json<Translation>(r)),
-  approve: (id: string) =>
-    fetch(`/api/translations/${encodeURIComponent(id)}/approve`, { method: "POST" }).then((r) => json<Translation>(r)),
+    }),
+  approve: (id: string) => json<Translation>(`/api/translations/${encodeURIComponent(id)}/approve`, { method: "POST" }),
   publishOne: (id: string, target: string) =>
-    fetch(`/api/translations/${encodeURIComponent(id)}/publish`, {
+    json<PublishResult>(`/api/translations/${encodeURIComponent(id)}/publish`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ target }),
-    }).then((r) => json<PublishResult>(r)),
-  unapprove: (id: string) =>
-    fetch(`/api/translations/${encodeURIComponent(id)}/unapprove`, { method: "POST" }).then((r) => json<Translation>(r)),
-  listRenderings: () => fetch("/api/renderings").then((r) => json<Rendering[]>(r)),
+    }),
+  unapprove: (id: string) => json<Translation>(`/api/translations/${encodeURIComponent(id)}/unapprove`, { method: "POST" }),
+  listRenderings: () => json<Rendering[]>("/api/renderings"),
   editRendering: (itemId: string, type: ConversionType, channel: Channel, text: string) =>
-    fetch(rPath(itemId, type, channel), {
+    json<Omit<Rendering, "convertedText">>(rPath(itemId, type, channel), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
-    }).then((r) => json<Omit<Rendering, "convertedText">>(r)),
+    }),
   approveRendering: (itemId: string, type: ConversionType, channel: Channel, approve = true) =>
-    fetch(`${rPath(itemId, type, channel)}/${approve ? "approve" : "unapprove"}`, { method: "POST" }).then((r) =>
-      json<Omit<Rendering, "convertedText">>(r),
-    ),
+    json<Omit<Rendering, "convertedText">>(`${rPath(itemId, type, channel)}/${approve ? "approve" : "unapprove"}`, {
+      method: "POST",
+    }),
   /**
    * The destination spellings of a rendering. With `outletId`, the spellings of *that room's*
    * copy — which differs from the group's the moment the room is forked, and is what a human
    * actually pastes or a bot actually posts.
    */
   emissions: (itemId: string, type: ConversionType, channel: Channel, outletId?: string) =>
-    fetch(`${rPath(itemId, type, channel)}/emissions${outletId ? `/${outletId}` : ""}`).then((r) => json<Emissions>(r)),
-  status: () => fetch("/api/status").then((r) => json<AppStatus>(r)),
-  publishState: () => fetch("/api/publish/state").then((r) => json<PublishStateRow[]>(r)),
+    json<Emissions>(`${rPath(itemId, type, channel)}/emissions${outletId ? `/${outletId}` : ""}`),
+  status: () => json<AppStatus>("/api/status"),
+  publishState: () => json<PublishStateRow[]>("/api/publish/state"),
 
   /**
-   * How much Typefully publishing headroom is left, for the board banner. Always resolves — the
-   * server answers 200 either way, since an unreadable headroom is information for the banner, not a
-   * client error — so this never throws; a missing `headroom` means "show nothing".
+   * How much Typefully publishing headroom is left, for the board banner. Always resolves — a
+   * non-401 error from the server itself already answers 200 with `{ error }` (unreadable headroom
+   * is information for the banner, not a client error), and the `catch` below absorbs everything
+   * else (including a 401, after `json()` has already fired the redirect hook), so this never
+   * throws; a missing `headroom` means "show nothing".
    */
   typefullyQuota: async (): Promise<HeadroomView> => {
-    const res = await fetch("/api/typefully/quota");
-    return (await res.json().catch(() => ({}))) as HeadroomView;
+    try {
+      return await json<HeadroomView>("/api/typefully/quota");
+    } catch {
+      return {};
+    }
   },
 
   /**
@@ -107,13 +141,12 @@ export const api = {
    * itemId cares about was retired (`dropped`), not published; `retired` has to be on this type or
    * a caller has no way to tell "still waiting" from "will never happen" apart.
    */
-  reconcile: async (itemId: string) => {
-    const res = await fetch(`/api/items/${encodeURIComponent(itemId)}/reconcile`, { method: "POST" });
-    const body = (await res.json().catch(() => ({}))) as { reconciled?: number; retired?: number; pending?: number; error?: string; board?: BoardView };
-    if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, body.board);
-    return body as { reconciled: number; retired: number; pending: number; board: BoardView };
-  },
-  board: (itemId: string) => fetch(`/api/items/${encodeURIComponent(itemId)}/board`).then((r) => json<BoardView>(r)),
+  reconcile: (itemId: string) =>
+    json<{ reconciled: number; retired: number; pending: number; board: BoardView }>(
+      `/api/items/${encodeURIComponent(itemId)}/reconcile`,
+      { method: "POST" },
+    ),
+  board: (itemId: string) => json<BoardView>(`/api/items/${encodeURIComponent(itemId)}/board`),
   /** Gives one room its own text — that is what forking is; there is no separate fork call. */
   editOutlet: (itemId: string, type: ConversionType, outletId: string, text: string) =>
     putOutlet(itemId, type, outletId, { text }),
@@ -122,33 +155,29 @@ export const api = {
   /** Deletes the override: the room falls back to the group text *and* the group's approval. */
   revertOutlet: (itemId: string, type: ConversionType, outletId: string) =>
     putOutlet(itemId, type, outletId, { revert: true }),
-  sendOutlet: async (itemId: string, type: ConversionType, outletId: string, resend = false) => {
-    const res = await fetch(`${oPath(itemId, type, outletId)}/send`, {
+  sendOutlet: (itemId: string, type: ConversionType, outletId: string, resend = false) =>
+    json<SendReply>(`${oPath(itemId, type, outletId)}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ resend }),
-    });
-    const body = (await res.json().catch(() => ({}))) as Partial<SendReply> & { error?: string };
-    if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, body.board);
-    return body as SendReply;
-  },
+    }),
   markOutlet: (itemId: string, type: ConversionType, outletId: string, delivered: boolean) =>
-    fetch(`${oPath(itemId, type, outletId)}/mark`, {
+    json<BoardReply>(`${oPath(itemId, type, outletId)}/mark`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ delivered }),
-    }).then((r) => json<BoardReply>(r)),
+    }),
 
   /**
    * The board cannot convert — no Claude API, `zod`-only runtime — so this writes a worksheet and
    * hands back where it landed; the operator still has to ask the local agent to fill it in.
    */
   convertPrepare: (itemId: string, types: ConversionType[]) =>
-    fetch(`/api/items/${encodeURIComponent(itemId)}/convert-prepare`, {
+    json<ConvertPrepareReply>(`/api/items/${encodeURIComponent(itemId)}/convert-prepare`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ types }),
-    }).then((r) => json<ConvertPrepareReply>(r)),
+    }),
   /**
    * Unlike conversion, `FormatVariants` is pure code, so this button really does the work — and
    * overwrites whatever was stored for the given (type, channel) pairs, discarding any edit or
@@ -160,9 +189,9 @@ export const api = {
    * the route (and its tests) stay live for whatever replaces it.
    */
   formatItem: (itemId: string, types: ConversionType[], channels?: Channel[]) =>
-    fetch(`/api/items/${encodeURIComponent(itemId)}/format`, {
+    json<FormatReply>(`/api/items/${encodeURIComponent(itemId)}/format`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(channels ? { types, channels } : { types }),
-    }).then((r) => json<FormatReply>(r)),
+    }),
 };

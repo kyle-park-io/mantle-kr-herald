@@ -4,6 +4,7 @@ import type { Translation, AppStatus, PublishStateRow } from "./types";
 import { TranslationList } from "./components/TranslationList";
 import { TranslationDetail } from "./components/TranslationDetail";
 import { RenderingsView } from "./components/RenderingsView";
+import { btn } from "./buttonStyles";
 
 type Mode = "translations" | "renderings";
 
@@ -32,7 +33,7 @@ const GROUP_LABEL: Record<"collect" | "publish" | "send" | "data", string> = {
   data: "데이터",
 };
 
-export function App() {
+export function App({ onSignOut }: { onSignOut: () => void }) {
   const [mode, setMode] = useState<Mode>(modeFromHash);
   const [items, setItems] = useState<Translation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -120,16 +121,21 @@ export function App() {
   return (
     <div className="flex h-screen flex-col bg-bg text-ink">
       <header className="shrink-0 border-b border-line bg-surface">
-        <div className="flex h-14 items-center gap-4 px-5">
-          <div className="flex items-center gap-2.5">
+        {/* `overflow-x-auto` is the fallback, not the plan: every child below is `shrink-0` so the
+            row keeps every control at a legible, tappable size and scrolls sideways under real
+            pressure (a very narrow phone) rather than the pre-`shrink-0` behavior, which let flex's
+            default shrinking wrap Korean labels one character per line — nothing here read as a
+            button anymore, sign-out included. */}
+        <div className="flex h-14 items-center gap-4 overflow-x-auto px-5">
+          <div className="flex shrink-0 items-center gap-2.5">
             <span className="h-2.5 w-2.5 rounded-full bg-mint" />
-            <span className="text-[15px] font-semibold tracking-tight">
+            <span className="whitespace-nowrap text-[15px] font-semibold tracking-tight">
               Mantle KR <span className="text-faint font-normal">Review</span>
             </span>
           </div>
 
           {status && (
-            <div className="group relative">
+            <div className="group relative shrink-0">
               <span
                 className={`inline-flex cursor-default items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
                   isCloud ? "bg-mint-soft text-mint" : "bg-amber-soft text-amber-ink"
@@ -190,7 +196,7 @@ export function App() {
             </div>
           )}
 
-          <nav className="ml-2 inline-flex rounded-lg border border-line bg-bg p-0.5">
+          <nav className="ml-2 inline-flex shrink-0 rounded-lg border border-line bg-bg p-0.5">
             {(
               [
                 ["translations", "1차 검수 · 번역"],
@@ -200,7 +206,7 @@ export function App() {
               <button
                 key={m}
                 onClick={() => switchMode(m)}
-                className={`rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors ${
+                className={`whitespace-nowrap rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors ${
                   mode === m ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
                 }`}
               >
@@ -209,58 +215,68 @@ export function App() {
             ))}
           </nav>
 
-          {status && (
-            <div className="ml-auto hidden items-center gap-3 md:flex">
-              {/* Left of the funnel and set apart with a wider gap: these leave the dashboard,
-                  while everything to the right of them reports on it. Each appears only when its id
-                  is configured, so an empty GSHEET_QA_ID hides QA rather than linking nowhere. */}
-              {(status.sheetLinks.data || status.sheetLinks.qa) && (
-                <span className="mr-3 flex items-center gap-3 text-[13px]">
-                  {status.sheetLinks.data && (
-                    <a
-                      href={status.sheetLinks.data.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-medium text-mint underline-offset-2 hover:underline"
-                      title="팀 데이터 시트 — history · x-performance · targets"
-                    >
-                      {status.sheetLinks.data.title} ↗
-                    </a>
-                  )}
-                  {status.sheetLinks.qa && (
-                    <a
-                      href={status.sheetLinks.qa.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-medium text-amber-ink underline-offset-2 hover:underline"
-                      title="QA 시트 — 요청·이슈를 여기에 적어주세요 (점검 현황 · 미완 항목 · 변경 이력)"
-                    >
-                      {status.sheetLinks.qa.title} ↗
-                    </a>
-                  )}
+          {/* Wraps the (desktop-only) status funnel and the sign-out control together so the whole
+              group pushes to the header's right edge — on a narrow screen the funnel hides
+              (`hidden md:flex` below) but 로그아웃 still lands at the far right on its own. */}
+          <div className="ml-auto flex shrink-0 items-center gap-3">
+            {status && (
+              <div className="hidden items-center gap-3 md:flex">
+                {/* Left of the funnel and set apart with a wider gap: these leave the dashboard,
+                    while everything to the right of them reports on it. Each appears only when its id
+                    is configured, so an empty GSHEET_QA_ID hides QA rather than linking nowhere. */}
+                {(status.sheetLinks.data || status.sheetLinks.qa) && (
+                  <span className="mr-3 flex items-center gap-3 text-[13px]">
+                    {status.sheetLinks.data && (
+                      <a
+                        href={status.sheetLinks.data.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-mint underline-offset-2 hover:underline"
+                        title="팀 데이터 시트 — history · x-performance · targets"
+                      >
+                        {status.sheetLinks.data.title} ↗
+                      </a>
+                    )}
+                    {status.sheetLinks.qa && (
+                      <a
+                        href={status.sheetLinks.qa.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-amber-ink underline-offset-2 hover:underline"
+                        title="QA 시트 — 요청·이슈를 여기에 적어주세요 (점검 현황 · 미완 항목 · 변경 이력)"
+                      >
+                        {status.sheetLinks.qa.title} ↗
+                      </a>
+                    )}
+                  </span>
+                )}
+                <div className="flex items-center gap-1.5 text-[13px]">
+                  {FUNNEL_STEPS.map(([label, key], i) => (
+                    <div key={key} className="flex items-center gap-1.5">
+                      {i > 0 && <span className="text-line-strong">→</span>}
+                      <span className="text-muted">{label}</span>
+                      <span className="font-mono text-xs font-semibold tabular-nums">{status.funnel[key]}</span>
+                    </div>
+                  ))}
+                </div>
+                <span className="h-4 w-px bg-line" />
+                <span
+                  className={`inline-flex items-center gap-1.5 text-xs font-medium ${syncWarn ? "text-amber-ink" : "text-mint"}`}
+                  title="발행됨 · 재발행 필요 · 미발행"
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${syncWarn ? "bg-amber-ink" : "bg-mint"}`} />
+                  발행됨 {status.sync.synced}
+                  {status.sync.needsRepublish > 0 ? ` · 재발행 필요 ${status.sync.needsRepublish}` : ""}
+                  {status.sync.unpublished > 0 ? ` · 미발행 ${status.sync.unpublished}` : ""}
                 </span>
-              )}
-              <div className="flex items-center gap-1.5 text-[13px]">
-                {FUNNEL_STEPS.map(([label, key], i) => (
-                  <div key={key} className="flex items-center gap-1.5">
-                    {i > 0 && <span className="text-line-strong">→</span>}
-                    <span className="text-muted">{label}</span>
-                    <span className="font-mono text-xs font-semibold tabular-nums">{status.funnel[key]}</span>
-                  </div>
-                ))}
               </div>
-              <span className="h-4 w-px bg-line" />
-              <span
-                className={`inline-flex items-center gap-1.5 text-xs font-medium ${syncWarn ? "text-amber-ink" : "text-mint"}`}
-                title="발행됨 · 재발행 필요 · 미발행"
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${syncWarn ? "bg-amber-ink" : "bg-mint"}`} />
-                발행됨 {status.sync.synced}
-                {status.sync.needsRepublish > 0 ? ` · 재발행 필요 ${status.sync.needsRepublish}` : ""}
-                {status.sync.unpublished > 0 ? ` · 미발행 ${status.sync.unpublished}` : ""}
-              </span>
-            </div>
-          )}
+            )}
+            {/* The board's own `btn` geometry — the header's one control that acts rather than
+                reports, so it reads as a button among labels rather than inventing its own style. */}
+            <button onClick={onSignOut} className={`${btn} shrink-0 whitespace-nowrap`}>
+              로그아웃
+            </button>
+          </div>
         </div>
       </header>
 
