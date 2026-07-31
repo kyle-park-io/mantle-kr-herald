@@ -237,7 +237,7 @@ The Drive snapshot is the pre-migration restore point. Confirm it succeeded and 
 
 - [ ] **Step 2: 🔒 Dry run against a scratch database**
 
-Point `DATABASE_URL` at an empty database with `HERALD_DB_ENV=development` and run `pnpm db:import`. Then `pnpm db:export` into a scratch tree and diff it against `output/`:
+Point `DATABASE_URL` at an empty database with `HERALD_DB_ENV=development` and run `pnpm db:import --yes`. Then export it into a scratch tree with `pnpm db:export /tmp/herald-export-check --yes` (both commands default to a flagless preview that writes nothing — `--yes` is required to actually import/export) and diff it against `output/`:
 
 ```bash
 diff -r output/ /tmp/herald-export-check/
@@ -303,7 +303,7 @@ Once production is trusted, `output/` review state is dead weight and a second c
 At any point after Task 5:
 
 ```bash
-pnpm db:export          # database → output/
+pnpm db:export --yes    # database → output/ (flagless previews and writes nothing)
 # revert to the pre-Plan-A commit
 pnpm serve              # runs on files again
 ```
