@@ -310,7 +310,7 @@ Invariants:
 
 - Implements `TranslationStore` (`src/ports/TranslationStore.ts`) exactly — no extra public methods.
 - `upsert` is **one statement**: `insert ... on conflict (item_id) do update set ...`. If you find yourself calling `loadAll()` inside `upsert`, stop: that is the read-modify-write this migration exists to delete.
-- `loadAll()` returns rows in a stable order (`order by item_id`) so tests and `db:export` are deterministic.
+- `loadAll()` returns rows in **insertion order**, not key order. Every table carries a monotonic `ordinal` column set on first insert and left alone by an update; `loadAll()` is `order by ordinal`. Key order would be deterministic but wrong: `JsonTranslationStore` appends, so the file's order is insertion order, and Task 16 asserts the export reproduces the original file byte for byte. Ordering by `item_id` passes every test in this task and fails that one.
 - Mapping `null` → absent is the store's job. The third test above exists because `JSON.stringify` of a `null` differs from an omitted key, and `db:export` (Task 16) must reproduce the original file.
 - Read `src/adapters/store/JsonTranslationStore.ts` first for the behaviour being replaced.
 
@@ -637,7 +637,7 @@ The byte-for-byte assertion is deliberate and will catch three things — fix th
 
 1. **Key order.** `JSON.stringify` emits insertion order. Construct objects with fields in the domain model's declaration order.
 2. **Absent vs null.** An optional field the original omitted must stay omitted. This is what Task 3's third test guards.
-3. **Row order.** The export must preserve the original array order. `order by item_id` gives determinism but not the *original* order — if a file's order is meaningful, store an ordinal on import and sort by it. Check each store: `translations.json` is written in insertion order by `JsonTranslationStore`, and the round trip must match.
+3. **Row order.** The export must preserve the original array order. This is what the `ordinal` column from Task 3 is for — every store orders by it, so import order survives into the export. If a store was written ordering by its key instead, this test is where that shows up.
 
 - [ ] **Step 4: Run tests, typecheck, commit**
 
