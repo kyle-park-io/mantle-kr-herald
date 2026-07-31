@@ -401,7 +401,7 @@ This is the subtlest one. `LocalJsonStore.upsert` merges threads and tweets with
 Two hazards specific to this store:
 
 - `upsert(threads)` takes an **array**. "One statement per write" here means one per thread, not a read-modify-write of the table. `loadAll()` inside `upsert` is the anti-pattern; a targeted read of only the rows being merged is what the merge needs and is fine. Wrap the batch in `Db.tx` so a partial merge cannot be observed.
-- **Always `JSON.stringify` the tweets array before passing it as a parameter.** `pg` serializes a raw JS array as a Postgres *array literal*, while PGlite does not — so relying on the driver would pass every test here and corrupt the column in production. This divergence was found empirically during implementation; it is the one place in this plan where PGlite and `pg` genuinely disagree.
+- **Always `JSON.stringify` the tweets array before passing it as a parameter.** `pg` serializes a raw JS array as a Postgres *array literal*, while PGlite does not — so relying on the driver passes every test here and breaks under `pg`. For a non-empty array Postgres rejects the malformed JSON outright, which is loud; the **empty** array is the dangerous case, storing `{}` and only failing later when `json_array_elements` or iteration meets it. This divergence was found empirically during implementation; it is the one place in this plan where PGlite and `pg` genuinely disagree.
 
 `LocalJsonStore` also implements `WatermarkStore` (`get`/`set` over `x/state.json`). Watermarks stay on disk — `collect` is a local job per the spec — so `PgCollectionRepository` implements `CollectionRepository` **only**. Leave `LocalJsonStore` in place for the watermark half and note it in the commit body.
 
