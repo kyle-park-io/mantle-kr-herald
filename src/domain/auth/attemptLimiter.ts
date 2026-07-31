@@ -1,8 +1,12 @@
+/**
+ * Async because a database-backed limiter (`PgAttemptLimiter`) cannot answer synchronously — the
+ * in-memory implementation below is the only one that could, and it resolves immediately.
+ */
 export interface AttemptLimiter {
   /** Milliseconds the caller must wait before trying again, or 0 when the attempt may proceed. */
-  retryAfterMs(now: Date): number;
-  recordFailure(now: Date): void;
-  recordSuccess(): void;
+  retryAfterMs(now: Date): Promise<number>;
+  recordFailure(now: Date): Promise<void>;
+  recordSuccess(): Promise<void>;
 }
 
 /**
@@ -15,7 +19,7 @@ export interface AttemptLimiter {
  *
  * State is in memory, so it resets when the process does. Adequate for a long-lived server; a
  * serverless deployment gets a fresh limiter per instance and would need a shared store to be
- * meaningful. See docs/superpowers/specs/2026-07-29-dashboard-auth-options.md.
+ * meaningful — see `PgAttemptLimiter`. See docs/superpowers/specs/2026-07-29-dashboard-auth-options.md.
  */
 export function createAttemptLimiter(options: { maxFailures?: number; lockoutMs?: number } = {}): AttemptLimiter {
   const maxFailures = options.maxFailures ?? 5;
@@ -30,8 +34,10 @@ export function createAttemptLimiter(options: { maxFailures?: number; lockoutMs?
   };
 
   return {
-    retryAfterMs: remainingMs,
-    recordFailure(now) {
+    async retryAfterMs(now) {
+      return remainingMs(now);
+    },
+    async recordFailure(now) {
       // Serving the lockout buys back the whole allowance. Without this the count carries over, so
       // the first typo after the wait re-locks immediately and the operator never gets back in.
       if (lockedAt !== undefined && remainingMs(now) === 0) {
@@ -41,7 +47,7 @@ export function createAttemptLimiter(options: { maxFailures?: number; lockoutMs?
       failures += 1;
       if (failures >= maxFailures) lockedAt = now;
     },
-    recordSuccess() {
+    async recordSuccess() {
       failures = 0;
       lockedAt = undefined;
     },

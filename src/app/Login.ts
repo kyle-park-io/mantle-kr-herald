@@ -23,17 +23,17 @@ export class Login {
   ) {}
 
   async run(supplied: SuppliedCredentials, now: Date): Promise<LoginResult> {
-    const retryAfterMs = this.limiter.retryAfterMs(now);
+    const retryAfterMs = await this.limiter.retryAfterMs(now);
     if (retryAfterMs > 0) return { ok: false, retryAfterMs };
     if (this.account === undefined) return { ok: false, retryAfterMs: 0 };
 
     if (await checkCredentials(supplied, this.account)) {
-      this.limiter.recordSuccess();
+      await this.limiter.recordSuccess();
       return { ok: true };
     }
-    this.limiter.recordFailure(now);
+    await this.limiter.recordFailure(now);
     // Read the lockout again: this failure may have been the one that tripped it, and the caller
     // should be told to wait now rather than discover it on the next attempt.
-    return { ok: false, retryAfterMs: this.limiter.retryAfterMs(now) };
+    return { ok: false, retryAfterMs: await this.limiter.retryAfterMs(now) };
   }
 }
