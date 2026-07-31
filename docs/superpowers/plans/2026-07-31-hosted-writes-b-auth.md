@@ -369,6 +369,18 @@ git commit -m "feat(web): send the dashboard to sign-in when the session is gone
 
 An install with no `HERALD_AUTH_USERNAME` / `HERALD_AUTH_PASSWORD_HASH` currently starts and refuses every login (`Login`'s constructor comment explains why the account is optional). That was right when the server was loopback-bound and is wrong now. **`serve.ts` must refuse to start without an account configured**, with a message naming `pnpm auth:hash`.
 
+**Schema note (from Tasks 1–3 fix round 1 review):** `applySchema` is currently called only from
+`db-import.ts` and `db-export.ts` — `serve.ts` calls `createDb` and never applies the schema itself.
+On a database Plan A already migrated (has `deliveries` etc. but predates `auth_attempts`), nothing
+today creates the new table before `PgAttemptLimiter` tries to read or write it, so this step must
+either have `serve.ts` call `applySchema(db)` at startup, or establish a real migration step that
+runs before the dashboard does — a bare `pnpm serve` must not be the thing that first discovers a
+missing table via `relation "auth_attempts" does not exist` on someone's first login attempt.
+`isSchemaApplied()` (`src/cli/dbStores.ts`) now checks every table in `schema.ts`'s `TABLE_NAMES`,
+not just `deliveries`, so it correctly reports "not applied" for a database missing only
+`auth_attempts` — useful for whichever check or startup message this step adds, but it does not by
+itself create the table.
+
 - [ ] **Step 2: Update the security note in `HttpServer.ts`**
 
 The file says the model is "no auth, bound to loopback". That is no longer true. Rewrite that comment to describe what actually guards the server now, and what it does not guard against.

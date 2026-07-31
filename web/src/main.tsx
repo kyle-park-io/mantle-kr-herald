@@ -10,9 +10,12 @@ import "./styles.css";
  *
  * It is NOT yet a gate. A correct password proves the credential and nothing more: no session is
  * issued, and dropping the hash still lands in the dashboard. That is deliberate rather than
- * unfinished — a check that lives in the browser is not a check, and what replaces it (a session
- * cookie, per-user identity) is still an open decision, recorded in
- * `docs/superpowers/specs/2026-07-29-dashboard-auth-options.md`.
+ * unfinished — a check that lives in the browser is not a check. What replaces it is decided, not
+ * open: a signed, `httpOnly` session cookie, never a JWT — see
+ * `docs/superpowers/specs/2026-07-31-hosted-writes-design.md`'s "Authentication" section, which
+ * settled the question `docs/superpowers/specs/2026-07-29-dashboard-auth-options.md` originally
+ * deferred. Landing task by task on this branch (`docs/superpowers/plans/2026-07-31-hosted-writes-
+ * b-auth.md`); this file does not consult a session yet.
  *
  * The hash rather than a router: `App.tsx` already routes its two modes this way, and adding a
  * router for one pre-auth screen would be the larger change.

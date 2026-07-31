@@ -181,19 +181,22 @@ const STATEMENTS: readonly string[] = [
   // (domain/auth/attemptLimiter.ts). One row, not one per client: there is a single credential, so
   // every attempt is an attempt on the same thing, and keying by IP would only tell an attacker to
   // rotate addresses — see that file's own comment. `locked_at` null means "not locked out"; set,
-  // it holds the ISO instant `PgAttemptLimiter` measures a lockout's remaining time against.
+  // it holds the ISO instant `PgAttemptLimiter` measures a lockout's remaining time against. No
+  // `ordinal`, unlike every other table here: that column exists so `db:export` can reproduce a
+  // file's insertion order (`order by ordinal`), and this table is not one of the stores `db:export`
+  // moves — it is server-side operational state, never exported. Adding one anyway would cost a
+  // sequence that advances on every failed login and imply an export contract that does not exist.
   `create table if not exists auth_attempts (
     id text primary key,
     failures integer not null,
-    locked_at text,
-    ordinal bigserial unique
+    locked_at text
   )`,
 
-  // Seeds the one row `auth_attempts` ever holds, so it always exists for `PgAttemptLimiter` to
-  // `select ... for update` — a lock only serializes concurrent transactions against a row that is
-  // already there; without a pre-existing row, two concurrent first failures would both see no row,
-  // both compute failures = 1, and one would overwrite the other. `on conflict do nothing` keeps
-  // this idempotent across repeated `applySchema` calls, and never resets a count already recorded.
+  // Seeds the one row `auth_attempts` ever holds. Belt-and-braces, not load-bearing:
+  // `PgAttemptLimiter.recordFailure` guarantees this same row for itself, inside its own
+  // transaction, immediately before locking it with `select ... for update` — see that class's doc
+  // comment for why a lock needs a pre-existing row to mean anything. This seed just means the row
+  // is already there on a freshly migrated database, before any login has ever failed.
   `insert into auth_attempts (id, failures, locked_at)
    values ('singleton', 0, null)
    on conflict (id) do nothing`,
@@ -204,3 +207,15 @@ export async function applySchema(db: Db): Promise<void> {
     await db.query(statement);
   }
 }
+
+/**
+ * Every table name `applySchema` creates, parsed out of `STATEMENTS` above rather than maintained
+ * as a second, hand-written list — the same reasoning `dbStores.ts`'s `LABEL_WIDTH` computes itself
+ * from the labels it prints. `isSchemaApplied` (`src/cli/dbStores.ts`) checks every name here is an
+ * existing table, so a database missing even one of them — not just `deliveries` — reports
+ * unapplied. Adding a table to `STATEMENTS` above extends this list automatically; nothing here
+ * needs editing when that happens.
+ */
+export const TABLE_NAMES: readonly string[] = STATEMENTS
+  .map((statement) => /create table if not exists (\w+)/i.exec(statement)?.[1])
+  .filter((name): name is string => name !== undefined);

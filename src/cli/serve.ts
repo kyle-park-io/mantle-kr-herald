@@ -42,8 +42,9 @@ import {
   loadDbConfig,
   tryLoadAuthConfig,
 } from "../config";
-import { Login } from "../app/Login";
+import { Login, type LoginResult } from "../app/Login";
 import { createAttemptLimiter } from "../domain/auth/attemptLimiter";
+import { singleFlight } from "../shared/concurrency/singleFlight";
 import { createUploaders, resolveTargets } from "./uploaders";
 import type { PublishResult } from "../app/PublishTranslations";
 import { REPO_ROOT, OUTPUT_DIR, paths } from "../paths";
@@ -336,11 +337,28 @@ const formatVariants = new FormatVariants(conversionStore, formattingStore, unde
  */
 const loginUseCase = new Login(tryLoadAuthConfig(), createAttemptLimiter());
 
+/** How long a caller who hit the single-flight guard below is told to wait — see its own comment. */
+const LOGIN_BUSY_RETRY_MS = 1000;
+
+/**
+ * `POST /api/login` is the one route the session gate leaves open to unauthenticated callers, so it
+ * cannot be protected by requiring what it exists to grant. `Login.run`'s lockout only throttles
+ * SEQUENTIAL guesses — several concurrent requests all read "not locked out" before any of them has
+ * recorded a failure, so they would all reach `verifyPassword`'s scrypt derivation (~64MB, 100–300ms
+ * each) at once. `singleFlight` (`src/shared/concurrency/singleFlight.ts`) caps that at one
+ * derivation in flight for the whole process; a concurrent second attempt is refused the same way a
+ * lockout is (`{ ok: false, retryAfterMs }`), not queued.
+ */
+const login = singleFlight(
+  (credentials: { username: string; password: string }) => loginUseCase.run(credentials, new Date()),
+  (): LoginResult => ({ ok: false, retryAfterMs: LOGIN_BUSY_RETRY_MS }),
+);
+
 const deps: ApiDeps = {
   translationStore,
   saveTranslation,
   publishOne,
-  login: (credentials) => loginUseCase.run(credentials, new Date()),
+  login,
   storageMode,
   formattingStore,
   conversionStore,

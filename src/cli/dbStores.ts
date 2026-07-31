@@ -1,4 +1,5 @@
 import type { Db } from "../adapters/db/Db";
+import { TABLE_NAMES } from "../adapters/db/schema";
 
 /**
  * The eleven stores `db:import`/`db:export` move between `output/` (plus the `translation/` and
@@ -104,18 +105,23 @@ export async function previewCount(fn: () => Promise<number>): Promise<number> {
 }
 
 /**
- * Standalone, one-shot check: has this database ever had the schema applied? `previewCount` above
- * reports 0 for a missing table the same way it would for a genuinely empty, migrated one, so the
- * two cannot be told apart from a preview's counts alone. `db-import.ts`'s and `db-export.ts`'s
- * entry scripts call this once, before printing the preview, to print an explicit "schema not
- * applied yet" line when that is why every count reads 0.
+ * Standalone, one-shot check: has this database ever had the FULL schema applied? Checks every
+ * table `applySchema` creates (`TABLE_NAMES`, from `schema.ts`) against `information_schema.tables`
+ * — not just `deliveries`. A single-table probe answers "yes" the moment the oldest table exists,
+ * which is wrong the instant a later table is added to `schema.ts` and an already-migrated database
+ * never gets it: that database would report "applied" forever, right up until the first read against
+ * the new table fails at runtime with no earlier warning. (`auth_attempts`, added after the tables
+ * this probe used to check, is exactly that case.)
+ *
+ * `previewCount` above reports 0 for a missing table the same way it would for a genuinely empty,
+ * migrated one, so the two cannot be told apart from a preview's counts alone. `db-import.ts`'s and
+ * `db-export.ts`'s entry scripts call this once, before printing the preview, to print an explicit
+ * "schema not applied yet" line when that is why every count reads 0.
  */
 export async function isSchemaApplied(db: Db): Promise<boolean> {
-  try {
-    await db.query("select 1 from deliveries limit 1");
-    return true;
-  } catch (err) {
-    if (isSchemaMissingError(err)) return false;
-    throw err;
-  }
+  const rows = await db.query<{ table_name: string }>(
+    "select table_name from information_schema.tables where table_schema = 'public'",
+  );
+  const existing = new Set(rows.map((r) => r.table_name));
+  return TABLE_NAMES.every((name) => existing.has(name));
 }
