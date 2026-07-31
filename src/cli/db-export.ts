@@ -2,10 +2,11 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { Db } from "../adapters/db/Db";
 import { createDb } from "../adapters/db/createDb";
+import { applySchema } from "../adapters/db/schema";
 import { loadDbConfig } from "../config";
 import { OUTPUT_DIR, REPO_ROOT } from "../paths";
 import { ALL_TYPES } from "../domain/conversion/models";
-import { writeJsonFileAtomic } from "../shared/store/jsonFile";
+import { readJsonFile, writeJsonFileAtomic } from "../shared/store/jsonFile";
 import { LocalJsonStore } from "../adapters/store/LocalJsonStore";
 import { LarkLocalStore } from "../adapters/lark/LarkLocalStore";
 import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
@@ -29,7 +30,7 @@ import { PgXArticleLedger } from "../adapters/store/PgXArticleLedger";
 import { PgPublishStore } from "../adapters/store/PgPublishStore";
 import { PgLineageStore } from "../adapters/store/PgLineageStore";
 import { PgFewShotStore, fewShotStoresByType as pgFewShotStoresByType } from "../adapters/store/PgFewShotStore";
-import { describeCounts } from "./dbStores";
+import { describeCounts, describePreview, type PreviewCounts, type StoreKey } from "./dbStores";
 import type { ImportReport } from "./db-import";
 
 /**
@@ -78,11 +79,109 @@ async function ensurePublishStateWritten(dir: string, rowCount: number): Promise
 }
 
 /**
+ * The array/object-shaped stores whose write path above (`ensureArrayFileWritten` /
+ * `ensurePublishStateWritten`) force-writes an empty file — or `{ entries: [] }` — whenever the
+ * database holds zero rows for that store, **regardless of what is already on disk**. `x_threads`
+ * and `lark_items` are excluded on purpose: `LocalJsonStore.upsert` / `LarkLocalStore.upsert` merge
+ * the incoming (possibly empty) array into whatever the target file already holds rather than
+ * replacing it, so they cannot wipe a populated file even when the database is empty — flagging them
+ * here would be a false positive. `lineage` is excluded for the same reason (`exportLineage`'s
+ * content-keyed dedup only ever appends).
+ *
+ * Reads each on-disk file directly with `readJsonFile` rather than through a `Json*` store's
+ * `loadAll()` — a row count is all this needs, and `exportOutputTree` below reads through the real
+ * stores anyway once this has cleared.
+ */
+async function emptyOverwriteHazards(db: Db, outputRoot: string, configRoot: string | undefined): Promise<string[]> {
+  const d = outputDirs(outputRoot);
+  const hazards: string[] = [];
+
+  const check = async (path: string, incoming: number): Promise<void> => {
+    if (incoming > 0) return;
+    const existing = await readJsonFile<unknown[]>(path, []);
+    if (existing.length > 0) hazards.push(`${path} (${existing.length} row(s) on disk, database has 0)`);
+  };
+
+  await check(join(d.translations, "translations.json"), (await new PgTranslationStore(db).loadAll()).length);
+  await check(join(d.variants, "variants.json"), (await new PgConversionStore(db).loadAll()).length);
+  await check(join(d.formatted, "renderings.json"), (await new PgFormattingStore(db).loadAll()).length);
+  await check(join(d.formatted, "overrides.json"), (await new PgOutletOverrideStore(db).loadAll()).length);
+  await check(join(d.publish, "deliveries.json"), (await new PgDeliveryLedger(db).loadAll()).length);
+  await check(join(d.publish, "x-article.json"), (await new PgXArticleLedger(db).loadAll()).length);
+
+  const statePath = join(d.publish, "state.json");
+  const incomingPublishEntries = (await new PgPublishStore(db).listEntries()).length;
+  if (incomingPublishEntries === 0) {
+    const existing = await readJsonFile<{ entries?: unknown[] }>(statePath, {});
+    const existingCount = existing.entries?.length ?? 0;
+    if (existingCount > 0) hazards.push(`${statePath} (${existingCount} row(s) on disk, database has 0)`);
+  }
+
+  if (configRoot) {
+    const translationDir = join(configRoot, "translation");
+    const conversionDir = join(configRoot, "conversion");
+    await check(join(translationDir, "few-shot.json"), (await new PgFewShotStore(db, "translation").load()).length);
+    const pgByType = pgFewShotStoresByType(db);
+    for (const type of ALL_TYPES) {
+      await check(join(conversionDir, `few-shot.${type}.json`), (await pgByType[type].load()).length);
+    }
+  }
+
+  return hazards;
+}
+
+/**
+ * Refuses when `emptyOverwriteHazards` finds any — the specific move that turns a fat-fingered
+ * `db:export` into data loss. An empty (or wrong) database exported over a populated `output/` tree
+ * would otherwise silently wipe every array-shaped store down to `[]`; that tree is simultaneously
+ * `db:import`'s only input and `assertLedgerMigrated`'s only safety net, so losing it is not a
+ * cosmetic mistake.
+ *
+ * Called before `exportOutputTree` writes anything, so a refusal here leaves *every* file on disk
+ * untouched — not only the ones that would have been wiped, but the merge-safe ones too
+ * (`x_threads`, `lark_items`) that a hazard discovered mid-write would otherwise still rewrite
+ * (harmlessly, but rewrite nonetheless) before reaching the store that actually throws.
+ *
+ * `allowEmptyOverwrite` is a separate, explicit opt-in — deliberately not folded into `--yes`, so
+ * the one confirmation that authorizes "write" cannot also be the one that authorizes "wipe".
+ */
+async function assertNoEmptyOverwrite(
+  db: Db,
+  outputRoot: string,
+  configRoot: string | undefined,
+  allowEmptyOverwrite: boolean,
+): Promise<void> {
+  if (allowEmptyOverwrite) return;
+  const hazards = await emptyOverwriteHazards(db, outputRoot, configRoot);
+  if (hazards.length === 0) return;
+  throw new Error(
+    `Refusing to export: the database holds zero rows for ${hazards.length} store(s) whose target file ` +
+      `already holds data on disk. Exporting would overwrite it with an empty file:\n` +
+      hazards.map((h) => `  - ${h}`).join("\n") +
+      `\nThis is far more often a wrong or empty database (check DATABASE_URL / HERALD_DB_ENV, or run ` +
+      `pnpm db:import first) than a store that was genuinely emptied. If it really was, re-run with ` +
+      `--allow-empty-overwrite.`,
+  );
+}
+
+export interface ExportOptions {
+  /** See `assertNoEmptyOverwrite`. Defaults to `false` — export refuses an empty-over-populated
+   *  overwrite unless this is passed explicitly. */
+  allowEmptyOverwrite?: boolean;
+}
+
+/**
  * The rollback path. Reads each `Pg*` store — in `ordinal` order, which is insertion order (see
  * `src/adapters/db/schema.ts`) — and writes through the matching `Json*`/`Local*Store` class
  * pointed at `outputRoot` (and, for the few-shot corpus, `configRoot`), so the file it produces is
  * not a reimplementation of what `upsert`/`add`/`record`/`append` already does; it is that exact
  * code, run once per row (or, for `x_threads`/`lark_items`, once per batch — see below).
+ *
+ * Applies the schema (`applySchema`) first, matching `db-import.ts`'s `importOutputTree` — safe on
+ * a database that already has the tables, and needed on one that does not (there is nothing to
+ * export from it, but the failure should be "the database is empty", not a relation error).
+ * Immediately after, `assertNoEmptyOverwrite` runs and can refuse outright — see its own doc
+ * comment — before any of the writes below happen.
  *
  * That reuse is what makes the round trip in `tests/cli/dbRoundTrip.test.ts` byte-for-byte: the
  * same `writeJsonFileAtomic` call (2-space `JSON.stringify` plus a trailing newline) that
@@ -116,7 +215,14 @@ async function ensurePublishStateWritten(dir: string, rowCount: number): Promise
  * pre-cutover `lineage/*.jsonl` line `db:import` read) is exactly the "unchanged tree" case, not an
  * edge case reached only by re-running twice.
  */
-export async function exportOutputTree(db: Db, outputRoot: string, configRoot?: string): Promise<ExportReport> {
+export async function exportOutputTree(
+  db: Db,
+  outputRoot: string,
+  configRoot?: string,
+  options: ExportOptions = {},
+): Promise<ExportReport> {
+  await applySchema(db);
+  await assertNoEmptyOverwrite(db, outputRoot, configRoot, options.allowEmptyOverwrite ?? false);
   const d = outputDirs(outputRoot);
 
   const xThreads = await new PgCollectionRepository(db).loadAll();
@@ -198,6 +304,95 @@ export async function exportOutputTree(db: Db, outputRoot: string, configRoot?: 
   };
 }
 
+async function countLineageOnDisk(lineageDir: string): Promise<number> {
+  const items = await new JsonlLineageStore(lineageDir).listItems();
+  return items.reduce((sum, i) => sum + i.entries, 0);
+}
+
+async function countLineageInDb(db: Db): Promise<number> {
+  const items = await new PgLineageStore(db).listItems();
+  return items.reduce((sum, i) => sum + i.entries, 0);
+}
+
+/**
+ * Read-only: for every store, how many rows already sit on disk at `outputRoot` (`current` — what a
+ * write would overwrite) versus how many the database holds and would write (`incoming`). This is
+ * what a flagless `db:export` run prints instead of writing anything, giving it the same
+ * preview-before-write shape `db:import`'s `previewImport` already has — reusing its
+ * `PreviewCounts`/`describePreview` — with `current` and `incoming` naming the opposite sides,
+ * because export's data flows the opposite direction.
+ *
+ * Coarser than `emptyOverwriteHazards`'s per-file check on purpose: `fewShotExamples` here is one
+ * combined count across every `few-shot.*.json` file, matching `db:import`'s own preview shape,
+ * because this function is informational (an operator deciding whether to proceed) rather than the
+ * safety mechanism itself — that per-file precision lives in `assertNoEmptyOverwrite`.
+ */
+export async function previewExport(
+  db: Db,
+  outputRoot: string,
+  configRoot?: string,
+): Promise<Record<StoreKey, PreviewCounts>> {
+  await applySchema(db);
+  const d = outputDirs(outputRoot);
+
+  let currentFewShot = 0;
+  let incomingFewShot = 0;
+  if (configRoot) {
+    currentFewShot += (await new JsonFewShotStore(join(configRoot, "translation")).load()).length;
+    incomingFewShot += (await new PgFewShotStore(db, "translation").load()).length;
+    const jsonByType = jsonFewShotStoresByType(join(configRoot, "conversion"));
+    const pgByType = pgFewShotStoresByType(db);
+    for (const type of ALL_TYPES) {
+      currentFewShot += (await jsonByType[type].load()).length;
+      incomingFewShot += (await pgByType[type].load()).length;
+    }
+  }
+
+  return {
+    xThreads: {
+      current: (await new LocalJsonStore(d.x).loadAll()).length,
+      incoming: (await new PgCollectionRepository(db).loadAll()).length,
+    },
+    larkItems: {
+      current: (await new LarkLocalStore(d.lark).loadAll()).length,
+      incoming: (await new PgLarkRepository(db).loadAll()).length,
+    },
+    translations: {
+      current: (await new JsonTranslationStore(d.translations).loadAll()).length,
+      incoming: (await new PgTranslationStore(db).loadAll()).length,
+    },
+    variants: {
+      current: (await new JsonConversionStore(d.variants).loadAll()).length,
+      incoming: (await new PgConversionStore(db).loadAll()).length,
+    },
+    renderings: {
+      current: (await new JsonFormattingStore(d.formatted).loadAll()).length,
+      incoming: (await new PgFormattingStore(db).loadAll()).length,
+    },
+    outletOverrides: {
+      current: (await new JsonOutletOverrideStore(d.formatted).loadAll()).length,
+      incoming: (await new PgOutletOverrideStore(db).loadAll()).length,
+    },
+    deliveries: {
+      current: (await new JsonDeliveryLedger(d.publish).loadAll()).length,
+      incoming: (await new PgDeliveryLedger(db).loadAll()).length,
+    },
+    xArticleDeliveries: {
+      current: (await new JsonXArticleLedger(d.publish).loadAll()).length,
+      incoming: (await new PgXArticleLedger(db).loadAll()).length,
+    },
+    publishEntries: {
+      current: (await new JsonPublishStore(d.publish).listEntries()).length,
+      incoming: (await new PgPublishStore(db).listEntries()).length,
+    },
+    lineageEntries: {
+      current: await countLineageOnDisk(d.lineage),
+      incoming: await countLineageInDb(db),
+    },
+    fewShotExamples: { current: currentFewShot, incoming: incomingFewShot },
+  };
+}
+
 /**
  * One `<itemId>.jsonl` file per item, each line appended in `ordinal` order — the same order
  * `JsonlLineageStore.append` originally wrote them in, since a plain `appendFile` (like a plain
@@ -232,9 +427,10 @@ async function exportLineage(db: Db, lineageDir: string): Promise<number> {
 }
 
 /**
- * The runnable entry point. Guarded so that `tests/cli/dbRoundTrip.test.ts` can `import
- * { exportOutputTree }` from this same file without also running this block — see `db-import.ts`'s
- * identical guard for why `process.argv[1] === fileURLToPath(import.meta.url)` is the right test.
+ * The runnable entry point. Guarded so that `tests/cli/dbRoundTrip.test.ts` and
+ * `tests/cli/dbExport.test.ts` can `import { exportOutputTree, previewExport }` from this same file
+ * without also running this block — see `db-import.ts`'s identical guard for why
+ * `process.argv[1] === fileURLToPath(import.meta.url)` is the right test.
  *
  * Takes an optional positional target directory (`pnpm db:export /tmp/scratch`), defaulting to the
  * real `output/` tree — the rollback destination this command exists for. Mirrors the
@@ -243,18 +439,33 @@ async function exportLineage(db: Db, lineageDir: string): Promise<number> {
  * `conversion/` config trees (`REPO_ROOT`), not under the positional target — matching
  * `db:import`'s entry script, and matching where those two directories actually live regardless of
  * where the rest of the tree is being written.
+ *
+ * The same preview-then-confirm shape as `db:import`: a flagless run only connects to compute and
+ * print `previewExport`'s current-vs-incoming counts, and writes nothing. `--yes` performs the
+ * write. `--allow-empty-overwrite` is a second, separate flag on top of that — see
+ * `assertNoEmptyOverwrite` — for the one legitimate case where a store really was emptied and the
+ * export is meant to reflect that; `--yes` alone is not enough to authorize wiping a populated file.
  */
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await import("./registerErrorHandler");
   const cfg = loadDbConfig();
   const outputRoot = process.argv[2]?.startsWith("--") ? OUTPUT_DIR : (process.argv[2] ?? OUTPUT_DIR);
+  const confirmed = process.argv.includes("--yes");
+  const allowEmptyOverwrite = process.argv.includes("--allow-empty-overwrite");
 
   console.log(`db:export — exporting the ${cfg.env} database into ${outputRoot}`);
 
   const db = createDb(cfg);
   try {
-    const report = await exportOutputTree(db, outputRoot, REPO_ROOT);
-    for (const line of describeCounts(report)) console.log(line);
+    if (!confirmed) {
+      const preview = await previewExport(db, outputRoot, REPO_ROOT);
+      for (const line of describePreview(preview)) console.log(line);
+      console.log(`\npreview only — nothing was written.`);
+      console.log(`Re-run with --yes to export into ${outputRoot}.`);
+    } else {
+      const report = await exportOutputTree(db, outputRoot, REPO_ROOT, { allowEmptyOverwrite });
+      for (const line of describeCounts(report)) console.log(line);
+    }
   } finally {
     await db.close();
   }

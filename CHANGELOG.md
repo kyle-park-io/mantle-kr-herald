@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (host and database name only, never the password) by querying a real table, so a database that
   connects but was never imported into fails the check instead of reporting healthy, and `pnpm
   status` prints the attached environment on its first line.
+- **`pnpm db:export` (the rollback path) now previews by default and requires `--yes` to write, the
+  same shape as `pnpm db:import`.** A flagless run only prints current-on-disk-vs-incoming-from-
+  database counts for every store; nothing is written until `--yes` is passed. It also refuses
+  outright — even with `--yes` — to overwrite a store's file with an empty one when that file
+  already holds rows on disk: an empty or wrong database (unset `HERALD_DB_ENV`, or one `db:import`
+  was never run against) is a far more likely explanation than the store having been genuinely
+  emptied, and `db:export`'s default target is the same `output/` tree that is both `db:import`'s
+  only input and the send-path ledger guard's only safety net. Pass `--allow-empty-overwrite` if a
+  store really was emptied and the export is meant to reflect that.
 - **Before the first `pnpm kol-telegram:record`, create and seed the `kol-map` tab by hand — the
   command cannot run without it, and the rows it writes decide KOL payments.** This is a new
   human-maintained tab in the `GSHEET_ID` workbook with the header row
