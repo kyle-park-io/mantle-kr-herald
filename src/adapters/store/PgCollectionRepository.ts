@@ -77,7 +77,20 @@ function mergeTweets(existing: SourceTweet[], incoming: SourceTweet[]): SourceTw
  * batch runs inside `db.tx()` so a failure partway through rolls back the threads already written in
  * the same call, matching `LocalJsonStore.upsert`'s single atomic file write. The `on conflict`
  * clause never assigns `ordinal`, so `loadAll()`'s `order by ordinal` keeps reproducing insertion
- * order even after a thread has been re-merged.
+ * order even after a thread has been re-merged. `existingByRoot` is updated after each thread's
+ * write, so a second entry for the same `rootId` later in the same batch chains onto the first
+ * entry's merged result — matching `LocalJsonStore.upsert`'s running `Map`, which folds the same
+ * way — rather than re-reading pre-batch state and dropping the first entry's contribution.
+ *
+ * Residual race, accepted rather than fixed: two *separate* concurrent `upsert()` calls that both
+ * target the same `rootId` can still lose one side's merge under READ COMMITTED, because each
+ * call's targeted `select` runs before its own `on conflict` write — the second call's read can see
+ * a state that predates the first call's not-yet-committed insert. `db.tx()` only makes each
+ * `upsert()` call atomic as a whole; it does not serialize two different calls against each other.
+ * This is acceptable because `collect` is a single local job with no concurrent writers today, and
+ * it is strictly better than the whole-file read-modify-write it replaces (which had the same class
+ * of race across two processes, with no transaction at all), but it is a real gap and is recorded
+ * here rather than implied away.
  */
 export class PgCollectionRepository implements CollectionRepository {
   constructor(private readonly db: Db) {}
@@ -115,6 +128,10 @@ export class PgCollectionRepository implements CollectionRepository {
              deleted_at = excluded.deleted_at`,
           [incoming.rootId, JSON.stringify(tweets), incoming.status, firstSeenAt, incoming.deletedAt ?? null],
         );
+        // A second entry for this rootId later in the same batch must merge on top of THIS
+        // result, not the pre-batch state read above — matching LocalJsonStore.upsert's running
+        // `Map`, which folds each incoming thread onto the previous entry's merged result.
+        existingByRoot.set(incoming.rootId, { root_id: incoming.rootId, tweets, first_seen_at: firstSeenAt });
       }
     });
   }

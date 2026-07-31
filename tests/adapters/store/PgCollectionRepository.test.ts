@@ -194,6 +194,50 @@ describe("PgCollectionRepository", () => {
     expect(all[0].tweets[0].article?.blocks).toEqual([{ type: "unstyled", text: "Body" }]);
   });
 
+  it("upsert lets a freshly fetched article body with real blocks replace a stored one", async () => {
+    // Mirror image of the three "preserves a stored article body" tests above: when the incoming
+    // article DOES carry blocks, it must win outright, not just lose gracefully when it doesn't.
+    // Without this case, a mutant that drops the `blocks?.length` check and always keeps
+    // `existing.article` passes every other article test here.
+    db = await createTestDb();
+    const store = new PgCollectionRepository(db);
+    const withArticle: CollectedThread = {
+      rootId: "1",
+      tweets: [
+        {
+          id: "1", conversationId: "1", text: "https://t.co/x", createdAt: "2026-01-01T00:00:00.000Z",
+          url: "u/1", authorUserName: "Mantle_Official", isReply: false, isQuote: false,
+          article: { title: "T", blocks: [{ type: "unstyled", text: "Body" }] },
+        },
+      ],
+      status: "active",
+      firstSeenAt: "2026-01-01T00:00:00.000Z",
+    };
+    await store.upsert([withArticle]);
+
+    const refetchedArticle: CollectedThread = {
+      ...withArticle,
+      tweets: [{
+        ...withArticle.tweets[0],
+        article: {
+          title: "T v2",
+          blocks: [
+            { type: "unstyled", text: "Body" },
+            { type: "unstyled", text: "More body, fetched later" },
+          ],
+        },
+      }],
+    };
+    await store.upsert([refetchedArticle]);
+
+    const all = await store.loadAll();
+    expect(all[0].tweets[0].article?.blocks).toEqual([
+      { type: "unstyled", text: "Body" },
+      { type: "unstyled", text: "More body, fetched later" },
+    ]);
+    expect(all[0].tweets[0].article?.title).toBe("T v2");
+  });
+
   it("omits deletedAt when absent rather than returning null", async () => {
     db = await createTestDb();
     const store = new PgCollectionRepository(db);
@@ -211,6 +255,22 @@ describe("PgCollectionRepository", () => {
     expect(all.map((t) => t.rootId).sort()).toEqual(["1", "2"]);
   });
 
+  it("a single upsert() call chains two entries for the same rootId, like LocalJsonStore's running Map", async () => {
+    // LocalJsonStore.upsert folds through a `Map`, so a second entry for the same rootId in one
+    // batch merges on top of the FIRST entry's result, not pre-batch database state. Both tweets
+    // must survive (they don't collide by id) and the earlier firstSeenAt must win, exactly as if
+    // the two entries had been upserted one at a time.
+    db = await createTestDb();
+    const store = new PgCollectionRepository(db);
+    const first = thread("1", ["1"], { firstSeenAt: "2026-01-01T00:00:00.000Z" });
+    const second = thread("1", ["2"], { firstSeenAt: "2026-02-02T00:00:00.000Z" });
+    await store.upsert([first, second]);
+    const all = await store.loadAll();
+    expect(all).toHaveLength(1);
+    expect(all[0].tweets.map((t) => t.id).sort()).toEqual(["1", "2"]); // tweet "1" must not be dropped
+    expect(all[0].firstSeenAt).toBe("2026-01-01T00:00:00.000Z"); // first-in-batch value wins
+  });
+
   it("a single upsert() call merges a new thread and an update to an existing thread together", async () => {
     db = await createTestDb();
     const store = new PgCollectionRepository(db);
@@ -226,7 +286,12 @@ describe("PgCollectionRepository", () => {
     expect(all.find((t) => t.rootId === "3")).toBeDefined();
   });
 
-  it("survives two overlapping upserts of different threads — no read-modify-write left to lose one", async () => {
+  it("two concurrent upsert() calls for different rootIds both land", async () => {
+    // Different rootIds cannot conflict by construction, and PGlite is single-connection, so this
+    // does NOT exercise (and must not be read as proving) safety for two concurrent upsert() calls
+    // targeting the SAME rootId. See the residual-race paragraph on the class doc comment: that
+    // case can still lose one side's merge under READ COMMITTED, because each call's targeted
+    // `select` runs before its `on conflict` write.
     db = await createTestDb();
     const store = new PgCollectionRepository(db);
     await Promise.all([store.upsert([thread("1", ["1"])]), store.upsert([thread("2", ["2"])])]);
