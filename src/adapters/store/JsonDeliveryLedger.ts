@@ -58,22 +58,38 @@ export class JsonDeliveryLedger implements DeliveryLedger {
   }
 
   /**
-   * A plain read-modify-write — read the file, mutate a Map in memory, write it back atomically.
-   * Correct for a single process with no concurrent writer, which is what this store is for once
-   * `PgDeliveryLedger` takes over the live send path (Task 17): its only remaining caller is
-   * `db:export`, run alone. Two overlapping callers can still drop a row the way any
-   * read-modify-write can — see `PgDeliveryLedger`, which protects concurrent writers with a
-   * database transaction instead of the file lock and in-process queue this store used to wrap
-   * these two methods in.
+   * A plain read-modify-write — read the file once, mutate a Map in memory, write it back
+   * atomically once. Correct for a single process with no concurrent writer, which is what this
+   * store is for once `PgDeliveryLedger` takes over the live send path (Task 17): its only
+   * remaining caller is `db:export`, run alone. Two overlapping callers on the same instance can
+   * still drop a row the way any read-modify-write can — see `PgDeliveryLedger`, which protects
+   * concurrent writers with a database transaction instead of the file lock and in-process queue
+   * this store used to wrap `add`/`remove` in.
+   *
+   * `add`, `remove` and `replace` all funnel through this single read + single write so that none
+   * of them ever leaves a gap of their own between reading the file and rewriting it — `replace` in
+   * particular needs that: reading once, deleting `previous`'s key and setting `next`'s key on the
+   * same in-memory Map before the one write back means there is no moment where the file on disk
+   * holds neither row.
    */
-  async add(entry: DeliveryEntry): Promise<void> {
+  private async mutate(change: (byKey: Map<string, DeliveryEntry>) => void): Promise<void> {
     const byKey = new Map((await this.loadAll()).map((e) => [deliveryKey(e), e]));
-    byKey.set(deliveryKey(entry), entry);
+    change(byKey);
     await writeJsonFileAtomic(this.dir, this.path, [...byKey.values()]);
   }
 
+  async add(entry: DeliveryEntry): Promise<void> {
+    await this.mutate((byKey) => byKey.set(deliveryKey(entry), entry));
+  }
+
   async remove(key: string): Promise<void> {
-    const kept = (await this.loadAll()).filter((e) => deliveryKey(e) !== key);
-    await writeJsonFileAtomic(this.dir, this.path, kept);
+    await this.mutate((byKey) => byKey.delete(key));
+  }
+
+  async replace(previous: DeliveryEntry, next: DeliveryEntry): Promise<void> {
+    await this.mutate((byKey) => {
+      byKey.delete(deliveryKey(previous));
+      byKey.set(deliveryKey(next), next);
+    });
   }
 }

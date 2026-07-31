@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { makeSendToOutlet, type SendToOutletDeps } from "../../src/cli/sendToOutlet";
+import { PgDeliveryLedger } from "../../src/adapters/store/PgDeliveryLedger";
+import { createTestDb } from "../support/testDb";
 import type { FormattingStore } from "../../src/ports/FormattingStore";
 import type { DeliveryLedger } from "../../src/ports/DeliveryLedger";
 import type { TranslationStore } from "../../src/ports/TranslationStore";
@@ -36,6 +38,9 @@ function fakeDeliveryLedger(seed: DeliveryEntry[] = []): DeliveryLedger {
     },
     remove: async (key: string) => {
       rows = rows.filter((r) => deliveryKey(r) !== key);
+    },
+    replace: async (previous: DeliveryEntry, next: DeliveryEntry) => {
+      rows = [...rows.filter((r) => deliveryKey(r) !== deliveryKey(previous) && deliveryKey(r) !== deliveryKey(next)), next];
     },
   };
 }
@@ -890,5 +895,45 @@ describe("makeSendToOutlet — a cancelled original is retired, not restored as 
 
     expect(lookup.cancels).toEqual([]);
     expect(await ledger.loadAll()).toEqual([previous]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// `DeliveryLedger.replace()` — the primitive the resend restore sites above call instead of
+// composing `remove()` then `add()` themselves. Real Postgres (via PGlite), not a fake: what is
+// under test is exactly the guarantee a fake in-memory object cannot demonstrate — that no OTHER
+// connection's read lands in a gap between the delete and the insert `replace()` runs.
+// ---------------------------------------------------------------------------------------------
+
+describe("DeliveryLedger.replace — never exposes a gap", () => {
+  // PGlite is single-connection (see PgCollectionRepository.test.ts), so the 20-round polling loop
+  // below and `replace()`'s own transaction share it — under the full suite's parallel worker load
+  // that queue can run meaningfully slower than the default 5s test timeout, even though the same
+  // test finishes in ~2s run alone. A generous timeout, not a smaller round count, is the fix: fewer
+  // rounds would weaken what the test can actually catch.
+  it("never exposes a ledger with no row for a room mid-replace", { timeout: 20_000 }, async () => {
+    const db = await createTestDb();
+    const ledger = new PgDeliveryLedger(db);
+    const entry = {
+      itemId: "x:1", type: "announcement", outletId: "tg-community",
+      status: "sent" as const, at: "2026-07-29T00:00:00.000Z", by: "auto" as const,
+    };
+    await ledger.add(entry);
+
+    // Observe the ledger from outside while `replace()` is in flight. Every observation must see
+    // the room as delivered — before, during and after.
+    const observations: boolean[] = [];
+    const observing = (async () => {
+      for (let i = 0; i < 20; i++) {
+        observations.push((await ledger.loadKeys()).has("x:1:announcement:tg-community"));
+        await new Promise((r) => setImmediate(r));
+      }
+    })();
+
+    await ledger.replace(entry, { ...entry, url: "https://t.me/c/1/9" });
+    await observing;
+
+    expect(observations.every(Boolean)).toBe(true);
+    await db.close();
   });
 });

@@ -85,6 +85,7 @@ describe("createSenders — telegram on a per-room .env", () => {
       loadKeys: async () => new Set(rows.map(deliveryKey)),
       add: async (e) => { rows = [...rows, e]; },
       remove: async () => {},
+      replace: async (_previous, next) => { rows = [...rows, next]; },
     };
 
     // The real CLI wiring: senders from `createSenders`, chat ids from `loadTelegramChatIds`.

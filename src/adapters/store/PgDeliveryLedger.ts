@@ -103,9 +103,12 @@ export class PgDeliveryLedger implements DeliveryLedger {
    * initial insert and an update leaves it alone, so `loadAll()`'s `order by ordinal` keeps
    * reproducing insertion order even after a row has been re-added (e.g. a scheduled draft that
    * later resolves to a live `url`).
+   *
+   * Takes `db` rather than closing over `this.db` so `replace()` below can run the exact same
+   * statement inside its own transaction — `add()` itself just passes `this.db`.
    */
-  async add(entry: DeliveryEntry): Promise<void> {
-    await this.db.query(
+  private async upsert(db: Db, entry: DeliveryEntry): Promise<void> {
+    await db.query(
       `insert into deliveries
          (item_id, type, outlet_id, status, at, by, post_id, url, sender_name)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -130,17 +133,45 @@ export class PgDeliveryLedger implements DeliveryLedger {
     );
   }
 
+  async add(entry: DeliveryEntry): Promise<void> {
+    await this.upsert(this.db, entry);
+  }
+
   /**
    * `key` is the joined `deliveryKey()` string (`${itemId}:${type}:${outletId}`), never parsed
    * apart: `itemId` itself contains a colon (`"x:1"`), so a naive `split(":")` could misassign
    * segments and delete the wrong row, or none. Recomputing the same join in SQL and comparing it
    * whole — mirroring `deliveryKey` in `src/domain/delivery/models.ts` byte for byte — is immune to
    * a colon in any of the three fields.
+   *
+   * Takes `db` rather than closing over `this.db` for the same reason `upsert` does — `remove()`
+   * passes `this.db`, `replace()` below passes its transaction's binding.
    */
-  async remove(key: string): Promise<void> {
-    await this.db.query(
+  private async deleteByKey(db: Db, key: string): Promise<void> {
+    await db.query(
       "delete from deliveries where item_id || ':' || type || ':' || outlet_id = $1",
       [key],
     );
+  }
+
+  async remove(key: string): Promise<void> {
+    await this.deleteByKey(this.db, key);
+  }
+
+  /**
+   * Deletes `previous`'s row and upserts `next`, both inside one `db.tx()`. A caller composing
+   * `remove()` then `add()` itself would leave a real gap between the two statements — another
+   * connection's plain `select` can land in it and read the room as never-sent, which is the input
+   * to a duplicate send (see `sendToOutlet.ts`'s resend path, the caller this exists for). Wrapping
+   * both statements in one transaction closes that: under Postgres's MVCC, a concurrent reader on a
+   * different connection sees either the whole pre-transaction state or the whole post-transaction
+   * state, never a moment with neither row, because the DELETE's effects are not visible to any
+   * other connection until COMMIT.
+   */
+  async replace(previous: DeliveryEntry, next: DeliveryEntry): Promise<void> {
+    await this.db.tx(async (tx) => {
+      await this.deleteByKey(tx, deliveryKey(previous));
+      await this.upsert(tx, next);
+    });
   }
 }

@@ -387,6 +387,19 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
    * counting down to publish. `guardQueuedDraft` cancels that one, or refuses the resend, because
    * "two messages exist afterwards" is the *acceptable* outcome only when the operator can see the
    * first one and chose to send anyway.
+   *
+   * The initial `remove(key)` below has to be a real removal, not a replace: `SendChannels.run()`
+   * decides "already delivered" from its own fresh read of the ledger, so the room must actually be
+   * absent from it for the send to be attempted at all — writing any row that still counts as
+   * delivered (via `deliveredToRoom`) here would make `run()` skip the room exactly as it would a
+   * genuinely new send. That leaves a real, human-triggered window — for as long as `run()` takes —
+   * where a concurrent reader sees this room as never-sent. It is not new: the file lock this store
+   * used to wrap `remove`/`add` in never held across the two calls either, so it never covered this
+   * gap. What IS new is `replace()`: every "nothing went out, put `previous` back" write below is
+   * one `deliveryLedger.replace(previous, restore)` call rather than a bare `add`, which at least
+   * makes that half of the round trip — and the low-level primitive an outside reader would observe
+   * — atomic instead of composed from two calls sendToOutlet.ts would otherwise have to coordinate
+   * itself.
    */
   return async (itemId: string, type: string, outletId: string, resend = false): Promise<{ sent: number; failed: number; error?: string }> => {
     const outlet = outletById(outletId);
@@ -453,7 +466,10 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
       if (result.quotaBlocked) {
         const { needed, available, resetsAt } = result.quotaBlocked;
         const when = resetsAt ? ` (${resetsAt.slice(0, 10)} 리셋)` : "";
-        if (restore) await deliveryLedger.add(restore); // nothing went out — see `restore`
+        // `restore` is only ever set alongside `previous` (both inside the `if (resend)` block
+        // above), so this check is redundant in practice — kept so TypeScript can see it too rather
+        // than asserting it, since nothing here is worth a runtime crash over an assertion drifting.
+        if (restore && previous) await deliveryLedger.replace(previous, restore); // nothing went out — see `restore`
         // `available` (remaining − inFlight) can be negative when a stale in-flight row overcounts —
         // clamp only the displayed number; the refusal itself already happened on the raw comparison.
         return { sent: 0, failed: 0, error: `Typefully 월간 발행 쿼터가 부족합니다 — 필요 ${needed}건, 잔여 ${Math.max(0, available)}건${when}` };
@@ -472,12 +488,12 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
           : result.unconfigured > 0 ? `${result.unconfiguredEnv.join(", ")} is not set`
           : result.withheld > 0 ? "withheld by the first-delivery guard"
           : "no approved copy to send";
-        if (restore) await deliveryLedger.add(restore); // nothing went out — see `restore`
+        if (restore && previous) await deliveryLedger.replace(previous, restore); // nothing went out — see `restore`
         return { sent: 0, failed: result.failed, error: `${outlet.label} (${outlet.id}): ${reason}` };
       }
       return { sent: result.sent, failed: result.failed };
     } catch (err) {
-      if (restore) await deliveryLedger.add(restore); // the send threw before reaching the room — see `restore`
+      if (restore && previous) await deliveryLedger.replace(previous, restore); // the send threw before reaching the room — see `restore`
       return { sent: 0, failed: 1, error: (err as Error).message };
     }
   };
