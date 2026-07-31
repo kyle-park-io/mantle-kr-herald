@@ -35,3 +35,16 @@ export async function createTestDb(): Promise<Db & { close(): Promise<void> }> {
   await applySchema(db);
   return { ...db, close: () => client.close() };
 }
+
+/**
+ * A fresh in-memory PGlite database with **no** schema applied — deliberately, unlike
+ * `createTestDb()`. This is what `output/`'s "nothing creates the tables, and `doctor` cannot
+ * tell" hazard looks like on a real connection: exists for tests that must prove behaviour against
+ * a database that has never seen `applySchema` (`db:import`'s own implicit call, and `doctor`'s
+ * connectivity probe), not the one every other test wants. Call `close()` when done.
+ */
+export async function createUnmigratedTestDb(): Promise<Db & { close(): Promise<void> }> {
+  const client = new PGlite();
+  const db = wrap(client, false);
+  return { ...db, close: () => client.close() };
+}

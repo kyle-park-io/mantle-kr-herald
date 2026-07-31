@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createTestDb } from "../support/testDb";
+import { createTestDb, createUnmigratedTestDb } from "../support/testDb";
 import { importOutputTree, previewImport } from "../../src/cli/db-import";
 import { PgTranslationStore } from "../../src/adapters/store/PgTranslationStore";
 import { PgDeliveryLedger } from "../../src/adapters/store/PgDeliveryLedger";
@@ -88,6 +88,23 @@ describe("importOutputTree", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("against a fresh database with no schema applied", () => {
+  // `createUnmigratedTestDb()` skips `applySchema` on purpose — this is what a documented-but-never-
+  // run `pnpm db:import` looked like before it started applying the schema itself: the very first
+  // read died with `relation "x_threads" does not exist`. Both entry points below must survive it.
+  it("importOutputTree creates the schema itself and imports normally", async () => {
+    db = await createUnmigratedTestDb();
+    await importOutputTree(db, await tree());
+    expect(await new PgTranslationStore(db).loadAll()).toHaveLength(1);
+  });
+
+  it("previewImport (the flagless, read-only path) also creates the schema itself rather than dying on its first read", async () => {
+    db = await createUnmigratedTestDb();
+    const preview = await previewImport(db, await tree());
+    expect(preview.translations).toEqual({ current: 0, incoming: 1 });
   });
 });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   configCheck,
   cloudCheck,
@@ -9,7 +9,11 @@ import {
   sheetAccessResult,
   quotaResult,
   runDbCheck,
+  describeSchemaProbeError,
+  databaseProbe,
 } from "../../src/doctor/checks";
+import { createTestDb, createUnmigratedTestDb } from "../support/testDb";
+import type { Db } from "../../src/adapters/db/Db";
 
 const DRIVE = "https://www.googleapis.com/auth/drive.file";
 const SHEETS = "https://www.googleapis.com/auth/spreadsheets";
@@ -191,6 +195,44 @@ describe("runDbCheck", () => {
     expect(result.ok).toBe(false);
     expect(result.detail).not.toContain("user");
     expect(result.detail).not.toContain("s3cret");
+  });
+});
+
+describe("describeSchemaProbeError", () => {
+  it("names the remedy when the probe fails because the schema was never applied", () => {
+    const err = describeSchemaProbeError(new Error('relation "deliveries" does not exist'));
+    expect(err.message).toContain("Schema not applied");
+    expect(err.message).toContain("pnpm db:import");
+  });
+
+  it("passes through any other probe failure unchanged", () => {
+    const original = new Error("ECONNREFUSED");
+    expect(describeSchemaProbeError(original)).toBe(original);
+  });
+});
+
+describe("databaseProbe", () => {
+  let db: (Db & { close(): Promise<void> }) | undefined;
+  afterEach(async () => {
+    await db?.close();
+    db = undefined;
+  });
+
+  it("fails against a database whose schema was never applied, naming the remedy — doctor cannot report ok here", async () => {
+    db = await createUnmigratedTestDb();
+    await expect(databaseProbe(db)()).rejects.toThrow(/pnpm db:import/);
+  });
+
+  it("succeeds against a migrated database", async () => {
+    db = await createTestDb();
+    await expect(databaseProbe(db)()).resolves.toBe(true);
+  });
+
+  it("plugged into runDbCheck, a table-less database reports fail with the remedy in the detail", async () => {
+    db = await createUnmigratedTestDb();
+    const result = await runDbCheck({ url: "postgres://localhost/herald", env: "development" }, databaseProbe(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("pnpm db:import");
   });
 });
 

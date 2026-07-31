@@ -1,5 +1,6 @@
 import type { CheckResult } from "./report";
 import { describeDbTarget, type DbConfig } from "../config";
+import type { Db } from "../adapters/db/Db";
 
 /** Run a config loader: ok if it doesn't throw, fail with its own message otherwise. */
 export function configCheck(name: string, run: () => void, okDetail = "configured"): CheckResult {
@@ -75,6 +76,49 @@ export async function runDbCheck(cfg: DbConfig, probe: () => Promise<boolean>): 
   } catch (err) {
     return { ok: false, detail: `${target} — ${err instanceof Error ? err.message : String(err)}` };
   }
+}
+
+/**
+ * The literal line to paste, matching `storage/mode.ts`'s `REMEDY` register: a command, not a
+ * pointer to another command. `pnpm db:import` (not a separate `pnpm db:schema`) is the fix because
+ * `importOutputTree`/`previewImport` now call `applySchema` themselves — every statement there is
+ * `create table if not exists`, so this is safe to run even against a database that already has the
+ * tables, and safe on one with no `output/` tree to import from (it creates the tables and imports
+ * zero rows).
+ */
+export const SCHEMA_REMEDY = "Run pnpm db:import to apply the schema (safe on an empty database — it also imports output/ into it once you are ready).";
+
+/**
+ * `select 1` — `doctor`'s probe before this function existed — passes on a database that has never
+ * had `applySchema` run against it, so `doctor` reported "ok" on exactly the database `db:import`
+ * cannot use. Only a Postgres "relation ... does not exist" error is rewritten to name the remedy;
+ * any other probe failure (bad credentials, network, TLS) is passed through unchanged so its real
+ * cause — not a schema guess — stays visible.
+ */
+export function describeSchemaProbeError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/relation .* does not exist/i.test(message)) {
+    return new Error(`Schema not applied — ${message}. ${SCHEMA_REMEDY}`);
+  }
+  return err instanceof Error ? err : new Error(message);
+}
+
+/**
+ * The real connectivity probe `doctor` runs, as a `runDbCheck`-shaped closure over an already-built
+ * `Db`. Touches an actual table (`deliveries` — any of the eleven `applySchema` creates would do;
+ * the check only cares that the query fails with "relation ... does not exist" when the schema was
+ * never applied) rather than `select 1`, which cannot tell a migrated database from a table-less
+ * one. Zero rows is not a failure — only the query itself throwing is.
+ */
+export function databaseProbe(db: Db): () => Promise<boolean> {
+  return async () => {
+    try {
+      await db.query("select 1 from deliveries limit 1");
+    } catch (err) {
+      throw describeSchemaProbeError(err);
+    }
+    return true;
+  };
 }
 
 /** A space-separated OAuth scope string → array (empties dropped). */

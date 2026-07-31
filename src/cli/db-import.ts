@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { Db } from "../adapters/db/Db";
 import { createDb } from "../adapters/db/createDb";
+import { applySchema } from "../adapters/db/schema";
 import { loadDbConfig, type DbConfig } from "../config";
 import { OUTPUT_DIR, REPO_ROOT } from "../paths";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
@@ -122,6 +123,14 @@ async function loadIncoming(outputRoot: string, configRoot: string | undefined):
  * through `loadIncoming`, which is the single place this module and `previewImport` below both go
  * for "what does the tree currently hold" — so the two can never read the files two different ways.
  *
+ * Applies the schema (`applySchema`) before touching a table. Every statement in `schema.ts` is
+ * `create table if not exists`, so this is a no-op on a database that already has the tables and a
+ * one-time DDL apply on one that does not — which is otherwise a step nothing calls: there is no
+ * `pnpm db:schema`, and a fresh database died here with `relation "x_threads" does not exist`
+ * before this line existed. `previewImport` below does the same for the same reason — the flagless,
+ * read-only preview path hit that error first, before an operator ever got to `--yes`.
+ *
+
  * Every write except lineage is an upsert on the store's natural key, so re-running this against an
  * *unchanged* tree leaves the database exactly as it was. **`lineage` is the one exception**: it is
  * append-only (no natural key — see `PgLineageStore`'s doc comment), so a plain re-import would
@@ -136,6 +145,7 @@ async function loadIncoming(outputRoot: string, configRoot: string | undefined):
  * against a production database for exactly this reason — see its own refusal text.
  */
 export async function importOutputTree(db: Db, outputRoot: string, configRoot?: string): Promise<ImportReport> {
+  await applySchema(db);
   const incoming = await loadIncoming(outputRoot, configRoot);
 
   await new PgCollectionRepository(db).upsert(incoming.xThreads);
@@ -241,6 +251,7 @@ export async function previewImport(
   outputRoot: string,
   configRoot?: string,
 ): Promise<Record<StoreKey, PreviewCounts>> {
+  await applySchema(db);
   const incoming = await loadIncoming(outputRoot, configRoot);
   const lineageDir = outputDirs(outputRoot).lineage;
 

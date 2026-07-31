@@ -29,6 +29,7 @@ import {
   sheetAccessResult,
   quotaResult,
   runDbCheck,
+  databaseProbe,
 } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
@@ -55,7 +56,8 @@ function authMode(): string {
 /** Real connectivity, not gated by `--live`: unlike the third-party integrations below, every
  *  command now needs a working database connection to do anything at all, so this is core
  *  infrastructure rather than an optional network check. Never prints the password — see
- *  `runDbCheck`. */
+ *  `runDbCheck`. Probes a real table (`databaseProbe`), not `select 1` — a database that connects
+ *  fine but has never had the schema applied must fail this check, not report ok. */
 async function runDatabaseCheck(): Promise<CheckResult> {
   let cfg: DbConfig;
   try {
@@ -65,10 +67,7 @@ async function runDatabaseCheck(): Promise<CheckResult> {
   }
   const db = createDb(cfg);
   try {
-    const check = await runDbCheck(cfg, async () => {
-      await db.query("select 1");
-      return true;
-    });
+    const check = await runDbCheck(cfg, databaseProbe(db));
     return { name: "Database", status: check.ok ? "ok" : "fail", detail: check.detail };
   } finally {
     await db.close();
