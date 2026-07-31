@@ -1,6 +1,8 @@
 import "./registerErrorHandler";
-import { loadConfig } from "../config";
+import { loadConfig, loadDbConfig } from "../config";
 import { argValue } from "./args";
+import { createDb } from "../adapters/db/createDb";
+import { createStores } from "./stores";
 import { TwitterClient } from "../adapters/twitterapi/TwitterClient";
 import { TwitterApiSourceGateway } from "../adapters/twitterapi/TwitterApiSourceGateway";
 import { LocalJsonStore } from "../adapters/store/LocalJsonStore";
@@ -23,14 +25,23 @@ if (limit) {
 
 const client = new TwitterClient(loadConfig().apiKey);
 const source = new TwitterApiSourceGateway(client);
-const store = new LocalJsonStore(paths.xDir);
 const ledger = new JsonCollectionRunLedger(paths.xRuns);
-const usecase = new CollectAuthoredContent(source, store, store, ledger);
 
-const { run } = await usecase.run(target, opts);
+const db = createDb(loadDbConfig());
+try {
+  // The repository (collected threads) lives in Postgres; the watermark (x/state.json) stays on
+  // disk — collect is a local job, per the plan's carried-forward design.
+  const repo = createStores(db).collectionRepository;
+  const watermark = new LocalJsonStore(paths.xDir);
+  const usecase = new CollectAuthoredContent(source, repo, watermark, ledger);
 
-const cov = run.covered ? `covered ${run.covered.from} ~ ${run.covered.to}` : "nothing new in window";
-const gap = run.gap ? `, GAP ${run.gap.from ?? "(open)"} ~ ${run.gap.to} (limit reached)` : "";
-console.log(
-  `collected ${run.threadCount} threads (${run.tweetCount} tweets) for @${target} — ${cov}${gap}`,
-);
+  const { run } = await usecase.run(target, opts);
+
+  const cov = run.covered ? `covered ${run.covered.from} ~ ${run.covered.to}` : "nothing new in window";
+  const gap = run.gap ? `, GAP ${run.gap.from ?? "(open)"} ~ ${run.gap.to} (limit reached)` : "";
+  console.log(
+    `collected ${run.threadCount} threads (${run.tweetCount} tweets) for @${target} — ${cov}${gap}`,
+  );
+} finally {
+  await db.close();
+}
