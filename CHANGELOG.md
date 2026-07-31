@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrading — action required for existing installs
 
+- **Set `DATABASE_URL` and `HERALD_DB_ENV` (`development` or `production`) in `.env`, then run
+  `pnpm db:import` once, before the first send after upgrading.** The record of truth — translations,
+  variants, renderings, outlet overrides, both send ledgers, publish state, lineage, few-shot
+  examples, and collected X/Lark content — moved from `output/*.json` files to Postgres. Every CLI
+  command and the dashboard now read and write through the database, not the tree; `output/` is no
+  longer where sent state lives. `pnpm db:import` copies whatever `output/` (and `translation/`/
+  `conversion/`'s few-shot corpora) currently holds into the database once; it only ever upserts or
+  appends and never deletes, so re-running it is safe as long as the tree hasn't drifted since —
+  re-running it against a tree that *has* since gone stale can resurrect a row removed through the
+  app, so it is meant to run once at cutover, not routinely. Skipping this step is not a silent
+  failure: `pnpm serve`, `pnpm send:channels`, and `pnpm send:x-article` all refuse to start or send
+  when the database's delivery (or X-article) ledger is empty but `output/publish/deliveries.json` /
+  `channels.json` (or `x-article.json`) still holds sent rows on disk, and say to run
+  `pnpm db:import` — the unguarded alternative would have been every already-sent item reading as
+  never-sent, and the next send re-posting the whole history to live Telegram rooms and the brand's
+  X account. `pnpm doctor` now checks the database connection too (host and database name only, never
+  the password), and `pnpm status` prints the attached environment on its first line.
 - **Before the first `pnpm kol-telegram:record`, create and seed the `kol-map` tab by hand — the
   command cannot run without it, and the rows it writes decide KOL payments.** This is a new
   human-maintained tab in the `GSHEET_ID` workbook with the header row

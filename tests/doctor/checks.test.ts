@@ -175,6 +175,23 @@ describe("runDbCheck", () => {
     });
     expect(result.detail).toContain("ECONNREFUSED");
   });
+
+  it("fails cleanly — never throws — when DATABASE_URL is not a parseable URL, instead of aborting the whole report", async () => {
+    const probe = async () => true;
+    await expect(runDbCheck({ url: "not-a-url", env: "development" }, probe)).resolves.toEqual({
+      ok: false,
+      detail: "development — DATABASE_URL is not a valid URL",
+    });
+  });
+
+  it("never echoes a malformed DATABASE_URL back, even when it still contains credentials", async () => {
+    // new URL() throws for this value (no host after the userinfo) — confirming the credential-
+    // bearing raw string never reaches the report, not just that *some* generic string is unused.
+    const result = await runDbCheck({ url: "postgres://user:s3cret@", env: "production" }, async () => true);
+    expect(result.ok).toBe(false);
+    expect(result.detail).not.toContain("user");
+    expect(result.detail).not.toContain("s3cret");
+  });
 });
 
 describe("quotaResult", () => {

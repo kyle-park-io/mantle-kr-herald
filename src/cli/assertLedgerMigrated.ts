@@ -37,6 +37,16 @@ import { JsonXArticleLedger } from "../adapters/store/JsonXArticleLedger";
  *
  * `outputRoot` is a parameter (not `OUTPUT_DIR` baked in) so this is testable against an arbitrary
  * tmpdir, the same shape `db-import.ts`/`db-export.ts` use.
+ *
+ * **This guard keys off local disk, and is therefore inert wherever `output/` does not exist.** It
+ * answers "does the legacy tree on *this* filesystem still hold sent rows the database is missing" —
+ * a real, sufficient check for this plan's own scope, where every command that can reach this guard
+ * runs on a machine that also has (or once had) the `output/` tree it cut over from. It is not a
+ * general "was this database ever imported into" check, and a future host with no local `output/` at
+ * all — the hosted/serverless target another plan is preparing for — would see no legacy file
+ * regardless of whether `db:import` ran, and this function would proceed silently either way. That
+ * host needs its own answer to "is this database populated," not an inherited assumption that this
+ * function already covers it.
  */
 export async function assertLedgerMigrated(db: Db, outputRoot: string): Promise<void> {
   const publishDir = join(outputRoot, "publish");

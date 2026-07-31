@@ -52,11 +52,23 @@ export function optionalCheck(name: string, run: () => void, absentDetail: strin
  * `status.ts`'s first line, which is not a check report. The caller wraps this into a `CheckResult`
  * for `doctor`.
  *
- * Never prints the password: `detail` is built from `describeDbTarget` (host and database name
- * only) plus `cfg.env`, never `cfg.url` itself.
+ * Never prints the password. `describeDbTarget` itself only ever returns host and database name,
+ * but `loadDbConfig` does not validate that `DATABASE_URL` parses as a URL at all, so
+ * `describeDbTarget`'s own `new URL(cfg.url)` can throw for a malformed value — and a `URL`
+ * constructor's error message is not guaranteed, across engines, not to echo the invalid input back
+ * (which could still contain `user:password@`). That parse step is therefore its own try/catch,
+ * reported with a fixed, generic message rather than whatever the thrown error says. Only once a
+ * `target` string has been safely built does the probe run, and only *that* branch's failure
+ * message (a driver error like `ECONNREFUSED`, never derived from `cfg.url`) is shown as-is — this
+ * must never throw past the caller, or one malformed value takes down the whole `doctor` report.
  */
 export async function runDbCheck(cfg: DbConfig, probe: () => Promise<boolean>): Promise<{ ok: boolean; detail: string }> {
-  const target = `${cfg.env} · ${describeDbTarget(cfg)}`;
+  let target: string;
+  try {
+    target = `${cfg.env} · ${describeDbTarget(cfg)}`;
+  } catch {
+    return { ok: false, detail: `${cfg.env} — DATABASE_URL is not a valid URL` };
+  }
   try {
     await probe();
     return { ok: true, detail: target };

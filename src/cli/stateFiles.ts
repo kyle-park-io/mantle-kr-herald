@@ -51,7 +51,7 @@ import type { SyncEntry } from "../domain/publish/syncLedger";
  * every previously-approved room reading as unapproved — which is exactly the class of loss this
  * feature exists to prevent for the two stores above.
  *
- * The six:
+ * The seven:
  *
  * - `translations/translations.json` — the 1차 Korean text plus its approval state. See above.
  * - `variants/variants.json` — the per-type converted copy, and the source `format` renders from.
