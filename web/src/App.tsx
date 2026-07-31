@@ -121,12 +121,17 @@ export function App({ onSignOut }: { onSignOut: () => void }) {
   return (
     <div className="flex h-screen flex-col bg-bg text-ink">
       <header className="shrink-0 border-b border-line bg-surface">
-        {/* `overflow-x-auto` is the fallback, not the plan: every child below is `shrink-0` so the
-            row keeps every control at a legible, tappable size and scrolls sideways under real
-            pressure (a very narrow phone) rather than the pre-`shrink-0` behavior, which let flex's
-            default shrinking wrap Korean labels one character per line — nothing here read as a
-            button anymore, sign-out included. */}
-        <div className="flex h-14 items-center gap-4 overflow-x-auto px-5">
+        {/* Every child below is `shrink-0` so a control never squishes down to illegible,
+            letter-wrapped Korean text under real width pressure (a narrow phone) — the defect this
+            row exists to avoid, sign-out button included. The row itself *wraps* onto a second line
+            when it runs out of width (`flex-wrap` + `min-h-14`, not a fixed `h-14`) rather than
+            scrolling sideways: `overflow-x-auto` looked like the same fix, but setting `overflow-x`
+            forces the computed `overflow-y` to `auto` too — a box cannot have `visible` on one axis
+            and something else on the other — which turned this row into a clip box on *both* axes
+            and silently hid the storage-mode pill's hover popover just below (`top-full`,
+            absolutely positioned, taller than `h-14`) at every width, not only narrow ones.
+            Wrapping needs no `overflow` here at all, so nothing below can ever be clipped by it. */}
+        <div className="flex flex-wrap min-h-14 items-center gap-x-4 gap-y-2 px-5 py-2">
           <div className="flex shrink-0 items-center gap-2.5">
             <span className="h-2.5 w-2.5 rounded-full bg-mint" />
             <span className="whitespace-nowrap text-[15px] font-semibold tracking-tight">

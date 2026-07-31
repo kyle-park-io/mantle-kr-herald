@@ -52,6 +52,19 @@ describe("startServer", () => {
       expect(res.status).toBe(401);
     });
 
+    // `session.test.ts` proves `verifySession` itself rejects a forged token at the unit level;
+    // this proves `currentSession` actually passes that verdict through rather than, say, granting
+    // a session to any request that merely carries *a* cookie by this name.
+    it("answers 401 for an API request with a tampered session cookie", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "web-"));
+      await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+      const base = await start(dir);
+
+      const res = await fetch(`${base}/api/translations`, { headers: { Cookie: `${SESSION_COOKIE_NAME}=garbage` } });
+
+      expect(res.status).toBe(401);
+    });
+
     it("POST /api/login sets a session cookie with the right attributes on success", async () => {
       const dir = await mkdtemp(join(tmpdir(), "web-"));
       await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");

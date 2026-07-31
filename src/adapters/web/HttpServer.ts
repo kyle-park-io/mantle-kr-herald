@@ -72,6 +72,13 @@ function isLoopbackOrigin(origin: string): boolean {
  * server-side session list to revoke one entry from, the same tradeoff the auth-options record
  * accepted in choosing a signed cookie over a JWT and not reopening it here. And since the account is
  * shared, nothing here can answer "which person did this" — only "someone with the password did."
+ * The cookie is `Secure`, so a browser will not send it — or store it in the first place — over plain
+ * `http://` to anything but a loopback host: login would still answer 200 (the response itself is not
+ * blocked), but the cookie never gets set, so every request after it 401s and the user bounces to
+ * `#login` forever with no message explaining why. Harmless today, since every host this plan covers
+ * is loopback and browsers treat `localhost`/`127.0.0.1` as a secure context regardless of scheme —
+ * listed here because this comment is written for the hosted future, where serving this over plain
+ * HTTP to a real hostname would be exactly this failure, not proof it is already a problem.
  */
 export function refusalReason(method: string, origin?: string, contentType?: string): string | undefined {
   if (!STATE_CHANGING.has(method.toUpperCase())) return undefined;

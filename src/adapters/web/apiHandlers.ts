@@ -179,9 +179,17 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
   }
 
   /**
-   * Ends the session server-side by clearing the cookie. Gated like every other route above (the
-   * only exemption is `/api/login`), so this is only ever reached by a caller who already has a
-   * session — a session that could not be ended this way is the JWT problem this design rejected.
+   * Clears the cookie in the browser — that is the whole of what this does. The token itself is not
+   * revoked: it stays valid, unchanged, until its own `issuedAt + ttlMs` lapses or someone rotates
+   * `HERALD_SESSION_SECRET` (see `HttpServer.ts`'s `refusalReason()` comment, and
+   * `docs/ko/team-runbook.md`'s rotation note). There is no server-side session list this could
+   * delete an entry from, so a copy of the token saved before logout and replayed directly against
+   * the API — never touching this browser again — is accepted exactly as before.
+   *
+   * Gated like every other route above (the only exemption is `/api/login`), which has a
+   * consequence worth stating rather than leaving implicit: a caller presenting an expired or forged
+   * cookie never reaches this branch — the gate above already answered 401, and no clearing header
+   * was ever sent. That is correct (there is no session there to clear), not a bug in this route.
    */
   if (method === "POST" && segments.length === 2 && segments[1] === "logout") {
     return { status: 200, json: { ok: true }, setCookie: CLEARED_SESSION_COOKIE };

@@ -82,7 +82,12 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
     }),
-  /** Ends the session server-side. The dashboard's sign-out control; see `App.tsx`. */
+  /**
+   * Clears the session cookie in this browser only. The token itself remains valid until it expires
+   * (12h) or the team rotates `HERALD_SESSION_SECRET` — there is no server-side record of individual
+   * sessions to revoke one from (see `apiHandlers.ts`'s logout route). The dashboard's sign-out
+   * control; see `App.tsx`.
+   */
   logout: () => json<{ ok: true }>("/api/logout", { method: "POST" }),
   list: () => json<Translation[]>("/api/translations"),
   edit: (id: string, koreanText: string) =>
