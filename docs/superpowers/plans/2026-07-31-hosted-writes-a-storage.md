@@ -412,6 +412,48 @@ The flattening logic already exists in `src/adapters/content/XContentSource.ts` 
 
 ---
 
+## Task 12b: PgLarkRepository — the store this plan forgot
+
+**Added 2026-07-31, after Task 15's review surfaced it.** This plan's File Structure promises
+"eleven store implementations, **one per port**", and `src/ports/LarkRepository.ts` is a port. Tasks
+3–13 allocated eleven `Pg*` classes and none of them writes `lark_items`: Task 1 created the table
+and Task 13 built a reader for it. The count was right and the coverage was not, and the ledger's
+"all eleven stores done" line hid it.
+
+Nothing downstream closes this on its own. Without a writer, `db:import` cannot carry Lark messages,
+so after cutover `PgContentSource.loadPending()` returns no Lark items and every Lark-sourced
+deliverable vanishes from the board.
+
+**Files:**
+- Create: `src/adapters/store/PgLarkRepository.ts`
+- Test: `tests/adapters/store/PgLarkRepository.test.ts`
+
+- [ ] **Step 1: Read the port and the file-backed implementation**
+
+`src/ports/LarkRepository.ts` and its `Json`/`Local` counterpart under `src/adapters/store/`, plus
+`src/adapters/content/LarkContentSource.ts` for the shape `PgContentSource` already expects to read
+back out of `lark_items`. The two must agree on every column or the reader silently returns nothing.
+
+- [ ] **Step 2: Write the failing test**
+
+Mirror `tests/adapters/store/PgTranslationStore.test.ts` case for case, and port whatever exists in
+the file-backed store's own test. Cover at minimum: round trip, upsert by the table's key, absent
+optional fields staying absent, and `ordinal` surviving an update.
+
+- [ ] **Step 3–5: Red, implement against the template's invariants, green, commit**
+
+Same rules as every other store: port unchanged, single `insert ... on conflict`, `order by ordinal`,
+`OmitNulls`, `Db` only, PGlite tests. See Task 3.
+
+- [ ] **Step 6: Confirm the reader agrees**
+
+Write one test that stores a Lark message through `PgLarkRepository` and reads it back through
+`PgContentSource.loadPending(new Set())`, asserting the `ContentItem` matches what
+`LarkContentSource` produces from the equivalent file. That round trip is the only thing that proves
+the writer and the reader were built to the same column names.
+
+---
+
 ## Task 14: Delete the file-locking layer
 
 **Files:**
