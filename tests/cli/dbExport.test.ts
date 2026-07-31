@@ -227,4 +227,28 @@ describe("previewExport", () => {
       expect(preview[key]).toEqual({ current: 0, incoming: 0 });
     }
   });
+
+  it("tolerates a database whose schema was never applied, reporting 0 for every incoming count instead of creating it", async () => {
+    db = await createUnmigratedTestDb();
+    const root = await mkdtemp(join(tmpdir(), "export-preview-unmigrated-"));
+    const preview = await previewExport(db, root);
+    for (const key of Object.keys(preview) as (keyof typeof preview)[]) {
+      expect(preview[key]).toEqual({ current: 0, incoming: 0 });
+    }
+  });
+
+  /**
+   * Pins the mechanism, not just the outcome above: a preview is reachable flagless against
+   * production and against a mistyped `DATABASE_URL`, where creating eleven tables as a side effect
+   * of merely computing a preview would be its own hazard. `previewExport` must reach the same
+   * all-zero `incoming` counts by catching "relation ... does not exist" per store (`previewCount`,
+   * `dbStores.ts`), not by calling `applySchema` — the outcome-only assertion above cannot tell a
+   * caught-error path from a schema quietly created as a side effect.
+   */
+  it("previewExport issues no DDL — the schema is still absent after it runs", async () => {
+    db = await createUnmigratedTestDb();
+    const root = await mkdtemp(join(tmpdir(), "export-preview-no-ddl-"));
+    await previewExport(db, root);
+    await expect(db.query("select 1 from deliveries limit 1")).rejects.toThrow(/relation .* does not exist/i);
+  });
 });

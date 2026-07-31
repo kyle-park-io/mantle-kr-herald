@@ -1,3 +1,5 @@
+import type { Db } from "../adapters/db/Db";
+
 /**
  * The eleven stores `db:import`/`db:export` move between `output/` (plus the `translation/` and
  * `conversion/` config trees) and Postgres — see `docs/superpowers/specs/2026-07-31-hosted-writes-
@@ -70,4 +72,50 @@ export function describePreview(preview: Record<StoreKey, PreviewCounts>): strin
     const { current, incoming } = preview[key];
     return `  ${label.padEnd(LABEL_WIDTH)}current ${current} -> incoming ${incoming}`;
   });
+}
+
+/**
+ * Postgres's message for a table that was never created via `create table` — the same shape
+ * `doctor/checks.ts`'s `describeSchemaProbeError` matches, for the same underlying reason: a
+ * database `applySchema` has never run against raises exactly this on its first read.
+ */
+function isSchemaMissingError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /relation .* does not exist/i.test(message);
+}
+
+/**
+ * Wraps a single store's database read for a preview. `previewImport`/`previewExport` must never
+ * apply the schema themselves — a preview is reachable flagless against production and against a
+ * mistyped `DATABASE_URL`, where creating eleven tables as a side effect of merely *looking* would
+ * be its own hazard, and a read-only database role must be able to run one at all. So a table that
+ * does not exist yet is not a bug here: it is reported as 0, the same number a genuinely empty,
+ * migrated table would give, rather than thrown. Any other failure (bad credentials, network) is
+ * rethrown unchanged — this only ever swallows the one specific, expected shape of "not migrated
+ * yet".
+ */
+export async function previewCount(fn: () => Promise<number>): Promise<number> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (isSchemaMissingError(err)) return 0;
+    throw err;
+  }
+}
+
+/**
+ * Standalone, one-shot check: has this database ever had the schema applied? `previewCount` above
+ * reports 0 for a missing table the same way it would for a genuinely empty, migrated one, so the
+ * two cannot be told apart from a preview's counts alone. `db-import.ts`'s and `db-export.ts`'s
+ * entry scripts call this once, before printing the preview, to print an explicit "schema not
+ * applied yet" line when that is why every count reads 0.
+ */
+export async function isSchemaApplied(db: Db): Promise<boolean> {
+  try {
+    await db.query("select 1 from deliveries limit 1");
+    return true;
+  } catch (err) {
+    if (isSchemaMissingError(err)) return false;
+    throw err;
+  }
 }

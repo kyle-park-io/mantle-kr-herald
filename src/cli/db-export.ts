@@ -30,7 +30,14 @@ import { PgXArticleLedger } from "../adapters/store/PgXArticleLedger";
 import { PgPublishStore } from "../adapters/store/PgPublishStore";
 import { PgLineageStore } from "../adapters/store/PgLineageStore";
 import { PgFewShotStore, fewShotStoresByType as pgFewShotStoresByType } from "../adapters/store/PgFewShotStore";
-import { describeCounts, describePreview, type PreviewCounts, type StoreKey } from "./dbStores";
+import {
+  describeCounts,
+  describePreview,
+  previewCount,
+  isSchemaApplied,
+  type PreviewCounts,
+  type StoreKey,
+} from "./dbStores";
 import type { ImportReport } from "./db-import";
 
 /**
@@ -368,68 +375,74 @@ async function countLineageInDb(db: Db): Promise<number> {
  * combined count across every `few-shot.*.json` file, matching `db:import`'s own preview shape,
  * because this function is informational (an operator deciding whether to proceed) rather than the
  * safety mechanism itself — that per-file precision lives in `assertNoEmptyOverwrite`.
+ *
+ * Never applies the schema, and never lets a missing one surface as a crash: every `incoming`
+ * (database-side) read below goes through `previewCount` (`dbStores.ts`), which reports 0 for a
+ * table that does not exist yet instead of throwing or creating it — a preview must stay
+ * side-effect-free, including against a mistyped `DATABASE_URL`. `isSchemaApplied` (`dbStores.ts`)
+ * is the separate, explicit check the entry script below uses to print a "schema not applied yet"
+ * line when that is why every `incoming` count reads 0.
  */
 export async function previewExport(
   db: Db,
   outputRoot: string,
   configRoot?: string,
 ): Promise<Record<StoreKey, PreviewCounts>> {
-  await applySchema(db);
   const d = outputDirs(outputRoot);
 
   let currentFewShot = 0;
   let incomingFewShot = 0;
   if (configRoot) {
     currentFewShot += (await new JsonFewShotStore(join(configRoot, "translation")).load()).length;
-    incomingFewShot += (await new PgFewShotStore(db, "translation").load()).length;
+    incomingFewShot += await previewCount(() => new PgFewShotStore(db, "translation").load().then((rows) => rows.length));
     const jsonByType = jsonFewShotStoresByType(join(configRoot, "conversion"));
     const pgByType = pgFewShotStoresByType(db);
     for (const type of ALL_TYPES) {
       currentFewShot += (await jsonByType[type].load()).length;
-      incomingFewShot += (await pgByType[type].load()).length;
+      incomingFewShot += await previewCount(() => pgByType[type].load().then((rows) => rows.length));
     }
   }
 
   return {
     xThreads: {
       current: (await new LocalJsonStore(d.x).loadAll()).length,
-      incoming: (await new PgCollectionRepository(db).loadAll()).length,
+      incoming: await previewCount(() => new PgCollectionRepository(db).loadAll().then((rows) => rows.length)),
     },
     larkItems: {
       current: (await new LarkLocalStore(d.lark).loadAll()).length,
-      incoming: (await new PgLarkRepository(db).loadAll()).length,
+      incoming: await previewCount(() => new PgLarkRepository(db).loadAll().then((rows) => rows.length)),
     },
     translations: {
       current: (await new JsonTranslationStore(d.translations).loadAll()).length,
-      incoming: (await new PgTranslationStore(db).loadAll()).length,
+      incoming: await previewCount(() => new PgTranslationStore(db).loadAll().then((rows) => rows.length)),
     },
     variants: {
       current: (await new JsonConversionStore(d.variants).loadAll()).length,
-      incoming: (await new PgConversionStore(db).loadAll()).length,
+      incoming: await previewCount(() => new PgConversionStore(db).loadAll().then((rows) => rows.length)),
     },
     renderings: {
       current: (await new JsonFormattingStore(d.formatted).loadAll()).length,
-      incoming: (await new PgFormattingStore(db).loadAll()).length,
+      incoming: await previewCount(() => new PgFormattingStore(db).loadAll().then((rows) => rows.length)),
     },
     outletOverrides: {
       current: (await new JsonOutletOverrideStore(d.formatted).loadAll()).length,
-      incoming: (await new PgOutletOverrideStore(db).loadAll()).length,
+      incoming: await previewCount(() => new PgOutletOverrideStore(db).loadAll().then((rows) => rows.length)),
     },
     deliveries: {
       current: (await new JsonDeliveryLedger(d.publish).loadAll()).length,
-      incoming: (await new PgDeliveryLedger(db).loadAll()).length,
+      incoming: await previewCount(() => new PgDeliveryLedger(db).loadAll().then((rows) => rows.length)),
     },
     xArticleDeliveries: {
       current: (await new JsonXArticleLedger(d.publish).loadAll()).length,
-      incoming: (await new PgXArticleLedger(db).loadAll()).length,
+      incoming: await previewCount(() => new PgXArticleLedger(db).loadAll().then((rows) => rows.length)),
     },
     publishEntries: {
       current: (await new JsonPublishStore(d.publish).listEntries()).length,
-      incoming: (await new PgPublishStore(db).listEntries()).length,
+      incoming: await previewCount(() => new PgPublishStore(db).listEntries().then((rows) => rows.length)),
     },
     lineageEntries: {
       current: await countLineageOnDisk(d.lineage),
-      incoming: await countLineageInDb(db),
+      incoming: await previewCount(() => countLineageInDb(db)),
     },
     fewShotExamples: { current: currentFewShot, incoming: incomingFewShot },
   };
@@ -483,10 +496,14 @@ async function exportLineage(db: Db, lineageDir: string): Promise<number> {
  * where the rest of the tree is being written.
  *
  * The same preview-then-confirm shape as `db:import`: a flagless run only connects to compute and
- * print `previewExport`'s current-vs-incoming counts, and writes nothing. `--yes` performs the
- * write. `--allow-empty-overwrite` is a second, separate flag on top of that — see
- * `assertNoEmptyOverwrite` — for the one legitimate case where a store really was emptied and the
- * export is meant to reflect that; `--yes` alone is not enough to authorize wiping a populated file.
+ * print `previewExport`'s current-vs-incoming counts, and writes nothing — and, unlike the write
+ * path (`exportOutputTree`), applies no DDL: `previewExport` tolerates a database whose schema was
+ * never applied instead of creating it (see its own doc comment), so `isSchemaApplied` below is the
+ * separate check that prints an explicit line when that is why every `incoming` count reads 0.
+ * `--yes` performs the write. `--allow-empty-overwrite` is a second, separate flag on top of that —
+ * see `assertNoEmptyOverwrite` — for the one legitimate case where a store really was emptied and
+ * the export is meant to reflect that; `--yes` alone is not enough to authorize wiping a populated
+ * file.
  */
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await import("./registerErrorHandler");
@@ -500,7 +517,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const db = createDb(cfg);
   try {
     if (!confirmed) {
+      const schemaApplied = await isSchemaApplied(db);
       const preview = await previewExport(db, outputRoot, REPO_ROOT);
+      if (!schemaApplied) {
+        console.log(
+          `Schema not applied yet on this database — every "incoming" count below is 0 because the ` +
+            `tables do not exist (there is nothing to export from it yet).`,
+        );
+      }
       for (const line of describePreview(preview)) console.log(line);
       console.log(`\npreview only — nothing was written.`);
       console.log(`Re-run with --yes to export into ${outputRoot}.`);

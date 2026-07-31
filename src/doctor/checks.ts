@@ -80,13 +80,17 @@ export async function runDbCheck(cfg: DbConfig, probe: () => Promise<boolean>): 
 
 /**
  * The literal line to paste, matching `storage/mode.ts`'s `REMEDY` register: a command, not a
- * pointer to another command. `pnpm db:import` (not a separate `pnpm db:schema`) is the fix because
- * `importOutputTree`/`previewImport` now call `applySchema` themselves — every statement there is
- * `create table if not exists`, so this is safe to run even against a database that already has the
- * tables, and safe on one with no `output/` tree to import from (it creates the tables and imports
- * zero rows).
+ * pointer to another command. `pnpm db:import --yes` (not a separate `pnpm db:schema`) is the fix
+ * because `importOutputTree` applies `applySchema` itself — every statement there is `create table
+ * if not exists`, so this is safe to run even against a database that already has the tables, and
+ * safe on one with no `output/` tree to import from (it creates the tables and imports zero rows).
+ * `--yes` is required in the text itself: the flagless preview path (`previewImport`/`previewExport`,
+ * `src/cli/db-import.ts`/`db-export.ts`) deliberately does **not** apply the schema any more — a
+ * preview must stay side-effect-free, reachable against production or a read-only role without
+ * risking a `CREATE` — so pointing an operator at a flagless `pnpm db:import` here would not
+ * actually apply it.
  */
-export const SCHEMA_REMEDY = "Run pnpm db:import to apply the schema (safe on an empty database — it also imports output/ into it once you are ready).";
+export const SCHEMA_REMEDY = "Run pnpm db:import --yes to apply the schema (safe on an empty database — it also imports output/ into it once you are ready).";
 
 /**
  * `select 1` — `doctor`'s probe before this function existed — passes on a database that has never

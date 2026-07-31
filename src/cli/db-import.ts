@@ -29,7 +29,15 @@ import { PgXArticleLedger } from "../adapters/store/PgXArticleLedger";
 import { PgPublishStore } from "../adapters/store/PgPublishStore";
 import { PgLineageStore } from "../adapters/store/PgLineageStore";
 import { PgFewShotStore, fewShotStoresByType as pgFewShotStoresByType } from "../adapters/store/PgFewShotStore";
-import { type StoreCounts, type StoreKey, type PreviewCounts, describeCounts, describePreview } from "./dbStores";
+import {
+  type StoreCounts,
+  type StoreKey,
+  type PreviewCounts,
+  describeCounts,
+  describePreview,
+  previewCount,
+  isSchemaApplied,
+} from "./dbStores";
 
 export type ImportReport = StoreCounts;
 
@@ -127,8 +135,15 @@ async function loadIncoming(outputRoot: string, configRoot: string | undefined):
  * `create table if not exists`, so this is a no-op on a database that already has the tables and a
  * one-time DDL apply on one that does not — which is otherwise a step nothing calls: there is no
  * `pnpm db:schema`, and a fresh database died here with `relation "x_threads" does not exist`
- * before this line existed. `previewImport` below does the same for the same reason — the flagless,
- * read-only preview path hit that error first, before an operator ever got to `--yes`.
+ * before this line existed.
+ *
+ * `previewImport` below deliberately does **not** do the same: a preview is reachable flagless
+ * against production and against a mistyped `DATABASE_URL`, and creating eleven tables as a side
+ * effect of merely *looking* — before any refusal can fire — is its own hazard, not a convenience.
+ * It instead wraps every store's read in `previewCount` (`dbStores.ts`), which tolerates the
+ * `relation ... does not exist` a table-less database raises and reports 0 rather than crashing or
+ * creating the schema; the entry script below calls `isSchemaApplied` separately to tell that case
+ * apart from a genuinely empty, migrated database in what it prints.
  *
 
  * Every write except lineage is an upsert on the store's natural key, so re-running this against an
@@ -245,48 +260,75 @@ async function countCurrentLineageEntries(db: Db): Promise<number> {
  * output tree (and, when `configRoot` is given, the config tree) would bring in. This is what a
  * flagless `db:import` run prints instead of writing anything — see the entry script below — so an
  * operator sees the change before confirming it, the same shape `state:pull`'s preview gives.
+ *
+ * Never applies the schema, and never lets a missing one surface as a crash: every database read
+ * below goes through `previewCount` (`dbStores.ts`), which reports 0 for a table that does not
+ * exist yet instead of throwing (or creating it) — a preview must stay side-effect-free even when
+ * it is reached flagless against production or a mistyped `DATABASE_URL`. `isSchemaApplied`
+ * (`dbStores.ts`) is the separate, explicit check the entry script below uses to print a "schema
+ * not applied yet" line when that is why every count reads 0, since a preview's own counts cannot
+ * tell that case apart from a genuinely empty, migrated database.
  */
 export async function previewImport(
   db: Db,
   outputRoot: string,
   configRoot?: string,
 ): Promise<Record<StoreKey, PreviewCounts>> {
-  await applySchema(db);
   const incoming = await loadIncoming(outputRoot, configRoot);
   const lineageDir = outputDirs(outputRoot).lineage;
 
   let currentFewShot = 0;
   if (configRoot) {
-    currentFewShot += (await new PgFewShotStore(db, "translation").load()).length;
+    currentFewShot += await previewCount(() => new PgFewShotStore(db, "translation").load().then((rows) => rows.length));
     const pgByType = pgFewShotStoresByType(db);
-    for (const type of ALL_TYPES) currentFewShot += (await pgByType[type].load()).length;
+    for (const type of ALL_TYPES) {
+      currentFewShot += await previewCount(() => pgByType[type].load().then((rows) => rows.length));
+    }
   }
   const incomingFewShot =
     incoming.fewShotTranslation.length + ALL_TYPES.reduce((sum, type) => sum + incoming.fewShotByType[type].length, 0);
 
   return {
-    xThreads: { current: (await new PgCollectionRepository(db).loadAll()).length, incoming: incoming.xThreads.length },
-    larkItems: { current: (await new PgLarkRepository(db).loadAll()).length, incoming: incoming.larkItems.length },
+    xThreads: {
+      current: await previewCount(() => new PgCollectionRepository(db).loadAll().then((rows) => rows.length)),
+      incoming: incoming.xThreads.length,
+    },
+    larkItems: {
+      current: await previewCount(() => new PgLarkRepository(db).loadAll().then((rows) => rows.length)),
+      incoming: incoming.larkItems.length,
+    },
     translations: {
-      current: (await new PgTranslationStore(db).loadAll()).length,
+      current: await previewCount(() => new PgTranslationStore(db).loadAll().then((rows) => rows.length)),
       incoming: incoming.translations.length,
     },
-    variants: { current: (await new PgConversionStore(db).loadAll()).length, incoming: incoming.variants.length },
-    renderings: { current: (await new PgFormattingStore(db).loadAll()).length, incoming: incoming.renderings.length },
+    variants: {
+      current: await previewCount(() => new PgConversionStore(db).loadAll().then((rows) => rows.length)),
+      incoming: incoming.variants.length,
+    },
+    renderings: {
+      current: await previewCount(() => new PgFormattingStore(db).loadAll().then((rows) => rows.length)),
+      incoming: incoming.renderings.length,
+    },
     outletOverrides: {
-      current: (await new PgOutletOverrideStore(db).loadAll()).length,
+      current: await previewCount(() => new PgOutletOverrideStore(db).loadAll().then((rows) => rows.length)),
       incoming: incoming.outletOverrides.length,
     },
-    deliveries: { current: (await new PgDeliveryLedger(db).loadAll()).length, incoming: incoming.deliveries.length },
+    deliveries: {
+      current: await previewCount(() => new PgDeliveryLedger(db).loadAll().then((rows) => rows.length)),
+      incoming: incoming.deliveries.length,
+    },
     xArticleDeliveries: {
-      current: (await new PgXArticleLedger(db).loadAll()).length,
+      current: await previewCount(() => new PgXArticleLedger(db).loadAll().then((rows) => rows.length)),
       incoming: incoming.xArticleDeliveries.length,
     },
     publishEntries: {
-      current: (await new PgPublishStore(db).listEntries()).length,
+      current: await previewCount(() => new PgPublishStore(db).listEntries().then((rows) => rows.length)),
       incoming: incoming.publishEntries.length,
     },
-    lineageEntries: { current: await countCurrentLineageEntries(db), incoming: await countLineageEntries(lineageDir) },
+    lineageEntries: {
+      current: await previewCount(() => countCurrentLineageEntries(db)),
+      incoming: await countLineageEntries(lineageDir),
+    },
     fewShotExamples: { current: currentFewShot, incoming: incomingFewShot },
   };
 }
@@ -305,11 +347,16 @@ function describeTarget(cfg: DbConfig): string {
  * when this module is loaded as a test dependency, and this file's own path only when it is run
  * directly (`tsx src/cli/db-import.ts`, i.e. `pnpm db:import`).
  *
- * A flagless run never writes: it connects only to read current counts, prints them beside what
- * the tree would bring in, and stops — modeled on `state:pull`'s preview, so an operator sees what
- * is about to change before changing it, in *every* environment, not only production. `--yes` is
- * what performs the write. Production additionally refuses outright without `--yes`, after showing
- * the same preview, because of the stale-tree hazard the refusal text below explains.
+ * A flagless run against a non-production database never writes: it connects only to read current
+ * counts, prints them beside what the tree would bring in, and stops — modeled on `state:pull`'s
+ * preview, so an operator sees what is about to change before changing it. `--yes` is what performs
+ * the write.
+ *
+ * Production is different, and checked **before** `createDb`/`previewImport` run at all: a flagless
+ * run against it refuses outright, before any statement — not even a read — reaches the database,
+ * because of the stale-tree hazard the refusal text below explains. Showing the preview first (the
+ * previous shape) would mean every store's read already touched production by the time the refusal
+ * fired; this stops cold instead. `--yes` is still what performs the write, for every environment.
  */
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await import("./registerErrorHandler");
@@ -319,22 +366,30 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
   console.log(`db:import — ${target}`);
 
+  if (!confirmed && cfg.env === "production") {
+    throw new Error(
+      `Refusing to import into the production database without --yes.\n` +
+        `This is not safe to re-run casually: import only ever upserts or appends, it never deletes. ` +
+        `Run it against a stale output/ tree — one that has drifted since a previous cutover — and it ` +
+        `will resurrect rows removed through the app (e.g. an unticked 전달함 delivery) and overwrite ` +
+        `database edits with the file's older values. Only pass --yes for the deliberate, ` +
+        `human-supervised migration this command exists for.`,
+    );
+  }
+
   const db = createDb(cfg);
   try {
     if (!confirmed) {
+      const schemaApplied = await isSchemaApplied(db);
       const preview = await previewImport(db, OUTPUT_DIR, REPO_ROOT);
-      for (const line of describePreview(preview)) console.log(line);
-      console.log(`\npreview only — nothing was written.`);
-      if (cfg.env === "production") {
-        throw new Error(
-          `Refusing to import into the production database without --yes.\n` +
-            `This is not safe to re-run casually: import only ever upserts or appends, it never deletes. ` +
-            `Run it against a stale output/ tree — one that has drifted since a previous cutover — and it ` +
-            `will resurrect rows removed through the app (e.g. an unticked 전달함 delivery) and overwrite ` +
-            `database edits with the file's older values. Only pass --yes for the deliberate, ` +
-            `human-supervised migration this command exists for.`,
+      if (!schemaApplied) {
+        console.log(
+          `Schema not applied yet on this database — every "current" count below is 0 because the ` +
+            `tables do not exist. Re-run with --yes to create them and import.`,
         );
       }
+      for (const line of describePreview(preview)) console.log(line);
+      console.log(`\npreview only — nothing was written.`);
       console.log(`Re-run with --yes to import into the ${target}.`);
     } else {
       const report = await importOutputTree(db, OUTPUT_DIR, REPO_ROOT);

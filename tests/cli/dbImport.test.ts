@@ -94,17 +94,33 @@ describe("importOutputTree", () => {
 describe("against a fresh database with no schema applied", () => {
   // `createUnmigratedTestDb()` skips `applySchema` on purpose — this is what a documented-but-never-
   // run `pnpm db:import` looked like before it started applying the schema itself: the very first
-  // read died with `relation "x_threads" does not exist`. Both entry points below must survive it.
+  // read died with `relation "x_threads" does not exist`. Both entry points below must survive it,
+  // but not the same way: only the write path is allowed to run DDL as a side effect.
   it("importOutputTree creates the schema itself and imports normally", async () => {
     db = await createUnmigratedTestDb();
     await importOutputTree(db, await tree());
     expect(await new PgTranslationStore(db).loadAll()).toHaveLength(1);
   });
 
-  it("previewImport (the flagless, read-only path) also creates the schema itself rather than dying on its first read", async () => {
+  it("previewImport (the flagless, read-only path) tolerates a missing schema instead of creating it, reporting 0 rather than dying on its first read", async () => {
     db = await createUnmigratedTestDb();
     const preview = await previewImport(db, await tree());
     expect(preview.translations).toEqual({ current: 0, incoming: 1 });
+  });
+
+  /**
+   * Pins the mechanism, not just the outcome above: a preview is reachable flagless against
+   * production and against a mistyped `DATABASE_URL`, where creating eleven tables as a side effect
+   * of merely computing a preview would be its own hazard (and would break a read-only database
+   * role that could otherwise run one). `previewImport` must reach the same all-zero `current`
+   * counts by catching "relation ... does not exist" per store (`previewCount`, `dbStores.ts`), not
+   * by calling `applySchema` the way it used to. This is what would actually catch a regression back
+   * to the old behaviour, since the outcome-only assertion above cannot tell the two mechanisms apart.
+   */
+  it("previewImport issues no DDL — the schema is still absent after it runs", async () => {
+    db = await createUnmigratedTestDb();
+    await previewImport(db, await tree());
+    await expect(db.query("select 1 from deliveries limit 1")).rejects.toThrow(/relation .* does not exist/i);
   });
 });
 
