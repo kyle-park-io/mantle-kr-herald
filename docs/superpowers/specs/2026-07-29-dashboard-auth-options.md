@@ -1,5 +1,8 @@
 # Dashboard authentication on Vercel — options record
 
+**Superseded by:** `docs/superpowers/specs/2026-07-31-hosted-writes-design.md`, section
+"Authentication" — its open questions are resolved there.
+
 **Date:** 2026-07-29
 **Status:** recorded, not decided. Kyle will revisit this in detail.
 **Decided so far:** the login page ships as a single shared account — id + password checked
