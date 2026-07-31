@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createTestDb } from "../support/testDb";
+import { createTestDb, createUnmigratedTestDb } from "../support/testDb";
 import { exportOutputTree, previewExport } from "../../src/cli/db-export";
 
 let db: Awaited<ReturnType<typeof createTestDb>> | undefined;
@@ -161,6 +161,34 @@ describe("exportOutputTree — refuses to overwrite a populated file with an emp
     const report = await exportOutputTree(db, root);
     expect(report.deliveries).toBe(0);
     expect(await readFile(join(root, "publish", "deliveries.json"), "utf8")).toBe("[]\n");
+  });
+
+  it("catches the hazard on a legacy-layout tree too — populated channels.json, deliveries.json entirely absent — instead of reading zero rows and permanently shadowing it", async () => {
+    db = await createTestDb();
+    const root = await mkdtemp(join(tmpdir(), "export-guard-legacy-"));
+    await mkdir(join(root, "publish"), { recursive: true });
+    const legacy = [
+      { itemId: "x:1", type: "announcement", channel: "telegram", senderName: "auto", sentAt: "2026-07-29T00:00:00.000Z" },
+    ];
+    const legacyOriginal = JSON.stringify(legacy, null, 2) + "\n";
+    await writeFile(join(root, "publish", "channels.json"), legacyOriginal, "utf8");
+
+    await expect(exportOutputTree(db, root)).rejects.toThrow(/deliveries\.json/);
+
+    // Refusing must leave the tree exactly as it was — in particular, must NOT write
+    // deliveries.json = [], which would permanently shadow channels.json behind
+    // JsonDeliveryLedger.loadAll()'s exclusive-or from this point on.
+    await expect(readFile(join(root, "publish", "deliveries.json"), "utf8")).rejects.toThrow();
+    expect(await readFile(join(root, "publish", "channels.json"), "utf8")).toBe(legacyOriginal);
+  });
+
+  it("reports a readable error, not a bare TypeError, when a store's file holds null instead of an array", async () => {
+    db = await createTestDb();
+    const root = await mkdtemp(join(tmpdir(), "export-guard-corrupt-"));
+    await mkdir(join(root, "translations"), { recursive: true });
+    await writeFile(join(root, "translations", "translations.json"), "null\n", "utf8");
+
+    await expect(exportOutputTree(db, root)).rejects.toThrow(/translations\.json.*JSON array/);
   });
 });
 

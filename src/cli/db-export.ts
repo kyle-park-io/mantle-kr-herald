@@ -79,6 +79,26 @@ async function ensurePublishStateWritten(dir: string, rowCount: number): Promise
 }
 
 /**
+ * `readJsonFile<unknown[]>(path, [])` casts whatever `JSON.parse` returns without checking it is
+ * actually an array. A file holding the literal `null` (or any other non-array JSON value — an
+ * object, a number, a string) reads back successfully and only fails the moment `.length` is
+ * accessed, as an unreadable `TypeError: Cannot read properties of null (reading 'length')` with no
+ * mention of which file caused it. This validates the parsed shape and throws a message naming the
+ * path instead, so a corrupt file on disk fails loud — through the same guard that exists precisely
+ * to prevent silent data loss — rather than crashing `emptyOverwriteHazards` opaquely.
+ */
+async function readArrayLength(path: string): Promise<number> {
+  const data = await readJsonFile<unknown>(path, []);
+  if (!Array.isArray(data)) {
+    throw new Error(
+      `Expected ${path} to hold a JSON array, but it holds ${data === null ? "null" : typeof data}. ` +
+        `The file may be corrupt.`,
+    );
+  }
+  return data.length;
+}
+
+/**
  * The array/object-shaped stores whose write path above (`ensureArrayFileWritten` /
  * `ensurePublishStateWritten`) force-writes an empty file — or `{ entries: [] }` — whenever the
  * database holds zero rows for that store, **regardless of what is already on disk**. `x_threads`
@@ -90,7 +110,8 @@ async function ensurePublishStateWritten(dir: string, rowCount: number): Promise
  *
  * Reads each on-disk file directly with `readJsonFile` rather than through a `Json*` store's
  * `loadAll()` — a row count is all this needs, and `exportOutputTree` below reads through the real
- * stores anyway once this has cleared.
+ * stores anyway once this has cleared. **`deliveries.json` is the one exception** — see
+ * `checkDeliveries` below.
  */
 async function emptyOverwriteHazards(db: Db, outputRoot: string, configRoot: string | undefined): Promise<string[]> {
   const d = outputDirs(outputRoot);
@@ -98,15 +119,36 @@ async function emptyOverwriteHazards(db: Db, outputRoot: string, configRoot: str
 
   const check = async (path: string, incoming: number): Promise<void> => {
     if (incoming > 0) return;
-    const existing = await readJsonFile<unknown[]>(path, []);
-    if (existing.length > 0) hazards.push(`${path} (${existing.length} row(s) on disk, database has 0)`);
+    const existing = await readArrayLength(path);
+    if (existing > 0) hazards.push(`${path} (${existing} row(s) on disk, database has 0)`);
+  };
+
+  /**
+   * `deliveries.json` cannot be read with the plain `readArrayLength(path)` every other store here
+   * uses: on a legacy-layout tree (a populated `channels.json`, `deliveries.json` entirely absent —
+   * the pre-outlet layout `db:import` still migrates on read), a raw read of `deliveries.json` alone
+   * sees zero rows, this guard sees no hazard, and `ensureArrayFileWritten` then writes
+   * `deliveries.json = []` — which *permanently* shadows `channels.json`, since
+   * `JsonDeliveryLedger.loadAll()`'s exclusive-or only falls back to the legacy file when
+   * `deliveries.json` is entirely absent. That reproduces, one layout over, the exact "empty export
+   * wipes the real send history" hazard this whole guard exists to close (see `assertNoEmptyOverwrite`'s
+   * doc comment) — and it is the same file `assertLedgerMigrated.ts` and `db:import` both read through
+   * `JsonDeliveryLedger.loadAll()` for the identical reason. So this reads through that method too,
+   * inheriting the exclusive-or rather than re-deriving it.
+   */
+  const checkDeliveries = async (dir: string, incoming: number): Promise<void> => {
+    if (incoming > 0) return;
+    const existing = (await new JsonDeliveryLedger(dir).loadAll()).length;
+    if (existing > 0) {
+      hazards.push(`${join(dir, "deliveries.json")} (${existing} row(s) on disk, database has 0)`);
+    }
   };
 
   await check(join(d.translations, "translations.json"), (await new PgTranslationStore(db).loadAll()).length);
   await check(join(d.variants, "variants.json"), (await new PgConversionStore(db).loadAll()).length);
   await check(join(d.formatted, "renderings.json"), (await new PgFormattingStore(db).loadAll()).length);
   await check(join(d.formatted, "overrides.json"), (await new PgOutletOverrideStore(db).loadAll()).length);
-  await check(join(d.publish, "deliveries.json"), (await new PgDeliveryLedger(db).loadAll()).length);
+  await checkDeliveries(d.publish, (await new PgDeliveryLedger(db).loadAll()).length);
   await check(join(d.publish, "x-article.json"), (await new PgXArticleLedger(db).loadAll()).length);
 
   const statePath = join(d.publish, "state.json");
