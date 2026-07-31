@@ -444,7 +444,42 @@ git commit -m "refactor(store): retire the file lock — the unique index replac
 
 ---
 
+> ### ⚠ MERGE GATE — Tasks 14 to 17 must land together
+>
+> Task 14 deletes the in-process serializer and the file lock. Task 17 is what points `serve.ts` at
+> the Postgres stores whose unique constraints replace them. **Between those two tasks the branch is
+> in a state that must never be merged or deployed**: `serve.ts` still builds `JsonDeliveryLedger`
+> and `JsonXArticleLedger`, so `ReconcilePublished` (every two minutes) and every dashboard or CLI
+> send do read-modify-write on the same files with neither guard.
+>
+> That is precisely the lost-row → duplicate-live-post failure `serialWrites.ts` was written to
+> describe. The two ledger tests were deliberately relaxed at Task 14 (from "both rows survive" to
+> "at least one survives") to accept it, which is correct for an intermediate state and wrong for a
+> shipped one.
+>
+> Harmless if the branch merges as a unit after Task 17. Do not merge, deploy, or cherry-pick
+> Tasks 14–16 on their own.
+
 ## Task 14b: Make resend one transaction
+
+> **Scope correction, recorded after implementation.** This task's premise — that `sendToOutlet.ts`
+> "calls `remove(key)` then `add(...)`" — was only half right, and the half that matters is the
+> other one. The three `restore` sites this task touches were already a single bare `add(restore)`,
+> so replacing them with an atomic operation changes no behaviour. The `remove(key)` that genuinely
+> opens a window is separated from its `add` by the **actual network send**, and it cannot be closed
+> here: `SendChannels.run()` decides "already delivered" from its own ledger read via
+> `deliveredToRoom`, so the room must really leave that predicate for a resend to proceed at all.
+> No row both unblocks the send and reads as delivered — those are structurally opposite.
+>
+> Verified as **not a regression**: before this plan, `JsonDeliveryLedger.add` and `.remove` each
+> took and released their *own* lock and `loadAll()` took none, so a concurrent reader saw the same
+> gap. It is a pre-existing property of how resend is defined, not something the migration
+> introduced.
+>
+> Closing it properly means changing how `SendChannels` decides "already delivered" — a resend-
+> semantics question, not a storage one. **Out of scope for this plan**, and it needs its own design
+> rather than being smuggled into a migration. `replace()` still earns its place as a correct
+> primitive with the ordinal guarantee attached; it is just not the window-closer this task claimed.
 
 **Files:**
 - Modify: `src/cli/sendToOutlet.ts`
