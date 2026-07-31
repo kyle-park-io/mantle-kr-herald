@@ -1,15 +1,19 @@
 import "./registerErrorHandler";
-import { loadConfig } from "../config";
+import { loadConfig, loadDbConfig } from "../config";
+import { createDb } from "../adapters/db/createDb";
+import { createStores } from "./stores";
 import { TwitterClient } from "../adapters/twitterapi/TwitterClient";
 import { TwitterApiSourceGateway } from "../adapters/twitterapi/TwitterApiSourceGateway";
-import { LocalJsonStore } from "../adapters/store/LocalJsonStore";
 import { ReconcileDeletions } from "../app/ReconcileDeletions";
-import { paths } from "../paths";
 
 const client = new TwitterClient(loadConfig().apiKey);
 const source = new TwitterApiSourceGateway(client);
-const store = new LocalJsonStore(paths.xDir);
-const usecase = new ReconcileDeletions(source, store);
 
-const result = await usecase.run();
-console.log(`reconciled ${result.checked} tweets; marked ${result.deleted} thread(s) deleted`);
+const db = createDb(loadDbConfig());
+try {
+  const usecase = new ReconcileDeletions(source, createStores(db).collectionRepository);
+  const result = await usecase.run();
+  console.log(`reconciled ${result.checked} tweets; marked ${result.deleted} thread(s) deleted`);
+} finally {
+  await db.close();
+}
