@@ -29,4 +29,15 @@ describe("applySchema", () => {
     await db.query(insert, ["x:1", "announcement", "tg-community"]);
     await expect(db.query(insert, ["x:1", "announcement", "tg-community"])).rejects.toThrow();
   });
+
+  it("returns a stored JSON document with its key order intact — jsonb would reorder it", async () => {
+    db = await createTestDb();
+    const original = '{"z":1,"a":2,"m":{"y":3,"b":4}}';
+    await db.query(
+      "insert into x_threads (root_id, tweets, status, first_seen_at) values ($1, $2::json, 'active', '2026-01-01T00:00:00.000Z')",
+      ["x:1", original],
+    );
+    const [row] = await db.query<{ tweets: string }>("select tweets::text as tweets from x_threads where root_id = $1", ["x:1"]);
+    expect(row?.tweets).toBe(original);
+  });
 });

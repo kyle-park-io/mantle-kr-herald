@@ -20,11 +20,14 @@ import type { Db } from "./Db";
  */
 const STATEMENTS: readonly string[] = [
   // x_threads — CollectedThread (domain/models.ts). Key: root_id — CollectionRepository.upsert
-  // merges by rootId. `tweets` is stored whole as jsonb; the merge rules that touch it (see
-  // LocalJsonStore.mergeTweet) stay in TypeScript, not SQL.
+  // merges by rootId. `tweets` is stored whole as `json`, not `jsonb`: `jsonb` parses to a binary
+  // form that normalizes key order and drops insignificant whitespace, so a round trip would not
+  // reproduce the original file's bytes — the same reasoning the brief already applies to
+  // timestamps. `json` stores (and returns) the exact input text. The merge rules that touch this
+  // column (see LocalJsonStore.mergeTweet) stay in TypeScript, not SQL.
   `create table if not exists x_threads (
     root_id text primary key,
-    tweets jsonb not null,
+    tweets json not null,
     status text not null,
     first_seen_at text not null,
     deleted_at text,
