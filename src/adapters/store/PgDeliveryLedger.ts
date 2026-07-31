@@ -33,11 +33,11 @@ function toDeliveryEntry(row: DeliveryRow): DeliveryEntry {
 
 /**
  * `DeliveryLedger` backed by the `deliveries` table. Replaces `JsonDeliveryLedger` — one of the two
- * send ledgers `src/shared/store/serialWrites.ts` describes: a lost or mis-keyed row here is a live
- * post to a brand's Telegram room or X account that the ledger can no longer see, which the next run
- * publishes a second time. The in-process serializer and cross-process file lock `JsonDeliveryLedger`
- * wrapped its read-modify-write in are both gone: `add`'s `insert ... on conflict` is one statement,
- * so there is no read-modify-write left for two overlapping writers to race, and the
+ * send ledgers where a lost or mis-keyed row is a live post to a brand's Telegram room or X account
+ * that the ledger can no longer see, which the next run publishes a second time. The in-process
+ * serializer and cross-process file lock `JsonDeliveryLedger` used to wrap its read-modify-write in
+ * are both retired: `add`'s `insert ... on conflict` is one statement, so there is no
+ * read-modify-write left for two overlapping writers to race, and the
  * `(item_id, type, outlet_id)` primary key on `deliveries` is what used to be the file lock's job —
  * enforced by the database itself rather than by application code.
  *
@@ -69,8 +69,8 @@ function toDeliveryEntry(row: DeliveryRow): DeliveryEntry {
  * running `db:import` first, and `SendChannels.run()`'s `already` and `planRooms()`'s
  * `everDelivered` both read "never sent" for a fully-populated send history — the next run re-posts
  * the entire backlog to live Telegram rooms and the brand's own X account. That is the exact failure
- * `serialWrites.ts` exists to prevent, at a far larger blast radius than the one-lost-row case it was
- * written about. Nothing in this class can defend against it — enforcing "import before first write"
+ * the old file lock existed to prevent, at a far larger blast radius than the one-lost-row case it
+ * was built for. Nothing in this class can defend against it — enforcing "import before first write"
  * is a property of the cutover procedure, not of this store.
  */
 export class PgDeliveryLedger implements DeliveryLedger {

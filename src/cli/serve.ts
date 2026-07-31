@@ -74,8 +74,7 @@ const conversionStore = new JsonConversionStore(paths.variantsDir);
 // Same directories the CLI uses, so `send:channels` and the dashboard read one ledger, not two.
 const overrideStore = new JsonOutletOverrideStore(paths.formattedDir);
 const deliveryLedger = new JsonDeliveryLedger(paths.publishDir);
-// One instance for the whole process: `reconcilePublished` runs every two minutes and its writes
-// must serialize against each other on the same chain, not a fresh one per pass (see serialWrites.ts).
+// One instance for the whole process, shared by `reconcilePublished` and every send path below.
 const xArticleLedger = new JsonXArticleLedger(paths.publishDir);
 
 const storageMode = loadStorageMode();

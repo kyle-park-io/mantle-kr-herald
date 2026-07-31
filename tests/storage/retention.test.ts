@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { expiredArchiveDays, isStrandedTempFile, lockGuarding } from "../../src/storage/retention";
-import { lockPathFor } from "../../src/shared/store/fileLock";
+import { expiredArchiveDays, isStrandedTempFile } from "../../src/storage/retention";
 
 const now = new Date("2026-07-20T12:00:00.000Z");
 
@@ -74,7 +73,7 @@ describe("isStrandedTempFile", () => {
     expect(isStrandedTempFile("x-article.json.lock")).toBe(true);
   });
 
-  // SAFETY: the lock pattern must not reach past the suffix `lockPathFor` appends.
+  // SAFETY: the lock pattern must not reach past the `.lock` suffix the old file lock appended.
   it("rejects near-misses of the lock suffix", () => {
     expect(isStrandedTempFile("deliveries.json")).toBe(false);
     expect(isStrandedTempFile("lock.json")).toBe(false);
@@ -82,29 +81,4 @@ describe("isStrandedTempFile", () => {
     expect(isStrandedTempFile("deliveries.json.lock.bak")).toBe(false);
   });
 
-});
-
-/**
- * Which lock's liveness decides whether a piece of debris is still in use. The sweep needs this
- * because a lock and the `.tmp-*` written inside the critical section it guards come from ONE write,
- * and only the lock is refreshed while that write runs — so the tmp has to be judged by the lock, not
- * by its own mtime.
- */
-describe("lockGuarding", () => {
-  it("sends a temp file to the lock on the store it is being renamed onto", () => {
-    expect(lockGuarding("items.json.tmp-4821-1750000000000-3f2b1c9d-aaaa-bbbb-cccc-ddddeeeeffff")).toBe(
-      "items.json.lock",
-    );
-  });
-
-  // Exactly the path `withFileLock` takes for the ledger this temp file belongs to — the whole point
-  // is that the two names meet.
-  it("agrees with lockPathFor on the store name", () => {
-    const store = "deliveries.json";
-    expect(lockGuarding(`${store}.tmp-1-2-3f2b1c9d-aaaa-bbbb-cccc-ddddeeeeffff`)).toBe(lockPathFor(store));
-  });
-
-  it("lets a lock answer for itself", () => {
-    expect(lockGuarding("deliveries.json.lock")).toBe("deliveries.json.lock");
-  });
 });

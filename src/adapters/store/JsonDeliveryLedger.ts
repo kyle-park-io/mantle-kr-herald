@@ -3,14 +3,11 @@ import type { ChannelSentEntry } from "../../domain/send/channels";
 import type { DeliveryEntry } from "../../domain/delivery/models";
 import { deliveredToRoom, deliveryKey, migrateLegacyEntry } from "../../domain/delivery/models";
 import type { DeliveryLedger } from "../../ports/DeliveryLedger";
-import { withFileLock } from "../../shared/store/fileLock";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
-import { createSerializer } from "../../shared/store/serialWrites";
 
 export class JsonDeliveryLedger implements DeliveryLedger {
   private readonly path: string;
   private readonly legacyPath: string;
-  private readonly serial = createSerializer();
   constructor(private readonly dir: string) {
     this.path = join(dir, "deliveries.json");
     this.legacyPath = join(dir, "channels.json");
@@ -61,28 +58,22 @@ export class JsonDeliveryLedger implements DeliveryLedger {
   }
 
   /**
-   * The two layers of protection are deliberate and not redundant. `serial` orders writes issued by
-   * this instance — cheap, in-memory, no syscalls. `withFileLock` orders them against *other
-   * processes*: a `pnpm send:channels` run while the dashboard `pnpm serve` is up has two ledgers
-   * over one file, and read-modify-write across two processes drops whichever row lost the rename.
-   * A dropped row here is a send the ledger can no longer see, which the next run publishes again.
+   * A plain read-modify-write — read the file, mutate a Map in memory, write it back atomically.
+   * Correct for a single process with no concurrent writer, which is what this store is for once
+   * `PgDeliveryLedger` takes over the live send path (Task 17): its only remaining caller is
+   * `db:export`, run alone. Two overlapping callers can still drop a row the way any
+   * read-modify-write can — see `PgDeliveryLedger`, which protects concurrent writers with a
+   * database transaction instead of the file lock and in-process queue this store used to wrap
+   * these two methods in.
    */
   async add(entry: DeliveryEntry): Promise<void> {
-    return this.serial(() =>
-      withFileLock(this.path, async () => {
-        const byKey = new Map((await this.loadAll()).map((e) => [deliveryKey(e), e]));
-        byKey.set(deliveryKey(entry), entry);
-        await writeJsonFileAtomic(this.dir, this.path, [...byKey.values()]);
-      }),
-    );
+    const byKey = new Map((await this.loadAll()).map((e) => [deliveryKey(e), e]));
+    byKey.set(deliveryKey(entry), entry);
+    await writeJsonFileAtomic(this.dir, this.path, [...byKey.values()]);
   }
 
   async remove(key: string): Promise<void> {
-    return this.serial(() =>
-      withFileLock(this.path, async () => {
-        const kept = (await this.loadAll()).filter((e) => deliveryKey(e) !== key);
-        await writeJsonFileAtomic(this.dir, this.path, kept);
-      }),
-    );
+    const kept = (await this.loadAll()).filter((e) => deliveryKey(e) !== key);
+    await writeJsonFileAtomic(this.dir, this.path, kept);
   }
 }

@@ -24,12 +24,12 @@ function toXArticleSentEntry(row: XArticleRow): XArticleSentEntry {
 
 /**
  * `XArticleLedger` backed by the `x_article_deliveries` table. Replaces `JsonXArticleLedger` — the
- * other send ledger `src/shared/store/serialWrites.ts` describes: a lost or mis-keyed row here is a
- * live X-article post the ledger can no longer see, which the next run posts a second time. The
- * in-process serializer and cross-process file lock `JsonXArticleLedger` wrapped its read-modify-write
- * in are both gone: `add`'s `insert ... on conflict` is one statement, so there is no read-modify-write
- * left for two overlapping writers to race, and the `item_id` primary key on `x_article_deliveries`
- * does the job the file lock used to.
+ * other send ledger where a lost or mis-keyed row is a live X-article post the ledger can no longer
+ * see, which the next run posts a second time. The in-process serializer and cross-process file lock
+ * `JsonXArticleLedger` used to wrap its read-modify-write in are both retired: `add`'s
+ * `insert ... on conflict` is one statement, so there is no read-modify-write left for two
+ * overlapping writers to race, and the `item_id` primary key on `x_article_deliveries` does the job
+ * the file lock used to.
  *
  * `upsert` fully replaces the row on conflict — matching `JsonXArticleLedger.add`'s `byId.set(...)`,
  * which discards whatever the previous entry held rather than merging field by field. A re-`add()`

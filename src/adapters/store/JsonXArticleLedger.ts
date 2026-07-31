@@ -1,13 +1,10 @@
 import { join } from "node:path";
 import { deliveredToRoom } from "../../domain/delivery/models";
 import type { XArticleLedger, XArticleSentEntry } from "../../ports/XArticleLedger";
-import { withFileLock } from "../../shared/store/fileLock";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
-import { createSerializer } from "../../shared/store/serialWrites";
 
 export class JsonXArticleLedger implements XArticleLedger {
   private readonly path: string;
-  private readonly serial = createSerializer();
   constructor(private readonly dir: string) {
     this.path = join(dir, "x-article.json");
   }
@@ -22,19 +19,14 @@ export class JsonXArticleLedger implements XArticleLedger {
     return this.load();
   }
   /**
-   * `serial` orders this instance's writes; `withFileLock` orders them against other processes,
-   * whose independent serializer would otherwise interleave a read-modify-write and drop a row —
-   * an X article the ledger can no longer see, which the next run posts to the account again.
-   * The lock is on this ledger's own path: two files, two locks, so a delivery write never waits
-   * behind an unrelated X-article write.
+   * A plain read-modify-write, correct for a single process with no concurrent writer — see
+   * `JsonDeliveryLedger.add` for why that is the only caller left once Task 17 lands, and
+   * `PgXArticleLedger` for the store that protects concurrent writers with a database transaction
+   * instead of the file lock and in-process queue this store used to wrap this method in.
    */
   async add(entry: XArticleSentEntry): Promise<void> {
-    return this.serial(() =>
-      withFileLock(this.path, async () => {
-        const byId = new Map((await this.load()).map((e) => [e.itemId, e]));
-        byId.set(entry.itemId, entry);
-        await writeJsonFileAtomic(this.dir, this.path, [...byId.values()]);
-      }),
-    );
+    const byId = new Map((await this.load()).map((e) => [e.itemId, e]));
+    byId.set(entry.itemId, entry);
+    await writeJsonFileAtomic(this.dir, this.path, [...byId.values()]);
   }
 }
