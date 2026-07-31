@@ -204,15 +204,35 @@ export interface AuthConfig {
 /**
  * The dashboard's one account, or `undefined` when it is not configured.
  *
- * Deliberately a `try` loader with no throwing counterpart: the dashboard predates having any
- * credential and still runs bound to loopback without one, so requiring the pair would stop every
- * existing install at startup. An unconfigured server serves as before and refuses every login.
+ * Not the only loader: `loadAuthConfig()` just below is the required counterpart `serve.ts` calls.
+ * This `try` form stays for a caller with its own reason to tolerate an absent account — `Login`'s
+ * constructor is that caller today, staying permissive by design (see its own comment) for whatever
+ * else might construct it unconfigured, a test included.
  */
 export function tryLoadAuthConfig(): AuthConfig | undefined {
   const username = process.env.HERALD_AUTH_USERNAME?.trim();
   const passwordHash = process.env.HERALD_AUTH_PASSWORD_HASH?.trim();
   if (!username || !passwordHash) return undefined;
   return { username, passwordHash };
+}
+
+const AUTH_REMEDY = "Generate one with `pnpm auth:hash` and add the two printed lines to .env.";
+
+/**
+ * Required. The dashboard used to run loopback-only, where an unconfigured account was harmless:
+ * `Login` simply refused every attempt forever, and nothing beyond localhost could reach the login
+ * screen to notice. Now every other route sits behind the session gate this account is the only way
+ * through, so `serve.ts` calls this — not `tryLoadAuthConfig()` — and refuses to start rather than
+ * serve a login screen that refuses everyone, permanently, reachable from wherever the server is.
+ */
+export function loadAuthConfig(): AuthConfig {
+  const config = tryLoadAuthConfig();
+  if (!config) {
+    throw new Error(
+      `No dashboard account configured (HERALD_AUTH_USERNAME / HERALD_AUTH_PASSWORD_HASH missing or blank). ${AUTH_REMEDY}`,
+    );
+  }
+  return config;
 }
 
 export interface SessionConfig {

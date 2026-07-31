@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { tryLoadAuthConfig } from "../src/config";
+import { tryLoadAuthConfig, loadAuthConfig } from "../src/config";
 
 const KEYS = ["HERALD_AUTH_USERNAME", "HERALD_AUTH_PASSWORD_HASH"] as const;
 const original = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
@@ -19,8 +19,9 @@ describe("tryLoadAuthConfig", () => {
   });
 
   /**
-   * Absent rather than throwing: the dashboard predates having a credential and runs on loopback
-   * without one, so an unset account must not stop the server from starting.
+   * Absent rather than throwing — this loader's own contract, for a caller with a reason to
+   * tolerate it (see its doc comment). `loadAuthConfig()` below is what `serve.ts` actually calls,
+   * and does throw.
    */
   it.each([
     ["neither is set", undefined, undefined],
@@ -33,5 +34,25 @@ describe("tryLoadAuthConfig", () => {
     if (hash === undefined) delete process.env.HERALD_AUTH_PASSWORD_HASH;
     else process.env.HERALD_AUTH_PASSWORD_HASH = hash;
     expect(tryLoadAuthConfig()).toBeUndefined();
+  });
+});
+
+describe("loadAuthConfig", () => {
+  it("returns the configured account", () => {
+    process.env.HERALD_AUTH_USERNAME = "herald";
+    process.env.HERALD_AUTH_PASSWORD_HASH = "scrypt$65536$8$1$c2FsdA==$aGFzaA==";
+    expect(loadAuthConfig()).toEqual({ username: "herald", passwordHash: "scrypt$65536$8$1$c2FsdA==$aGFzaA==" });
+  });
+
+  /**
+   * The one behavior this task adds: `serve.ts` used to run loopback-only, where an absent account
+   * was harmless. It no longer is — every other route sits behind the session gate this account is
+   * the only way through, so a missing one must stop the server rather than serve a login screen
+   * that refuses everyone, permanently, with no way to tell why from the screen itself.
+   */
+  it("throws, naming pnpm auth:hash, when no account is configured", () => {
+    delete process.env.HERALD_AUTH_USERNAME;
+    delete process.env.HERALD_AUTH_PASSWORD_HASH;
+    expect(() => loadAuthConfig()).toThrow(/pnpm auth:hash/);
   });
 });

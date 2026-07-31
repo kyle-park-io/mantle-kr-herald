@@ -36,11 +36,21 @@ function isLoopbackOrigin(origin: string): boolean {
 /**
  * Why a request must be refused before it reaches a route, or `undefined`.
  *
- * The server has no auth and binds to 127.0.0.1, but it now performs irreversible live posts, and
- * `POST /api/outlets/:itemId/:type/:outletId/send` takes no body — which makes a cross-site form
- * POST a *simple* request: no preflight, so CORS never gets a say and the browser just sends it,
- * from any page the operator has open. Needing a known `itemId` keeps that impractical; the guard is
- * a few lines and the blast radius changed class in this slice.
+ * This used to be the whole security model — "no auth, bound to loopback" — and that sentence is no
+ * longer true. It is not the only guard anymore, and it is not the first one a request meets:
+ *
+ * 1. **The session gate.** Every `/api/` route except `POST /api/login` (and, separately,
+ *    `/api/publish/local/*`, gated the same way one step down) requires a valid, signed, `httpOnly`,
+ *    `SameSite=Lax` session cookie — see `apiHandlers.ts`'s `handleApi` and `currentSession()` below.
+ *    Read or write, unauthenticated now means 401, with no detail about why. This is the actual
+ *    boundary a stranger who is not on this machine runs into first.
+ * 2. **This function**, still. It exists for the one class of request the session cookie's own
+ *    `SameSite=Lax` cannot be fully trusted to stop by itself: a cross-site `POST` that rides along
+ *    with whatever a browser decides is or is not "top-level" for cookie purposes, from any page the
+ *    operator happens to have open. `POST /api/outlets/:itemId/:type/:outletId/send` takes no body,
+ *    which makes it a *simple* request — no preflight, so CORS never gets a say and the browser just
+ *    sends it. Refusing by `Origin` does not depend on any of that being handled correctly; it is
+ *    independent, not a fallback for a cookie the gate above already checks.
  *
  * - **Origin** — present and not loopback: refused. *Any* loopback port is accepted rather than this
  *   server's own, because `pnpm dev:web` serves the UI from Vite on :5173 and proxies `/api` here
@@ -49,7 +59,19 @@ function isLoopbackOrigin(origin: string): boolean {
  * - **content-type** — the three an HTML form can produce are refused outright, which covers a
  *   client that sends no `Origin` at all. Costs nothing: every dashboard call sends JSON or no body.
  *
- * `GET` is untouched, so the SPA, the static files and the local publish reader are unaffected.
+ * `GET` is untouched by this function specifically — the session gate is what now reaches it too, so
+ * the SPA shell and the static files under `staticDir` are the only things actually unaffected; the
+ * local publish reader is not (see its own guard, just past this one, in `startServer`).
+ *
+ * **What still is not guarded, by design or by what this plan covers:** the server still binds to
+ * 127.0.0.1 only — `Plan C`, not this one, is what makes it reachable from anywhere else, and
+ * everything above is written for that future, not proof it has already arrived. There is no CSRF
+ * token; the cookie's `SameSite` plus the Origin check above stand in for one, which is adequate for
+ * a single shared account and would need revisiting for anything with per-user sessions. A stolen
+ * cookie is valid until it expires (12h) or `HERALD_SESSION_SECRET` is rotated — there is no
+ * server-side session list to revoke one entry from, the same tradeoff the auth-options record
+ * accepted in choosing a signed cookie over a JWT and not reopening it here. And since the account is
+ * shared, nothing here can answer "which person did this" — only "someone with the password did."
  */
 export function refusalReason(method: string, origin?: string, contentType?: string): string | undefined {
   if (!STATE_CHANGING.has(method.toUpperCase())) return undefined;

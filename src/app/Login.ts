@@ -13,9 +13,12 @@ export type LoginResult = { ok: true } | { ok: false; retryAfterMs: number };
  */
 export class Login {
   /**
-   * `account` is optional because the dashboard has always run without one, bound to loopback.
-   * Requiring it here would stop those installs at startup; an unconfigured server serves as before
-   * and refuses every login, since there is nothing to let anyone in to yet.
+   * `account` stays optional at this layer even though `serve.ts` now refuses to start the dashboard
+   * without one (see its own comment) — that used to be the reason: the server ran loopback-only, so
+   * an unconfigured account was harmless, and `Login` simply refused every attempt. The refusal
+   * belongs to whoever wires this up, not to the credential check itself, so `Login` keeps behaving
+   * safely (refuse everything) for any other caller that constructs it unconfigured — a test, or some
+   * future embedding — rather than throwing over a decision it does not own.
    */
   constructor(
     private readonly account: Account | undefined,

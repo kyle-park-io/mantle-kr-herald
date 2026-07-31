@@ -6,8 +6,10 @@ import { startServer } from "../adapters/web/HttpServer";
 import type { ApiDeps } from "../adapters/web/apiHandlers";
 import type { StatusView, PublishStateRow, IntegrationStatus } from "../adapters/web/apiHandlers";
 import { createDb } from "../adapters/db/createDb";
+import { applySchema } from "../adapters/db/schema";
 import { createStores } from "./stores";
 import { assertLedgerMigrated } from "./assertLedgerMigrated";
+import { PgAttemptLimiter } from "../adapters/store/PgAttemptLimiter";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
@@ -40,11 +42,10 @@ import {
   loadTypefullyConfig,
   loadXMaxWeighted,
   loadDbConfig,
-  tryLoadAuthConfig,
+  loadAuthConfig,
   loadSessionConfig,
 } from "../config";
 import { Login, type LoginResult } from "../app/Login";
-import { createAttemptLimiter } from "../domain/auth/attemptLimiter";
 import { singleFlight } from "../shared/concurrency/singleFlight";
 import { createUploaders, resolveTargets } from "./uploaders";
 import type { PublishResult } from "../app/PublishTranslations";
@@ -67,9 +68,22 @@ const dbConfig = loadDbConfig();
 // request both need this secret, so a server with none has no way to run the gate — see
 // `loadSessionConfig()`'s own doc comment for why this is a hard refusal, not an optional one.
 const sessionConfig = loadSessionConfig();
+
+// Refuses to start without an account configured — see `loadAuthConfig()`'s own doc comment for why
+// this is required now, unlike the `tryLoadAuthConfig()` this used to call.
+const authConfig = loadAuthConfig();
+
 // One pool for the life of this process — a long-running server, unlike the one-shot CLI commands,
 // which each open and close their own.
 const db = createDb(dbConfig);
+// `applySchema` is idempotent (every statement is `create table if not exists` / `insert ... on
+// conflict do nothing`) and cheap, so it runs unconditionally rather than only after a probe. Nothing
+// else on this path ever created `auth_attempts` — `db:import`/`db:export` are the only other
+// callers, and neither runs before `pnpm serve` on a database Plan A already migrated. Without this,
+// the first login attempt against such a database would fail with a raw
+// `relation "auth_attempts" does not exist` from `PgAttemptLimiter`, not a message that explains
+// anything.
+await applySchema(db);
 // Refuses to start the dashboard — and therefore ReconcilePublished's scheduler and every
 // [발송] click — against a database that looks unmigrated. See assertLedgerMigrated's own doc
 // comment for why an empty deliveries table is not, by itself, proof of a fresh install.
@@ -337,10 +351,13 @@ const prepareConversionRun = new PrepareConversionRun(
 const formatVariants = new FormatVariants(conversionStore, formattingStore, undefined, loadXMaxWeighted());
 
 /**
- * One limiter for the process, so failures accumulate across requests rather than resetting on each
- * one. Unconfigured (`HERALD_AUTH_*` unset) it refuses every attempt — see `src/app/Login.ts`.
+ * Backed by `auth_attempts` (`PgAttemptLimiter`), not memory, over the same `db` the stores use — so
+ * failed attempts accumulate across restarts, and across the several instances a real deployment can
+ * run at once, instead of each process getting its own fresh five-attempt allowance. `authConfig` is
+ * checked non-optional above; by the time this line runs, refusing to start over a missing account
+ * has already happened.
  */
-const loginUseCase = new Login(tryLoadAuthConfig(), createAttemptLimiter());
+const loginUseCase = new Login(authConfig, new PgAttemptLimiter(db));
 
 /** How long a caller who hit the single-flight guard below is told to wait — see its own comment. */
 const LOGIN_BUSY_RETRY_MS = 1000;

@@ -46,9 +46,10 @@ describe("Login", () => {
   });
 
   /**
-   * The dashboard has run without any credential since it existed, bound to loopback. Making the
-   * account required would stop every one of those installs at startup, so an unconfigured server
-   * keeps serving and refuses every login instead — there is nothing to let anyone in to yet.
+   * `serve.ts` now refuses to start at all without an account configured (the dashboard is no longer
+   * loopback-only) — this test is `Login`'s own fallback for any other caller that constructs it
+   * unconfigured anyway: refuse every attempt rather than throw, since there is nothing to let anyone
+   * in to yet.
    */
   it("refuses every attempt when no account is configured", async () => {
     const use = new Login(undefined, createAttemptLimiter());
