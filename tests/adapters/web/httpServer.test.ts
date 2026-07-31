@@ -98,6 +98,30 @@ describe("startServer", () => {
       expect(res.status).toBe(401);
     });
 
+    // `session.test.ts` proves `verifySession` itself enforces a `ttlMs` shorter than the 12h
+    // default; this proves `HttpServer` actually threads `sessionConfig.ttlMs` through rather than
+    // handing `verifySession` nothing and letting it fall back to `SESSION_TTL_MS` regardless —
+    // against the old, inert plumbing this cookie (2s old, under a 1s `ttlMs`) would still verify
+    // fine and this would answer 200.
+    it("rejects a session older than sessionConfig.ttlMs, even though it is well under the 12h default", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "web-"));
+      await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+      const deps = fakeDeps();
+      deps.sessionConfig = { secret: TEST_SESSION_SECRET, ttlMs: 1_000 };
+      const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
+      servers.push(server);
+      await new Promise((r) => server.once("listening", r));
+      const { port } = server.address() as AddressInfo;
+      const base = `http://127.0.0.1:${port}`;
+
+      const staleIssuedAt = new Date(Date.now() - 2_000).toISOString();
+      const token = signSession({ issuedAt: staleIssuedAt }, TEST_SESSION_SECRET);
+
+      const res = await fetch(`${base}/api/translations`, { headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` } });
+
+      expect(res.status).toBe(401);
+    });
+
     it("POST /api/login sets a session cookie with the right attributes on success", async () => {
       const dir = await mkdtemp(join(tmpdir(), "web-"));
       await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
@@ -403,10 +427,12 @@ describe("startServer", () => {
   });
 
   /**
-   * The dashboard has no auth, and `POST /api/outlets/:itemId/:type/:outletId/send` takes no body —
-   * a *simple* cross-site request, so no preflight stands between a page the operator happens to
-   * have open and a live post to a real Telegram room. Loopback binding and a guessed `itemId` make
-   * it impractical, not impossible; these tests hold the guard in place.
+   * The session gate alone is not enough here: a signed-in operator's browser still holds a valid
+   * cookie, and `SameSite=Lax` is what a browser decides is "top-level," not something this server
+   * controls. `POST /api/outlets/:itemId/:type/:outletId/send` takes no body — a *simple* cross-site
+   * request, so no preflight stands between a page the operator happens to have open (with a live
+   * session) and a live post to a real Telegram room. Loopback binding and a guessed `itemId` make it
+   * impractical, not impossible; these tests hold the guard in place.
    */
   describe("cross-site guard", () => {
     /** A server whose send route records its calls, so a refusal is shown to reach no use case. */

@@ -36,4 +36,16 @@ describe("session tokens", () => {
       expect(verifySession(bad, secret, issued)).toBeUndefined();
     }
   });
+
+  // `ttlMs` is a real parameter, not a label on `SESSION_TTL_MS` — a caller (`HttpServer.ts`'s
+  // `currentSession()`) that passes a shorter lifetime gets it enforced, not silently ignored in
+  // favor of the 12h default every other test in this file relies on.
+  it("honors a ttlMs shorter than SESSION_TTL_MS rather than always falling back to it", () => {
+    const shortTtlMs = 1_000;
+    const token = signSession({ issuedAt: issued.toISOString() }, secret);
+    const stillWithin = new Date(issued.getTime() + shortTtlMs - 1);
+    const justPast = new Date(issued.getTime() + shortTtlMs + 1);
+    expect(verifySession(token, secret, stillWithin, shortTtlMs)).toEqual({ issuedAt: issued.toISOString() });
+    expect(verifySession(token, secret, justPast, shortTtlMs)).toBeUndefined();
+  });
 });

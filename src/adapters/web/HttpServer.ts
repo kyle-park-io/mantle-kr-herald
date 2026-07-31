@@ -101,14 +101,16 @@ export function refusalReason(method: string, origin?: string, contentType?: str
 
 /**
  * The verified session for this request, or `undefined`. Read from the `Cookie` header and checked
- * against `secret` once, right here — `HttpServer` is the one place a raw HTTP header exists, and
- * handing the already-verified payload to `handleApi` (via `ApiDeps.session`) keeps that function
- * testable without a real HTTP request. `verifySession` never throws, so a malformed or absent
- * cookie ends up `undefined` the same as a genuinely missing one.
+ * against `secret` and `ttlMs` once, right here — `HttpServer` is the one place a raw HTTP header
+ * exists, and handing the already-verified payload to `handleApi` (via `ApiDeps.session`) keeps that
+ * function testable without a real HTTP request. `verifySession` never throws, so a malformed or
+ * absent cookie ends up `undefined` the same as a genuinely missing one. `ttlMs` is threaded through
+ * from `sessionConfig` rather than left to `verifySession`'s own default, so the lifetime a session
+ * was signed with and the lifetime it is checked against can never be two different `SessionConfig`s.
  */
-function currentSession(req: IncomingMessage, secret: string): SessionPayload | undefined {
+function currentSession(req: IncomingMessage, secret: string, ttlMs: number): SessionPayload | undefined {
   const token = readSessionToken(req.headers.cookie);
-  return token ? verifySession(token, secret, new Date()) : undefined;
+  return token ? verifySession(token, secret, new Date(), ttlMs) : undefined;
 }
 
 /**
@@ -164,7 +166,7 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
         // function, since this is the one `/api/` path that bypasses it entirely. It serves
         // unpublished review/approved markdown in local storage mode, which is exactly the kind of
         // content "the board is not public" is about.
-        if (!currentSession(req, deps.sessionConfig.secret)) {
+        if (!currentSession(req, deps.sessionConfig.secret, deps.sessionConfig.ttlMs)) {
           res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: "unauthenticated" }));
           return;
         }
@@ -186,7 +188,7 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
         return;
       }
       if (url.pathname.startsWith("/api/")) {
-        session = currentSession(req, deps.sessionConfig.secret);
+        session = currentSession(req, deps.sessionConfig.secret, deps.sessionConfig.ttlMs);
         // Refused before the body is ever read. `readBody` used to run unconditionally here, ahead
         // of this same gate inside `handleApi` — an unauthenticated 20 MB `PUT` was fully read and
         // concatenated before the 401 that was always coming ever went out. A request the gate is

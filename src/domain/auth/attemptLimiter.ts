@@ -22,9 +22,14 @@ export interface AttemptLimiter {
  * implementation an install is actually running, do not assume a restart clears a lockout; see
  * `docs/ko/team-runbook.md`'s entry for a locked-out login for the real recovery.
  *
- * State is in memory, so it resets when the process does. Adequate for a long-lived server; a
- * serverless deployment gets a fresh limiter per instance and would need a shared store to be
- * meaningful — see `PgAttemptLimiter`. See docs/superpowers/specs/2026-07-29-dashboard-auth-options.md.
+ * State is in memory, so it resets when the process does — a serverless deployment gets a fresh
+ * limiter per instance and would need a shared store to be meaningful, which is what motivated
+ * `PgAttemptLimiter` in the first place. `serve.ts`, the one composition root this project has, has
+ * constructed a `PgAttemptLimiter` there ever since — not this function — so "adequate for a
+ * long-lived server" is no longer a claim about anything actually running; nothing here reaches
+ * production. What's left is `Login`'s own tests and its optional-`account` fallback caller (see
+ * `Login`'s own comment for why that stays permissive) — a database-free `AttemptLimiter` for a
+ * caller with no `Db` to hand it. See docs/superpowers/specs/2026-07-29-dashboard-auth-options.md.
  */
 export function createAttemptLimiter(options: { maxFailures?: number; lockoutMs?: number } = {}): AttemptLimiter {
   const maxFailures = options.maxFailures ?? 5;

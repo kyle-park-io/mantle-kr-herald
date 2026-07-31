@@ -12,9 +12,12 @@ export interface SessionPayload {
 
 /**
  * How long a session stays valid after `issuedAt`, enforced inside `verifySession` itself rather
- * than by the cookie's `Max-Age`. `loadSessionConfig()` (`src/config.ts`) exposes this same value
- * so the cookie can be set to expire around when the token actually does, but the token is what
- * decides — the cookie's lifetime is just a hint to the browser about when to stop sending it.
+ * than by the cookie's `Max-Age`. This is `verifySession`'s *default* `ttlMs` — the value it uses
+ * when a caller does not pass one, which is every caller in this codebase today, since
+ * `loadSessionConfig()` (`src/config.ts`) never returns anything else. The cookie's `Max-Age` is
+ * always set from that same `SessionConfig.ttlMs`, so it stays a hint to the browser about when to
+ * stop sending the cookie — the token, verified against whatever `ttlMs` its caller actually passed,
+ * is what decides.
  *
  * 12 hours: a working day, then sign in again. The dashboard has one shared account, so there is no
  * per-user session list to reason about — only "how long is a stolen cookie worth."
@@ -55,8 +58,13 @@ export function signSession(payload: SessionPayload, secret: string): string {
  * is not this dashboard — is simply an unauthenticated request, not a 500: every failure path
  * (wrong shape, wrong signature, expired) returns `undefined` alike, so a caller can never learn
  * which one happened, the same rule `checkCredentials` applies to a wrong username vs. password.
+ *
+ * `ttlMs` defaults to `SESSION_TTL_MS` but is a real parameter, not a label on the module constant:
+ * `HttpServer.ts`'s `currentSession()` passes `sessionConfig.ttlMs` explicitly, the same value
+ * `buildSessionCookie` sets the cookie's `Max-Age` from, so the two can never enforce different
+ * lifetimes even though `loadSessionConfig()` only ever produces one value today.
  */
-export function verifySession(token: string, secret: string, now: Date): SessionPayload | undefined {
+export function verifySession(token: string, secret: string, now: Date, ttlMs: number = SESSION_TTL_MS): SessionPayload | undefined {
   try {
     const parts = token.split(".");
     if (parts.length !== 2) return undefined;
@@ -73,7 +81,7 @@ export function verifySession(token: string, secret: string, now: Date): Session
     const payload = parsed as SessionPayload;
     const issuedAt = new Date(payload.issuedAt);
     if (Number.isNaN(issuedAt.getTime())) return undefined;
-    if (now.getTime() - issuedAt.getTime() > SESSION_TTL_MS) return undefined;
+    if (now.getTime() - issuedAt.getTime() > ttlMs) return undefined;
 
     return payload;
   } catch {
