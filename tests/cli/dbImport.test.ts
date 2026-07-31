@@ -19,6 +19,13 @@ async function tree(): Promise<string> {
   return root;
 }
 
+// A generous per-test timeout, not the default 5000ms: each test here pays for a fresh
+// PGlite instance (schema applied fresh — see `createTestDb`) *and* real file I/O, which under
+// the full suite's parallel load (every other Pg*Store test spinning up its own PGlite
+// instance at the same time) can comfortably exceed the default. Same rationale as the
+// explicit timeouts in `tests/adapters/drive/drive.probe.test.ts`.
+const SLOW = 20000;
+
 describe("importOutputTree", () => {
   it("loads a translation from the output tree into the database", async () => {
     db = await createTestDb();
@@ -26,7 +33,7 @@ describe("importOutputTree", () => {
     const all = await new PgTranslationStore(db).loadAll();
     expect(all).toHaveLength(1);
     expect(all[0]?.approvedAt).toBe("2026-01-02T00:00:00.000Z");
-  });
+  }, SLOW);
 
   it("is idempotent — importing the same tree twice leaves one row", async () => {
     db = await createTestDb();
@@ -34,11 +41,11 @@ describe("importOutputTree", () => {
     await importOutputTree(db, root);
     await importOutputTree(db, root);
     expect(await new PgTranslationStore(db).loadAll()).toHaveLength(1);
-  });
+  }, SLOW);
 
   it("treats an absent file as empty rather than failing", async () => {
     db = await createTestDb();
     const root = await mkdtemp(join(tmpdir(), "import-empty-"));
     await expect(importOutputTree(db, root)).resolves.not.toThrow();
-  });
+  }, SLOW);
 });
