@@ -27,19 +27,6 @@ function toOutletOverride(row: OutletOverrideRow): OutletOverride {
 }
 
 /**
- * Splits a key built by `overrideKey` (`${itemId}:${type}:${outletId}`) back into its parts.
- * `itemId` itself contains a colon (`"x:<rootId>"` / `"lark:<messageId>"`), so a plain
- * `key.split(":")` cannot assume three pieces — the last two colon-separated segments are
- * `outletId` and `type`, and everything left over, rejoined with `:`, is `itemId`.
- */
-function parseOverrideKey(key: string): { itemId: string; type: string; outletId: string } {
-  const parts = key.split(":");
-  const outletId = parts.pop() ?? "";
-  const type = parts.pop() ?? "";
-  return { itemId: parts.join(":"), type, outletId };
-}
-
-/**
  * `OutletOverrideStore` backed by the `outlet_overrides` table. Replaces `JsonOutletOverrideStore`.
  *
  * `upsert` is one `insert ... on conflict (item_id, type, outlet_id) do update` statement — no
@@ -50,10 +37,17 @@ function parseOverrideKey(key: string): { itemId: string; type: string; outletId
  * produces by appending to `overrides.json` — even after a row has been edited.
  *
  * `remove` takes the same joined string key `JsonOutletOverrideStore.remove` does. That store
- * never actually splits it — it recomputes `overrideKey` for every loaded row and filters out the
- * one that matches the whole string. A SQL `delete` instead needs the three parts of the primary
- * key, so `parseOverrideKey` above reverses `overrideKey`'s join the same way `overrideKey` builds
- * it, so the two agree on every key this store is ever asked to remove.
+ * never splits it — it recomputes `overrideKey` for every loaded row and filters out the one that
+ * matches the whole string. `remove` here does the same thing in SQL instead of parsing the key
+ * apart: `item_id || ':' || type || ':' || outlet_id` mirrors `overrideKey` in
+ * `src/domain/outlet/override.ts` byte for byte, so a `where` on that expression is the whole-string
+ * comparison the Json store makes, not a split. This matters because `type` reaches this store
+ * unvalidated — `apiHandlers.ts` takes it straight off the URL segment, unlike the sibling
+ * convert/format routes — so a colon in `type` (or, just as easily, in `itemId` or `outletId`) is
+ * reachable at runtime even though nothing on the frontend sends one today. A split that assumed
+ * which segments were which could misassign the parts and silently match zero rows; recomputing
+ * the key instead is immune to a colon in *any* field. If `overrideKey`'s shape ever changes, this
+ * expression must change with it.
  */
 export class PgOutletOverrideStore implements OutletOverrideStore {
   constructor(private readonly db: Db) {}
@@ -82,10 +76,10 @@ export class PgOutletOverrideStore implements OutletOverrideStore {
   }
 
   async remove(key: string): Promise<void> {
-    const { itemId, type, outletId } = parseOverrideKey(key);
     await this.db.query(
-      "delete from outlet_overrides where item_id = $1 and type = $2 and outlet_id = $3",
-      [itemId, type, outletId],
+      // Mirrors `overrideKey` (src/domain/outlet/override.ts): `${itemId}:${type}:${outletId}`.
+      "delete from outlet_overrides where item_id || ':' || type || ':' || outlet_id = $1",
+      [key],
     );
   }
 }

@@ -113,6 +113,22 @@ describe("PgOutletOverrideStore", () => {
     expect(all[0]?.itemId).toBe("lark:2");
   });
 
+  it("remove parses a type that itself contains a colon, matching overrideKey whole", async () => {
+    // Nothing on this write path validates `type` against ALL_TYPES (apiHandlers.ts takes it
+    // straight off the URL segment), so a colon in `type` is reachable at runtime even though the
+    // frontend never sends one. A right-anchored split(":") that assumes the last two segments
+    // are always outletId/type would misassign this key's parts; recomputing the key in SQL and
+    // comparing it whole — like JsonOutletOverrideStore does — is immune to a colon in any field.
+    db = await createTestDb();
+    const store = new PgOutletOverrideStore(db);
+    await store.upsert(override({ type: "kol:special", outletId: "a" }));
+    await store.upsert(override({ type: "announcement", outletId: "a" }));
+    await store.remove(overrideKey({ itemId: "x:1", type: "kol:special", outletId: "a" }));
+    const all = await store.loadAll();
+    expect(all).toHaveLength(1);
+    expect(all[0]?.type).toBe("announcement");
+  });
+
   it("remove of a key with no matching row is a no-op", async () => {
     db = await createTestDb();
     const store = new PgOutletOverrideStore(db);
