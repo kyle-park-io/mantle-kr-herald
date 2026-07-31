@@ -43,37 +43,52 @@ function renderTweetText(t: SourceTweet): { text: string; isArticle: boolean } {
   return { text: t.text + mediaMarkers(t.media), isArticle: false };
 }
 
+/**
+ * Pure: flattens collected X threads to `ContentItem[]`, filtering out deleted threads and ids
+ * already in `translatedIds`. Only `rootId`/`tweets`/`status` are read, so a caller that never
+ * tracked `firstSeenAt`/`deletedAt` (e.g. a row straight out of the database) can pass those in
+ * without fabricating the rest of `CollectedThread`. Shared by `XContentSource` (reads
+ * `items.json`) and `PgContentSource` (reads the `x_threads` table) so both sources flatten
+ * threads — including media markers and article rendering — exactly the same way.
+ */
+export function flattenXThreads(
+  threads: Pick<CollectedThread, "rootId" | "tweets" | "status">[],
+  translatedIds: Set<string>,
+): ContentItem[] {
+  const items: ContentItem[] = [];
+  for (const thread of threads) {
+    if (thread.status !== "active") continue;
+    const id = `x:${thread.rootId}`;
+    if (translatedIds.has(id)) continue;
+    const first = thread.tweets[0];
+    // Handling this per tweet rather than per thread means a thread mixing an article with
+    // ordinary replies still reads correctly.
+    let hasArticle = false;
+    const text = thread.tweets
+      .map((t, i) => {
+        const rendered = renderTweetText(t);
+        if (rendered.isArticle) hasArticle = true;
+        return i > 0 && isCommenterReply(t) ? `${COMMENTER_REPLY_MARKER} ${rendered.text}` : rendered.text;
+      })
+      .join(THREAD_TWEET_SEPARATOR);
+    items.push({
+      id,
+      source: "x",
+      text,
+      createdAt: first?.createdAt ?? "",
+      refUrl: first?.url,
+      isReply: first?.isReply,
+      kind: hasArticle ? "article" : "post",
+    });
+  }
+  return items;
+}
+
 export class XContentSource implements ContentSource {
   constructor(private readonly itemsPath: string) {}
 
   async loadPending(translatedIds: Set<string>): Promise<ContentItem[]> {
     const threads = await readJsonFile<CollectedThread[]>(this.itemsPath, []);
-    const items: ContentItem[] = [];
-    for (const thread of threads) {
-      if (thread.status !== "active") continue;
-      const id = `x:${thread.rootId}`;
-      if (translatedIds.has(id)) continue;
-      const first = thread.tweets[0];
-      // Handling this per tweet rather than per thread means a thread mixing an article with
-      // ordinary replies still reads correctly.
-      let hasArticle = false;
-      const text = thread.tweets
-        .map((t, i) => {
-          const rendered = renderTweetText(t);
-          if (rendered.isArticle) hasArticle = true;
-          return i > 0 && isCommenterReply(t) ? `${COMMENTER_REPLY_MARKER} ${rendered.text}` : rendered.text;
-        })
-        .join(THREAD_TWEET_SEPARATOR);
-      items.push({
-        id,
-        source: "x",
-        text,
-        createdAt: first?.createdAt ?? "",
-        refUrl: first?.url,
-        isReply: first?.isReply,
-        kind: hasArticle ? "article" : "post",
-      });
-    }
-    return items;
+    return flattenXThreads(threads, translatedIds);
   }
 }
