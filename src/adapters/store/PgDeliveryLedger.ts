@@ -159,18 +159,33 @@ export class PgDeliveryLedger implements DeliveryLedger {
   }
 
   /**
-   * Deletes `previous`'s row and upserts `next`, both inside one `db.tx()`. A caller composing
-   * `remove()` then `add()` itself would leave a real gap between the two statements — another
-   * connection's plain `select` can land in it and read the room as never-sent, which is the input
-   * to a duplicate send (see `sendToOutlet.ts`'s resend path, the caller this exists for). Wrapping
-   * both statements in one transaction closes that: under Postgres's MVCC, a concurrent reader on a
+   * Deletes `previous`'s row and upserts `next`, both inside one `db.tx()` — except when the two
+   * share a key, which is `sendToOutlet.ts`'s actual resend shape (`restore` never changes
+   * `itemId`/`type`/`outletId`, only `status`/`postId`/`url`). DELETE-then-INSERT would give that
+   * row a fresh `ordinal` and move it to the end of `loadAll()`'s `order by ordinal` — `ordinal` is
+   * `bigserial`, set once on insert and left alone by `on conflict ... do update` (see `upsert`
+   * above), and Task 16's `db:export` round trip depends on that insertion order surviving. So a
+   * same-key `replace()` skips the DELETE entirely and lets the upsert's `on conflict` branch do the
+   * work — one statement, already atomic on its own, exactly like `add()`.
+   *
+   * A cross-key `replace()` (nothing in this codebase calls it that way today, but the port allows
+   * it) still needs both statements, and still needs them atomic: a caller composing `remove()` then
+   * `add()` itself would leave a real gap between the two — another connection's plain `select` can
+   * land in it and read the room as never-sent, which is the input to a duplicate send. Wrapping both
+   * statements in one transaction closes that: under Postgres's MVCC, a concurrent reader on a
    * different connection sees either the whole pre-transaction state or the whole post-transaction
    * state, never a moment with neither row, because the DELETE's effects are not visible to any
    * other connection until COMMIT.
    */
   async replace(previous: DeliveryEntry, next: DeliveryEntry): Promise<void> {
+    const previousKey = deliveryKey(previous);
+    const nextKey = deliveryKey(next);
+    if (previousKey === nextKey) {
+      await this.upsert(this.db, next);
+      return;
+    }
     await this.db.tx(async (tx) => {
-      await this.deleteByKey(tx, deliveryKey(previous));
+      await this.deleteByKey(tx, previousKey);
       await this.upsert(tx, next);
     });
   }

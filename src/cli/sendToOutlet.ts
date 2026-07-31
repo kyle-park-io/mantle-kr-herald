@@ -59,8 +59,8 @@ export interface SendToOutletDeps {
   overrideStore: OutletOverrideStore;
   /**
    * Only read to build the publishing-headroom reader (`headroomReader` gates X on BOTH ledgers).
-   * `serve.ts` holds one `JsonXArticleLedger` for the whole process — pass that same instance, not a
-   * fresh one, or a read here can disagree with what `reconcilePublished` sees (see its own comment).
+   * `JsonXArticleLedger` caches nothing — every read is a fresh `readJsonFile` — so what matters is
+   * pointing this at the same `x-article.json` the rest of the install uses, not object identity.
    */
   articleLedger: Parameters<typeof headroomReader>[2];
   /**
@@ -395,11 +395,16 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
    * genuinely new send. That leaves a real, human-triggered window — for as long as `run()` takes —
    * where a concurrent reader sees this room as never-sent. It is not new: the file lock this store
    * used to wrap `remove`/`add` in never held across the two calls either, so it never covered this
-   * gap. What IS new is `replace()`: every "nothing went out, put `previous` back" write below is
-   * one `deliveryLedger.replace(previous, restore)` call rather than a bare `add`, which at least
-   * makes that half of the round trip — and the low-level primitive an outside reader would observe
-   * — atomic instead of composed from two calls sendToOutlet.ts would otherwise have to coordinate
-   * itself.
+   * gap.
+   *
+   * Every "nothing went out, put `pending.previous` back" write below calls
+   * `deliveryLedger.replace(pending.previous, pending.restore)` rather than a bare `add` — not
+   * because the old `add(restore)` had a gap of its own (it was already one statement, already
+   * atomic), but because `replace()` is the operation that actually describes what this call is
+   * doing: putting back the specific row it took out, not just writing *a* row. `previous` and
+   * `restore` always share a key here, so `PgDeliveryLedger.replace`'s same-key fast path makes this
+   * exactly as cheap as the `add()` it replaces (see that method's doc for why a naive
+   * DELETE-then-INSERT would have been a regression, not a simplification, on `ordinal`).
    */
   return async (itemId: string, type: string, outletId: string, resend = false): Promise<{ sent: number; failed: number; error?: string }> => {
     const outlet = outletById(outletId);
@@ -416,10 +421,15 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
     const key = deliveryKey({ itemId, type, outletId });
     const previous = resend ? (await deliveryLedger.loadAll()).find((e) => deliveryKey(e) === key) : undefined;
     /**
-     * The row to put back if nothing reaches the room — set only once the row has actually been
-     * removed, so every "nothing went out" path below can restore unconditionally.
+     * The row that was removed, paired with what to put back in its place if nothing reaches the
+     * room — set only once the row has actually been removed, so every "nothing went out" path below
+     * can call `deliveryLedger.replace(pending.previous, pending.restore)` unconditionally. Kept as
+     * one pair rather than two separate variables so a caller can never have one half without the
+     * other — the redundant-looking `if (restore) ... previous ...` check that shape used to force at
+     * every call site is gone because the pairing makes it impossible to reach.
      *
-     * Usually `previous` verbatim: the room still holds the post that row describes.
+     * `pending.restore` is usually `pending.previous` verbatim: the room still holds the post that
+     * row describes.
      *
      * NOT verbatim when the guard cancelled a queued draft. `previous` then describes a Typefully
      * draft this code has just deleted, and writing it back would claim the room is still waiting on
@@ -429,14 +439,14 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
      * with no reconcile round trip (a CLI-only install never runs one). It is the same retirement
      * `ReconcilePublished` writes for a draft that vanished, reached by a different route.
      */
-    let restore: DeliveryEntry | undefined;
+    let pending: { previous: DeliveryEntry; restore: DeliveryEntry } | undefined;
     if (resend) {
       if (!previous) return { sent: 0, failed: 0, error: `${outlet.label} (${outlet.id}): nothing has been sent to this room yet` };
       // Deliberately before the `remove`, not after it: every refusal this can produce returns with
       // the ledger untouched, so no restore has to be remembered on the way out. See its own comment.
       const guard = await guardQueuedDraft(outlet, previous);
       if (guard.refusal) return guard.refusal;
-      restore = guard.cancelled ? { ...previous, status: "dropped" } : previous;
+      pending = { previous, restore: guard.cancelled ? { ...previous, status: "dropped" } : previous };
       await deliveryLedger.remove(key);
     }
 
@@ -466,10 +476,7 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
       if (result.quotaBlocked) {
         const { needed, available, resetsAt } = result.quotaBlocked;
         const when = resetsAt ? ` (${resetsAt.slice(0, 10)} 리셋)` : "";
-        // `restore` is only ever set alongside `previous` (both inside the `if (resend)` block
-        // above), so this check is redundant in practice — kept so TypeScript can see it too rather
-        // than asserting it, since nothing here is worth a runtime crash over an assertion drifting.
-        if (restore && previous) await deliveryLedger.replace(previous, restore); // nothing went out — see `restore`
+        if (pending) await deliveryLedger.replace(pending.previous, pending.restore); // nothing went out — see `pending`
         // `available` (remaining − inFlight) can be negative when a stale in-flight row overcounts —
         // clamp only the displayed number; the refusal itself already happened on the raw comparison.
         return { sent: 0, failed: 0, error: `Typefully 월간 발행 쿼터가 부족합니다 — 필요 ${needed}건, 잔여 ${Math.max(0, available)}건${when}` };
@@ -488,12 +495,12 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
           : result.unconfigured > 0 ? `${result.unconfiguredEnv.join(", ")} is not set`
           : result.withheld > 0 ? "withheld by the first-delivery guard"
           : "no approved copy to send";
-        if (restore && previous) await deliveryLedger.replace(previous, restore); // nothing went out — see `restore`
+        if (pending) await deliveryLedger.replace(pending.previous, pending.restore); // nothing went out — see `pending`
         return { sent: 0, failed: result.failed, error: `${outlet.label} (${outlet.id}): ${reason}` };
       }
       return { sent: result.sent, failed: result.failed };
     } catch (err) {
-      if (restore && previous) await deliveryLedger.replace(previous, restore); // the send threw before reaching the room — see `restore`
+      if (pending) await deliveryLedger.replace(pending.previous, pending.restore); // the send threw before reaching the room — see `pending`
       return { sent: 0, failed: 1, error: (err as Error).message };
     }
   };

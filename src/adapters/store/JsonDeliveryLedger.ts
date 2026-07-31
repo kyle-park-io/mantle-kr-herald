@@ -86,10 +86,22 @@ export class JsonDeliveryLedger implements DeliveryLedger {
     await this.mutate((byKey) => byKey.delete(key));
   }
 
+  /**
+   * Deletes `previous`'s key and sets `next`'s key on the same in-memory Map — except when the two
+   * keys are equal, in which case the `delete` is skipped and only `set` runs. That distinction
+   * matters for order, not just correctness: `Map` iteration follows insertion order, and `set` on a
+   * key already present updates its value in place without moving it, while `delete` followed by
+   * `set` re-inserts the key at the end. `loadAll()`'s array order is exactly this Map's iteration
+   * order, and `sendToOutlet.ts`'s actual resend shape never changes a row's key — only its
+   * `status`/`postId`/`url` — so skipping the no-op delete keeps a same-key `replace()` from moving
+   * the row, matching `PgDeliveryLedger.replace`'s equivalent fast path for `ordinal`.
+   */
   async replace(previous: DeliveryEntry, next: DeliveryEntry): Promise<void> {
     await this.mutate((byKey) => {
-      byKey.delete(deliveryKey(previous));
-      byKey.set(deliveryKey(next), next);
+      const previousKey = deliveryKey(previous);
+      const nextKey = deliveryKey(next);
+      if (previousKey !== nextKey) byKey.delete(previousKey);
+      byKey.set(nextKey, next);
     });
   }
 }

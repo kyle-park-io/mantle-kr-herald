@@ -44,6 +44,24 @@ describe("JsonDeliveryLedger", () => {
     expect(await l.loadAll()).toEqual([]);
   });
 
+  // REGRESSION: `replace()` deletes `previous`'s key then sets `next`'s key on the same Map — an
+  // unconditional delete-then-set moves the row to the end of Map iteration order even when the two
+  // keys are equal, which is sendToOutlet.ts's actual resend shape (`restore` never changes the
+  // key). `loadAll()`'s array order is this Map's iteration order, and PgDeliveryLedger's `ordinal`
+  // depends on the same insertion-order invariant, so both adapters must agree on it.
+  it("a same-key replace() keeps the row's position, matching a plain add()'s upsert", async () => {
+    const l = new JsonDeliveryLedger(dir);
+    await l.add(sent);
+    await l.add({ ...sent, outletId: "tg-dev" });
+    await l.add({ ...sent, outletId: "tg-defi" });
+
+    await l.replace(sent, { ...sent, url: "https://t.me/c/1/2" });
+
+    const all = await l.loadAll();
+    expect(all.map((e) => e.outletId)).toEqual(["tg-community", "tg-dev", "tg-defi"]);
+    expect(all[0]?.url).toBe("https://t.me/c/1/2");
+  });
+
   /**
    * Residual race, accepted rather than fixed. `add()` is a plain read-modify-write: two overlapping
    * calls on the SAME instance both read the same file, and the second `rename` silently discards

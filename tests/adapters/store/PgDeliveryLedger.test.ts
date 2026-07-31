@@ -158,6 +158,39 @@ describe("PgDeliveryLedger", () => {
     expect(all[0]?.url).toBe("https://t.me/c/1/2");
   });
 
+  // REGRESSION: `replace()` is DELETE-then-INSERT in the general case, and a naive implementation
+  // ran that unconditionally even when `previous` and `next` share a key — sendToOutlet.ts's actual
+  // resend shape. That gave the row a fresh `ordinal` and moved it to the end of `loadAll()`, the
+  // same bug the "update leaves ordinal untouched" test above pins for `add()`.
+  it("a same-key replace() leaves ordinal untouched, so loadAll() keeps insertion order", async () => {
+    const localDb = await createTestDb();
+    db = localDb;
+    const ledger = new PgDeliveryLedger(localDb);
+    await ledger.add(sent);
+    await ledger.add({ ...sent, outletId: "tg-dev" });
+    await ledger.add({ ...sent, outletId: "tg-defi" });
+
+    const [{ ordinal: ordinalBefore }] = await localDb.query<{ ordinal: string }>(
+      "select ordinal from deliveries where item_id = $1 and type = $2 and outlet_id = $3",
+      [sent.itemId, sent.type, sent.outletId],
+    );
+
+    // Replace the first-inserted row last, same key throughout — if `replace` ever deleted and
+    // re-inserted for a same-key call, this would move the tg-community row to the end of
+    // loadAll() and bump its ordinal value.
+    await ledger.replace(sent, { ...sent, url: "https://t.me/c/1/2" });
+
+    const [{ ordinal: ordinalAfter }] = await localDb.query<{ ordinal: string }>(
+      "select ordinal from deliveries where item_id = $1 and type = $2 and outlet_id = $3",
+      [sent.itemId, sent.type, sent.outletId],
+    );
+    expect(ordinalAfter).toBe(ordinalBefore);
+
+    const all = await ledger.loadAll();
+    expect(all.map((e) => e.outletId)).toEqual(["tg-community", "tg-dev", "tg-defi"]);
+    expect(all[0]?.url).toBe("https://t.me/c/1/2");
+  });
+
   /**
    * `JsonDeliveryLedger.loadAll()` fell back to `channels.json` when `deliveries.json` was absent,
    * and its doc comment warns that a migrated legacy row must keep appearing in `loadKeys()` after
