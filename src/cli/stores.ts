@@ -24,6 +24,7 @@ import { PgFewShotStore, fewShotStoresByType } from "../adapters/store/PgFewShot
 import { PgCollectionRepository } from "../adapters/store/PgCollectionRepository";
 import { PgLarkRepository } from "../adapters/store/PgLarkRepository";
 import { PgContentSource, PgXContentSource, PgLarkContentSource } from "../adapters/store/PgContentSource";
+import { pgXArticleMeta } from "../adapters/content/xArticleMeta";
 
 /**
  * The full set of `Pg*` stores a live command (`serve.ts`, or any one-shot CLI entry point) reads
@@ -71,6 +72,9 @@ export interface Stores {
   xContentSource: ContentSource;
   /** Lark items only — the `--source lark` counterpart to `xContentSource` above. */
   larkContentSource: ContentSource;
+  /** Whether an item is an X Article and its cover image url — replaces
+   *  `xArticleMeta(paths.xItems)`, reading `x_threads` instead of `x/items.json`. */
+  xArticleMeta: (itemId: string) => Promise<{ isArticle: boolean; coverImageUrl?: string }>;
 }
 
 export function createStores(db: Db): Stores {
@@ -90,5 +94,6 @@ export function createStores(db: Db): Stores {
     contentSource: new PgContentSource(db),
     xContentSource: new PgXContentSource(db),
     larkContentSource: new PgLarkContentSource(db),
+    xArticleMeta: pgXArticleMeta(db),
   };
 }
