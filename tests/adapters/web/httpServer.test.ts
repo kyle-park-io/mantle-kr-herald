@@ -248,6 +248,7 @@ describe("startServer", () => {
     expect((savedInputs[0] as { koreanText: string }).koreanText).toBe("새 번역");
   });
 
+  // Authenticated — see "returns a generic 500 body" below for the one unauthenticated route.
   it("returns a clean 500 error body when a dependency throws (no crash)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "web-"));
     await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
@@ -286,6 +287,39 @@ describe("startServer", () => {
 
     expect(res.status).toBe(500);
     expect(((await res.json()) as { error: string }).error).toContain("boom");
+  });
+
+  /**
+   * `POST /api/login` is the one route reachable with no session, and it reaches live database
+   * queries through `Login` → `PgAttemptLimiter`. A driver failure there (a bad `DATABASE_URL`, an
+   * unmigrated schema, a rejected password) must not repeat the detailed body the authenticated case
+   * above gets — that would hand an unauthenticated caller the driver's own text: schema names,
+   * internal hostnames, database usernames. Same bar the 401 elsewhere on this route already holds
+   * itself to: no detail about why.
+   */
+  it("returns a generic 500 body — not the driver's own text — when POST /api/login's dependency throws", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "web-"));
+    await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+    const deps = fakeDeps();
+    deps.login = async () => {
+      throw new Error('relation "auth_attempts" does not exist');
+    };
+    const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
+    servers.push(server);
+    await new Promise((r) => server.once("listening", r));
+    const { port } = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${port}`;
+
+    const res = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "herald", password: "pw" }),
+    });
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).not.toContain("auth_attempts");
+    expect(body.error).not.toContain("relation");
   });
 
   it("serves a local publish file as text/markdown", async () => {

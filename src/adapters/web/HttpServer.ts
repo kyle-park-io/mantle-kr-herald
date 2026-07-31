@@ -148,6 +148,10 @@ async function readBody(req: import("node:http").IncomingMessage, maxBytes: numb
 export function startServer(deps: ApiDeps, opts: { port: number; staticDir: string; localPublishDir: string }): Server {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
+    // Hoisted so the catch block at the bottom can tell an authenticated failure from an
+    // unauthenticated one — set inside the `/api/` branch below, left `undefined` for every request
+    // that never got that far (a static asset, or `POST /api/login` itself).
+    let session: SessionPayload | undefined;
     try {
       // Before any route: a state-changing request from somewhere else never reaches a use case.
       const refusal = refusalReason(req.method ?? "GET", req.headers.origin, req.headers["content-type"]);
@@ -182,7 +186,7 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
         return;
       }
       if (url.pathname.startsWith("/api/")) {
-        const session = currentSession(req, deps.sessionConfig.secret);
+        session = currentSession(req, deps.sessionConfig.secret);
         // Refused before the body is ever read. `readBody` used to run unconditionally here, ahead
         // of this same gate inside `handleApi` — an unauthenticated 20 MB `PUT` was fully read and
         // concatenated before the 401 that was always coming ever went out. A request the gate is
@@ -225,12 +229,29 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
       }
       res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "application/octet-stream" }).end(data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       if (res.headersSent) {
         res.end();
-      } else {
-        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: message }));
+        return;
       }
+      if (session) {
+        // An authenticated caller is a trusted team operator, not a stranger — the same tier as one
+        // running this command from a terminal, where an uncaught error already prints its own
+        // message. There is nothing in `err.message` here that a signed-in team member does not
+        // already have access to, and the detail is what lets them fix it without needing a
+        // terminal.
+        const message = err instanceof Error ? err.message : String(err);
+        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: message }));
+        return;
+      }
+      // No session — in practice always `POST /api/login`, the one route reachable without one (a
+      // static asset failing this hard is a broken install, not a request this is written for). A
+      // driver failure reached from `Login` → `PgAttemptLimiter` (a bad `DATABASE_URL`, an
+      // unmigrated schema, a rejected password) must not hand an unauthenticated caller the driver's
+      // own text — schema names, internal hostnames, database usernames. Same bar the 401 above
+      // already holds itself to: no detail about why. The real message still goes somewhere — the
+      // server's own log — rather than nowhere.
+      console.error("unauthenticated request failed:", err);
+      res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: "internal error" }));
     }
   });
   server.listen(opts.port, "127.0.0.1");
