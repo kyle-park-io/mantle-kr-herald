@@ -269,3 +269,35 @@ describe("loadGoogleSheetConfig", () => {
     expect(() => loadGoogleSheetConfig()).toThrow(/GSHEET_ID/);
   });
 });
+
+describe("loadDbConfig", () => {
+  const clear = () => { delete process.env.DATABASE_URL; delete process.env.HERALD_DB_ENV; };
+  beforeEach(clear);
+  afterEach(clear);
+
+  it("refuses when DATABASE_URL is absent", async () => {
+    const { loadDbConfig } = await import("../src/config");
+    process.env.HERALD_DB_ENV = "development";
+    expect(() => loadDbConfig()).toThrow(/DATABASE_URL/);
+  });
+
+  it("refuses when HERALD_DB_ENV is absent — it is never inferred from the URL", async () => {
+    const { loadDbConfig } = await import("../src/config");
+    process.env.DATABASE_URL = "postgres://localhost/herald";
+    expect(() => loadDbConfig()).toThrow(/HERALD_DB_ENV/);
+  });
+
+  it("refuses an HERALD_DB_ENV that is neither production nor development", async () => {
+    const { loadDbConfig } = await import("../src/config");
+    process.env.DATABASE_URL = "postgres://localhost/herald";
+    process.env.HERALD_DB_ENV = "staging";
+    expect(() => loadDbConfig()).toThrow(/production/);
+  });
+
+  it("returns both when both are stated", async () => {
+    const { loadDbConfig } = await import("../src/config");
+    process.env.DATABASE_URL = "postgres://localhost/herald";
+    process.env.HERALD_DB_ENV = "production";
+    expect(loadDbConfig()).toEqual({ url: "postgres://localhost/herald", env: "production" });
+  });
+});

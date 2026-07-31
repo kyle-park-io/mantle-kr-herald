@@ -232,3 +232,36 @@ export function tryLoadStorageMode(): StorageMode | undefined {
 export function loadXMaxWeighted(): number {
   return process.env.X_PREMIUM?.trim() === "true" ? X_PREMIUM_MAX_WEIGHTED : X_MAX_WEIGHTED;
 }
+
+export interface DbConfig {
+  url: string;
+  env: "production" | "development";
+}
+
+const DB_ENV_VALUES = ["production", "development"] as const;
+
+/**
+ * Never inferred from which credentials happen to be present: a `DATABASE_URL` looks the same
+ * whether it points at a laptop's scratch database or the team's shared one, so guessing from the
+ * URL — or defaulting when `HERALD_DB_ENV` is unset — is the one failure this must not allow. A
+ * wrong guess either strands a day of approvals in a database nobody reads, or puts a local
+ * experiment on the team's live board.
+ */
+const DB_REMEDY = "Add DATABASE_URL and HERALD_DB_ENV=development (or \"production\") to .env.";
+
+export function loadDbConfig(): DbConfig {
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error(`Missing required environment variable: DATABASE_URL. ${DB_REMEDY}`);
+  }
+  const env = process.env.HERALD_DB_ENV?.trim();
+  if (!env) {
+    throw new Error(`Missing required environment variable: HERALD_DB_ENV. ${DB_REMEDY}`);
+  }
+  if (!DB_ENV_VALUES.includes(env as (typeof DB_ENV_VALUES)[number])) {
+    throw new Error(
+      `Invalid HERALD_DB_ENV: ${env} (expected "production" or "development"). ${DB_REMEDY}`,
+    );
+  }
+  return { url, env: env as "production" | "development" };
+}
