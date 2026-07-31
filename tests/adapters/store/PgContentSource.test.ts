@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestDb } from "../../support/testDb";
-import { PgContentSource } from "../../../src/adapters/store/PgContentSource";
+import { PgContentSource, PgXContentSource, PgLarkContentSource } from "../../../src/adapters/store/PgContentSource";
 import type { CollectedThread, SourceTweet } from "../../../src/domain/models";
 import type { LarkMessage } from "../../../src/domain/larkMessage";
 
@@ -127,5 +127,29 @@ describe("PgContentSource", () => {
     const pending = await new PgContentSource(db).loadPending(new Set());
 
     expect(pending.map((p) => p.id)).toEqual(["x:100", "lark:om_1"]);
+  });
+});
+
+describe("PgXContentSource", () => {
+  it("returns only X items, even when lark_items also holds rows", async () => {
+    db = await createTestDb();
+    await insertThread(db, { rootId: "100", status: "active", firstSeenAt: "x", tweets: [tweet({ id: "100" })] });
+    await insertLark(db, { messageId: "om_1", chatId: "oc", msgType: "text", createdAt: "2026-01-01T00:00:00.000Z", text: "lark", rawContent: "{}" });
+
+    const pending = await new PgXContentSource(db).loadPending(new Set());
+
+    expect(pending.map((p) => p.id)).toEqual(["x:100"]);
+  });
+});
+
+describe("PgLarkContentSource", () => {
+  it("returns only Lark items, even when x_threads also holds rows", async () => {
+    db = await createTestDb();
+    await insertThread(db, { rootId: "100", status: "active", firstSeenAt: "x", tweets: [tweet({ id: "100" })] });
+    await insertLark(db, { messageId: "om_1", chatId: "oc", msgType: "text", createdAt: "2026-01-01T00:00:00.000Z", text: "lark", rawContent: "{}" });
+
+    const pending = await new PgLarkContentSource(db).loadPending(new Set());
+
+    expect(pending.map((p) => p.id)).toEqual(["lark:om_1"]);
   });
 });
