@@ -2,12 +2,11 @@ import "./registerErrorHandler";
 import { argValue } from "./args";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { XContentSource } from "../adapters/content/XContentSource";
-import { LarkContentSource } from "../adapters/content/LarkContentSource";
-import { CompositeContentSource } from "../adapters/content/CompositeContentSource";
+import { createDb } from "../adapters/db/createDb";
+import { loadDbConfig } from "../config";
+import { createStores } from "./stores";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { JsonFewShotStore } from "../adapters/store/JsonFewShotStore";
-import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { PrepareTranslations, type Selector } from "../app/PrepareTranslations";
 import type { ContentSource } from "../ports/ContentSource";
@@ -16,10 +15,6 @@ import { writeJsonFileAtomic } from "../shared/store/jsonFile";
 import { paths } from "../paths";
 
 const sourceArg = argValue("--source"); // "x" | "lark" | undefined (both)
-const xSource = new XContentSource(paths.xItems);
-const larkSource = new LarkContentSource(paths.larkItems);
-const source: ContentSource =
-  sourceArg === "x" ? xSource : sourceArg === "lark" ? larkSource : new CompositeContentSource([xSource, larkSource]);
 
 const selector: Selector = {};
 const ids = argValue("--ids");
@@ -32,25 +27,34 @@ if (limit) {
   if (Number.isFinite(n)) selector.limit = n;
 }
 
-const usecase = new PrepareTranslations(
-  source,
-  new JsonGlossaryStore(paths.translationConfigDir),
-  new JsonFewShotStore(paths.translationConfigDir),
-  new FileTranslationConfig(paths.translationConfigDir),
-  new JsonTranslationStore(paths.translationsDir),
-  new JsonFewShotStore(paths.translationConfigDir, "tm.json"),
-);
+const db = createDb(loadDbConfig());
+try {
+  const stores = createStores(db);
+  const source: ContentSource =
+    sourceArg === "x" ? stores.xContentSource : sourceArg === "lark" ? stores.larkContentSource : stores.contentSource;
 
-const { worksheet, pending } = await usecase.run(selector);
+  const usecase = new PrepareTranslations(
+    source,
+    new JsonGlossaryStore(paths.translationConfigDir),
+    stores.fewShotStore,
+    new FileTranslationConfig(paths.translationConfigDir),
+    stores.translationStore,
+    new JsonFewShotStore(paths.translationConfigDir, "tm.json"),
+  );
 
-await mkdir(paths.translationsWorksheets, { recursive: true });
-const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const worksheetPath = join(paths.translationsWorksheets, `batch-${stamp}.md`);
-await writeFile(worksheetPath, worksheet, "utf8");
+  const { worksheet, pending } = await usecase.run(selector);
 
-const archived = await archiveFile(paths.translationsPending, paths.archiveDir, "pending-translations");
-if (archived) console.log(`  archived the previous unsaved batch → ${archived}`);
-await writeJsonFileAtomic(paths.translationsDir, paths.translationsPending, pending);
+  await mkdir(paths.translationsWorksheets, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const worksheetPath = join(paths.translationsWorksheets, `batch-${stamp}.md`);
+  await writeFile(worksheetPath, worksheet, "utf8");
 
-console.log(`prepared ${pending.length} item(s) → ${worksheetPath}`);
-console.log("Translate each item's 원문 into the 번역 section, then run: pnpm translate:save --id <id> --file <korean.txt> [--approve]");
+  const archived = await archiveFile(paths.translationsPending, paths.archiveDir, "pending-translations");
+  if (archived) console.log(`  archived the previous unsaved batch → ${archived}`);
+  await writeJsonFileAtomic(paths.translationsDir, paths.translationsPending, pending);
+
+  console.log(`prepared ${pending.length} item(s) → ${worksheetPath}`);
+  console.log("Translate each item's 원문 into the 번역 section, then run: pnpm translate:save --id <id> --file <korean.txt> [--approve]");
+} finally {
+  await db.close();
+}
