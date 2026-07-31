@@ -41,6 +41,7 @@ import {
   loadXMaxWeighted,
   loadDbConfig,
   tryLoadAuthConfig,
+  loadSessionConfig,
 } from "../config";
 import { Login, type LoginResult } from "../app/Login";
 import { createAttemptLimiter } from "../domain/auth/attemptLimiter";
@@ -62,6 +63,10 @@ import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 
 const port = Number(process.env.PORT) || 5757;
 const dbConfig = loadDbConfig();
+// Required once the gate exists at all: signing a session on login and verifying one on every other
+// request both need this secret, so a server with none has no way to run the gate — see
+// `loadSessionConfig()`'s own doc comment for why this is a hard refusal, not an optional one.
+const sessionConfig = loadSessionConfig();
 // One pool for the life of this process — a long-running server, unlike the one-shot CLI commands,
 // which each open and close their own.
 const db = createDb(dbConfig);
@@ -359,6 +364,10 @@ const deps: ApiDeps = {
   saveTranslation,
   publishOne,
   login,
+  sessionConfig,
+  // Overwritten per request by `HttpServer` from the incoming `Cookie` header — this base value is
+  // never read.
+  session: undefined,
   storageMode,
   formattingStore,
   conversionStore,

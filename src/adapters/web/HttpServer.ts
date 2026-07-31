@@ -1,8 +1,10 @@
 // src/adapters/web/HttpServer.ts
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type IncomingMessage } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join, normalize, extname, resolve, sep } from "node:path";
 import { handleApi, type ApiDeps } from "./apiHandlers";
+import { readSessionToken } from "./sessionCookie";
+import { verifySession, type SessionPayload } from "../../domain/auth/session";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -58,6 +60,18 @@ export function refusalReason(method: string, origin?: string, contentType?: str
   return undefined;
 }
 
+/**
+ * The verified session for this request, or `undefined`. Read from the `Cookie` header and checked
+ * against `secret` once, right here — `HttpServer` is the one place a raw HTTP header exists, and
+ * handing the already-verified payload to `handleApi` (via `ApiDeps.session`) keeps that function
+ * testable without a real HTTP request. `verifySession` never throws, so a malformed or absent
+ * cookie ends up `undefined` the same as a genuinely missing one.
+ */
+function currentSession(req: IncomingMessage, secret: string): SessionPayload | undefined {
+  const token = readSessionToken(req.headers.cookie);
+  return token ? verifySession(token, secret, new Date()) : undefined;
+}
+
 async function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
@@ -80,6 +94,14 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
         return;
       }
       if (url.pathname.startsWith("/api/publish/local/")) {
+        // Not routed through `handleApi` — its own gate, mirroring the one at the top of that
+        // function, since this is the one `/api/` path that bypasses it entirely. It serves
+        // unpublished review/approved markdown in local storage mode, which is exactly the kind of
+        // content "the board is not public" is about.
+        if (!currentSession(req, deps.sessionConfig.secret)) {
+          res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: "unauthenticated" }));
+          return;
+        }
         try {
           const rel = normalize(decodeURIComponent(url.pathname.slice("/api/publish/local/".length)))
             .replace(/^(\.\.[/\\])+/, "")
@@ -98,10 +120,13 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
         return;
       }
       if (url.pathname.startsWith("/api/")) {
+        const session = currentSession(req, deps.sessionConfig.secret);
         const body = req.method === "POST" || req.method === "PUT" ? await readBody(req) : undefined;
-        const result = await handleApi(deps, req.method ?? "GET", url.pathname, body);
+        const result = await handleApi({ ...deps, session }, req.method ?? "GET", url.pathname, body);
         const payload = JSON.stringify(result.json);
-        res.writeHead(result.status, { "Content-Type": "application/json; charset=utf-8" }).end(payload);
+        const headers: Record<string, string> = { "Content-Type": "application/json; charset=utf-8" };
+        if (result.setCookie) headers["Set-Cookie"] = result.setCookie;
+        res.writeHead(result.status, headers).end(payload);
         return;
       }
       // static: map path to a file under staticDir, default to index.html (SPA fallback)

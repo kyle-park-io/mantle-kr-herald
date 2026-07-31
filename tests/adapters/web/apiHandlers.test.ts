@@ -5,6 +5,15 @@ import type { BoardView } from "../../../src/adapters/web/board";
 import type { Translation } from "../../../src/domain/translation/models";
 import type { ChannelRendering } from "../../../src/domain/formatting/models";
 import type { ContentVariant } from "../../../src/domain/conversion/models";
+import { SESSION_TTL_MS } from "../../../src/domain/auth/session";
+
+/**
+ * None of these tests are about the session gate (that is `gate.test.ts`'s job) — they exercise the
+ * routes below it, so every `ApiDeps` this file builds carries an already-authenticated session by
+ * default, the same way it carries harmless stubs for every other dependency a given test does not
+ * care about.
+ */
+const AUTHENTICATED_SESSION = { issuedAt: new Date().toISOString() };
 
 function tr(over: Partial<Translation> = {}): Translation {
   return { itemId: "x:1", source: "x", sourceText: "src", koreanText: "ko", status: "translated", translatedAt: "t", ...over };
@@ -145,6 +154,8 @@ function makeDeps(
     } as unknown as ApiDeps["formatVariants"],
     loadQuota: async () => ({ error: "not configured" }),
     login: async () => ({ ok: false, retryAfterMs: 0 }),
+    sessionConfig: { secret: "test-secret-at-least-32-characters-long", ttlMs: SESSION_TTL_MS },
+    session: AUTHENTICATED_SESSION,
   };
 }
 

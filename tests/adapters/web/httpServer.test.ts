@@ -6,57 +6,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer } from "../../../src/adapters/web/HttpServer";
 import type { ApiDeps } from "../../../src/adapters/web/apiHandlers";
+import { SESSION_COOKIE_NAME } from "../../../src/adapters/web/sessionCookie";
+import { signSession } from "../../../src/domain/auth/session";
+import { fakeDeps, fakeRenderingDeps, fakeBoardDeps, fakeConvertFormatDeps, TEST_SESSION_SECRET } from "../../support/fakeApiDeps";
 
 const servers: import("node:http").Server[] = [];
 afterEach(() => servers.forEach((s) => s.close()));
 
-// §7 renderings deps are irrelevant to these HttpServer-level tests (transport concerns
-// only), so they're stubbed out identically wherever an ApiDeps literal is needed.
-function fakeRenderingDeps(): Pick<ApiDeps, "formattingStore" | "conversionStore" | "saveRendering" | "approveRendering"> {
-  return {
-    formattingStore: { loadAll: async () => [], upsert: async () => {}, listRenderedKeys: async () => new Set() },
-    conversionStore: { loadAll: async () => [], upsert: async () => {}, listConvertedKeys: async () => new Set() },
-    saveRendering: { run: async () => ({ itemId: "x:1", type: "x", channel: "x" }) } as unknown as ApiDeps["saveRendering"],
-    approveRendering: { run: async () => undefined } as unknown as ApiDeps["approveRendering"],
-  };
-}
-
-/** §8 board deps, likewise irrelevant to transport-level tests. */
-function fakeBoardDeps(): Pick<ApiDeps, "loadBoard" | "saveOutletOverride" | "markDelivery" | "sendToOutlet" | "reconcilePublished"> {
-  return {
-    loadBoard: async (itemId: string) => ({ itemId, groups: [], unconverted: [] }),
-    saveOutletOverride: { run: async () => undefined } as unknown as ApiDeps["saveOutletOverride"],
-    markDelivery: { run: async () => {} } as unknown as ApiDeps["markDelivery"],
-    reconcilePublished: async () => ({ reconciled: 0, retired: 0, pending: 0 }),
-    sendToOutlet: async () => ({ sent: 0, failed: 0 }),
-  };
-}
-
-/** §10 conversion/format triggers, likewise irrelevant to transport-level tests. */
-function fakeConvertFormatDeps(): Pick<ApiDeps, "prepareConversionRun" | "formatVariants"> {
-  return {
-    prepareConversionRun: { run: async () => ({ worksheetPath: "", pending: 0 }) } as unknown as ApiDeps["prepareConversionRun"],
-    formatVariants: { run: async () => ({ renderings: [], warnings: [] }) } as unknown as ApiDeps["formatVariants"],
-  };
-}
-
-function fakeDeps(): ApiDeps {
-  return {
-    translationStore: { loadAll: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }], upsert: async () => {}, listTranslatedIds: async () => new Set() },
-    saveTranslation: { run: async () => ({ itemId: "x:1", promoted: false }) } as unknown as ApiDeps["saveTranslation"],
-    publishOne: async () => ({ uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }),
-    storageMode: "cloud",
-    ...fakeRenderingDeps(),
-    ...fakeBoardDeps(),
-    ...fakeConvertFormatDeps(),
-    loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development" }),
-    loadPublishState: async () => [],
-    loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
-    xMaxWeighted: 280,
-    loadQuota: async () => ({ error: "not configured" }),
-    login: async () => ({ ok: false, retryAfterMs: 0 }),
-  };
-}
+/**
+ * A signed, currently-valid cookie header — every test below that expects a real route to run (not
+ * merely to be gated) needs one, since `fakeDeps()`'s own `session` field is irrelevant here: it is
+ * always overwritten per request by `HttpServer` from the real `Cookie` header, exactly as it is in
+ * production.
+ */
+const authCookieHeader = (): Record<string, string> => ({
+  Cookie: `${SESSION_COOKIE_NAME}=${signSession({ issuedAt: new Date().toISOString() }, TEST_SESSION_SECRET)}`,
+});
 
 async function start(staticDir: string, localPublishDir = staticDir) {
   const server = startServer(fakeDeps(), { port: 0, staticDir, localPublishDir });
@@ -71,9 +36,62 @@ describe("startServer", () => {
     const dir = await mkdtemp(join(tmpdir(), "web-"));
     await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
     const base = await start(dir);
-    const res = await fetch(`${base}/api/translations`);
+    const res = await fetch(`${base}/api/translations`, { headers: authCookieHeader() });
     expect(res.status).toBe(200);
     expect(((await res.json()) as { itemId: string }[])[0].itemId).toBe("x:1");
+  });
+
+  describe("the session gate", () => {
+    it("answers 401 for an API request with no session cookie — reads included, the board is not public", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "web-"));
+      await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+      const base = await start(dir);
+
+      const res = await fetch(`${base}/api/translations`);
+
+      expect(res.status).toBe(401);
+    });
+
+    it("POST /api/login sets a session cookie with the right attributes on success", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "web-"));
+      await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+      const deps = fakeDeps();
+      deps.login = async () => ({ ok: true });
+      const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
+      servers.push(server);
+      await new Promise((r) => server.once("listening", r));
+      const { port } = server.address() as AddressInfo;
+      const base = `http://127.0.0.1:${port}`;
+
+      const res = await fetch(`${base}/api/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: "herald", password: "pw" }),
+      });
+
+      expect(res.status).toBe(200);
+      const cookie = res.headers.get("set-cookie") ?? "";
+      expect(cookie).toContain(`${SESSION_COOKIE_NAME}=`);
+      expect(cookie).toContain("HttpOnly");
+      expect(cookie).toContain("Secure");
+      expect(cookie).toContain("SameSite=Lax");
+      expect(cookie).toContain("Path=/");
+      // Max-Age matches the token's own lifetime (SESSION_TTL_MS, 12h) in seconds.
+      expect(cookie).toContain(`Max-Age=${12 * 60 * 60}`);
+    });
+
+    it("POST /api/logout clears the session cookie", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "web-"));
+      await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+      const base = await start(dir);
+
+      const res = await fetch(`${base}/api/logout`, { method: "POST", headers: authCookieHeader() });
+
+      expect(res.status).toBe(200);
+      const cookie = res.headers.get("set-cookie") ?? "";
+      expect(cookie).toContain(`${SESSION_COOKIE_NAME}=;`);
+      expect(cookie).toContain("Max-Age=0");
+    });
   });
 
   it("serves index.html for a non-API path (SPA fallback)", async () => {
@@ -111,6 +129,8 @@ describe("startServer", () => {
       xMaxWeighted: 280,
       loadQuota: async () => ({ error: "not configured" }),
       login: async () => ({ ok: false, retryAfterMs: 0 }),
+      sessionConfig: { secret: TEST_SESSION_SECRET, ttlMs: 1000 },
+      session: undefined,
     };
     const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
     servers.push(server);
@@ -120,7 +140,7 @@ describe("startServer", () => {
 
     const res = await fetch(`${base}/api/translations/x%3A1`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authCookieHeader() },
       body: JSON.stringify({ koreanText: "새 번역" }),
     });
 
@@ -153,6 +173,8 @@ describe("startServer", () => {
       xMaxWeighted: 280,
       loadQuota: async () => ({ error: "not configured" }),
       login: async () => ({ ok: false, retryAfterMs: 0 }),
+      sessionConfig: { secret: TEST_SESSION_SECRET, ttlMs: 1000 },
+      session: undefined,
     };
     const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
     servers.push(server);
@@ -160,7 +182,7 @@ describe("startServer", () => {
     const { port } = server.address() as AddressInfo;
     const base = `http://127.0.0.1:${port}`;
 
-    const res = await fetch(`${base}/api/translations`);
+    const res = await fetch(`${base}/api/translations`, { headers: authCookieHeader() });
 
     expect(res.status).toBe(500);
     expect(((await res.json()) as { error: string }).error).toContain("boom");
@@ -174,11 +196,27 @@ describe("startServer", () => {
     await writeFile(join(pubDir, "approved", "doc.md"), "# 발행본\n본문");
     const base = await start(staticDir, pubDir);
 
-    const res = await fetch(`${base}/api/publish/local/approved/doc.md`);
+    const res = await fetch(`${base}/api/publish/local/approved/doc.md`, { headers: authCookieHeader() });
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/markdown");
     expect(await res.text()).toBe("# 발행본\n본문");
+  });
+
+  // This route bypasses `handleApi` entirely (its own branch in `HttpServer.ts`), so it needs its
+  // own gate check rather than inheriting the one `handleApi` runs — this proves that check is
+  // actually there, not just the one inside `handleApi`.
+  it("answers 401 for a local publish file with no session cookie", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "web-"));
+    await writeFile(join(staticDir, "index.html"), "<!doctype html><title>x</title>");
+    const pubDir = await mkdtemp(join(tmpdir(), "pub-"));
+    await mkdir(join(pubDir, "approved"), { recursive: true });
+    await writeFile(join(pubDir, "approved", "doc.md"), "# 발행본\n본문");
+    const base = await start(staticDir, pubDir);
+
+    const res = await fetch(`${base}/api/publish/local/approved/doc.md`);
+
+    expect(res.status).toBe(401);
   });
 
   it("returns 404 for a traversal attempt, reading nothing outside the root", async () => {
@@ -187,7 +225,7 @@ describe("startServer", () => {
     const pubDir = await mkdtemp(join(tmpdir(), "pub-"));
     const base = await start(staticDir, pubDir);
 
-    const res = await fetch(`${base}/api/publish/local/../../etc/passwd`);
+    const res = await fetch(`${base}/api/publish/local/../../etc/passwd`, { headers: authCookieHeader() });
 
     expect(res.status).toBe(404);
   });
@@ -202,7 +240,7 @@ describe("startServer", () => {
     const pubDir = await mkdtemp(join(tmpdir(), "pub-"));
     const base = await start(staticDir, pubDir);
 
-    const res = await fetch(`${base}/api/publish/local/..%2f..%2fetc%2fpasswd`);
+    const res = await fetch(`${base}/api/publish/local/..%2f..%2fetc%2fpasswd`, { headers: authCookieHeader() });
 
     expect(res.status).toBe(404);
   });
@@ -213,7 +251,7 @@ describe("startServer", () => {
     const pubDir = await mkdtemp(join(tmpdir(), "pub-"));
     const base = await start(staticDir, pubDir);
 
-    const res = await fetch(`${base}/api/publish/local/nope.md`);
+    const res = await fetch(`${base}/api/publish/local/nope.md`, { headers: authCookieHeader() });
 
     expect(res.status).toBe(404);
     expect(await res.text()).not.toContain("dash");
@@ -225,7 +263,7 @@ describe("startServer", () => {
     const pubDir = await mkdtemp(join(tmpdir(), "pub-"));
     const base = await start(staticDir, pubDir);
 
-    const res = await fetch(`${base}/api/publish/local/%zz`);
+    const res = await fetch(`${base}/api/publish/local/%zz`, { headers: authCookieHeader() });
 
     expect(res.status).toBe(404);
   });
@@ -274,8 +312,8 @@ describe("startServer", () => {
 
     it("allows the dashboard's own send (same-origin, and the no-Origin case)", async () => {
       const { base, sends } = await startCounting();
-      expect((await send(base, { Origin: base })).status).toBe(200);
-      expect((await send(base)).status).toBe(200);
+      expect((await send(base, { Origin: base, ...authCookieHeader() })).status).toBe(200);
+      expect((await send(base, authCookieHeader())).status).toBe(200);
       expect(sends).toHaveLength(2);
     });
 
@@ -283,7 +321,7 @@ describe("startServer", () => {
     // Origin intact, so the guard cannot key on this server's own port.
     it("allows a send proxied from the Vite dev server on another loopback port", async () => {
       const { base, sends } = await startCounting();
-      expect((await send(base, { Origin: "http://localhost:5173" })).status).toBe(200);
+      expect((await send(base, { Origin: "http://localhost:5173", ...authCookieHeader() })).status).toBe(200);
       expect(sends).toHaveLength(1);
     });
 
@@ -297,7 +335,7 @@ describe("startServer", () => {
 
     it("leaves reads alone — a foreign Origin on a GET still serves", async () => {
       const { base } = await startCounting();
-      const res = await fetch(`${base}/api/translations`, { headers: { Origin: "https://evil.example" } });
+      const res = await fetch(`${base}/api/translations`, { headers: { Origin: "https://evil.example", ...authCookieHeader() } });
       expect(res.status).toBe(200);
     });
   });

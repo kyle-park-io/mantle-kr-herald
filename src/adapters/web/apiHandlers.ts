@@ -20,6 +20,9 @@ import type { PrepareConversionRun } from "../../app/PrepareConversionRun";
 import type { FormatVariants } from "../../app/FormatVariants";
 import type { HeadroomView } from "../../domain/send/headroom";
 import type { LoginResult } from "../../app/Login";
+import { signSession, type SessionPayload } from "../../domain/auth/session";
+import type { SessionConfig } from "../../config";
+import { buildSessionCookie, CLEARED_SESSION_COOKIE } from "./sessionCookie";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -59,6 +62,12 @@ export interface PublishStateRow {
 export interface ApiResult {
   status: number;
   json: unknown;
+  /**
+   * A `Set-Cookie` header value the caller (`HttpServer`) must send with this response. Present only
+   * for `POST /api/login` on success (issuing a session) and `POST /api/logout` (clearing it) —
+   * absent, and therefore not sent, for every other route.
+   */
+  setCookie?: string;
 }
 
 export interface ApiDeps {
@@ -101,6 +110,22 @@ export interface ApiDeps {
   loadQuota: () => Promise<HeadroomView>;
   /** Checks the dashboard's one credential behind a lockout. See `src/app/Login.ts`. */
   login: (credentials: { username: string; password: string }) => Promise<LoginResult>;
+  /**
+   * Secret and lifetime for signing a fresh session on a successful login. `HttpServer` reads the
+   * same `secret` to verify the request's cookie *before* `handleApi` is ever called — one
+   * `SessionConfig` (`loadSessionConfig()`, `src/config.ts`), not two, so the cookie a login hands
+   * out and the signature a later request is checked against can never drift onto different secrets
+   * or lifetimes.
+   */
+  sessionConfig: SessionConfig;
+  /**
+   * The verified session for THIS request, or `undefined` for none. Computed by `HttpServer` from
+   * the incoming `Cookie` header before `handleApi` runs — never derived in here, so `handleApi`
+   * stays callable (and testable) without a real HTTP request. Unlike every other field on
+   * `ApiDeps`, this one is not fixed for the process: each request gets its own value spread over
+   * the same base deps (see `HttpServer.ts`).
+   */
+  session: SessionPayload | undefined;
 }
 
 /** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */
@@ -114,28 +139,52 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
   const segments = path.split("/").filter(Boolean); // ["api", "translations", ...]
   if (segments[0] !== "api") return { status: 404, json: { error: "not found" } };
 
+  const isLoginRoute = method === "POST" && segments.length === 2 && segments[1] === "login";
+
   /**
-   * The one route that must answer before anyone is authenticated.
+   * The session gate: one check, before any route below is matched — the same shape
+   * `refusalReason()` uses in `HttpServer.ts` for the cross-site guard, so a route added below with
+   * no session check of its own is still covered rather than silently reachable.
    *
-   * The refusal says nothing about which half was wrong. With a single account, naming the field
-   * would tell someone probing when they had found the account name — half the secret — so both
-   * failures read identically. The lockout is the one case that says more, because a caller who is
-   * not told to wait will simply keep hammering.
+   * `POST /api/login` is the one exemption: it is what grants a session, so it cannot require one.
+   * Every other route — read or write, the board is not public — answers the same 401 with no further
+   * detail. Distinguishing "no cookie" from "an expired or forged one" would tell a guesser which
+   * half of the problem they still have to solve, the same reasoning the login refusal below applies
+   * to a wrong username vs. a wrong password.
    */
-  if (method === "POST" && segments.length === 2 && segments[1] === "login") {
+  if (!isLoginRoute && !deps.session) {
+    return { status: 401, json: { error: "unauthenticated" } };
+  }
+
+  if (isLoginRoute) {
     const { username, password } = (body ?? {}) as { username?: unknown; password?: unknown };
     if (typeof username !== "string" || typeof password !== "string") {
       return { status: 400, json: { error: "아이디와 비밀번호가 필요합니다." } };
     }
     const result = await deps.login({ username, password });
-    if (result.ok) return { status: 200, json: { ok: true } };
+    if (result.ok) {
+      const token = signSession({ issuedAt: new Date().toISOString() }, deps.sessionConfig.secret);
+      return { status: 200, json: { ok: true }, setCookie: buildSessionCookie(token, deps.sessionConfig.ttlMs) };
+    }
     if (result.retryAfterMs > 0) {
       return {
         status: 429,
         json: { error: "너무 많이 시도했습니다. 잠시 후 다시 시도해 주세요.", retryAfterMs: result.retryAfterMs },
       };
     }
+    // Says nothing about which half was wrong. With a single account, naming the field would tell
+    // someone probing when they had found the account name — half the secret — so both failures
+    // read identically.
     return { status: 401, json: { error: "아이디 또는 비밀번호가 맞지 않습니다." } };
+  }
+
+  /**
+   * Ends the session server-side by clearing the cookie. Gated like every other route above (the
+   * only exemption is `/api/login`), so this is only ever reached by a caller who already has a
+   * session — a session that could not be ended this way is the JWT problem this design rejected.
+   */
+  if (method === "POST" && segments.length === 2 && segments[1] === "logout") {
+    return { status: 200, json: { ok: true }, setCookie: CLEARED_SESSION_COOKIE };
   }
 
   // The frontend cannot know the server's storage mode, and it decides which publish targets to
