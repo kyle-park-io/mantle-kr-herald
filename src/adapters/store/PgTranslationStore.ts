@@ -27,7 +27,7 @@ function toTranslation(row: TranslationRow): Translation {
     approvedAt: row.approved_at,
     isReply: row.is_reply,
     refUrl: row.ref_url,
-  }) as Translation;
+  });
 }
 
 /**
