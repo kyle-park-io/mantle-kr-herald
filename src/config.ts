@@ -1,6 +1,7 @@
 import { parseStorageMode, tryParseStorageMode, type StorageMode } from "./storage/mode";
 import { X_MAX_WEIGHTED, X_PREMIUM_MAX_WEIGHTED } from "./domain/formatting/weightedLength";
 import { ALL_OUTLETS } from "./domain/outlet/models";
+import { SESSION_TTL_MS } from "./domain/auth/session";
 
 export interface Config {
   apiKey: string;
@@ -212,6 +213,43 @@ export function tryLoadAuthConfig(): AuthConfig | undefined {
   const passwordHash = process.env.HERALD_AUTH_PASSWORD_HASH?.trim();
   if (!username || !passwordHash) return undefined;
   return { username, passwordHash };
+}
+
+export interface SessionConfig {
+  secret: string;
+  ttlMs: number;
+}
+
+const SESSION_SECRET_MIN_LENGTH = 32;
+
+/**
+ * Follows `storage/mode.ts`'s register: state the remedy once, reuse it in every refusal for this
+ * variable, because a required secret with no safe default must fail loudly rather than start the
+ * server unauthenticated.
+ */
+const SESSION_REMEDY =
+  "Add HERALD_SESSION_SECRET to .env — generate one with `openssl rand -hex 32`.";
+
+/**
+ * Required, unlike `tryLoadAuthConfig()`: the account above may be absent (an install that has
+ * never gated anything), but once the server signs a session at all, a missing or guessable signing
+ * key means anyone can forge one. There is no safe "unconfigured" behaviour to fall back to here —
+ * only a refusal to start.
+ *
+ * `ttlMs` is `session.ts`'s own `SESSION_TTL_MS`, re-exported through here rather than duplicated,
+ * so the cookie's `Max-Age` and the token's actual enforced lifetime can never drift apart.
+ */
+export function loadSessionConfig(): SessionConfig {
+  const secret = process.env.HERALD_SESSION_SECRET?.trim();
+  if (!secret) {
+    throw new Error(`Missing required environment variable: HERALD_SESSION_SECRET. ${SESSION_REMEDY}`);
+  }
+  if (secret.length < SESSION_SECRET_MIN_LENGTH) {
+    throw new Error(
+      `HERALD_SESSION_SECRET is too short (${secret.length} chars, need at least ${SESSION_SECRET_MIN_LENGTH}). ${SESSION_REMEDY}`,
+    );
+  }
+  return { secret, ttlMs: SESSION_TTL_MS };
 }
 
 export interface TypefullyConfig {

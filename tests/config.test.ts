@@ -301,3 +301,27 @@ describe("loadDbConfig", () => {
     expect(loadDbConfig()).toEqual({ url: "postgres://localhost/herald", env: "production" });
   });
 });
+
+describe("loadSessionConfig", () => {
+  const clear = () => { delete process.env.HERALD_SESSION_SECRET; };
+  beforeEach(clear);
+  afterEach(clear);
+
+  it("refuses when HERALD_SESSION_SECRET is absent", async () => {
+    const { loadSessionConfig } = await import("../src/config");
+    expect(() => loadSessionConfig()).toThrow(/HERALD_SESSION_SECRET/);
+  });
+
+  it("refuses a secret shorter than 32 characters", async () => {
+    const { loadSessionConfig } = await import("../src/config");
+    process.env.HERALD_SESSION_SECRET = "a".repeat(31);
+    expect(() => loadSessionConfig()).toThrow(/too short/);
+  });
+
+  it("returns the secret and the session lifetime", async () => {
+    const { loadSessionConfig } = await import("../src/config");
+    const { SESSION_TTL_MS } = await import("../src/domain/auth/session");
+    process.env.HERALD_SESSION_SECRET = "a".repeat(32);
+    expect(loadSessionConfig()).toEqual({ secret: "a".repeat(32), ttlMs: SESSION_TTL_MS });
+  });
+});
