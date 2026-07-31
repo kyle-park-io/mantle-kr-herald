@@ -135,11 +135,22 @@ async function findById(store: TranslationStore, id: string): Promise<Translatio
   return (await store.loadAll()).find((t) => t.itemId === id);
 }
 
+/**
+ * Whether `method`+`path` is `POST /api/login` — the one route exempt from the session gate.
+ * Exported so `HttpServer.ts` can ask the same question before it ever calls `handleApi` (to skip
+ * reading a body it is about to refuse anyway); computing this in one place means the pre-body-read
+ * gate there and the session gate in here can never disagree about what counts as the login route.
+ */
+export function isLoginRoute(method: string, path: string): boolean {
+  const segments = path.split("/").filter(Boolean);
+  return method === "POST" && segments.length === 2 && segments[0] === "api" && segments[1] === "login";
+}
+
 export async function handleApi(deps: ApiDeps, method: string, path: string, body: unknown): Promise<ApiResult> {
   const segments = path.split("/").filter(Boolean); // ["api", "translations", ...]
   if (segments[0] !== "api") return { status: 404, json: { error: "not found" } };
 
-  const isLoginRoute = method === "POST" && segments.length === 2 && segments[1] === "login";
+  const isLogin = isLoginRoute(method, path);
 
   /**
    * The session gate: one check, before any route below is matched — the same shape
@@ -152,11 +163,11 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
    * half of the problem they still have to solve, the same reasoning the login refusal below applies
    * to a wrong username vs. a wrong password.
    */
-  if (!isLoginRoute && !deps.session) {
+  if (!isLogin && !deps.session) {
     return { status: 401, json: { error: "unauthenticated" } };
   }
 
-  if (isLoginRoute) {
+  if (isLogin) {
     const { username, password } = (body ?? {}) as { username?: unknown; password?: unknown };
     if (typeof username !== "string" || typeof password !== "string") {
       return { status: 400, json: { error: "아이디와 비밀번호가 필요합니다." } };

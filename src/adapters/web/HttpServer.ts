@@ -2,7 +2,7 @@
 import { createServer, type Server, type IncomingMessage } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join, normalize, extname, resolve, sep } from "node:path";
-import { handleApi, type ApiDeps } from "./apiHandlers";
+import { handleApi, isLoginRoute, type ApiDeps } from "./apiHandlers";
 import { readSessionToken } from "./sessionCookie";
 import { verifySession, type SessionPayload } from "../../domain/auth/session";
 
@@ -101,9 +101,32 @@ function currentSession(req: IncomingMessage, secret: string): SessionPayload | 
   return token ? verifySession(token, secret, new Date()) : undefined;
 }
 
-async function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
+/**
+ * Bytes past which `readBody` gives up rather than keep concatenating — measured against what is
+ * actually read off the socket, not the client-declared `Content-Length` (which a request can omit,
+ * understate, or lie about), so a request cannot buffer past the cap just by mislabeling itself.
+ *
+ * 2 MiB is far above the largest legitimate payload on this API. Every write route on this API sends
+ * at most one free-text field (`koreanText`, rendering `text`, …) plus a handful of short strings and
+ * booleans; the design spec's own upper bound for the longest of those — an X Article's `sourceText`
+ * — is ~12,000 characters, under 50 KB even in the worst-case multi-byte UTF-8 encoding. The cap
+ * exists to bound memory, not to police content size, so nothing here is expected to ever get close
+ * to it.
+ */
+const MAX_API_BODY_BYTES = 2 * 1024 * 1024;
+
+/** Thrown by `readBody` when a request body exceeds `MAX_API_BODY_BYTES`. */
+class BodyTooLargeError extends Error {}
+
+async function readBody(req: import("node:http").IncomingMessage, maxBytes: number): Promise<unknown> {
   const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
+  let total = 0;
+  for await (const c of req) {
+    const chunk = c as Buffer;
+    total += chunk.length;
+    if (total > maxBytes) throw new BodyTooLargeError();
+    chunks.push(chunk);
+  }
   if (chunks.length === 0) return undefined;
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -150,7 +173,29 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
       }
       if (url.pathname.startsWith("/api/")) {
         const session = currentSession(req, deps.sessionConfig.secret);
-        const body = req.method === "POST" || req.method === "PUT" ? await readBody(req) : undefined;
+        // Refused before the body is ever read. `readBody` used to run unconditionally here, ahead
+        // of this same gate inside `handleApi` — an unauthenticated 20 MB `PUT` was fully read and
+        // concatenated before the 401 that was always coming ever went out. A request the gate is
+        // about to refuse must not first be made to pay for buffering whatever it sent; `req.destroy()`
+        // drops the connection rather than draining the rest of a body nobody is going to look at.
+        if (!session && !isLoginRoute(req.method ?? "GET", url.pathname)) {
+          res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: "unauthenticated" }));
+          req.destroy();
+          return;
+        }
+        let body: unknown;
+        if (req.method === "POST" || req.method === "PUT") {
+          try {
+            body = await readBody(req, MAX_API_BODY_BYTES);
+          } catch (err) {
+            if (err instanceof BodyTooLargeError) {
+              res.writeHead(413, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: "request body too large" }));
+              req.destroy();
+              return;
+            }
+            throw err;
+          }
+        }
         const result = await handleApi({ ...deps, session }, req.method ?? "GET", url.pathname, body);
         const payload = JSON.stringify(result.json);
         const headers: Record<string, string> = { "Content-Type": "application/json; charset=utf-8" };

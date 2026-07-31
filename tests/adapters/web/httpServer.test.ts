@@ -1,6 +1,7 @@
 // tests/adapters/web/httpServer.test.ts
 import { describe, it, expect, afterEach } from "vitest";
 import type { AddressInfo } from "node:net";
+import { connect } from "node:net";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,38 @@ import { fakeDeps, fakeRenderingDeps, fakeBoardDeps, fakeConvertFormatDeps, TEST
 
 const servers: import("node:http").Server[] = [];
 afterEach(() => servers.forEach((s) => s.close()));
+
+/**
+ * Writes `head` (and, optionally, `body`) over a raw TCP socket and collects whatever the server
+ * sends back until the connection closes. A real HTTP client can't express what these tests need:
+ * "declare a huge Content-Length but never finish sending it" (to prove the server answers without
+ * waiting to read a body it was always going to refuse) or "stop writing partway through a body
+ * that's over a server-side cap" (to prove the server stops reading, and answers, right at the cap
+ * rather than after buffering everything the client felt like sending).
+ */
+function rawRequest(port: number, head: string, body?: Buffer): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(head);
+      if (body) socket.write(body);
+    });
+    const chunks: Buffer[] = [];
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("timed out waiting for a response — the server may have blocked reading the body"));
+    }, 3000);
+    socket.on("data", (c) => chunks.push(c));
+    socket.once("close", () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+    socket.on("error", () => {
+      // A server-initiated `req.destroy()` can surface as ECONNRESET on this side; `close` still
+      // follows and is what actually resolves this — swallow the error rather than reject a
+      // request that already got its answer.
+    });
+  });
+}
 
 /**
  * A signed, currently-valid cookie header — every test below that expects a real route to run (not
@@ -104,6 +137,60 @@ describe("startServer", () => {
       const cookie = res.headers.get("set-cookie") ?? "";
       expect(cookie).toContain(`${SESSION_COOKIE_NAME}=;`);
       expect(cookie).toContain("Max-Age=0");
+    });
+
+    // A status-only assertion here would pass even if the old, buggy code path were restored: that
+    // code also eventually answered 401, just after fully reading and concatenating the body first.
+    // This proves the gate runs BEFORE `readBody` by making a body-read impossible to complete: the
+    // request declares a 20 MB body and the socket never sends a single byte of it. If the server
+    // ever tried to read the body before checking the session, it would sit waiting for bytes that
+    // are never coming and this test would time out instead of getting a prompt 401.
+    it("401s a PUT with no session cookie without ever reading its (declared) body", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "web-"));
+      await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+      const base = await start(dir);
+      const { port } = new URL(base);
+
+      const declaredLength = 20 * 1024 * 1024;
+      const head =
+        `PUT /api/translations/x%3A1 HTTP/1.1\r\n` +
+        `Host: 127.0.0.1\r\n` +
+        `Content-Type: application/json\r\n` +
+        `Content-Length: ${declaredLength}\r\n` +
+        `Connection: close\r\n\r\n`;
+
+      const response = await rawRequest(Number(port), head);
+
+      expect(response).toContain(" 401 ");
+      expect(response).toContain("unauthenticated");
+    });
+
+    // The same body-read guard as above extends past the session gate: even an authenticated write
+    // must not let the server buffer an unbounded body. This sends real bytes past the 2 MiB cap
+    // (`MAX_API_BODY_BYTES`) but stops well short of the 10 MB the request declares — if the server
+    // answers here rather than after 10 MB arrive, it stopped reading at the cap, not at the
+    // client's own Content-Length.
+    it("answers 413 for an authenticated body over the cap, without waiting for the rest of it", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "web-"));
+      await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+      const base = await start(dir);
+      const { port } = new URL(base);
+      const cookie = `${SESSION_COOKIE_NAME}=${signSession({ issuedAt: new Date().toISOString() }, TEST_SESSION_SECRET)}`;
+
+      const overCap = Buffer.alloc(2 * 1024 * 1024 + 1024, "a");
+      const declaredLength = 10 * 1024 * 1024;
+      const head =
+        `PUT /api/translations/x%3A1 HTTP/1.1\r\n` +
+        `Host: 127.0.0.1\r\n` +
+        `Content-Type: application/json\r\n` +
+        `Cookie: ${cookie}\r\n` +
+        `Content-Length: ${declaredLength}\r\n` +
+        `Connection: close\r\n\r\n`;
+
+      const response = await rawRequest(Number(port), head, overCap);
+
+      expect(response).toContain(" 413 ");
+      expect(response).toContain("request body too large");
     });
   });
 
