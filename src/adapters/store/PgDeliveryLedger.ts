@@ -41,18 +41,37 @@ function toDeliveryEntry(row: DeliveryRow): DeliveryEntry {
  * `(item_id, type, outlet_id)` primary key on `deliveries` is what used to be the file lock's job —
  * enforced by the database itself rather than by application code.
  *
- * `loadAll()` has no equivalent of `JsonDeliveryLedger`'s fallback to `channels.json`. That fallback
- * existed only because the pre-outlet ledger and the outlet-keyed one were two different files, and
- * `deliveries.json` might not exist yet on a given install. At the database there is exactly one
- * table: `db:import` (Task 15) migrates every legacy `channels.json` row into `deliveries` once,
- * up front, via `migrateLegacyEntry`, as ordinary rows indistinguishable from ones `add()` wrote
- * directly. So the fallback becomes a no-op at rest — there is no second table to fall back to, and
- * no run-time branch reproduces `readJsonFile(..., null) ?? migrate(legacy)`. What must survive is
- * the *semantics* the fallback protected, not its mechanism: a migrated legacy row is a real past
- * send, and once it is a row in this table, an unrelated `add()`/`remove()` for a different key must
- * never make it disappear from `loadAll()` or `loadKeys()`. That already falls out of `add`/`remove`
- * below touching only the row whose key matches — see the "already-migrated row survives an unrelated
- * add()" test.
+ * `loadAll()` has no equivalent of `JsonDeliveryLedger`'s fallback to `channels.json`, and must not
+ * grow one: that fallback is EXCLUSIVE, not additive. `JsonDeliveryLedger.loadAll()`'s
+ * `readJsonFile(path, null)` returns `null` only when `deliveries.json` is entirely absent (ENOENT),
+ * so `if (current) return current` means that the moment `deliveries.json` exists — even holding an
+ * empty array — `channels.json` is ignored completely, never merged with it, even for a send that
+ * only ever landed in the legacy file. `db:import` (Task 15) must inherit that same exclusivity, and
+ * the way to get it for free is to import whatever `JsonDeliveryLedger.loadAll()` itself returns —
+ * not to read and parse `deliveries.json` and `channels.json` separately and union the rows. A union
+ * would resurrect a legacy row a `remove()` had already deleted (undoing an untick of 전달함) or
+ * overwrite a current `dropped` row back to `sent`. Once that one-time import has run, `deliveries`
+ * holds exactly what `JsonDeliveryLedger.loadAll()` would have returned, as ordinary rows
+ * indistinguishable from ones `add()` wrote directly — so there is no second table for *this* store
+ * to fall back to, and no run-time branch here reproduces `readJsonFile(..., null) ?? migrate(legacy)`.
+ *
+ * What must survive from the old fallback is the *semantics* it protected, not its mechanism: a
+ * migrated legacy row is a real past send, and once it is a row in this table, an unrelated
+ * `add()`/`remove()` for a different key must never make it disappear from `loadAll()` or
+ * `loadKeys()`. That falls out of `add`/`remove` below touching only the row whose key matches — see
+ * the "already-migrated row survives an unrelated add()" test.
+ *
+ * WARNING for whoever wires the cutover: that guarantee holds only *after* `db:import` has actually
+ * run. The JSON version's safety net was automatic — a fresh `JsonDeliveryLedger` with no
+ * `deliveries.json` fell back to `channels.json` with zero configuration required. This store has no
+ * such net: it depends on nothing but `Db`, so an empty `deliveries` table looks to `loadKeys()`
+ * exactly like a brand with no send history at all. Cut a hosted install over to Postgres without
+ * running `db:import` first, and `SendChannels.run()`'s `already` and `planRooms()`'s
+ * `everDelivered` both read "never sent" for a fully-populated send history — the next run re-posts
+ * the entire backlog to live Telegram rooms and the brand's own X account. That is the exact failure
+ * `serialWrites.ts` exists to prevent, at a far larger blast radius than the one-lost-row case it was
+ * written about. Nothing in this class can defend against it — enforcing "import before first write"
+ * is a property of the cutover procedure, not of this store.
  */
 export class PgDeliveryLedger implements DeliveryLedger {
   constructor(private readonly db: Db) {}

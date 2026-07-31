@@ -20,7 +20,11 @@ describe("PgDeliveryLedger", () => {
     expect([...(await ledger.loadKeys())]).toEqual(["x:1:announcement:tg-community"]);
   });
 
-  // Required by the task brief, verbatim.
+  // Required by the task brief, verbatim. This only proves the upsert *outcome* — a store doing
+  // select-then-insert in application code would pass it identically. The constraint itself, that
+  // a second raw insert for the same (item_id, type, outlet_id) is rejected by Postgres rather than
+  // merged, is proven directly in tests/adapters/db/schema.test.ts ("rejects a second delivery row
+  // for the same (item, type, outlet)").
   it("refuses a duplicate (item, type, outlet) at the database, not in application code", async () => {
     db = await createTestDb();
     const ledger = new PgDeliveryLedger(db);
@@ -42,6 +46,19 @@ describe("PgDeliveryLedger", () => {
     const keys = await ledger.loadKeys();
     expect(keys.has("x:1:announcement:tg-community")).toBe(true);
     expect(keys.has("x:1:announcement:tg-dev")).toBe(false);
+  });
+
+  it("round-trips every optional field, including senderName — the Telegram sender identity the board shows", async () => {
+    db = await createTestDb();
+    const ledger = new PgDeliveryLedger(db);
+    const full: DeliveryEntry = {
+      ...sent, postId: "111", url: "https://t.me/c/1/2", senderName: "telegram-bot",
+    };
+    await ledger.add(full);
+    const [row] = await ledger.loadAll();
+    expect(row?.postId).toBe("111");
+    expect(row?.url).toBe("https://t.me/c/1/2");
+    expect(row?.senderName).toBe("telegram-bot");
   });
 
   it("upserts on the same key rather than appending", async () => {
@@ -96,11 +113,13 @@ describe("PgDeliveryLedger", () => {
   });
 
   it("survives two overlapping adds of different rows — the reconcile-vs-send race", async () => {
-    // `add()` used to be read-modify-write: two overlapping calls both read the same file and the
-    // second rename silently discarded the first one's row. The dashboard's reconcile pass and the
-    // send path share one ledger, so this is not a theoretical race — it is the exact failure mode
-    // that turns a live scheduled X post into an invisible-then-duplicated one. `insert ... on
-    // conflict` being one statement is what closes it.
+    // This cannot actually fail on PGlite: it's one connection, and `query()` calls are awaited in
+    // turn under the hood, so `Promise.all` here serializes rather than truly overlapping — kept as
+    // a regression marker for the failure mode `JsonDeliveryLedger`'s read-modify-write had (two
+    // overlapping calls both reading the same file, the second rename silently discarding the
+    // first row), not as a test capable of reproducing that race. What actually closes it is `add()`
+    // being a single `insert ... on conflict` statement — proven structurally by there being no
+    // `loadAll` + merge + rewrite in `add()`'s body, not by this test.
     db = await createTestDb();
     const ledger = new PgDeliveryLedger(db);
     const a: DeliveryEntry = { itemId: "x:1", type: "announcement", outletId: "tg-community", status: "sent", at: "2026-07-29T00:00:00.000Z", by: "auto" };

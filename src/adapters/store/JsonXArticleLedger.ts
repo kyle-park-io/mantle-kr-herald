@@ -5,8 +5,6 @@ import { withFileLock } from "../../shared/store/fileLock";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
 import { createSerializer } from "../../shared/store/serialWrites";
 
-export type { XArticleSentEntry };
-
 export class JsonXArticleLedger implements XArticleLedger {
   private readonly path: string;
   private readonly serial = createSerializer();

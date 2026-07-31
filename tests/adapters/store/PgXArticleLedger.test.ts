@@ -22,6 +22,13 @@ describe("PgXArticleLedger", () => {
   });
 
   it("keeps both rows when two adds overlap", async () => {
+    // This cannot actually fail on PGlite: it's one connection, and `query()` calls are awaited in
+    // turn under the hood, so `Promise.all` here serializes rather than truly overlapping — kept as
+    // a regression marker for the failure mode `JsonXArticleLedger`'s read-modify-write had (two
+    // overlapping calls both reading the same file, the second rename silently discarding the first
+    // row), not as a test capable of reproducing that race. What actually closes it is `add()` being
+    // a single `insert ... on conflict` statement — proven structurally by there being no `loadAll`
+    // + merge + rewrite in `add()`'s body, not by this test.
     db = await createTestDb();
     const ledger = new PgXArticleLedger(db);
     await Promise.all([
@@ -42,6 +49,21 @@ describe("PgXArticleLedger", () => {
     expect(row?.postId).toBeUndefined();
     expect(row?.url).toBeUndefined();
     expect(row?.droppedAt).toBeUndefined();
+  });
+
+  it("round-trips every field, including sentAt and droppedAt — a mis-mapped column would ship silently otherwise", async () => {
+    db = await createTestDb();
+    const ledger = new PgXArticleLedger(db);
+    await ledger.add({
+      itemId: "x:1", postId: "111", url: "https://x.com/i/article/111",
+      sentAt: "2026-07-28T00:00:00.000Z", droppedAt: "2026-07-29T00:00:00.000Z",
+    });
+    const [row] = await ledger.loadAll();
+    expect(row?.itemId).toBe("x:1");
+    expect(row?.postId).toBe("111");
+    expect(row?.url).toBe("https://x.com/i/article/111");
+    expect(row?.sentAt).toBe("2026-07-28T00:00:00.000Z");
+    expect(row?.droppedAt).toBe("2026-07-29T00:00:00.000Z");
   });
 
   /**
