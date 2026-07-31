@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { datePrefix, itemUrl } from "../types";
 import type { Translation, PublishStateRow } from "../types";
 import { StatusChip, KindBadge } from "./TranslationList";
+import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
 
 const TARGET_LABEL: Record<"local" | "google" | "lark", string> = {
   local: "로컬 폴더",
@@ -96,7 +97,7 @@ export function TranslationDetail(props: {
       <section className="mb-6">
         <div className="eyebrow mb-2">원문 · source</div>
         <div className="rounded-xl border border-line bg-surface p-4 text-[15px] leading-relaxed whitespace-pre-wrap text-ink/80 shadow-sm">
-          {props.item.sourceText}
+          <MarkerText text={props.item.sourceText} />
         </div>
       </section>
 
@@ -122,6 +123,8 @@ export function TranslationDetail(props: {
           readOnly={approved}
           spellCheck={false}
         />
+        {/* Same problem the "편집 중" chip above solves, and the same fix — see `MediaEditNoticeSlot`. */}
+        <MediaEditNoticeSlot text={korean} where="원문" className="mt-1.5" />
       </section>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
