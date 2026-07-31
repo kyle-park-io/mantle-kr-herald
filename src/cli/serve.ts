@@ -5,19 +5,13 @@ import { join } from "node:path";
 import { startServer } from "../adapters/web/HttpServer";
 import type { ApiDeps } from "../adapters/web/apiHandlers";
 import type { StatusView, PublishStateRow, IntegrationStatus } from "../adapters/web/apiHandlers";
-import { JsonTranslationStore } from "../adapters/store/JsonTranslationStore";
-import { JsonPublishStore } from "../adapters/store/JsonPublishStore";
-import { JsonFewShotStore } from "../adapters/store/JsonFewShotStore";
+import { createDb } from "../adapters/db/createDb";
+import { createStores } from "./stores";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
-import { fewShotStoresByType } from "../adapters/store/JsonTypedFewShotStore";
 import { SaveTranslation } from "../app/SaveTranslation";
 import { PublishTranslations } from "../app/PublishTranslations";
-import { JsonFormattingStore } from "../adapters/store/JsonFormattingStore";
-import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
-import { JsonOutletOverrideStore } from "../adapters/store/JsonOutletOverrideStore";
-import { JsonDeliveryLedger } from "../adapters/store/JsonDeliveryLedger";
 import { SaveRendering } from "../app/SaveRendering";
 import { ApproveRendering } from "../app/ApproveRendering";
 import { SaveOutletOverride } from "../app/SaveOutletOverride";
@@ -44,14 +38,11 @@ import {
   loadTelegramChatIds,
   loadTypefullyConfig,
   loadXMaxWeighted,
+  loadDbConfig,
 } from "../config";
 import { createUploaders, resolveTargets } from "./uploaders";
 import type { PublishResult } from "../app/PublishTranslations";
 import { REPO_ROOT, paths } from "../paths";
-import { buildLineage } from "./lineage-wiring";
-import { XContentSource } from "../adapters/content/XContentSource";
-import { LarkContentSource } from "../adapters/content/LarkContentSource";
-import { CompositeContentSource } from "../adapters/content/CompositeContentSource";
 import { syncSummary } from "../status/sync";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { contentHash, isStale } from "../domain/publish/syncLedger";
@@ -60,21 +51,24 @@ import { publishRowLinks, type PublishLinkConfig } from "../adapters/web/publish
 import { attachKind } from "../adapters/web/attachKind";
 import { resolveSheetTitles } from "../adapters/sheets/sheetTitles";
 import { ReconcilePublished } from "../app/ReconcilePublished";
-import { JsonXArticleLedger } from "../adapters/store/JsonXArticleLedger";
 import { TypefullyDraftLookup } from "../adapters/send/TypefullyDraftLookup";
 import type { DraftLookup } from "../ports/DraftLookup";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 
 const port = Number(process.env.PORT) || 5757;
-const translationStore = new JsonTranslationStore(paths.translationsDir);
-const publishStore = new JsonPublishStore(paths.publishDir);
-const saveTranslation = new SaveTranslation(translationStore, new JsonFewShotStore(paths.translationConfigDir), undefined, buildLineage());
-const formattingStore = new JsonFormattingStore(paths.formattedDir);
-const conversionStore = new JsonConversionStore(paths.variantsDir);
-// Same directories the CLI uses, so `send:channels` and the dashboard read one ledger, not two.
-const overrideStore = new JsonOutletOverrideStore(paths.formattedDir);
-const deliveryLedger = new JsonDeliveryLedger(paths.publishDir);
-const xArticleLedger = new JsonXArticleLedger(paths.publishDir);
+// One pool for the life of this process — a long-running server, unlike the one-shot CLI commands,
+// which each open and close their own.
+const db = createDb(loadDbConfig());
+const stores = createStores(db);
+const translationStore = stores.translationStore;
+const publishStore = stores.publishStore;
+const saveTranslation = new SaveTranslation(translationStore, stores.fewShotStore, undefined, stores.lineageStore);
+const formattingStore = stores.formattingStore;
+const conversionStore = stores.conversionStore;
+// Same database the CLI uses, so `send:channels` and the dashboard read one ledger, not two.
+const overrideStore = stores.overrideStore;
+const deliveryLedger = stores.deliveryLedger;
+const xArticleLedger = stores.xArticleLedger;
 
 const storageMode = loadStorageMode();
 
@@ -156,10 +150,7 @@ if (storageMode === "cloud") {
   }
 }
 
-const contentSource = new CompositeContentSource([
-  new XContentSource(paths.xItems),
-  new LarkContentSource(paths.larkItems),
-]);
+const contentSource = stores.contentSource;
 
 /** The exact bytes an uploader would send for a translation at its current status. */
 const renderFor = (t: Translation): string => (t.status === "approved" ? renderApproved(t) : renderReview(t));
@@ -285,7 +276,8 @@ try {
 
 // The board's per-row [발송] and its resend restore — see sendToOutlet.ts for both doc comments,
 // carried there verbatim. `articleLedger` here is the same singleton `reconcilePublished` reads
-// from, not a fresh instance, so headroom reads never disagree with it (see xArticleLedger above).
+// from, not a fresh instance, so headroom reads never disagree with it — `xArticleLedger` is
+// constructed once above (from `stores`) and shared by both.
 const sendToOutlet = makeSendToOutlet({ formattingStore, deliveryLedger, translationStore, overrideStore, articleLedger: xArticleLedger, draftLookup });
 
 // Same construction as `src/cli/convert-prepare.ts`, so the board and the CLI read and write the
@@ -295,7 +287,7 @@ const prepareConversions = new PrepareConversions(
   new JsonGlossaryStore(paths.translationConfigDir),
   new FileTranslationConfig(paths.translationConfigDir),
   new FileConversionConfig(paths.conversionConfigDir),
-  fewShotStoresByType(paths.conversionConfigDir),
+  stores.fewShotStoresByType,
   conversionStore,
 );
 
@@ -335,8 +327,8 @@ const deps: ApiDeps = {
   storageMode,
   formattingStore,
   conversionStore,
-  saveRendering: new SaveRendering(formattingStore, undefined, buildLineage()),
-  approveRendering: new ApproveRendering(formattingStore, conversionStore, fewShotStoresByType(paths.conversionConfigDir), undefined, buildLineage()),
+  saveRendering: new SaveRendering(formattingStore, undefined, stores.lineageStore),
+  approveRendering: new ApproveRendering(formattingStore, conversionStore, stores.fewShotStoresByType, undefined, stores.lineageStore),
   loadStatus,
   loadPublishState,
   loadTranslations,
@@ -344,7 +336,7 @@ const deps: ApiDeps = {
   loadBoard,
   // The dashboard is the only writer of overrides, so this is the only place a fork's text can be
   // captured — and `그룹 글로 되돌리기` is the only click in the pipeline that deletes an unrecoverable text.
-  saveOutletOverride: new SaveOutletOverride(overrideStore, undefined, buildLineage()),
+  saveOutletOverride: new SaveOutletOverride(overrideStore, undefined, stores.lineageStore),
   markDelivery: new MarkDelivery(deliveryLedger),
   prepareConversionRun,
   formatVariants,
