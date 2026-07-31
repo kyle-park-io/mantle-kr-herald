@@ -3,6 +3,8 @@ import { argValue, parseList } from "./args";
 import { loadTelegramChatIds, loadXMaxWeighted, loadDbConfig } from "../config";
 import { createDb } from "../adapters/db/createDb";
 import { createStores } from "./stores";
+import { assertLedgerMigrated } from "./assertLedgerMigrated";
+import { OUTPUT_DIR } from "../paths";
 import { ALL_OUTLETS, deliveredByChannelSender, outletById, outletsForChannel } from "../domain/outlet/models";
 import { SendChannels } from "../app/SendChannels";
 import { resolveChannelTargets, createSenders } from "./channelSenders";
@@ -36,6 +38,10 @@ const ids = idsArg ? new Set(idsArg.split(",").map((s) => s.trim()).filter((s) =
 
 const db = createDb(loadDbConfig());
 try {
+  // Refuses to send when the deliveries table looks unmigrated — see assertLedgerMigrated's own
+  // doc comment. Checked before anything else in this block: a resend guard downstream of an empty
+  // ledger read cannot catch this itself.
+  await assertLedgerMigrated(db, OUTPUT_DIR);
   const stores = createStores(db);
   const store = stores.formattingStore;
   const ledger = stores.deliveryLedger;

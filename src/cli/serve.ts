@@ -7,6 +7,7 @@ import type { ApiDeps } from "../adapters/web/apiHandlers";
 import type { StatusView, PublishStateRow, IntegrationStatus } from "../adapters/web/apiHandlers";
 import { createDb } from "../adapters/db/createDb";
 import { createStores } from "./stores";
+import { assertLedgerMigrated } from "./assertLedgerMigrated";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
@@ -42,7 +43,7 @@ import {
 } from "../config";
 import { createUploaders, resolveTargets } from "./uploaders";
 import type { PublishResult } from "../app/PublishTranslations";
-import { REPO_ROOT, paths } from "../paths";
+import { REPO_ROOT, OUTPUT_DIR, paths } from "../paths";
 import { syncSummary } from "../status/sync";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { contentHash, isStale } from "../domain/publish/syncLedger";
@@ -59,6 +60,10 @@ const port = Number(process.env.PORT) || 5757;
 // One pool for the life of this process — a long-running server, unlike the one-shot CLI commands,
 // which each open and close their own.
 const db = createDb(loadDbConfig());
+// Refuses to start the dashboard — and therefore ReconcilePublished's scheduler and every
+// [발송] click — against a database that looks unmigrated. See assertLedgerMigrated's own doc
+// comment for why an empty deliveries table is not, by itself, proof of a fresh install.
+await assertLedgerMigrated(db, OUTPUT_DIR);
 const stores = createStores(db);
 const translationStore = stores.translationStore;
 const publishStore = stores.publishStore;

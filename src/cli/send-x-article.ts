@@ -3,6 +3,8 @@ import { argValue } from "./args";
 import { loadTypefullyConfig, loadDbConfig } from "../config";
 import { createDb } from "../adapters/db/createDb";
 import { createStores } from "./stores";
+import { assertLedgerMigrated } from "./assertLedgerMigrated";
+import { OUTPUT_DIR } from "../paths";
 import { TypefullyMedia } from "../adapters/send/TypefullyMedia";
 import { TypefullyArticleSender } from "../adapters/send/TypefullyArticleSender";
 import { SendXArticle } from "../app/SendXArticle";
@@ -15,6 +17,9 @@ const c = loadTypefullyConfig();
 
 const db = createDb(loadDbConfig());
 try {
+  // Refuses to send when the x-article ledger looks unmigrated — see assertLedgerMigrated's own
+  // doc comment.
+  await assertLedgerMigrated(db, OUTPUT_DIR);
   const stores = createStores(db);
   const articleLedger = stores.xArticleLedger;
   // Headroom spans both ledgers (x-post rooms and x-article), so this one-shot process reads its
