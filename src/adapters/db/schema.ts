@@ -176,6 +176,27 @@ const STATEMENTS: readonly string[] = [
     source_text text,
     at text not null
   )`,
+
+  // auth_attempts — the failed-login counter behind the dashboard's one shared credential
+  // (domain/auth/attemptLimiter.ts). One row, not one per client: there is a single credential, so
+  // every attempt is an attempt on the same thing, and keying by IP would only tell an attacker to
+  // rotate addresses — see that file's own comment. `locked_at` null means "not locked out"; set,
+  // it holds the ISO instant `PgAttemptLimiter` measures a lockout's remaining time against.
+  `create table if not exists auth_attempts (
+    id text primary key,
+    failures integer not null,
+    locked_at text,
+    ordinal bigserial unique
+  )`,
+
+  // Seeds the one row `auth_attempts` ever holds, so it always exists for `PgAttemptLimiter` to
+  // `select ... for update` — a lock only serializes concurrent transactions against a row that is
+  // already there; without a pre-existing row, two concurrent first failures would both see no row,
+  // both compute failures = 1, and one would overwrite the other. `on conflict do nothing` keeps
+  // this idempotent across repeated `applySchema` calls, and never resets a count already recorded.
+  `insert into auth_attempts (id, failures, locked_at)
+   values ('singleton', 0, null)
+   on conflict (id) do nothing`,
 ];
 
 export async function applySchema(db: Db): Promise<void> {

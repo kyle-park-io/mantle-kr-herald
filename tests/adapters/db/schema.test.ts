@@ -11,7 +11,7 @@ describe("applySchema", () => {
       "select table_name from information_schema.tables where table_schema = 'public' order by table_name",
     );
     expect(rows.map((r) => r.table_name)).toEqual([
-      "deliveries", "few_shot_examples", "lark_items", "lineage", "outlet_overrides",
+      "auth_attempts", "deliveries", "few_shot_examples", "lark_items", "lineage", "outlet_overrides",
       "publish_entries", "renderings", "translations", "variants", "x_article_deliveries", "x_threads",
     ]);
   });
