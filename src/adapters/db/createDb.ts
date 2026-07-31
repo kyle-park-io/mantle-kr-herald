@@ -37,8 +37,12 @@ function wrapClient(client: PoolClient, inTransaction: boolean): Db {
  * reuse `query()`: it calls `pool.connect()` to pin one client for the whole callback, runs
  * `BEGIN`/`COMMIT`/`ROLLBACK` on that same client via `wrapClient`, and releases it in `finally`
  * so a thrown `BEGIN`/`COMMIT`/callback error still returns the client to the pool.
+ *
+ * Exported (only) so `tests/adapters/db/createDb.test.ts` can drive it with an instrumented
+ * `Pool` stand-in and assert which client each statement landed on — PGlite has exactly one
+ * connection, so it cannot exercise the routing this function exists to get right.
  */
-function wrapPool(pool: Pool): Db {
+export function wrapPool(pool: Pool): Db {
   return {
     async query<R>(sql: string, params?: unknown[]): Promise<R[]> {
       const result = await pool.query(sql, params);
