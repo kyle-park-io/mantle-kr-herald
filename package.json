@@ -42,6 +42,7 @@
     "config:pull": "tsx --env-file-if-exists=.env src/cli/config-pull.ts",
     "state:push": "tsx --env-file-if-exists=.env src/cli/state-push.ts",
     "state:pull": "tsx --env-file-if-exists=.env src/cli/state-pull.ts",
+    "db:import": "tsx --env-file-if-exists=.env src/cli/db-import.ts",
     "glossary": "tsx src/cli/glossary.ts",
     "google:auth": "tsx --env-file-if-exists=.env src/cli/google-auth.ts",
     "serve": "tsx --env-file-if-exists=.env src/cli/serve.ts",
