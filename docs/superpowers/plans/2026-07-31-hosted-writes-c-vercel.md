@@ -21,6 +21,28 @@
 - Vercel Hobby caps cron at once per day, so **no cron job is deployed**. Reconcile stays local.
 - Secrets never appear in the repo, in a log line, or in an error body.
 
+## Decisions (Kyle, 2026-08-01)
+
+Taken after Plans A and B landed. They change several tasks below; where the older text disagrees,
+these win.
+
+- **Domain: the default `*.vercel.app`.** No custom domain. The CSRF origin allowlist is therefore a
+  **configuration value**, not a constant — the deployment's own origin is not known until it exists.
+  Read it from the environment and refuse to start without it, rather than defaulting to something
+  permissive.
+- **Preview deployments: off.** Only production exists. Every preview is another public URL with a
+  login page on it, and the exposure is not worth the convenience. This deletes Task 6's preview
+  step — verification happens locally against a throwaway database instead, which Plans A and B
+  already did successfully.
+- **Sends are closed on the first deploy.** The hosted dashboard ships with 1차/2차 approval working
+  and the send routes **refused by an environment flag**. The team uses approvals first; the flag is
+  flipped once that is trusted. This is the last irreversible capability to open, and opening it is
+  one variable rather than a deploy.
+
+  The flag must refuse at the **route** level, the same way `[변환 준비]` is absent rather than
+  hidden — a disabled button that still has a live route behind it is not closed. `POST /api/items/
+  :id/reconcile` stays open: it only reads Typefully and writes URLs onto rows that already exist.
+
 ---
 
 ## Task 1: Extract the composition root
@@ -261,38 +283,39 @@ Point local `.env` at the production database and run `pnpm serve`. Confirm the 
 
 ## Task 6: 🔒 First deploy
 
-- [ ] **Step 1: 🔒 Deploy to preview first**
+- [ ] **Step 1: Verify locally against a throwaway database first**
 
-```bash
-vercel deploy
-```
-
-Preview gets its own environment with `HERALD_DB_ENV=development` pointing at a scratch database. **A preview deployment must never hold production send credentials** — omit `TYPEFULLY_API_KEY` and `TELEGRAM_BOT_TOKEN` from the preview environment entirely, so a mistake there cannot reach a live room.
-
-- [ ] **Step 2: Verify on preview**
+Preview deployments are **off** by decision, so there is no hosted rehearsal. Do what Plans A and B
+did instead: a throwaway Docker Postgres, `pnpm db:import`, `pnpm serve`, and a browser at 1280px
+and 390px. Confirm:
 
 - Signed out → `#login`
-- Wrong password → refusal, and the lockout after five
+- Wrong password → refusal, and the lockout after the per-IP threshold
 - Signed in → board loads, source text present
 - 1차 edit and approve → reload → persisted
 - 2차 edit and approve → reload → persisted
 - `[포맷 다시]` re-renders
 - `[변환 준비]` **is not present**
-- Send button refuses cleanly with no credentials rather than 500ing
+- **The send button refuses** — sends ship closed on the first deploy
 - Sign out ends the session
-- 1280px and 390px
 
-- [ ] **Step 3: 🔒 Promote to production**
+- [ ] **Step 2: 🔒 Deploy straight to production**
 
 ```bash
 vercel deploy --prod
 ```
 
-- [ ] **Step 4: 🔒 One real send, watched**
+Then repeat the checklist above against the real URL, including that the origin allowlist accepts
+this deployment and refuses a request forged from elsewhere.
+
+- [ ] **Step 3: 🔒 Open sends, then one real send, watched**
+
+Flip the send flag first — that is the decision this deploy deferred, and it is one variable, not a redeploy of new code.
+
 
 The Typefully publishing quota is **15/month** and is the real ceiling — never test with a throwaway send. Wait for a genuine deliverable, send it from the hosted board, and confirm: the room received it, the ledger row appeared, and `pnpm send:reconcile` locally resolves the x.com URL onto the same row.
 
-- [ ] **Step 5: Retire the local-only path**
+- [ ] **Step 4: Retire the local-only path**
 
 Once production is trusted, `output/` review state is dead weight and a second copy someone could mistake for current. Archive it (`pnpm archive`) rather than deleting — `db:export` regenerates it if the rollback is ever needed.
 
