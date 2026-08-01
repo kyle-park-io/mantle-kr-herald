@@ -286,21 +286,41 @@ Point local `.env` at the production database and run `pnpm serve`. Confirm the 
 
 ## Task 6: 🔒 First deploy
 
-- [ ] **Step 1: Verify locally against a throwaway database first**
+- [x] **Step 1: Verify locally against a throwaway database first** — done 2026-08-02
 
-Preview deployments are **off** by decision, so there is no hosted rehearsal. Do what Plans A and B
-did instead: a throwaway Docker Postgres, `pnpm db:import`, `pnpm serve`, and a browser at 1280px
-and 390px. Confirm:
+Preview deployments are **off** by decision, so there is no hosted rehearsal on Vercel. Do what
+Plans A and B did instead: a throwaway Docker Postgres, `pnpm db:import`, and a browser at 1280px
+and 390px.
+
+**Two servers, not one.** `pnpm serve` is `routes: "local"`, which `createDeps.ts` always gives
+`prepareConversionRun` and always lets send — so it can never show the two things the hosted
+deployment does differently. `pnpm serve:hosted` runs `api/[...path].ts`'s own `createHandler` over
+a local `node:http` server for those. Point both at the same throwaway database.
+
+On `pnpm serve` (port 5757):
 
 - Signed out → `#login`
-- Wrong password → refusal, and the lockout after the per-IP threshold
+- Wrong password → refusal, and the lockout after the per-IP threshold (5 per IP; the global row
+  keeps counting to 50 separately, and a correct password is refused while the lock is held)
 - Signed in → board loads, source text present
 - 1차 edit and approve → reload → persisted
-- 2차 edit and approve → reload → persisted
-- `[포맷 다시]` re-renders
-- `[변환 준비]` **is not present**
-- **The send button refuses** — sends ship closed on the first deploy
-- Sign out ends the session
+- 2차 edit and approve → reload → persisted (per channel — approving `x` must leave the other three)
+- Sign out ends the session, and the API 401s again
+
+On `pnpm serve:hosted` (port 5758) — the hosted-only half:
+
+- `[변환 준비]` **is not present** (`StatusView.conversionEnabled`), and `POST
+  /api/items/:id/convert-prepare` answers 404 *before* body validation, where the local server
+  reaches 400
+- **The send button is `발송 · 잠김`** on a row that is an enabled `발송` locally, and the route
+  refuses with `SENDS_CLOSED_MESSAGE` — sends ship closed on the first deploy
+
+Inject every env var explicitly (a scratch env file, `tsx --env-file=...`); never point a rehearsal
+at the real `.env`. Do not click `[발송]` on the local server — it really sends.
+
+**Removed from this checklist:** `[포맷 다시] re-renders`. The button was taken off the board
+pending a different flow (`web/src/api.ts`); the route and its tests stay live, so there is nothing
+to click here.
 
 - [ ] **Step 2: 🔒 Deploy straight to production**
 
