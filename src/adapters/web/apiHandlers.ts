@@ -51,6 +51,12 @@ export interface StatusView {
    * board's banner and the route's own refusal can never disagree about whether sends are open.
    */
   sendsEnabled: boolean;
+  /**
+   * Whether `POST /api/items/:id/convert-prepare` exists on this deployment — mirrors
+   * `deps.prepareConversionRun !== undefined` (`createDeps.ts` computes the one boolean and uses it
+   * for both), so the board never offers a [변환 준비] button whose route answers 404.
+   */
+  conversionEnabled: boolean;
 }
 
 export interface PublishStateRow {

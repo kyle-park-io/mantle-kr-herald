@@ -9,8 +9,10 @@ export function RenderingsView(props: {
   authEpoch: number;
   /** See `OutletCard`'s same-named prop — passed straight through to `OutletBoard`. */
   sendsEnabled: boolean;
+  /** See `OutletBoard`'s same-named prop — passed straight through to it. */
+  conversionEnabled: boolean;
 }) {
-  const { onDirtyChange, authEpoch, sendsEnabled } = props;
+  const { onDirtyChange, authEpoch, sendsEnabled, conversionEnabled } = props;
   const [items, setItems] = useState<Rendering[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +70,7 @@ export function RenderingsView(props: {
               onGroupChanged={refresh}
               onDirtyChange={setDirty}
               authEpoch={authEpoch}
+              conversionEnabled={conversionEnabled}
               sendsEnabled={sendsEnabled}
             />
           ) : (

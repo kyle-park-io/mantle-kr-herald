@@ -49,8 +49,15 @@ export function OutletBoard(props: {
   authEpoch: number;
   /** See `OutletCard`'s same-named prop — passed straight through to every card on this board. */
   sendsEnabled: boolean;
+  /**
+   * `StatusView.conversionEnabled` — false on the hosted route set, where `convert-prepare` is a 404
+   * because the local agent that fills the worksheet is not there. Drops the [변환 준비] action
+   * rather than disabling it: unlike a locked [발송], which the same team opens later with one env
+   * var, no state of this deployment will ever make it work.
+   */
+  conversionEnabled: boolean;
 }) {
-  const { itemId, onDirtyChange, authEpoch } = props;
+  const { itemId, onDirtyChange, authEpoch, conversionEnabled } = props;
   const [board, setBoard] = useState<BoardView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [headroom, setHeadroom] = useState<Headroom | null>(null);
@@ -295,69 +302,78 @@ export function OutletBoard(props: {
             아직 변환 안 됨 —{" "}
             <span className="text-ink">{board.unconverted.map((t) => TYPE_LABEL[t]).join(" · ")}</span>
           </summary>
-          <p className="mt-2 text-[13px] leading-relaxed text-faint">
-            대시보드는 변환하지 않습니다 — 여기서는 유형을 골라 워크시트만 준비할 수 있습니다. 에이전트가
-            채운 뒤 <code className="font-mono">pnpm convert:save</code> 와{" "}
-            <code className="font-mono">pnpm format</code> 을 실행하면 여기에 카드가 생깁니다.
-          </p>
-          <div className="mt-2.5 flex flex-wrap items-center gap-3">
-            {board.unconverted.map((t) => (
-              <label key={t} className="inline-flex items-center gap-1.5 text-[13px] text-ink">
-                <input
-                  type="checkbox"
-                  checked={prepareTypes.has(t)}
-                  onChange={(e) =>
-                    setPrepareTypes((prev) => {
-                      const next = new Set(prev);
-                      if (e.target.checked) next.add(t);
-                      else next.delete(t);
-                      return next;
-                    })
-                  }
-                />
-                {TYPE_LABEL[t]}
-              </label>
-            ))}
-          </div>
-          <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
-            <button
-              className={btnPrimary}
-              disabled={preparing || prepareTypes.size === 0}
-              onClick={() => {
-                setPreparing(true);
-                setError(null);
-                setPrepareResult(null);
-                api
-                  .convertPrepare(board.itemId, [...prepareTypes])
-                  .then(setPrepareResult)
-                  .catch((e) => setError(String((e as Error).message ?? e)))
-                  .finally(() => setPreparing(false));
-              }}
-            >
-              변환 준비
-            </button>
-            {prepareResult &&
-              (prepareResult.pending > 0 ? (
-                <div className="flex flex-col gap-1">
-                  <p className="text-[13px] font-medium text-mint">
-                    워크시트 준비됨 — 에이전트에게 변환을 요청하세요:{" "}
-                    <code className="font-mono text-ink">{prepareResult.worksheetPath}</code>
-                  </p>
-                  {prepareResult.archived && (
-                    <p className="text-[12px] font-medium text-amber-ink">
-                      ⚠ 이전에 준비했던 미저장 배치는 보관되었습니다 —{" "}
-                      <code className="font-mono">{prepareResult.archived}</code>. 에이전트가 그 배치를 채우던
-                      중이었다면 다시 변환 준비가 필요합니다.
+          {conversionEnabled ? (
+            <>
+              <p className="mt-2 text-[13px] leading-relaxed text-faint">
+                대시보드는 변환하지 않습니다 — 여기서는 유형을 골라 워크시트만 준비할 수 있습니다. 에이전트가
+                채운 뒤 <code className="font-mono">pnpm convert:save</code> 와{" "}
+                <code className="font-mono">pnpm format</code> 을 실행하면 여기에 카드가 생깁니다.
+              </p>
+              <div className="mt-2.5 flex flex-wrap items-center gap-3">
+                {board.unconverted.map((t) => (
+                  <label key={t} className="inline-flex items-center gap-1.5 text-[13px] text-ink">
+                    <input
+                      type="checkbox"
+                      checked={prepareTypes.has(t)}
+                      onChange={(e) =>
+                        setPrepareTypes((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(t);
+                          else next.delete(t);
+                          return next;
+                        })
+                      }
+                    />
+                    {TYPE_LABEL[t]}
+                  </label>
+                ))}
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+                <button
+                  className={btnPrimary}
+                  disabled={preparing || prepareTypes.size === 0}
+                  onClick={() => {
+                    setPreparing(true);
+                    setError(null);
+                    setPrepareResult(null);
+                    api
+                      .convertPrepare(board.itemId, [...prepareTypes])
+                      .then(setPrepareResult)
+                      .catch((e) => setError(String((e as Error).message ?? e)))
+                      .finally(() => setPreparing(false));
+                  }}
+                >
+                  변환 준비
+                </button>
+                {prepareResult &&
+                  (prepareResult.pending > 0 ? (
+                    <div className="flex flex-col gap-1">
+                      <p className="text-[13px] font-medium text-mint">
+                        워크시트 준비됨 — 에이전트에게 변환을 요청하세요:{" "}
+                        <code className="font-mono text-ink">{prepareResult.worksheetPath}</code>
+                      </p>
+                      {prepareResult.archived && (
+                        <p className="text-[12px] font-medium text-amber-ink">
+                          ⚠ 이전에 준비했던 미저장 배치는 보관되었습니다 —{" "}
+                          <code className="font-mono">{prepareResult.archived}</code>. 에이전트가 그 배치를 채우던
+                          중이었다면 다시 변환 준비가 필요합니다.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[13px] text-faint">
+                      대기 중인 항목이 없습니다 — 승인된 원문이 없거나 이미 변환된 상태입니다. 이미 변환됐다면{" "}
+                      <code className="font-mono">pnpm format</code> 을 실행하면 여기에 카드가 생깁니다.
                     </p>
-                  )}
-                </div>
-              ) : (
-                <p className="text-[13px] text-faint">
-                  대기 중인 항목이 없습니다 — 승인된 원문이 없거나 이미 변환된 상태입니다. 이미 변환됐다면{" "}
-                  <code className="font-mono">pnpm format</code> 을 실행하면 여기에 카드가 생깁니다.
-                </p>
-              ))}
-          </div>
+                  ))}
+              </div>
+            </>
+          ) : (
+            <p className="mt-2 text-[13px] leading-relaxed text-faint">
+              이 배포에서는 워크시트를 준비할 수 없습니다 — 워크시트를 채우는 에이전트가 여기에 없습니다.
+              변환은 로컬에서 <code className="font-mono">pnpm convert:prepare</code> 를 실행하세요.
+            </p>
+          )}
         </details>
       )}
     </div>

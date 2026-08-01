@@ -112,6 +112,7 @@ function makeDeps(
       sheetLinks: {},
       dbEnv: "development" as const,
       sendsEnabled: true,
+      conversionEnabled: true,
     }),
     loadPublishState: async () => [
       { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
@@ -280,6 +281,7 @@ describe("handleApi", () => {
       sheetLinks: {},
       dbEnv: "development",
       sendsEnabled: true,
+      conversionEnabled: true,
     });
   });
 

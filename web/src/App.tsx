@@ -348,6 +348,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
           // every send button locked for a moment — the route enforces the real gate regardless of
           // what this reads, so an over-optimistic default here costs nothing but a stale tooltip.
           sendsEnabled={status?.sendsEnabled ?? true}
+          conversionEnabled={status?.conversionEnabled ?? true}
         />
       )}
     </div>

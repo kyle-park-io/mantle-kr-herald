@@ -101,6 +101,13 @@ export interface AppStatus {
    * note as `dbEnv` above.
    */
   sendsEnabled?: boolean;
+  /**
+   * Whether `POST /api/items/:id/convert-prepare` exists on this deployment — mirrors the server's
+   * `StatusView.conversionEnabled`. Drives whether `OutletBoard` offers [변환 준비] at all. Same
+   * optionality note as `dbEnv` above; `OutletBoard` treats an absent value as "available", which is
+   * what every deployment that predates this field was.
+   */
+  conversionEnabled?: boolean;
 }
 
 export interface PublishStateRow {

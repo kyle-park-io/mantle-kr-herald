@@ -101,6 +101,14 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   // own refusal and the board's banner can never disagree about which state this deployment is in.
   const sendsEnabled = routes === "local" || loadSendsEnabled();
 
+  // Whether `POST /api/items/:id/convert-prepare` exists at all — same "computed once, used for
+  // both" shape as `sendsEnabled` above, for the same reason. It gates the `prepareConversionRun`
+  // construction below (which is what makes `handleApi` answer 404) AND `StatusView.conversionEnabled`,
+  // so the board cannot offer a [변환 준비] button on a deployment whose route is not there. Without
+  // the second half, the button's only disabled condition is "no type ticked": the operator picks
+  // one, clicks, and reads the API's bare `not found`.
+  const conversionEnabled = routes === "local";
+
   // Refuses to build a dependency set without a secret to sign/verify sessions with — see
   // `loadSessionConfig()`'s own doc comment for why this is a hard refusal, not an optional one.
   const sessionConfig = loadSessionConfig();
@@ -234,6 +242,7 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       sheetLinks: await withSheetTitles(loadSheetLinks()),
       dbEnv,
       sendsEnabled,
+      conversionEnabled,
     };
   };
 
@@ -345,7 +354,7 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * `POST /api/items/:id/convert-prepare` — the route does not exist, not merely "does nothing".
    */
   let prepareConversionRun: PrepareConversionRun | undefined;
-  if (routes === "local") {
+  if (conversionEnabled) {
     // Same construction as `src/cli/convert-prepare.ts`, so the board and the CLI read and write the
     // same worksheets and the same `output/variants/pending.json` batch.
     const prepareConversions = new PrepareConversions(
