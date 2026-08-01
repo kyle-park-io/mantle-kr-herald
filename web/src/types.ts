@@ -87,6 +87,20 @@ export interface AppStatus {
   integrations: IntegrationStatus[];
   /** Header links to the team workbooks — absent when the id is not configured. */
   sheetLinks: { data?: SheetLink; qa?: SheetLink };
+  /**
+   * The attached database's stated `HERALD_DB_ENV` — mirrors the same field on the server's
+   * `StatusView` (`apiHandlers.ts`). Drives `EnvironmentBanner`'s persistent warning when this is
+   * not `"production"`. Optional here (unlike the server, where it is required) only so an older
+   * cached response or a test fixture that predates this field renders no banner rather than a
+   * crash — a real response always carries it.
+   */
+  dbEnv?: "production" | "development";
+  /**
+   * Whether `POST /api/outlets/:id/:type/:outletId/send` is actually open — mirrors the server's
+   * `StatusView.sendsEnabled`. Drives `EnvironmentBanner`'s other persistent notice. Same optionality
+   * note as `dbEnv` above.
+   */
+  sendsEnabled?: boolean;
 }
 
 export interface PublishStateRow {

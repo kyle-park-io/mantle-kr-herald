@@ -4,6 +4,7 @@ import type { Translation, AppStatus, PublishStateRow } from "./types";
 import { TranslationList } from "./components/TranslationList";
 import { TranslationDetail } from "./components/TranslationDetail";
 import { RenderingsView } from "./components/RenderingsView";
+import { EnvironmentBanner } from "./components/EnvironmentBanner";
 import { btn } from "./buttonStyles";
 
 type Mode = "translations" | "renderings";
@@ -137,6 +138,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
 
   return (
     <div className="flex h-screen flex-col bg-bg text-ink">
+      <EnvironmentBanner status={status} />
       <header className="shrink-0 border-b border-line bg-surface">
         {/* Every child below is `shrink-0` so a control never squishes down to illegible,
             letter-wrapped Korean text under real width pressure (a narrow phone) — the defect this

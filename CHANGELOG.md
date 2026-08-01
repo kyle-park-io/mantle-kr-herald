@@ -104,6 +104,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is now optional, and its absence is checked before anything else in the route, not hidden behind a
   disabled button. `StatusView.sendsEnabled` reports the same boolean for the dashboard's own banner
   (below).
+- **A persistent, non-dismissible dashboard banner when the attached database is not `production`,
+  and another when sends are closed.** `EnvironmentBanner` (`web/src/components/`) reads
+  `StatusView.dbEnv`/`sendsEnabled` and renders above the header — never hidden by scrolling, no
+  close button — Korean, matching the board's existing register. Renders nothing when a field is
+  absent (an older cached response) rather than guessing.
 - **The two read-only "원문" panes now show a hover preview for every photo marker.** A post's photos
   ride through the pipeline as `![](url)` markers inside the reviewed text (video as `[영상]`, which
   carries no url); 1차's `원문` pane (`TranslationDetail`) and 2차's `변환 원문` pane
