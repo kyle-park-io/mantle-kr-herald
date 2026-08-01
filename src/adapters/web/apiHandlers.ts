@@ -95,8 +95,15 @@ export interface ApiDeps {
    */
   reconcilePublished: () => Promise<{ reconciled: number; retired: number; pending: number; error?: string }>;
   sendToOutlet: (itemId: string, type: string, outletId: string, resend?: boolean) => Promise<{ sent: number; failed: number; error?: string }>;
-  /** Writes a conversion worksheet for the dashboard; the local agent still fills it in. */
-  prepareConversionRun: PrepareConversionRun;
+  /**
+   * Writes a conversion worksheet for the dashboard; the local agent still fills it in. Optional —
+   * this is how the route set becomes a property of the entry point (`createDeps.ts`): the hosted
+   * deployment has no local agent to hand a worksheet to, so it omits this field entirely rather
+   * than supplying one that would misleadingly claim the capability exists. `POST
+   * /api/items/:id/convert-prepare` below answers 404 when it is absent — not merely hidden by the
+   * frontend, an actually-missing route, since there is no agent on the other end of it to reach.
+   */
+  prepareConversionRun?: PrepareConversionRun;
   /** Pure code — unlike conversion, the dashboard can run this one itself. */
   formatVariants: FormatVariants;
   /**
@@ -372,6 +379,10 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     // hands back where the worksheet landed. Filling it is the local agent's job; the operator asks
     // for that separately, which is why the reply carries a path rather than converted text.
     if (method === "POST" && segments[3] === "convert-prepare") {
+      // Absent on the hosted route set (`createDeps.ts`, `routes: "hosted"`) — the local agent that
+      // fills the worksheet is not there. A 404 here, checked before any body validation, is what
+      // makes the route genuinely not exist rather than merely reject every request it gets.
+      if (!deps.prepareConversionRun) return { status: 404, json: { error: "not found" } };
       const typesRaw = (body as { types?: unknown })?.types;
       if (!Array.isArray(typesRaw) || typesRaw.length === 0) {
         return { status: 400, json: { error: "types (non-empty array) required" } };

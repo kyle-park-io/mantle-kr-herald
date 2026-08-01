@@ -361,11 +361,14 @@ const DB_ENV_VALUES = ["production", "development"] as const;
  */
 const DB_REMEDY = "Add DATABASE_URL and HERALD_DB_ENV=development (or \"production\") to .env.";
 
-export function loadDbConfig(): DbConfig {
-  const url = process.env.DATABASE_URL?.trim();
-  if (!url) {
-    throw new Error(`Missing required environment variable: DATABASE_URL. ${DB_REMEDY}`);
-  }
+/**
+ * Just the `HERALD_DB_ENV` half of `loadDbConfig()`, split out for `createDeps.ts`: it is handed an
+ * already-open `Db`, never a `DATABASE_URL`, and only needs the stated label for `StatusView.dbEnv`
+ * (the non-production banner). Requiring a connection string to read a label that has nothing to do
+ * with one would force every caller — including tests wiring a PGlite `Db` straight from
+ * `createTestDb()`, with no `DATABASE_URL` in sight — to fake a connection string it will never use.
+ */
+export function loadDbEnv(): "production" | "development" {
   const env = process.env.HERALD_DB_ENV?.trim();
   if (!env) {
     throw new Error(`Missing required environment variable: HERALD_DB_ENV. ${DB_REMEDY}`);
@@ -375,7 +378,15 @@ export function loadDbConfig(): DbConfig {
       `Invalid HERALD_DB_ENV: ${env} (expected "production" or "development"). ${DB_REMEDY}`,
     );
   }
-  return { url, env: env as "production" | "development" };
+  return env as "production" | "development";
+}
+
+export function loadDbConfig(): DbConfig {
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error(`Missing required environment variable: DATABASE_URL. ${DB_REMEDY}`);
+  }
+  return { url, env: loadDbEnv() };
 }
 
 /** `"host[:port]/dbname"` — never the credentials embedded in `DATABASE_URL`. Shared by `doctor`
