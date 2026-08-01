@@ -44,6 +44,13 @@ export interface StatusView {
    *  when this is not "production" (Plan C's work) — carried here so the two plans do not edit this
    *  interface independently. */
   dbEnv: "production" | "development";
+  /**
+   * Whether `POST /api/outlets/:id/:type/:outletId/send` is actually reachable — see
+   * `ApiDeps.sendToOutlet`'s own comment for the full story. Mirrors `deps.sendToOutlet !==
+   * undefined` exactly (`createDeps.ts` computes the one boolean and uses it for both), so the
+   * board's banner and the route's own refusal can never disagree about whether sends are open.
+   */
+  sendsEnabled: boolean;
 }
 
 export interface PublishStateRow {
@@ -94,7 +101,22 @@ export interface ApiDeps {
    * and `undefined > 0` on the board. Declared here so narrowing it is a compile error.
    */
   reconcilePublished: () => Promise<{ reconciled: number; retired: number; pending: number; error?: string }>;
-  sendToOutlet: (itemId: string, type: string, outletId: string, resend?: boolean) => Promise<{ sent: number; failed: number; error?: string }>;
+  /**
+   * Posts to a live Telegram room or the brand's X account. Optional — the SAME "route set is a
+   * property of the entry point" mechanism `prepareConversionRun` above already established, reused
+   * rather than duplicated: Kyle's decision was that the hosted dashboard ships with 1차/2차 approval
+   * working and sends refused by an environment flag (`HERALD_SENDS_ENABLED`, `config.ts`), flipped
+   * once the team trusts approvals. `createDeps.ts` omits this field entirely — for the hosted route
+   * set, until that flag is on — rather than supplying a function that would just refuse every call;
+   * `POST /api/outlets/:id/:type/:outletId/send` below checks for its absence before anything else,
+   * the same "refuse at the route, not the button" shape `prepareConversionRun` uses for
+   * `convert-prepare`. Unlike that route (permanently absent on hosted — there is no local agent to
+   * hand a worksheet to, ever), this one is only TEMPORARILY closed, so its refusal carries a Korean
+   * reason and the rebuilt board rather than a bare 404: an operator who clicks [발송] while it is
+   * closed is told why, through the exact response shape this route's other refusals already use
+   * (`SendChannels`-reported errors, just below).
+   */
+  sendToOutlet?: (itemId: string, type: string, outletId: string, resend?: boolean) => Promise<{ sent: number; failed: number; error?: string }>;
   /**
    * Writes a conversion worksheet for the dashboard; the local agent still fills it in. Optional —
    * this is how the route set becomes a property of the entry point (`createDeps.ts`): the hosted
@@ -154,6 +176,13 @@ export interface ApiDeps {
    */
   session: SessionPayload | undefined;
 }
+
+/**
+ * What an operator sees on a locked [발송] click while `deps.sendToOutlet` is closed. Says why,
+ * rather than a bare "not found" — see `ApiDeps.sendToOutlet`'s own comment for why this route's
+ * refusal shape differs from `convert-prepare`'s.
+ */
+const SENDS_CLOSED_MESSAGE = "발송이 아직 열려 있지 않습니다 — 1차·2차 승인이 자리잡으면 팀이 직접 엽니다.";
 
 /** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */
 type BoardReply = { board: BoardView } & Record<string, unknown>;
@@ -460,6 +489,16 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     }
 
     if (method === "POST" && segments.length === 6 && segments[5] === "send") {
+      // Checked before the resend flag, before anything else: `deps.sendToOutlet`'s own comment on
+      // `ApiDeps` has the full story. The board it carries back is what lets the row's [발송] click
+      // repaint from an accurate state rather than sitting on a stale one — the same reason the
+      // "already delivered" refusal a few lines below carries it too.
+      if (!deps.sendToOutlet) {
+        return {
+          status: 400,
+          json: { error: SENDS_CLOSED_MESSAGE, board: await deps.loadBoard(itemId) },
+        };
+      }
       // `resend` is opt-in per call rather than a separate route: it is the same delivery to the
       // same room, differing only in that the ledger already holds a row for it.
       const resend = (body as { resend?: unknown })?.resend === true;

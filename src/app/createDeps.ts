@@ -38,6 +38,7 @@ import {
   loadAuthConfig,
   loadSessionConfig,
   loadClientIpConfig,
+  loadSendsEnabled,
 } from "../config";
 import { Login, type LoginResult } from "./Login";
 import { singleFlight } from "../shared/concurrency/singleFlight";
@@ -92,6 +93,13 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   // it (a real Postgres pool for `serve.ts`, `attachDatabasePool` for the hosted entry point, PGlite
   // for a test's `createTestDb()`).
   const dbEnv = loadDbEnv();
+
+  // Whether `POST /api/outlets/:id/:type/:outletId/send` is actually reachable — the local entry
+  // point always sends (unaffected by `HERALD_SENDS_ENABLED`, exactly as it always has); the hosted
+  // one ships closed until the flag is turned on. Computed once, here, and used for BOTH the
+  // `ApiDeps.sendToOutlet` field below and `StatusView.sendsEnabled` in `loadStatus`, so the route's
+  // own refusal and the board's banner can never disagree about which state this deployment is in.
+  const sendsEnabled = routes === "local" || loadSendsEnabled();
 
   // Refuses to build a dependency set without a secret to sign/verify sessions with — see
   // `loadSessionConfig()`'s own doc comment for why this is a hard refusal, not an optional one.
@@ -225,6 +233,7 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       integrations,
       sheetLinks: await withSheetTitles(loadSheetLinks()),
       dbEnv,
+      sendsEnabled,
     };
   };
 
@@ -466,7 +475,10 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     markDelivery: new MarkDelivery(deliveryLedger),
     prepareConversionRun,
     formatVariants,
-    sendToOutlet,
+    // Absent (not a function that would just refuse every call) when sends are closed — see
+    // `ApiDeps.sendToOutlet`'s own doc comment (`apiHandlers.ts`) for why this mirrors
+    // `prepareConversionRun` just above.
+    sendToOutlet: sendsEnabled ? sendToOutlet : undefined,
     reconcilePublished,
     loadQuota,
   };

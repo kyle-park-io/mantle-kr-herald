@@ -111,6 +111,7 @@ function makeDeps(
       integrations: [],
       sheetLinks: {},
       dbEnv: "development" as const,
+      sendsEnabled: true,
     }),
     loadPublishState: async () => [
       { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
@@ -278,6 +279,7 @@ describe("handleApi", () => {
       integrations: [],
       sheetLinks: {},
       dbEnv: "development",
+      sendsEnabled: true,
     });
   });
 
@@ -495,6 +497,25 @@ describe("board routes", () => {
     const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
     expect(res.status).toBe(200);
     expect(res.json).toMatchObject({ sent: 1, failed: 1, error: "one room failed" });
+  });
+
+  /**
+   * `deps.sendToOutlet` absent — the hosted route set with sends still closed (`createDeps.ts`).
+   * Checked before the use-case, the same "refuse at the route" shape `convert-prepare` uses for
+   * `prepareConversionRun`, but with a Korean reason and the rebuilt board rather than a bare 404:
+   * unlike that route (never present on hosted), this one is only temporarily closed and an operator
+   * can still click [발송] on it, so the refusal has to say why.
+   */
+  it("POST send answers with a reason and the board when sends are closed, rather than reaching the use case", async () => {
+    const { spy, d } = spied();
+    d.sendToOutlet = undefined;
+    const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
+    expect(res.status).toBe(400);
+    expect(res.json).toEqual({
+      error: "발송이 아직 열려 있지 않습니다 — 1차·2차 승인이 자리잡으면 팀이 직접 엽니다.",
+      board: { itemId: "x:1", groups: [], unconverted: [] },
+    });
+    expect(spy.sends).toEqual([]);
   });
 });
 

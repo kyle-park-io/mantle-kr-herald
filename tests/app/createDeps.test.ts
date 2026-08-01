@@ -1,5 +1,5 @@
 // tests/app/createDeps.test.ts
-import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, beforeAll, afterAll } from "vitest";
 import { createTestDb } from "../support/testDb";
 import { createDeps } from "../../src/app/createDeps";
 import { handleApi, type ApiDeps } from "../../src/adapters/web/apiHandlers";
@@ -76,5 +76,51 @@ describe("createDeps", () => {
     ] as const) {
       expect((await handleApi(authenticated(deps), method, path, {})).status).not.toBe(404);
     }
+  });
+
+  /**
+   * Sends are a separate axis from the route set (`HERALD_SENDS_ENABLED`, `config.ts`), not folded
+   * into `routes: "local" | "hosted"` — see `createDeps.ts`'s own comment on `sendsEnabled`. These
+   * pin the two behaviours the flag actually has to produce: the local entry point always sends,
+   * unaffected; the hosted one is closed until the flag is explicitly turned on.
+   */
+  describe("the send flag (HERALD_SENDS_ENABLED)", () => {
+    const SEND_KEY = "HERALD_SENDS_ENABLED" as const;
+    let savedSendFlag: string | undefined;
+
+    beforeEach(() => {
+      savedSendFlag = process.env[SEND_KEY];
+      delete process.env[SEND_KEY];
+    });
+    afterEach(() => {
+      if (savedSendFlag === undefined) delete process.env[SEND_KEY];
+      else process.env[SEND_KEY] = savedSendFlag;
+    });
+
+    it("sendToOutlet is present on the local route set even with the flag unset", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      expect(deps.sendToOutlet).toBeDefined();
+      expect((await deps.loadStatus()).sendsEnabled).toBe(true);
+    });
+
+    it("sendToOutlet is absent on the hosted route set by default (flag unset)", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "hosted" });
+      expect(deps.sendToOutlet).toBeUndefined();
+      expect((await deps.loadStatus()).sendsEnabled).toBe(false);
+      await deps.translationStore.upsert({ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" });
+      const res = await handleApi(authenticated(deps), "POST", "/api/outlets/x:1/announcement/tg-community/send", {});
+      expect(res.status).toBe(400);
+      expect((res.json as { error: string }).error).toContain("발송이 아직 열려 있지 않습니다");
+    });
+
+    it("sendToOutlet is present on the hosted route set once the flag is true", async () => {
+      process.env[SEND_KEY] = "true";
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "hosted" });
+      expect(deps.sendToOutlet).toBeDefined();
+      expect((await deps.loadStatus()).sendsEnabled).toBe(true);
+    });
   });
 });

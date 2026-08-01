@@ -92,6 +92,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command. See `refusalReason` (now parameterized on which origins count as "this deployment",
   `HttpServer.ts`) and `resolveClientIp` (now typed over a minimal structural request shape,
   `clientIp.ts`, since a Vercel `Request` has no raw socket the way `node:http`'s does).
+- **The hosted deployment's send routes ship closed, behind `HERALD_SENDS_ENABLED`.** The team gets
+  1차/2차 approval working on the first deploy; `POST /api/outlets/:id/:type/:outletId/send` — the
+  only route that can reach a live Telegram room or the brand's X account — refuses until this flag
+  is explicitly turned on, with a Korean reason and the rebuilt board rather than a bare failure.
+  `POST /api/items/:id/reconcile` is unaffected: it only reads Typefully and writes urls onto rows
+  that already exist. The flag is a separate axis from local-vs-hosted (`createDeps.ts`'s
+  `routes: "local" | "hosted"`): `pnpm serve` always sends, exactly as it always has; only the hosted
+  route set is ever closed. Mechanically this reuses the same "route set is a property of the entry
+  point" pattern `prepareConversionRun`/`convert-prepare` already established — `ApiDeps.sendToOutlet`
+  is now optional, and its absence is checked before anything else in the route, not hidden behind a
+  disabled button. `StatusView.sendsEnabled` reports the same boolean for the dashboard's own banner
+  (below).
 - **The two read-only "원문" panes now show a hover preview for every photo marker.** A post's photos
   ride through the pipeline as `![](url)` markers inside the reviewed text (video as `[영상]`, which
   carries no url); 1차's `원문` pane (`TranslationDetail`) and 2차's `변환 원문` pane
