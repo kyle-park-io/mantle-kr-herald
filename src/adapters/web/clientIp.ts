@@ -2,6 +2,33 @@ import type { IncomingMessage } from "node:http";
 import type { ClientIpConfig } from "../../config";
 
 /**
+ * How long a trusted `X-Forwarded-For` entry may be before `resolveClientIp` refuses to use it as a
+ * row id — see `looksLikeAnAddress`'s own comment for why this check exists at all. Generous: the
+ * longest a real IPv4-mapped IPv6 literal gets is well under 50 characters; 64 leaves headroom without
+ * coming close to accepting arbitrary client-supplied text.
+ */
+const TRUSTED_ENTRY_MAX_LENGTH = 64;
+
+/** Digits, hex letters, `.`, `:`, and an optional wrapping `[...]` — everything a real IPv4 or IPv6 literal is made of, nothing else. */
+const IP_SHAPE = /^\[?[0-9a-fA-F:.]+\]?$/;
+
+/**
+ * A coarse shape check, not real IP validation — `resolveClientIp` has no need to reject a
+ * malformed-but-address-shaped value; the proxy this trust boundary already assumes is honest is the
+ * one writing this entry. What this guards against is different: a MISCONFIGURED
+ * `HERALD_TRUST_PROXY_HOPS` pointing past the trusted proxy's own appended entry, into chain positions
+ * a client fully controls (`resolveClientIp`'s own comment on counting from the end explains why
+ * everything left of the trusted position is exactly that). Without this check, that value becomes an
+ * `auth_attempts` row id verbatim (`ipRowId` in `PgAttemptLimiter.ts`) — unvalidated, arbitrarily long,
+ * fully client-chosen text as a primary key. Rejecting it here degrades to the same safe fallback every
+ * other unusable case already does: `resolveClientIp` returns `undefined`, and the caller keys the
+ * request under the global counter alone rather than under whatever the client sent.
+ */
+function looksLikeAnAddress(value: string): boolean {
+  return value.length <= TRUSTED_ENTRY_MAX_LENGTH && IP_SHAPE.test(value);
+}
+
+/**
  * The client IP the per-IP login lockout (`PgAttemptLimiter`'s `ip:<address>` rows, via
  * `attemptLimiter.ts`'s two-layer design) should key on for this request — or `undefined` when
  * nothing here can be trusted, in which case the caller must fall back to the global counter alone
@@ -37,6 +64,13 @@ import type { ClientIpConfig } from "../../config";
  * the same proxy. Nothing today actually sets `trustProxy` — `HttpServer.ts` still binds
  * 127.0.0.1-only, with nothing in front of it — so this whole branch is written for the hosted
  * future (`Plan C`), not proof any of it has been exercised against a real proxy yet.
+ *
+ * A third failure mode lives at the entry itself, not the chain: `looksLikeAnAddress` rejects
+ * whatever the hop count landed on if it is not coarsely IP-shaped or is implausibly long, and that
+ * rejection degrades the same way — `undefined`, global-only. See its own comment for why this exists
+ * even though the position it reads is, by the whole point of counting from the end, one the trusted
+ * proxy vouches for: it is a hedge against a MISCONFIGURED hop count landing on client-controlled
+ * territory instead, not a doubt about a correctly configured proxy's own entry.
  */
 export function resolveClientIp(req: IncomingMessage, config: ClientIpConfig): string | undefined {
   if (!config.trustProxy) return req.socket.remoteAddress ?? undefined;
@@ -51,5 +85,5 @@ export function resolveClientIp(req: IncomingMessage, config: ClientIpConfig): s
     .filter((s) => s.length > 0);
   const index = chain.length - config.trustedHopsFromEnd;
   const ip = index >= 0 ? chain[index] : undefined;
-  return ip && ip.length > 0 ? ip : undefined;
+  return ip && looksLikeAnAddress(ip) ? ip : undefined;
 }

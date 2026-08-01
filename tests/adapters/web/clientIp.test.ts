@@ -84,5 +84,43 @@ describe("resolveClientIp", () => {
       const r = req("10.0.0.1", { "x-forwarded-for": ["198.51.100.7, 10.0.0.1"] });
       expect(resolveClientIp(r, TRUSTED_1_HOP)).toBe("10.0.0.1");
     });
+
+    /**
+     * Real IPv4 and (bracketed or bare) IPv6 literals must still resolve — the shape check exists to
+     * reject implausible entries, not to narrow what a real address looks like.
+     */
+    it("accepts a real IPv4 address at the trusted position", () => {
+      const r = req("10.0.0.9", { "x-forwarded-for": "198.51.100.7, 203.0.113.9" });
+      expect(resolveClientIp(r, TRUSTED_1_HOP)).toBe("203.0.113.9");
+    });
+
+    it("accepts a real IPv6 address at the trusted position", () => {
+      const r = req("10.0.0.9", { "x-forwarded-for": "198.51.100.7, 2001:db8::1" });
+      expect(resolveClientIp(r, TRUSTED_1_HOP)).toBe("2001:db8::1");
+    });
+
+    /**
+     * The finding this closes: a MISCONFIGURED `trustedHopsFromEnd` can land the "trusted" position
+     * on an entry a client fully controls — everything left of the proxy's own appended entry is, by
+     * `resolveClientIp`'s own comment on counting from the end, exactly that. Without a shape check,
+     * that value becomes an `auth_attempts` row id verbatim. Falls back to `undefined` — the same
+     * degrade-to-global-only every other unusable case here already uses — rather than trusting it.
+     */
+    it("is undefined when the trusted position is not IP-shaped — a misconfigured hop count landing on client-controlled text", () => {
+      const r = req("10.0.0.9", { "x-forwarded-for": "'; drop table auth_attempts; --, 10.0.0.1" });
+      expect(resolveClientIp(r, TRUSTED_2_HOPS)).toBeUndefined();
+    });
+
+    it("is undefined when the trusted position is implausibly long, even if IP-shaped characters only", () => {
+      const overlong = "1".repeat(65);
+      const r = req("10.0.0.9", { "x-forwarded-for": `198.51.100.7, ${overlong}` });
+      expect(resolveClientIp(r, TRUSTED_1_HOP)).toBeUndefined();
+    });
+
+    it("accepts an entry right at the length boundary", () => {
+      const atBoundary = "1".repeat(64);
+      const r = req("10.0.0.9", { "x-forwarded-for": `198.51.100.7, ${atBoundary}` });
+      expect(resolveClientIp(r, TRUSTED_1_HOP)).toBe(atBoundary);
+    });
   });
 });
