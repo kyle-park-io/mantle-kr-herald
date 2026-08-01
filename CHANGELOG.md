@@ -110,7 +110,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   point" pattern `prepareConversionRun`/`convert-prepare` already established — `ApiDeps.sendToOutlet`
   is now optional, and its absence is checked before anything else in the route, not hidden behind a
   disabled button. `StatusView.sendsEnabled` reports the same boolean for the dashboard's own banner
-  (below).
+  (below) — and for `OutletCard`'s per-row [발송]/[재발송], which now paint the same locked
+  (`발송 · 잠김`) treatment an ineligible row already gets, with the identical Korean reason the route
+  itself answers with. Enforcement is the route either way; the button lock exists so an operator is
+  never invited to confirm an irreversible post through a dialog that cannot actually happen.
 - **A persistent, non-dismissible dashboard banner when the attached database is not `production`,
   and another when sends are closed.** `EnvironmentBanner` (`web/src/components/`) reads
   `StatusView.dbEnv`/`sendsEnabled` and renders above the header — never hidden by scrolling, no

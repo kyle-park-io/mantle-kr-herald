@@ -213,6 +213,15 @@ export const SEND_BLOCK_REASON: Record<SendBlock, string> = {
 };
 
 /**
+ * Mirrors `SENDS_CLOSED_MESSAGE` in `src/adapters/web/apiHandlers.ts` — what `POST
+ * /api/outlets/:id/:type/:outletId/send` answers with while `HERALD_SENDS_ENABLED` is off.
+ * `EnvironmentBanner`'s persistent notice and `OutletCard`'s locked [발송]/[재발송] tooltip both use
+ * this exact sentence, so an operator reads the same words whether they see it before or after
+ * clicking. `tests/web/typeMirror.test.ts` keeps the two byte-identical.
+ */
+export const SENDS_CLOSED_MESSAGE = "발송이 아직 열려 있지 않습니다 — 1차·2차 승인이 자리잡으면 팀이 직접 엽니다.";
+
+/**
  * What the `**볼드**` in a card's text actually does on that channel, told to the reviewer at the
  * one place they type it.
  *

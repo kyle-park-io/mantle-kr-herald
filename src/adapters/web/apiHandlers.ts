@@ -182,7 +182,12 @@ export interface ApiDeps {
  * rather than a bare "not found" — see `ApiDeps.sendToOutlet`'s own comment for why this route's
  * refusal shape differs from `convert-prepare`'s.
  */
-const SENDS_CLOSED_MESSAGE = "발송이 아직 열려 있지 않습니다 — 1차·2차 승인이 자리잡으면 팀이 직접 엽니다.";
+// Exported so the dashboard (`web/src/types.ts`'s mirror of the same name) can say the identical
+// sentence up front — in the board's persistent banner and in a locked [발송]/[재발송] row's own
+// tooltip — rather than an operator reading two different Korean sentences for the same refusal
+// depending on whether they clicked through or just looked. `tests/web/typeMirror.test.ts` keeps the
+// two byte-identical.
+export const SENDS_CLOSED_MESSAGE = "발송이 아직 열려 있지 않습니다 — 1차·2차 승인이 자리잡으면 팀이 직접 엽니다.";
 
 /** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */
 type BoardReply = { board: BoardView } & Record<string, unknown>;

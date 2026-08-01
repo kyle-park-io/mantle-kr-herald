@@ -1,4 +1,4 @@
-import type { AppStatus } from "../types";
+import { SENDS_CLOSED_MESSAGE, type AppStatus } from "../types";
 
 /**
  * Persistent, non-dismissible strips shown above the header. Neither has a close button and neither
@@ -22,8 +22,7 @@ export function EnvironmentBanner({ status }: { status: AppStatus | null }) {
       )}
       {status.sendsEnabled === false && (
         <div className="shrink-0 border-b border-amber-ink/20 bg-amber-soft px-5 py-2 text-center text-[13px] font-medium text-amber-ink">
-          발송이 아직 열려 있지 않습니다 — 1차·2차 승인이 자리잡으면 팀이 직접 엽니다. [발송]을 눌러도 실제 채널에는
-          올라가지 않습니다.
+          {SENDS_CLOSED_MESSAGE} [발송]을 눌러도 실제 채널에는 올라가지 않습니다.
         </div>
       )}
     </>

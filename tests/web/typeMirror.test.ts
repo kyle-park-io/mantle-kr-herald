@@ -5,6 +5,7 @@ import { CHANNEL_RENDERS_BOLD, DESTINATIONS_BY_CHANNEL } from "../../src/domain/
 import type { Destination } from "../../src/domain/formatting/emitters/types";
 import { ALL_OUTLETS } from "../../src/domain/outlet/models";
 import { SEND_BLOCK_REASON, type SendBlock } from "../../src/domain/send/sendBlock";
+import { SENDS_CLOSED_MESSAGE } from "../../src/adapters/web/apiHandlers";
 import { ALL_DELIVERY_STATUSES, deliveredToRoom } from "../../src/domain/delivery/models";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
 import type { FormatWarning } from "../../src/app/FormatVariants";
@@ -17,6 +18,7 @@ import {
   PASTE_DESTINATION as WEB_PASTE_DESTINATION,
   DESTINATION_LABEL as WEB_DESTINATION_LABEL,
   SEND_BLOCK_REASON as WEB_SEND_BLOCK_REASON,
+  SENDS_CLOSED_MESSAGE as WEB_SENDS_CLOSED_MESSAGE,
   CHANNEL_RENDERS_BOLD as WEB_CHANNEL_RENDERS_BOLD,
   CHANNEL_FORMAT_NOTE as WEB_CHANNEL_FORMAT_NOTE,
   deliveredToRoom as WEB_DELIVERED_TO_ROOM,
@@ -154,6 +156,16 @@ describe("web type mirror", () => {
     const unions: SameUnion<WebSendBlock, SendBlock> = true;
     expect(WEB_SEND_BLOCK_REASON).toEqual(SEND_BLOCK_REASON);
     expect(unions).toBe(true);
+  });
+
+  /**
+   * `EnvironmentBanner`'s persistent notice and `OutletCard`'s locked [발송]/[재발송] tooltip both
+   * quote this sentence — an operator who sees it before clicking and one who clicks through and
+   * gets it back from the route must read the same words, not two independently-worded refusals for
+   * the one state.
+   */
+  it("says the same thing about closed sends as the route that refuses them", () => {
+    expect(WEB_SENDS_CLOSED_MESSAGE).toBe(SENDS_CLOSED_MESSAGE);
   });
 
   /**

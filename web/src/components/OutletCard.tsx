@@ -14,6 +14,7 @@ import {
   OUTLET_DELIVERY,
   PASTE_DESTINATION,
   SEND_BLOCK_REASON,
+  SENDS_CLOSED_MESSAGE,
   TYPE_LABEL,
   deliveredToRoom,
   outletLabel,
@@ -63,6 +64,15 @@ const pasteSegments = (em: Emissions | undefined, channel: BoardGroup["channel"]
 export function OutletCard(props: {
   itemId: string;
   group: BoardGroup;
+  /**
+   * Whether the hosted board's auto-send routes are actually open — `AppStatus.sendsEnabled`,
+   * threaded down from `App.tsx` through `RenderingsView`/`OutletBoard`. `false` only while
+   * `HERALD_SENDS_ENABLED` is off on a hosted deployment; `pnpm serve` always reports `true`. Locks
+   * every `auto`-delivery row's [발송]/[재발송] the same way an ineligible `row.block` already does
+   * (`Row` below) — the route refuses independently either way, so this is the "say why" half, not
+   * the enforcement.
+   */
+  sendsEnabled: boolean;
   /** The joined source context for this (itemId, type) — `변환 원문`; "" when there is none. */
   convertedText: string;
   /** The room the pointer is over, board-wide — a room in two cards highlights in both. */
@@ -423,6 +433,7 @@ export function OutletCard(props: {
               group={group}
               itemId={itemId}
               busy={busy}
+              sendsEnabled={props.sendsEnabled}
               // Scoped to this room: the group's text, which every unforked room sends, plus this
               // room's own unsaved draft. A keystroke in the room above must not lock this one.
               dirty={groupDirty || draftDirty(row.outletId)}
@@ -632,6 +643,9 @@ function Row(props: {
   group: BoardGroup;
   itemId: string;
   busy: boolean;
+  /** See `OutletCard`'s same-named prop — this row's [발송]/[재발송] lock exactly like an ineligible
+   *  `row.block` when this is `false` and the room is `auto`-delivery. */
+  sendsEnabled: boolean;
   dirty: boolean;
   hovered: string | null;
   onHover: (outletId: string | null) => void;
@@ -653,13 +667,20 @@ function Row(props: {
   onConfirm: (request: ConfirmRequest) => void;
   run: (fn: () => Promise<void>) => Promise<void>;
 }) {
-  const { row, group, itemId, busy, dirty, run } = props;
+  const { row, group, itemId, busy, sendsEnabled, dirty, run } = props;
   const { type } = group;
   // Straight from the server's `sendBlock` — the same predicate `SendChannels` enforces, so this
   // button is locked exactly when a send would refuse. It covers the row's own approval (never the
   // group's: a fork left at `rendered` under an approved group would otherwise silently sit out a
   // send it looks eligible for) *and* the state of the 1차 translation it descends from.
-  const locked = row.block !== undefined;
+  //
+  // `!sendsEnabled` only ever adds a lock for an `auto` room — a `manual` one never calls
+  // `sendToOutlet` at all (전달함 just records a human's own paste), so the flag has nothing to say
+  // about it. This is the visual half of "refuse at the route, not the button": the route already
+  // refuses independently (`apiHandlers.ts`'s `SENDS_CLOSED_MESSAGE`), so a click that gets past this
+  // lock somehow still cannot reach a live room — this only stops an operator from being told so by
+  // a confirm dialog that promises an irreversible post which cannot actually happen.
+  const locked = row.block !== undefined || (row.delivery === "auto" && !sendsEnabled);
   const sent = row.deliveryStatus === "sent";
   const delivered = row.deliveryStatus === "delivered";
   // Neither `sent` nor `delivered`, on purpose: the scheduled draft was deleted before it published,
@@ -905,7 +926,14 @@ function Row(props: {
               {gate.showResend && (
                 <Tip
                   text={
-                    gate.resendDisabled ? SEND_BLOCK_REASON[row.block!]
+                    // A `sent` row (the only place 재발송 renders) is always an `auto` room —
+                    // `sendToOutlet` is the only thing that ever sets `deliveryStatus: "sent"` — so
+                    // this reads the same closed flag the button below does, no `row.delivery` check
+                    // needed. Same reasoning as `locked`: the route already refuses independently,
+                    // this is only what tells the operator before they click through a confirm
+                    // dialog for a post that cannot go out.
+                    !sendsEnabled ? SENDS_CLOSED_MESSAGE
+                    : gate.resendDisabled ? SEND_BLOCK_REASON[row.block!]
                     : dirty ? SAVE_FIRST
                     // Same split as the confirm dialog above, for the same reason: on an `예약됨`
                     // row nothing has gone out yet, so "먼저 보낸 글" names a post that does not
@@ -916,7 +944,7 @@ function Row(props: {
                 >
                   <button
                     className={btnDanger}
-                    disabled={busy || dirty || gate.resendDisabled}
+                    disabled={busy || dirty || gate.resendDisabled || !sendsEnabled}
                     onClick={askResend}
                   >
                     재발송
@@ -942,7 +970,12 @@ function Row(props: {
               text={
                 strandedFork
                   ? "이 방은 따로 쓴 글이 아직 승인 전입니다 — 그룹을 승인해도 이 방은 빠집니다."
-                  : SEND_BLOCK_REASON[row.block!]
+                  // `row.block` is `undefined` here whenever this row is locked only because sends
+                  // are closed account-wide (`locked`'s own comment above) — `SEND_BLOCK_REASON`
+                  // has nothing to say about that case, so it has to be checked first.
+                  : row.block === undefined
+                    ? SENDS_CLOSED_MESSAGE
+                    : SEND_BLOCK_REASON[row.block]
               }
             >
               <button className={btn} disabled>

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OutletCard } from "../src/components/OutletCard";
 import type { ConfirmRequest } from "../src/components/ConfirmDialog";
-import type { BoardGroup, BoardRow, BoardView } from "../src/types";
+import { SENDS_CLOSED_MESSAGE, type BoardGroup, type BoardRow, type BoardView } from "../src/types";
 
 /**
  * The board's own components, in a DOM — the first tests in this repo that click a button rather than
@@ -67,14 +67,18 @@ function stubFetch(handler?: (url: string, init?: RequestInit) => unknown) {
  * tests that need to simulate the board repainting under an editor the reviewer already has open
  * (e.g. a room going `sent` from outside this tab while a draft still sits in its editor).
  */
-function mount(g: BoardGroup, o: { convertedText?: string } = {}) {
+function mount(g: BoardGroup, o: { convertedText?: string; sendsEnabled?: boolean } = {}) {
   const confirms: ConfirmRequest[] = [];
   const errors: (string | null)[] = [];
   const boards: { board: BoardView; quotaMayHaveChanged?: boolean }[] = [];
-  const element = (group: BoardGroup, opts: { convertedText?: string }) => (
+  const element = (group: BoardGroup, opts: { convertedText?: string; sendsEnabled?: boolean }) => (
     <OutletCard
       itemId="2026-07-30-a"
       group={group}
+      // Defaults open — most of this file is about editor/confirm-dialog behaviour that has nothing
+      // to do with the send flag; the tests that ARE about it (below) pass `sendsEnabled: false`
+      // explicitly.
+      sendsEnabled={opts.sendsEnabled ?? true}
       convertedText={opts.convertedText ?? "변환 원문"}
       hovered={null}
       onHover={() => {}}
@@ -91,7 +95,7 @@ function mount(g: BoardGroup, o: { convertedText?: string } = {}) {
     errors,
     boards,
     container,
-    rerender: (g2: BoardGroup, o2: { convertedText?: string } = o) => rerender(element(g2, o2)),
+    rerender: (g2: BoardGroup, o2: { convertedText?: string; sendsEnabled?: boolean } = o) => rerender(element(g2, o2)),
   };
 }
 
@@ -159,6 +163,52 @@ describe("OutletCard — 재발송 asks about the row it was clicked on", () => 
 
     expect(confirms[0].confirmLabel).toBe("다시 발송");
     expect(vi.mocked(fetch).mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toEqual([]);
+  });
+});
+
+describe("OutletCard — sends closed account-wide (sendsEnabled: false)", () => {
+  /**
+   * "Refuse at the route, not the button" is about enforcement, not visibility — a route that
+   * refuses independently still has to say so before an operator promises themselves an irreversible
+   * post via the confirm dialog. Same visual treatment (`발송 · 잠김`) an ineligible `row.block`
+   * already gets, so a reviewer never has to learn a second "this is locked" shape.
+   */
+  it("locks an auto room's 발송 button, with the shared closed-sends message", () => {
+    mount(group({ rows: [row()] }), { sendsEnabled: false });
+
+    const button = screen.getByRole("button", { name: "발송 · 잠김" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText(SENDS_CLOSED_MESSAGE)).toBeTruthy();
+  });
+
+  /** The same route refuses a resend too — the button offering it must say so as well. */
+  it("locks an already-sent auto room's 재발송 button too", () => {
+    mount(group({ rows: [row({ deliveryStatus: "sent", url: "https://x.com/a/status/777" })] }), {
+      sendsEnabled: false,
+    });
+
+    const button = screen.getByRole("button", { name: "재발송" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText(SENDS_CLOSED_MESSAGE)).toBeTruthy();
+  });
+
+  /** `sendToOutlet` never touches a manual room — 전달함 keeps working while sends are closed. */
+  it("leaves a manual room's 전달함 alone", () => {
+    mount(group({ rows: [row({ delivery: "manual", outletId: "kakao-kol", label: "오픈카톡 KOL방" })] }), {
+      sendsEnabled: false,
+    });
+
+    expect(screen.queryByRole("button", { name: "발송 · 잠김" })).toBeNull();
+    expect(screen.queryByText(SENDS_CLOSED_MESSAGE)).toBeNull();
+    expect((screen.getByRole("button", { name: "전달함 ☐" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  /** The default (and every other test in this file): sends open, the ordinary button renders. */
+  it("leaves an auto room's 발송 button unlocked when sends are open", () => {
+    mount(group({ rows: [row()] }), { sendsEnabled: true });
+
+    expect((screen.getByRole("button", { name: "발송" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "발송 · 잠김" })).toBeNull();
   });
 });
 

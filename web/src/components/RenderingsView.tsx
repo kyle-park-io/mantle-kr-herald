@@ -4,8 +4,13 @@ import { type Rendering } from "../types";
 import { RenderingList } from "./RenderingList";
 import { OutletBoard } from "./OutletBoard";
 
-export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void; authEpoch: number }) {
-  const { onDirtyChange, authEpoch } = props;
+export function RenderingsView(props: {
+  onDirtyChange: (dirty: boolean) => void;
+  authEpoch: number;
+  /** See `OutletCard`'s same-named prop — passed straight through to `OutletBoard`. */
+  sendsEnabled: boolean;
+}) {
+  const { onDirtyChange, authEpoch, sendsEnabled } = props;
   const [items, setItems] = useState<Rendering[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +68,7 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void;
               onGroupChanged={refresh}
               onDirtyChange={setDirty}
               authEpoch={authEpoch}
+              sendsEnabled={sendsEnabled}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-10">

@@ -47,6 +47,8 @@ export function OutletBoard(props: {
    * at all) until the reviewer manually re-selected the item.
    */
   authEpoch: number;
+  /** See `OutletCard`'s same-named prop — passed straight through to every card on this board. */
+  sendsEnabled: boolean;
 }) {
   const { itemId, onDirtyChange, authEpoch } = props;
   const [board, setBoard] = useState<BoardView | null>(null);
@@ -270,6 +272,7 @@ export function OutletBoard(props: {
               key={`${g.type}:${g.channel}`}
               itemId={board.itemId}
               group={g}
+              sendsEnabled={props.sendsEnabled}
               convertedText={props.convertedByType[g.type] ?? ""}
               hovered={hovered}
               onHover={setHovered}

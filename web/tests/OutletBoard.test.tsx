@@ -58,6 +58,7 @@ describe("OutletBoard's authEpoch-triggered refetch", () => {
         onGroupChanged={async () => {}}
         onDirtyChange={() => {}}
         authEpoch={0}
+        sendsEnabled={true}
       />,
     );
 
@@ -75,6 +76,7 @@ describe("OutletBoard's authEpoch-triggered refetch", () => {
         onGroupChanged={async () => {}}
         onDirtyChange={() => {}}
         authEpoch={1}
+        sendsEnabled={true}
       />,
     );
 
