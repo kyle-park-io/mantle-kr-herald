@@ -142,6 +142,10 @@ describe("App's data refetch on authEpoch", () => {
     await screen.findByText("검수할 항목을 선택하세요"); // the empty-list state renders once the failed fetch settles
     expect(fetchMock.mock.calls.filter((c) => String(c[0]).endsWith("/api/translations"))).toHaveLength(1);
 
+    // That 401 put the driver's own word in the error banner. Asserted here so the check after the
+    // login is proof the banner was *cleared*, not proof it never rendered in the first place.
+    expect(screen.getByText("unauthenticated")).toBeTruthy();
+
     // A successful login (`Root.tsx`'s LoginPage onSubmit) now answers with real data — the same
     // component instance, same DOM, just a new authEpoch, standing in for what Root actually does.
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
@@ -174,5 +178,11 @@ describe("App's data refetch on authEpoch", () => {
     // The item that was there all along is now visible — proof the effect actually re-ran, not just
     // that the mock was swapped.
     await screen.findByText("번역");
+
+    // And the banner the cold start left behind is gone. The refetch above succeeded, so nothing on
+    // screen is failing any more; a stale "unauthenticated" would sit across the top of a working
+    // board for the rest of the session, in the driver's English, telling the reviewer their signed-in
+    // dashboard is not signed in.
+    expect(screen.queryByText("unauthenticated")).toBeNull();
   });
 });

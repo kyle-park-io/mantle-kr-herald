@@ -43,7 +43,17 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [publishRows, setPublishRows] = useState<PublishStateRow[]>([]);
 
-  const refresh = () => api.list().then(setItems).catch((e) => setError(String(e.message ?? e)));
+  // Clears on success, because the `authEpoch` effect below re-runs this after a login and the
+  // failure it is recovering from is usually the cold-start 401 — leaving that set would park
+  // "unauthenticated" across the top of a board that just signed in successfully.
+  const refresh = () =>
+    api
+      .list()
+      .then((next) => {
+        setItems(next);
+        setError(null);
+      })
+      .catch((e) => setError(String(e.message ?? e)));
 
   const refreshStatus = () => {
     api.status().then(setStatus).catch(() => setStatus(null));
