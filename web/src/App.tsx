@@ -33,7 +33,7 @@ const GROUP_LABEL: Record<"collect" | "publish" | "send" | "data", string> = {
   data: "데이터",
 };
 
-export function App({ onSignOut }: { onSignOut: () => void }) {
+export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch: number }) {
   const [mode, setMode] = useState<Mode>(modeFromHash);
   const [items, setItems] = useState<Translation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -48,10 +48,14 @@ export function App({ onSignOut }: { onSignOut: () => void }) {
     api.status().then(setStatus).catch(() => setStatus(null));
     api.publishState().then(setPublishRows).catch(() => setPublishRows([]));
   };
+  // `authEpoch` (`Root.tsx`'s own doc comment has the full story) — not `[]` — because `<App>` now
+  // mounts once and is only ever hidden, never remounted, across a `#login` round trip. Without it,
+  // a cold-start login (no session yet when this effect's first run 401s) would never retry, and the
+  // board would sit on "해당하는 항목이 없습니다" forever, not because there is nothing to review.
   useEffect(() => {
     refresh();
     refreshStatus();
-  }, []);
+  }, [authEpoch]);
 
   const selected = items.find((t) => t.itemId === selectedId) ?? null;
 
@@ -65,8 +69,21 @@ export function App({ onSignOut }: { onSignOut: () => void }) {
 
   // Back/forward, or the hash edited by hand. The confirm above is deliberately not repeated: the
   // navigation already happened, so refusing it here would leave the URL and the screen disagreeing.
+  //
+  // `#login` is skipped rather than fed through `modeFromHash()`: it is not one of this router's own
+  // routes, it is `Root.tsx`'s pseudo-route for the sign-in overlay, which now sits on top of `<App>`
+  // without unmounting it (see `Root.tsx`'s own comment on why). `modeFromHash()` maps anything that
+  // is not `"#renderings"` — `#login` included — to `"translations"`, so without this guard a session
+  // lapsing while `mode` is `"renderings"` would flip it to `"translations"` the moment the hash
+  // became `#login`, unmounting `RenderingsView` (and whatever unsaved edit was live in it) even
+  // though `<App>` itself stayed mounted. Skipping the update here means `mode` sits still, hidden,
+  // for as long as the overlay is up, and the hash change back to the real route on a successful
+  // login resolves it correctly on its own — nothing here needs to remember to restore it.
   useEffect(() => {
-    const onHashChange = () => setMode(modeFromHash());
+    const onHashChange = () => {
+      if (window.location.hash === "#login") return;
+      setMode(modeFromHash());
+    };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
@@ -312,7 +329,7 @@ export function App({ onSignOut }: { onSignOut: () => void }) {
           </section>
         </div>
       ) : (
-        <RenderingsView onDirtyChange={setDirty} />
+        <RenderingsView onDirtyChange={setDirty} authEpoch={authEpoch} />
       )}
     </div>
   );

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { startServer } from "../../../src/adapters/web/HttpServer";
 import type { ApiDeps } from "../../../src/adapters/web/apiHandlers";
 import { SESSION_COOKIE_NAME } from "../../../src/adapters/web/sessionCookie";
-import { signSession } from "../../../src/domain/auth/session";
+import { signSession, SESSION_TTL_MS } from "../../../src/domain/auth/session";
 import { fakeDeps, fakeRenderingDeps, fakeBoardDeps, fakeConvertFormatDeps, TEST_SESSION_SECRET } from "../../support/fakeApiDeps";
 
 const servers: import("node:http").Server[] = [];
@@ -98,12 +98,12 @@ describe("startServer", () => {
       expect(res.status).toBe(401);
     });
 
-    // `session.test.ts` proves `verifySession` itself enforces a `ttlMs` shorter than the 12h
-    // default; this proves `HttpServer` actually threads `sessionConfig.ttlMs` through rather than
-    // handing `verifySession` nothing and letting it fall back to `SESSION_TTL_MS` regardless —
-    // against the old, inert plumbing this cookie (2s old, under a 1s `ttlMs`) would still verify
-    // fine and this would answer 200.
-    it("rejects a session older than sessionConfig.ttlMs, even though it is well under the 12h default", async () => {
+    // `session.test.ts` proves `verifySession` itself enforces a `ttlMs` shorter than the
+    // `SESSION_TTL_MS` default; this proves `HttpServer` actually threads `sessionConfig.ttlMs`
+    // through rather than handing `verifySession` nothing and letting it fall back to
+    // `SESSION_TTL_MS` regardless — against the old, inert plumbing this cookie (2s old, under a 1s
+    // `ttlMs`) would still verify fine and this would answer 200.
+    it("rejects a session older than sessionConfig.ttlMs, even though it is well under the SESSION_TTL_MS default", async () => {
       const dir = await mkdtemp(join(tmpdir(), "web-"));
       await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
       const deps = fakeDeps();
@@ -146,8 +146,10 @@ describe("startServer", () => {
       expect(cookie).toContain("Secure");
       expect(cookie).toContain("SameSite=Lax");
       expect(cookie).toContain("Path=/");
-      // Max-Age matches the token's own lifetime (SESSION_TTL_MS, 12h) in seconds.
-      expect(cookie).toContain(`Max-Age=${12 * 60 * 60}`);
+      // Max-Age matches the token's own lifetime (SESSION_TTL_MS) in seconds — computed from the
+      // constant, not a copy of its current value, so this does not silently stop meaning anything
+      // the next time `SESSION_TTL_MS` changes (as it just did, 12h -> 2h).
+      expect(cookie).toContain(`Max-Age=${SESSION_TTL_MS / 1000}`);
     });
 
     it("POST /api/logout clears the session cookie", async () => {

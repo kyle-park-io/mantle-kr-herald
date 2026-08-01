@@ -5,8 +5,8 @@ import type {
 
 /**
  * What `json()` does when the server answers 401 — by default nothing, since a call made before
- * `main.tsx` has installed the real handler (below) has nowhere sensible to go. `main.tsx` installs
- * the real one once, at startup, before any request that could hit this path; `installUnauthenticatedHandler`
+ * `Root.tsx` has installed the real handler (below) has nowhere sensible to go. `Root.tsx` installs
+ * the real one once, at module load, before any request that could hit this path; `installUnauthenticatedHandler`
  * exists so tests can install their own and observe the call without touching `window.location`.
  */
 let notifyUnauthenticated: () => void = () => {};
@@ -84,7 +84,7 @@ export const api = {
     }),
   /**
    * Clears the session cookie in this browser only. The token itself remains valid until it expires
-   * (12h) or the team rotates `HERALD_SESSION_SECRET` — there is no server-side record of individual
+   * (2h) or the team rotates `HERALD_SESSION_SECRET` — there is no server-side record of individual
    * sessions to revoke one from (see `apiHandlers.ts`'s logout route). The dashboard's sign-out
    * control; see `App.tsx`.
    */

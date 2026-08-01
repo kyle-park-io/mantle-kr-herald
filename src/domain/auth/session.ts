@@ -19,10 +19,18 @@ export interface SessionPayload {
  * stop sending the cookie — the token, verified against whatever `ttlMs` its caller actually passed,
  * is what decides.
  *
- * 12 hours: a working day, then sign in again. The dashboard has one shared account, so there is no
- * per-user session list to reason about — only "how long is a stolen cookie worth."
+ * 2 hours: not "how long is a convenient working session" but "how long a stolen-then-logged-out
+ * token stays usable." Logging out (`apiHandlers.ts`'s `/api/logout`) only clears the cookie in the
+ * browser — the token itself is never revoked, so it stays valid until this TTL lapses regardless of
+ * whether the person who held it signed out. There is deliberately no server-side revocation list
+ * that could shorten that window on demand (see `docs/superpowers/specs/2026-07-29-dashboard-auth-options.md`
+ * and this module's own `signSession` comment on why a JWT-shaped, unrevocable token was accepted at
+ * all) — shrinking `SESSION_TTL_MS` is the whole mitigation. 12 hours (a working day) was the
+ * original figure; 2 hours keeps a sign-in from expiring mid-task for the dashboard's one shared
+ * account while still being short enough that "walked away without logging out" or "a cookie leaked
+ * once" is not a whole day of exposure.
  */
-export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+export const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 
 function sign(body: string, secret: string): string {
   return createHmac("sha256", secret).update(body).digest("base64url");

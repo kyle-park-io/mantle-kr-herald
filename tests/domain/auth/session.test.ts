@@ -1,9 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { signSession, verifySession } from "../../../src/domain/auth/session";
+import { signSession, verifySession, SESSION_TTL_MS } from "../../../src/domain/auth/session";
 
 const secret = "a".repeat(64);
 const issued = new Date("2026-07-31T00:00:00.000Z");
-const ttlMs = 12 * 60 * 60 * 1000;
+// Imported, not a second hardcoded literal: a test that copies the number rather than the constant
+// would keep passing even if `SESSION_TTL_MS` drifted from what the cookie's `Max-Age` is built from
+// (`sessionCookie.ts`'s `buildSessionCookie`, always called with `sessionConfig.ttlMs` —
+// `apiHandlers.ts`'s login route), which is exactly the drift this file exists to catch.
+const ttlMs = SESSION_TTL_MS;
+
+describe("SESSION_TTL_MS", () => {
+  it("is 2 hours — see the constant's own comment for why", () => {
+    expect(SESSION_TTL_MS).toBe(2 * 60 * 60 * 1000);
+  });
+});
 
 describe("session tokens", () => {
   it("round-trips a payload", () => {
@@ -39,7 +49,7 @@ describe("session tokens", () => {
 
   // `ttlMs` is a real parameter, not a label on `SESSION_TTL_MS` — a caller (`HttpServer.ts`'s
   // `currentSession()`) that passes a shorter lifetime gets it enforced, not silently ignored in
-  // favor of the 12h default every other test in this file relies on.
+  // favor of the `SESSION_TTL_MS` default every other test in this file relies on.
   it("honors a ttlMs shorter than SESSION_TTL_MS rather than always falling back to it", () => {
     const shortTtlMs = 1_000;
     const token = signSession({ issuedAt: issued.toISOString() }, secret);

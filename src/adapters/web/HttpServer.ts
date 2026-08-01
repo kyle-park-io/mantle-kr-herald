@@ -68,7 +68,7 @@ function isLoopbackOrigin(origin: string): boolean {
  * everything above is written for that future, not proof it has already arrived. There is no CSRF
  * token; the cookie's `SameSite` plus the Origin check above stand in for one, which is adequate for
  * a single shared account and would need revisiting for anything with per-user sessions. A stolen
- * cookie is valid until it expires (12h) or `HERALD_SESSION_SECRET` is rotated — there is no
+ * cookie is valid until it expires (`SESSION_TTL_MS`, 2h) or `HERALD_SESSION_SECRET` is rotated — there is no
  * server-side session list to revoke one entry from, the same tradeoff the auth-options record
  * accepted in choosing a signed cookie over a JWT and not reopening it here. And since the account is
  * shared, nothing here can answer "which person did this" — only "someone with the password did."

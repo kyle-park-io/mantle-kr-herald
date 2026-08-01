@@ -102,6 +102,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dashboard session lifetime cut from 12 hours to 2 hours.** Signing out
+  (`POST /api/logout`) only ever cleared the cookie in the browser — the session token itself was
+  never revoked, so a stolen-then-logged-out token stayed usable until it expired regardless. Rather
+  than build a server-side revocation record, `SESSION_TTL_MS` (`src/domain/auth/session.ts`) now
+  bounds that exposure window at 2 hours instead of 12. The cookie's `Max-Age` is derived from the
+  same `SessionConfig.ttlMs` a caller passes to `verifySession`, so the two cannot drift; a test now
+  pins that derivation to the constant rather than a copied literal.
 - **`state:push` now backs up the reviewed text as well — seven files, not five.**
   `output/translations/translations.json` and `output/variants/variants.json` join the bundle. They
   were classed as derivable on the grounds that the pipeline can produce a translation and a
@@ -117,6 +124,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A session expiring mid-edit no longer loses a reviewer's unsaved text.** Any 401 — including one
+  from a save the reviewer just triggered — sends the browser to `#login` (`web/src/api.ts`'s
+  `json()`). `web/src/main.tsx` used to swap `<App>` out for the sign-in screen on that redirect,
+  unmounting every bit of component state under it, unsaved edit included. At the old 12-hour session
+  lifetime this was theoretical; at the new 2-hour lifetime (see above) a reviewer mid-edit on a 2차
+  rendering can realistically hit it. `<App>` now moved into `web/src/Root.tsx`, which hides it
+  (`display:none`) instead of unmounting it while the sign-in overlay is up, and reveals the same
+  instance — unsaved draft intact — once login succeeds; `App.tsx`'s hash-driven mode router got a
+  matching fix so the `#login` pseudo-route does not itself flip the board away from whatever mode
+  the reviewer had open. That same "never unmount, only hide" change had a corollary: `<App>`'s (and
+  `RenderingsView`'s) data load only ever ran in a mount-only effect, so the far more common path
+  through the same overlay — the first login of the day, from a cold dashboard with no session
+  yet — 401'd once on that initial fetch and then never retried, leaving a populated board looking
+  permanently empty ("해당하는 항목이 없습니다") after a successful login until a manual reload.
+  `Root.tsx` now threads an `authEpoch`, incremented on every successful login, into both
+  components' data-loading effects so a login — first-time or a mid-edit re-auth alike — always
+  retries the fetch; verified against a real browser and a throwaway Postgres, both for the
+  mid-edit-401 case and this cold-start one.
 - **`GoogleSheetClient` retries 429/5xx and network errors** (three attempts, `1000 * 2^attempt`),
   mirroring the policy `HttpClient` already used. It previously threw on the first non-2xx, so a
   transient rate-limit or 503 failed the whole command. Shared by `metrics:record`,
