@@ -43,3 +43,4 @@ web/node_modules/
 *.xlsx
 *.xls
 *.numbers
+.vercel
