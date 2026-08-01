@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   configCheck,
   cloudCheck,
@@ -8,7 +8,12 @@ import {
   accessResult,
   sheetAccessResult,
   quotaResult,
+  runDbCheck,
+  describeSchemaProbeError,
+  databaseProbe,
 } from "../../src/doctor/checks";
+import { createTestDb, createUnmigratedTestDb } from "../support/testDb";
+import type { Db } from "../../src/adapters/db/Db";
 
 const DRIVE = "https://www.googleapis.com/auth/drive.file";
 const SHEETS = "https://www.googleapis.com/auth/spreadsheets";
@@ -144,6 +149,90 @@ describe("sheetAccessResult", () => {
 
   it("other status → HTTP N", () => {
     expect(sheetAccessResult("Sheet", { ok: false, status: 500 }).detail).toBe("HTTP 500");
+  });
+});
+
+describe("runDbCheck", () => {
+  it("reports the attached database and its stated environment", async () => {
+    const result = await runDbCheck({ url: "postgres://localhost/herald", env: "development" }, async () => true);
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain("development");
+  });
+
+  it("fails the check when the database is unreachable", async () => {
+    const result = await runDbCheck({ url: "postgres://localhost/herald", env: "production" }, async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("names the host and database, but never the credentials", async () => {
+    const result = await runDbCheck({ url: "postgres://user:s3cret@db.internal:5432/herald_prod", env: "production" }, async () => true);
+    expect(result.detail).toContain("db.internal:5432/herald_prod");
+    expect(result.detail).not.toContain("user");
+    expect(result.detail).not.toContain("s3cret");
+  });
+
+  it("includes the probe's error message on failure", async () => {
+    const result = await runDbCheck({ url: "postgres://localhost/herald", env: "development" }, async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    expect(result.detail).toContain("ECONNREFUSED");
+  });
+
+  it("fails cleanly — never throws — when DATABASE_URL is not a parseable URL, instead of aborting the whole report", async () => {
+    const probe = async () => true;
+    await expect(runDbCheck({ url: "not-a-url", env: "development" }, probe)).resolves.toEqual({
+      ok: false,
+      detail: "development — DATABASE_URL is not a valid URL",
+    });
+  });
+
+  it("never echoes a malformed DATABASE_URL back, even when it still contains credentials", async () => {
+    // new URL() throws for this value (no host after the userinfo) — confirming the credential-
+    // bearing raw string never reaches the report, not just that *some* generic string is unused.
+    const result = await runDbCheck({ url: "postgres://user:s3cret@", env: "production" }, async () => true);
+    expect(result.ok).toBe(false);
+    expect(result.detail).not.toContain("user");
+    expect(result.detail).not.toContain("s3cret");
+  });
+});
+
+describe("describeSchemaProbeError", () => {
+  it("names the remedy when the probe fails because the schema was never applied", () => {
+    const err = describeSchemaProbeError(new Error('relation "deliveries" does not exist'));
+    expect(err.message).toContain("Schema not applied");
+    expect(err.message).toContain("pnpm db:import");
+  });
+
+  it("passes through any other probe failure unchanged", () => {
+    const original = new Error("ECONNREFUSED");
+    expect(describeSchemaProbeError(original)).toBe(original);
+  });
+});
+
+describe("databaseProbe", () => {
+  let db: (Db & { close(): Promise<void> }) | undefined;
+  afterEach(async () => {
+    await db?.close();
+    db = undefined;
+  });
+
+  it("fails against a database whose schema was never applied, naming the remedy — doctor cannot report ok here", async () => {
+    db = await createUnmigratedTestDb();
+    await expect(databaseProbe(db)()).rejects.toThrow(/pnpm db:import/);
+  });
+
+  it("succeeds against a migrated database", async () => {
+    db = await createTestDb();
+    await expect(databaseProbe(db)()).resolves.toBe(true);
+  });
+
+  it("plugged into runDbCheck, a table-less database reports fail with the remedy in the detail", async () => {
+    db = await createUnmigratedTestDb();
+    const result = await runDbCheck({ url: "postgres://localhost/herald", env: "development" }, databaseProbe(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("pnpm db:import");
   });
 });
 

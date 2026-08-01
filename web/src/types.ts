@@ -87,6 +87,27 @@ export interface AppStatus {
   integrations: IntegrationStatus[];
   /** Header links to the team workbooks — absent when the id is not configured. */
   sheetLinks: { data?: SheetLink; qa?: SheetLink };
+  /**
+   * The attached database's stated `HERALD_DB_ENV` — mirrors the same field on the server's
+   * `StatusView` (`apiHandlers.ts`). Drives `EnvironmentBanner`'s persistent warning when this is
+   * not `"production"`. Optional here (unlike the server, where it is required) only so an older
+   * cached response or a test fixture that predates this field renders no banner rather than a
+   * crash — a real response always carries it.
+   */
+  dbEnv?: "production" | "development";
+  /**
+   * Whether `POST /api/outlets/:id/:type/:outletId/send` is actually open — mirrors the server's
+   * `StatusView.sendsEnabled`. Drives `EnvironmentBanner`'s other persistent notice. Same optionality
+   * note as `dbEnv` above.
+   */
+  sendsEnabled?: boolean;
+  /**
+   * Whether `POST /api/items/:id/convert-prepare` exists on this deployment — mirrors the server's
+   * `StatusView.conversionEnabled`. Drives whether `OutletBoard` offers [변환 준비] at all. Same
+   * optionality note as `dbEnv` above; `OutletBoard` treats an absent value as "available", which is
+   * what every deployment that predates this field was.
+   */
+  conversionEnabled?: boolean;
 }
 
 export interface PublishStateRow {
@@ -197,6 +218,15 @@ export const SEND_BLOCK_REASON: Record<SendBlock, string> = {
   unapproved: "아직 승인되지 않았습니다",
   "source-changed": "원문이 이 문구를 승인한 뒤에 다시 승인됐습니다 — 다시 검수하거나 변환을 새로 하세요",
 };
+
+/**
+ * Mirrors `SENDS_CLOSED_MESSAGE` in `src/adapters/web/apiHandlers.ts` — what `POST
+ * /api/outlets/:id/:type/:outletId/send` answers with while `HERALD_SENDS_ENABLED` is off.
+ * `EnvironmentBanner`'s persistent notice and `OutletCard`'s locked [발송]/[재발송] tooltip both use
+ * this exact sentence, so an operator reads the same words whether they see it before or after
+ * clicking. `tests/web/typeMirror.test.ts` keeps the two byte-identical.
+ */
+export const SENDS_CLOSED_MESSAGE = "발송이 아직 열려 있지 않습니다 — 1차·2차 승인이 자리잡으면 팀이 직접 엽니다.";
 
 /**
  * What the `**볼드**` in a card's text actually does on that channel, told to the reviewer at the

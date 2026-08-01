@@ -4,8 +4,15 @@ import { type Rendering } from "../types";
 import { RenderingList } from "./RenderingList";
 import { OutletBoard } from "./OutletBoard";
 
-export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void }) {
-  const { onDirtyChange } = props;
+export function RenderingsView(props: {
+  onDirtyChange: (dirty: boolean) => void;
+  authEpoch: number;
+  /** See `OutletCard`'s same-named prop — passed straight through to `OutletBoard`. */
+  sendsEnabled: boolean;
+  /** See `OutletBoard`'s same-named prop — passed straight through to it. */
+  conversionEnabled: boolean;
+}) {
+  const { onDirtyChange, authEpoch, sendsEnabled, conversionEnabled } = props;
   const [items, setItems] = useState<Rendering[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -15,9 +22,12 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
     () => api.listRenderings().then(setItems).catch((e) => setError(String(e.message ?? e))),
     [],
   );
+  // `authEpoch` — see `Root.tsx`'s doc comment: `<App>` (this component's parent) now only ever
+  // hides across a `#login` round trip, never remounts, so without it a cold-start login (landing
+  // here first, e.g. a bookmarked `#renderings`) would 401 once and never retry.
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, authEpoch]);
   useEffect(() => {
     onDirtyChange(dirty);
   }, [dirty, onDirtyChange]);
@@ -59,6 +69,9 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void 
               kind={selected.kind}
               onGroupChanged={refresh}
               onDirtyChange={setDirty}
+              authEpoch={authEpoch}
+              conversionEnabled={conversionEnabled}
+              sendsEnabled={sendsEnabled}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-10">

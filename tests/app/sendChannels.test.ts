@@ -57,6 +57,10 @@ function fakeLedger(seed: DeliveryEntry[] = []) {
     remove: async (key: string) => {
       rows = rows.filter((r) => deliveryKey(r) !== key);
     },
+    replace: async (previous: DeliveryEntry, next: DeliveryEntry) => {
+      rows = [...rows.filter((r) => deliveryKey(r) !== deliveryKey(previous) && deliveryKey(r) !== deliveryKey(next)), next];
+      added.push(next);
+    },
   };
   return { ledger, added };
 }
@@ -160,6 +164,7 @@ describe("SendChannels", () => {
       loadKeys: async () => new Set<string>(),
       add: async () => { throw new Error("disk full"); },
       remove: async () => {},
+      replace: async () => { throw new Error("disk full"); },
     };
     let sends = 0;
     const sender: ChannelSender = { name: "telegram", send: async () => { sends++; return { postId: "p" }; } };

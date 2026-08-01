@@ -1,8 +1,11 @@
 // src/adapters/web/HttpServer.ts
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type IncomingMessage } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join, normalize, extname, resolve, sep } from "node:path";
-import { handleApi, type ApiDeps } from "./apiHandlers";
+import { handleApi, isLoginRoute, type ApiDeps } from "./apiHandlers";
+import { readSessionToken } from "./sessionCookie";
+import { verifySession, type SessionPayload } from "../../domain/auth/session";
+import { resolveClientIp } from "./clientIp";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -34,11 +37,21 @@ function isLoopbackOrigin(origin: string): boolean {
 /**
  * Why a request must be refused before it reaches a route, or `undefined`.
  *
- * The server has no auth and binds to 127.0.0.1, but it now performs irreversible live posts, and
- * `POST /api/outlets/:itemId/:type/:outletId/send` takes no body — which makes a cross-site form
- * POST a *simple* request: no preflight, so CORS never gets a say and the browser just sends it,
- * from any page the operator has open. Needing a known `itemId` keeps that impractical; the guard is
- * a few lines and the blast radius changed class in this slice.
+ * This used to be the whole security model — "no auth, bound to loopback" — and that sentence is no
+ * longer true. It is not the only guard anymore, and it is not the first one a request meets:
+ *
+ * 1. **The session gate.** Every `/api/` route except `POST /api/login` (and, separately,
+ *    `/api/publish/local/*`, gated the same way one step down) requires a valid, signed, `httpOnly`,
+ *    `SameSite=Lax` session cookie — see `apiHandlers.ts`'s `handleApi` and `currentSession()` below.
+ *    Read or write, unauthenticated now means 401, with no detail about why. This is the actual
+ *    boundary a stranger who is not on this machine runs into first.
+ * 2. **This function**, still. It exists for the one class of request the session cookie's own
+ *    `SameSite=Lax` cannot be fully trusted to stop by itself: a cross-site `POST` that rides along
+ *    with whatever a browser decides is or is not "top-level" for cookie purposes, from any page the
+ *    operator happens to have open. `POST /api/outlets/:itemId/:type/:outletId/send` takes no body,
+ *    which makes it a *simple* request — no preflight, so CORS never gets a say and the browser just
+ *    sends it. Refusing by `Origin` does not depend on any of that being handled correctly; it is
+ *    independent, not a fallback for a cookie the gate above already checks.
  *
  * - **Origin** — present and not loopback: refused. *Any* loopback port is accepted rather than this
  *   server's own, because `pnpm dev:web` serves the UI from Vite on :5173 and proxies `/api` here
@@ -47,20 +60,135 @@ function isLoopbackOrigin(origin: string): boolean {
  * - **content-type** — the three an HTML form can produce are refused outright, which covers a
  *   client that sends no `Origin` at all. Costs nothing: every dashboard call sends JSON or no body.
  *
- * `GET` is untouched, so the SPA, the static files and the local publish reader are unaffected.
+ * `GET` is untouched by this function specifically — the session gate is what now reaches it too, so
+ * the SPA shell and the static files under `staticDir` are the only things actually unaffected; the
+ * local publish reader is not (see its own guard, just past this one, in `startServer`).
+ *
+ * **What still is not guarded, by design or by what this plan covers:** the server still binds to
+ * 127.0.0.1 only — `Plan C`, not this one, is what makes it reachable from anywhere else, and
+ * everything above is written for that future, not proof it has already arrived. There is no CSRF
+ * token; the cookie's `SameSite` plus the Origin check above stand in for one, which is adequate for
+ * a single shared account and would need revisiting for anything with per-user sessions. A stolen
+ * cookie is valid until it expires (`SESSION_TTL_MS`, 2h) or `HERALD_SESSION_SECRET` is rotated — there is no
+ * server-side session list to revoke one entry from, the same tradeoff the auth-options record
+ * accepted in choosing a signed cookie over a JWT and not reopening it here. And since the account is
+ * shared, nothing here can answer "which person did this" — only "someone with the password did."
+ * The cookie is `Secure`, so a browser will not send it — or store it in the first place — over plain
+ * `http://` to anything but a loopback host: login would still answer 200 (the response itself is not
+ * blocked), but the cookie never gets set, so every request after it 401s and the user bounces to
+ * `#login` forever with no message explaining why. Harmless today, since every host this plan covers
+ * is loopback and browsers treat `localhost`/`127.0.0.1` as a secure context regardless of scheme —
+ * listed here because this comment is written for the hosted future, where serving this over plain
+ * HTTP to a real hostname would be exactly this failure, not proof it is already a problem.
+ * The single-flight guard is still a free denial of service on signing in, not on anything behind
+ * the gate: a caller who floods concurrent `POST /api/login`s occupies `singleFlight`'s one
+ * derivation slot in `serve.ts` for as long as they keep sending, and a busy refusal never reaches
+ * the limiter (so it costs the attacker nothing) but still answers every legitimate concurrent
+ * attempt "try again" instead of actually checking it. That much is deliberately not fixed here.
+ *
+ * What USED to sit right next to it — a single wrong guess, from anywhere, tripping one global
+ * lockout and holding the whole team out for a minute at a time, repeatably, forever, at zero cost —
+ * is: `attemptLimiter.ts`'s own comment describes the two-layer replacement (a per-IP counter at the
+ * original threshold, plus a global counter kept only as a backstop at a much higher one). A single
+ * stranger — or a single teammate's typo — can now lock out only themselves; reaching the global
+ * lockout that shuts out the whole team takes a genuinely distributed attempt across many distinct,
+ * trustworthy addresses, which `clientIp.ts`'s `resolveClientIp` — see its own comment — only ever
+ * reports when `HERALD_TRUST_PROXY` is deliberately turned on for a deployment that actually sits
+ * behind a proxy; today, with nothing in front of this loopback-only server, every caller resolves
+ * to the same socket address, and the two-layer split degenerates back to one shared counter. Still
+ * not zero benefit even then, since the global threshold alone is now far higher than the old one.
+ * "Can now lock out only themselves" depends on `PgAttemptLimiter.recordFailure`'s decay (its own
+ * comment has the full argument): without it, one address could burst to its own per-IP threshold,
+ * serve that 60s lockout — which costs it nothing, since a refusal the per-IP layer already turns
+ * away never reaches `recordFailure` — and repeat, with each burst's failures still landing on the
+ * GLOBAL row, which would accumulate toward its own lockout across that unbounded wall-clock time. A
+ * single stranger, patient enough, would eventually be the "genuinely distributed attempt" this
+ * paragraph describes as needing many addresses. Decay is what actually makes that word operative.
+ * `docs/ko/team-runbook.md`'s entry for a locked-out login has the escape hatch for whichever lockout
+ * is actually holding — a per-IP one clears itself; the global one, which is what actually locks out
+ * everyone, still needs it, since it survives a restart the same way the old single counter did.
  */
-export function refusalReason(method: string, origin?: string, contentType?: string): string | undefined {
+/**
+ * `isAllowedOrigin` is a parameter, not `isLoopbackOrigin` baked in directly, so the Vercel entry
+ * point (`api/[...path].ts`, Plan C Task 2) can reuse this exact function rather than reimplementing
+ * the CSRF rule a second time — the algorithm above (which methods are state-changing, which content
+ * types a form can produce, "absent origin passes through") is identical on both entry points; only
+ * WHICH origins count as "this deployment" differs, and that is entirely what the parameter
+ * expresses. `HttpServer.ts`'s own call site below passes `isLoopbackOrigin`; the Vercel handler
+ * passes a predicate built from `loadDeploymentOrigin()` (`config.ts`).
+ */
+export function refusalReason(
+  method: string,
+  origin: string | undefined,
+  contentType: string | undefined,
+  isAllowedOrigin: (origin: string) => boolean,
+): string | undefined {
   if (!STATE_CHANGING.has(method.toUpperCase())) return undefined;
-  if (origin !== undefined && !isLoopbackOrigin(origin)) return "cross-site request refused";
+  if (origin !== undefined && !isAllowedOrigin(origin)) return "cross-site request refused";
   if (contentType && FORM_TYPES.has(contentType.split(";")[0].trim().toLowerCase())) {
     return "form-encoded request refused";
   }
   return undefined;
 }
 
-async function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
+/**
+ * Just enough of a request for `currentSession` to read. A real `IncomingMessage` satisfies this
+ * structurally without any change at its call sites below — `IncomingHttpHeaders` names `cookie`
+ * explicitly — and so does the small shim `api/[...path].ts` builds over a Vercel Web-standard
+ * `Request`, whose `headers` is a `Headers` object rather than a plain record and so cannot be
+ * handed to this function unchanged. Narrowed to the one field `currentSession` touches, the same
+ * move `clientIp.ts`'s `ClientIpRequest` already makes for `resolveClientIp`.
+ */
+export interface SessionRequest {
+  headers: { cookie?: string };
+}
+
+/**
+ * The verified session for this request, or `undefined`. Read from the `Cookie` header and checked
+ * against `secret` and `ttlMs` once, right here — exported so the Vercel entry point
+ * (`api/[...path].ts`) reads a cookie exactly the way this local server does, rather than
+ * re-deriving the same three lines a second time: which secret, which ttl, and what a malformed
+ * cookie means (`verifySession` never throws, so a malformed or absent cookie ends up `undefined`
+ * the same as a genuinely missing one) would otherwise live in two places that could quietly drift.
+ * `ttlMs` is threaded through from `sessionConfig` rather than left to `verifySession`'s own
+ * default, so the lifetime a session was signed with and the lifetime it is checked against can
+ * never be two different `SessionConfig`s.
+ */
+export function currentSession(req: SessionRequest, secret: string, ttlMs: number): SessionPayload | undefined {
+  const token = readSessionToken(req.headers.cookie);
+  return token ? verifySession(token, secret, new Date(), ttlMs) : undefined;
+}
+
+/**
+ * Bytes past which `readBody` gives up rather than keep concatenating — measured against what is
+ * actually read off the socket, not the client-declared `Content-Length` (which a request can omit,
+ * understate, or lie about), so a request cannot buffer past the cap just by mislabeling itself.
+ *
+ * 2 MiB is far above the largest legitimate payload on this API. Every write route on this API sends
+ * at most one free-text field (`koreanText`, rendering `text`, …) plus a handful of short strings and
+ * booleans; the design spec's own upper bound for the longest of those — an X Article's `sourceText`
+ * — is ~12,000 characters, under 50 KB even in the worst-case multi-byte UTF-8 encoding. The cap
+ * exists to bound memory, not to police content size, so nothing here is expected to ever get close
+ * to it.
+ *
+ * Exported so the Vercel entry point (`api/[...path].ts`) enforces the identical cap over its own
+ * Web-Streams body reader — one number, not two that could quietly drift apart.
+ */
+export const MAX_API_BODY_BYTES = 2 * 1024 * 1024;
+
+/** Thrown by `readBody` when a request body exceeds `MAX_API_BODY_BYTES`. Exported for the same
+ *  reason as the constant above — `api/[...path].ts` raises and catches the identical error type. */
+export class BodyTooLargeError extends Error {}
+
+async function readBody(req: import("node:http").IncomingMessage, maxBytes: number): Promise<unknown> {
   const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
+  let total = 0;
+  for await (const c of req) {
+    const chunk = c as Buffer;
+    total += chunk.length;
+    if (total > maxBytes) throw new BodyTooLargeError();
+    chunks.push(chunk);
+  }
   if (chunks.length === 0) return undefined;
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -72,14 +200,26 @@ async function readBody(req: import("node:http").IncomingMessage): Promise<unkno
 export function startServer(deps: ApiDeps, opts: { port: number; staticDir: string; localPublishDir: string }): Server {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
+    // Hoisted so the catch block at the bottom can tell an authenticated failure from an
+    // unauthenticated one — set inside the `/api/` branch below, left `undefined` for every request
+    // that never got that far (a static asset, or `POST /api/login` itself).
+    let session: SessionPayload | undefined;
     try {
       // Before any route: a state-changing request from somewhere else never reaches a use case.
-      const refusal = refusalReason(req.method ?? "GET", req.headers.origin, req.headers["content-type"]);
+      const refusal = refusalReason(req.method ?? "GET", req.headers.origin, req.headers["content-type"], isLoopbackOrigin);
       if (refusal) {
         res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: refusal }));
         return;
       }
       if (url.pathname.startsWith("/api/publish/local/")) {
+        // Not routed through `handleApi` — its own gate, mirroring the one at the top of that
+        // function, since this is the one `/api/` path that bypasses it entirely. It serves
+        // unpublished review/approved markdown in local storage mode, which is exactly the kind of
+        // content "the board is not public" is about.
+        if (!currentSession(req, deps.sessionConfig.secret, deps.sessionConfig.ttlMs)) {
+          res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: "unauthenticated" }));
+          return;
+        }
         try {
           const rel = normalize(decodeURIComponent(url.pathname.slice("/api/publish/local/".length)))
             .replace(/^(\.\.[/\\])+/, "")
@@ -98,10 +238,39 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
         return;
       }
       if (url.pathname.startsWith("/api/")) {
-        const body = req.method === "POST" || req.method === "PUT" ? await readBody(req) : undefined;
-        const result = await handleApi(deps, req.method ?? "GET", url.pathname, body);
+        session = currentSession(req, deps.sessionConfig.secret, deps.sessionConfig.ttlMs);
+        // Only the login route reads this (`apiHandlers.ts`'s `handleApi`) — computed once per
+        // request, here, the same place `session` is, so `clientIp.ts`'s `resolveClientIp` never has
+        // to run against anything but a real `IncomingMessage`'s real socket.
+        const clientIp = resolveClientIp(req, deps.ipConfig);
+        // Refused before the body is ever read. `readBody` used to run unconditionally here, ahead
+        // of this same gate inside `handleApi` — an unauthenticated 20 MB `PUT` was fully read and
+        // concatenated before the 401 that was always coming ever went out. A request the gate is
+        // about to refuse must not first be made to pay for buffering whatever it sent; `req.destroy()`
+        // drops the connection rather than draining the rest of a body nobody is going to look at.
+        if (!session && !isLoginRoute(req.method ?? "GET", url.pathname)) {
+          res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: "unauthenticated" }));
+          req.destroy();
+          return;
+        }
+        let body: unknown;
+        if (req.method === "POST" || req.method === "PUT") {
+          try {
+            body = await readBody(req, MAX_API_BODY_BYTES);
+          } catch (err) {
+            if (err instanceof BodyTooLargeError) {
+              res.writeHead(413, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: "request body too large" }));
+              req.destroy();
+              return;
+            }
+            throw err;
+          }
+        }
+        const result = await handleApi({ ...deps, session, clientIp }, req.method ?? "GET", url.pathname, body);
         const payload = JSON.stringify(result.json);
-        res.writeHead(result.status, { "Content-Type": "application/json; charset=utf-8" }).end(payload);
+        const headers: Record<string, string> = { "Content-Type": "application/json; charset=utf-8" };
+        if (result.setCookie) headers["Set-Cookie"] = result.setCookie;
+        res.writeHead(result.status, headers).end(payload);
         return;
       }
       // static: map path to a file under staticDir, default to index.html (SPA fallback)
@@ -116,12 +285,29 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
       }
       res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "application/octet-stream" }).end(data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       if (res.headersSent) {
         res.end();
-      } else {
-        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: message }));
+        return;
       }
+      if (session) {
+        // An authenticated caller is a trusted team operator, not a stranger — the same tier as one
+        // running this command from a terminal, where an uncaught error already prints its own
+        // message. There is nothing in `err.message` here that a signed-in team member does not
+        // already have access to, and the detail is what lets them fix it without needing a
+        // terminal.
+        const message = err instanceof Error ? err.message : String(err);
+        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: message }));
+        return;
+      }
+      // No session — in practice always `POST /api/login`, the one route reachable without one (a
+      // static asset failing this hard is a broken install, not a request this is written for). A
+      // driver failure reached from `Login` → `PgAttemptLimiter` (a bad `DATABASE_URL`, an
+      // unmigrated schema, a rejected password) must not hand an unauthenticated caller the driver's
+      // own text — schema names, internal hostnames, database usernames. Same bar the 401 above
+      // already holds itself to: no detail about why. The real message still goes somewhere — the
+      // server's own log — rather than nowhere.
+      console.error("unauthenticated request failed:", err);
+      res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: "internal error" }));
     }
   });
   server.listen(opts.port, "127.0.0.1");

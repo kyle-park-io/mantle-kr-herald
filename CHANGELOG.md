@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrading — action required for existing installs
 
+- **Set `DATABASE_URL` and `HERALD_DB_ENV` (`development` or `production`) in `.env`, then run
+  `pnpm db:import` once, before the first send after upgrading.** The record of truth — translations,
+  variants, renderings, outlet overrides, both send ledgers, publish state, lineage, few-shot
+  examples, and collected X/Lark content — moved from `output/*.json` files to Postgres. Every CLI
+  command and the dashboard now read and write through the database, not the tree; `output/` is no
+  longer where sent state lives. `pnpm db:import` applies the database schema itself the first time
+  it runs (there is no separate migration step to remember), then copies whatever `output/` (and
+  `translation/`/`conversion/`'s few-shot corpora) currently holds into the database once; it only
+  ever upserts or appends and never deletes, so re-running it is safe as long as the tree hasn't
+  drifted since — re-running it against a tree that *has* since gone stale can resurrect a row
+  removed through the app, so it is meant to run once at cutover, not routinely. Skipping this step
+  is not a silent failure: `pnpm serve`, `pnpm send:channels`, and `pnpm send:x-article` all refuse
+  to start or send when the database's delivery (or X-article) ledger is empty but
+  `output/publish/deliveries.json` / `channels.json` (or `x-article.json`) still holds sent rows on
+  disk, and say to run `pnpm db:import` — the unguarded alternative would have been every
+  already-sent item reading as never-sent, and the next send re-posting the whole history to live
+  Telegram rooms and the brand's X account. `pnpm doctor` now checks the database connection too
+  (host and database name only, never the password) by querying a real table, so a database that
+  connects but was never imported into fails the check instead of reporting healthy, and `pnpm
+  status` prints the attached environment on its first line.
+- **`pnpm db:export` (the rollback path) now previews by default and requires `--yes` to write, the
+  same shape as `pnpm db:import`.** A flagless run only prints current-on-disk-vs-incoming-from-
+  database counts for every store; nothing is written until `--yes` is passed. It also refuses
+  outright — even with `--yes` — to overwrite a store's file with an empty one when that file
+  already holds rows on disk: an empty or wrong database (unset `HERALD_DB_ENV`, or one `db:import`
+  was never run against) is a far more likely explanation than the store having been genuinely
+  emptied, and `db:export`'s default target is the same `output/` tree that is both `db:import`'s
+  only input and the send-path ledger guard's only safety net. Pass `--allow-empty-overwrite` if a
+  store really was emptied and the export is meant to reflect that.
 - **Before the first `pnpm kol-telegram:record`, create and seed the `kol-map` tab by hand — the
   command cannot run without it, and the rows it writes decide KOL payments.** This is a new
   human-maintained tab in the `GSHEET_ID` workbook with the header row
@@ -44,6 +73,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`api/[...path].ts` + `vercel.json` — a Vercel Function entry point for the review dashboard,
+  alongside the existing `pnpm serve`.** A thin adapter over the same `handleApi`/`refusalReason`
+  that `HttpServer.ts` already uses: it turns a Vercel Function's Web-standard `Request` into the
+  `(method, path, body)` those already expect and turns the answer back into a `Response`, adding no
+  routing or use-case logic of its own. One `pg.Pool` per function instance (`@vercel/functions`'
+  `attachDatabasePool`), never one per request. The session gate runs, and the CSRF origin check
+  refuses a foreign origin, before THIS FUNCTION reads the request body — Vercel's own platform
+  already accepts up to 4.5 MB at the edge and delivers it with the invocation regardless (there is
+  no local-server equivalent of refusing the accept itself), so this ordering bounds the function's
+  own work and still enforces the existing 2 MiB cap for an authenticated caller, but it is not a
+  guarantee about what the platform already buffered for an unauthenticated one — see
+  `api/[...path].ts`'s own comment for the precise boundary. The CSRF allowlist is
+  `HERALD_DEPLOYMENT_ORIGIN`, a required environment variable rather than a hardcoded loopback check —
+  the default `*.vercel.app` domain means this deployment's own origin does not exist until it is
+  deployed, so guessing or defaulting permissively was not an option. The function also refuses to
+  start unless `HERALD_TRUST_PROXY=true`: a Vercel Function has no raw socket, so without it the
+  per-address login lockout has no address to key on and only the global 50-failure backstop is left.
+  `vercel.json` builds `web/dist` as static output and disables all Git-triggered deployments
+  (`git.deploymentEnabled: false`) so no preview deployment — another public URL with a login page on
+  it — is ever created automatically; the first (and every) deploy is `vercel deploy --prod` run by
+  hand. No `crons` key: Vercel Hobby caps cron at once a day, so `pnpm send:reconcile` stays a local
+  command. See `refusalReason` (now parameterized on which origins count as "this deployment",
+  `HttpServer.ts`), `resolveClientIp` (now typed over a minimal structural request shape,
+  `clientIp.ts`, since a Vercel `Request` has no raw socket the way `node:http`'s does), and
+  `currentSession` (now exported from `HttpServer.ts` and reused here, over the same structural-type
+  move, rather than a second cookie-reading path).
+- **The hosted deployment's send routes ship closed, behind `HERALD_SENDS_ENABLED`.** The team gets
+  1차/2차 approval working on the first deploy; `POST /api/outlets/:id/:type/:outletId/send` — the
+  only route that can reach a live Telegram room or the brand's X account — refuses until this flag
+  is explicitly turned on, with a Korean reason and the rebuilt board rather than a bare failure.
+  `POST /api/items/:id/reconcile` is unaffected: it only reads Typefully and writes urls onto rows
+  that already exist. The flag is a separate axis from local-vs-hosted (`createDeps.ts`'s
+  `routes: "local" | "hosted"`): `pnpm serve` always sends, exactly as it always has; only the hosted
+  route set is ever closed. Mechanically this reuses the same "route set is a property of the entry
+  point" pattern `prepareConversionRun`/`convert-prepare` already established — `ApiDeps.sendToOutlet`
+  is now optional, and its absence is checked before anything else in the route, not hidden behind a
+  disabled button. `StatusView.sendsEnabled` reports the same boolean for the dashboard's own banner
+  (below) — and for `OutletCard`'s per-row [발송]/[재발송], which now paint the same locked
+  (`발송 · 잠김`) treatment an ineligible row already gets, with the identical Korean reason the route
+  itself answers with. Enforcement is the route either way; the button lock exists so an operator is
+  never invited to confirm an irreversible post through a dialog that cannot actually happen.
+- **A persistent, non-dismissible dashboard banner when the attached database is not `production`,
+  and another when sends are closed.** `EnvironmentBanner` (`web/src/components/`) reads
+  `StatusView.dbEnv`/`sendsEnabled` and renders above the header — never hidden by scrolling, no
+  close button — Korean, matching the board's existing register. Renders nothing when a field is
+  absent (an older cached response) rather than guessing.
 - **The two read-only "원문" panes now show a hover preview for every photo marker.** A post's photos
   ride through the pipeline as `![](url)` markers inside the reviewed text (video as `[영상]`, which
   carries no url); 1차's `원문` pane (`TranslationDetail`) and 2차's `변환 원문` pane
@@ -73,6 +148,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dashboard session lifetime cut from 12 hours to 2 hours.** Signing out
+  (`POST /api/logout`) only ever cleared the cookie in the browser — the session token itself was
+  never revoked, so a stolen-then-logged-out token stayed usable until it expired regardless. Rather
+  than build a server-side revocation record, `SESSION_TTL_MS` (`src/domain/auth/session.ts`) now
+  bounds that exposure window at 2 hours instead of 12. The cookie's `Max-Age` is derived from the
+  same `SessionConfig.ttlMs` a caller passes to `verifySession`, so the two cannot drift; a test now
+  pins that derivation to the constant rather than a copied literal.
+- **The login lockout is now two layers, not one.** A single global counter (5 failures/60s,
+  account-wide) meant one stranger sending a wrong guess from anywhere could hold the whole team out
+  of the dashboard indefinitely, at zero cost, and — since the lockout now survives a restart —
+  restarting the server was no longer a way out. `PgAttemptLimiter` (`src/adapters/store/PgAttemptLimiter.ts`)
+  now supports a row per scope: a **per-IP counter** at the original threshold (5 failures/60s,
+  self-clearing) stops one address from locking out anyone but itself, and the **global counter**
+  stays as a backstop at a much higher threshold (50 failures/60s) so a genuinely distributed attempt
+  across many addresses still trips something. A login is refused if either layer says so
+  (`src/app/Login.ts`). Both counters now **decay**: a failure count with a gap since the last attempt
+  wider than the 60s lockout window is treated as the start of a fresh run rather than added to
+  whatever accumulated before the gap, so "N failures/60s" is a real rolling window rather than "N
+  failures ever, until a lockout happens to get served" — without decay, a single address could burst
+  to its own per-IP threshold, sit out that lockout for free (a refusal the per-IP layer already turns
+  away never reaches the counter), and repeat indefinitely, walking the GLOBAL counter up to its own
+  threshold over an unbounded stretch of wall-clock time and eventually locking out the whole team from
+  one address alone. The client IP a per-IP row keys on is never read from a client-settable header by
+  default — `src/adapters/web/clientIp.ts`'s `resolveClientIp` uses the raw socket address unless the
+  new, opt-in `HERALD_TRUST_PROXY`/`HERALD_TRUST_PROXY_HOPS` (see `.env.example`) explicitly says this
+  server sits behind a specific reverse proxy that appends to `X-Forwarded-For` itself; trusting that
+  header by default would let one attacker defeat per-IP limiting entirely by forging a different
+  address on every request. A trusted entry is also shape-checked (a coarse IPv4/IPv6 pattern, capped
+  at 64 characters) before it becomes a row id, so a misconfigured hop count landing on
+  client-controlled chain positions cannot hand an attacker an arbitrary primary key either. When no
+  trustworthy IP can be determined, the request falls back to the global counter alone rather than
+  being keyed under one shared bogus value — and this fallback is what actually happens for every
+  caller **unless `HERALD_TRUST_PROXY` is explicitly set for a deployment that really does sit behind a
+  reverse proxy**; without it, every request behind that proxy resolves to the proxy's own fixed
+  socket address, and per-IP limiting degrades to one shared bucket for the whole team, not a
+  bucket-per-visitor. Per-IP rows are evicted by a sweep that runs from both `recordFailure` and
+  `recordSuccess` (any row untouched for over an hour is deleted on the next per-IP write from
+  either) — both, not just `recordFailure`, because either can be the write that creates a fresh
+  per-IP row in the first place (a first-ever login from a new address that happens to be correct
+  creates a row exactly like a wrong one does), so an install where every login succeeds cannot grow
+  `auth_attempts` without bound either.
 - **`state:push` now backs up the reviewed text as well — seven files, not five.**
   `output/translations/translations.json` and `output/variants/variants.json` join the bundle. They
   were classed as derivable on the grounds that the pipeline can produce a translation and a
@@ -88,6 +204,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A session expiring mid-edit no longer loses a reviewer's unsaved text.** Any 401 — including one
+  from a save the reviewer just triggered — sends the browser to `#login` (`web/src/api.ts`'s
+  `json()`). `web/src/main.tsx` used to swap `<App>` out for the sign-in screen on that redirect,
+  unmounting every bit of component state under it, unsaved edit included. At the old 12-hour session
+  lifetime this was theoretical; at the new 2-hour lifetime (see above) a reviewer mid-edit on a 2차
+  rendering can realistically hit it. `<App>` now moved into `web/src/Root.tsx`, which hides it
+  (`display:none`) instead of unmounting it while the sign-in overlay is up, and reveals the same
+  instance — unsaved draft intact — once login succeeds; `App.tsx`'s hash-driven mode router got a
+  matching fix so the `#login` pseudo-route does not itself flip the board away from whatever mode
+  the reviewer had open. That same "never unmount, only hide" change had a corollary: `<App>`'s (and
+  `RenderingsView`'s) data load only ever ran in a mount-only effect, so the far more common path
+  through the same overlay — the first login of the day, from a cold dashboard with no session
+  yet — 401'd once on that initial fetch and then never retried, leaving a populated board looking
+  permanently empty ("해당하는 항목이 없습니다") after a successful login until a manual reload.
+  `Root.tsx` now threads an `authEpoch`, incremented on every successful login, into both
+  components' data-loading effects so a login — first-time or a mid-edit re-auth alike — always
+  retries the fetch; verified against a real browser and a throwaway Postgres, both for the
+  mid-edit-401 case and this cold-start one.
 - **`GoogleSheetClient` retries 429/5xx and network errors** (three attempts, `1000 * 2^attempt`),
   mirroring the policy `HttpClient` already used. It previously threw on the first non-2xx, so a
   transient rate-limit or 503 failed the whole command. Shared by `metrics:record`,

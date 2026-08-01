@@ -5,6 +5,15 @@ import type { BoardView } from "../../../src/adapters/web/board";
 import type { Translation } from "../../../src/domain/translation/models";
 import type { ChannelRendering } from "../../../src/domain/formatting/models";
 import type { ContentVariant } from "../../../src/domain/conversion/models";
+import { SESSION_TTL_MS } from "../../../src/domain/auth/session";
+
+/**
+ * None of these tests are about the session gate (that is `gate.test.ts`'s job) — they exercise the
+ * routes below it, so every `ApiDeps` this file builds carries an already-authenticated session by
+ * default, the same way it carries harmless stubs for every other dependency a given test does not
+ * care about.
+ */
+const AUTHENTICATED_SESSION = { issuedAt: new Date().toISOString() };
 
 function tr(over: Partial<Translation> = {}): Translation {
   return { itemId: "x:1", source: "x", sourceText: "src", koreanText: "ko", status: "translated", translatedAt: "t", ...over };
@@ -101,6 +110,9 @@ function makeDeps(
       availableTargets: ["local"],
       integrations: [],
       sheetLinks: {},
+      dbEnv: "development" as const,
+      sendsEnabled: true,
+      conversionEnabled: true,
     }),
     loadPublishState: async () => [
       { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
@@ -143,6 +155,11 @@ function makeDeps(
       },
     } as unknown as ApiDeps["formatVariants"],
     loadQuota: async () => ({ error: "not configured" }),
+    login: async () => ({ ok: false, retryAfterMs: 0 }),
+    sessionConfig: { secret: "test-secret-at-least-32-characters-long", ttlMs: SESSION_TTL_MS },
+    ipConfig: { trustProxy: false, trustedHopsFromEnd: 1 },
+    clientIp: undefined,
+    session: AUTHENTICATED_SESSION,
   };
 }
 
@@ -262,6 +279,9 @@ describe("handleApi", () => {
       availableTargets: ["local"],
       integrations: [],
       sheetLinks: {},
+      dbEnv: "development",
+      sendsEnabled: true,
+      conversionEnabled: true,
     });
   });
 
@@ -479,6 +499,25 @@ describe("board routes", () => {
     const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
     expect(res.status).toBe(200);
     expect(res.json).toMatchObject({ sent: 1, failed: 1, error: "one room failed" });
+  });
+
+  /**
+   * `deps.sendToOutlet` absent — the hosted route set with sends still closed (`createDeps.ts`).
+   * Checked before the use-case, the same "refuse at the route" shape `convert-prepare` uses for
+   * `prepareConversionRun`, but with a Korean reason and the rebuilt board rather than a bare 404:
+   * unlike that route (never present on hosted), this one is only temporarily closed and an operator
+   * can still click [발송] on it, so the refusal has to say why.
+   */
+  it("POST send answers with a reason and the board when sends are closed, rather than reaching the use case", async () => {
+    const { spy, d } = spied();
+    d.sendToOutlet = undefined;
+    const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
+    expect(res.status).toBe(400);
+    expect(res.json).toEqual({
+      error: "발송이 아직 열려 있지 않습니다 — 1차·2차 승인이 자리잡으면 팀이 직접 엽니다.",
+      board: { itemId: "x:1", groups: [], unconverted: [] },
+    });
+    expect(spy.sends).toEqual([]);
   });
 });
 

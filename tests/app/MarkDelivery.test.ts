@@ -9,6 +9,9 @@ function fakeLedger(seed: DeliveryEntry[] = []) {
     loadKeys: async () => new Set(rows.map(deliveryKey)),
     add: async (e: DeliveryEntry) => { rows = [...rows.filter((r) => deliveryKey(r) !== deliveryKey(e)), e]; },
     remove: async (key: string) => { rows = rows.filter((r) => deliveryKey(r) !== key); },
+    replace: async (previous: DeliveryEntry, next: DeliveryEntry) => {
+      rows = [...rows.filter((r) => deliveryKey(r) !== deliveryKey(previous) && deliveryKey(r) !== deliveryKey(next)), next];
+    },
     rows: () => rows,
   };
 }

@@ -4,6 +4,8 @@ import type { Translation, AppStatus, PublishStateRow } from "./types";
 import { TranslationList } from "./components/TranslationList";
 import { TranslationDetail } from "./components/TranslationDetail";
 import { RenderingsView } from "./components/RenderingsView";
+import { EnvironmentBanner } from "./components/EnvironmentBanner";
+import { btn } from "./buttonStyles";
 
 type Mode = "translations" | "renderings";
 
@@ -32,7 +34,7 @@ const GROUP_LABEL: Record<"collect" | "publish" | "send" | "data", string> = {
   data: "데이터",
 };
 
-export function App() {
+export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch: number }) {
   const [mode, setMode] = useState<Mode>(modeFromHash);
   const [items, setItems] = useState<Translation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -41,16 +43,30 @@ export function App() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [publishRows, setPublishRows] = useState<PublishStateRow[]>([]);
 
-  const refresh = () => api.list().then(setItems).catch((e) => setError(String(e.message ?? e)));
+  // Clears on success, because the `authEpoch` effect below re-runs this after a login and the
+  // failure it is recovering from is usually the cold-start 401 — leaving that set would park
+  // "unauthenticated" across the top of a board that just signed in successfully.
+  const refresh = () =>
+    api
+      .list()
+      .then((next) => {
+        setItems(next);
+        setError(null);
+      })
+      .catch((e) => setError(String(e.message ?? e)));
 
   const refreshStatus = () => {
     api.status().then(setStatus).catch(() => setStatus(null));
     api.publishState().then(setPublishRows).catch(() => setPublishRows([]));
   };
+  // `authEpoch` (`Root.tsx`'s own doc comment has the full story) — not `[]` — because `<App>` now
+  // mounts once and is only ever hidden, never remounted, across a `#login` round trip. Without it,
+  // a cold-start login (no session yet when this effect's first run 401s) would never retry, and the
+  // board would sit on "해당하는 항목이 없습니다" forever, not because there is nothing to review.
   useEffect(() => {
     refresh();
     refreshStatus();
-  }, []);
+  }, [authEpoch]);
 
   const selected = items.find((t) => t.itemId === selectedId) ?? null;
 
@@ -64,8 +80,21 @@ export function App() {
 
   // Back/forward, or the hash edited by hand. The confirm above is deliberately not repeated: the
   // navigation already happened, so refusing it here would leave the URL and the screen disagreeing.
+  //
+  // `#login` is skipped rather than fed through `modeFromHash()`: it is not one of this router's own
+  // routes, it is `Root.tsx`'s pseudo-route for the sign-in overlay, which now sits on top of `<App>`
+  // without unmounting it (see `Root.tsx`'s own comment on why). `modeFromHash()` maps anything that
+  // is not `"#renderings"` — `#login` included — to `"translations"`, so without this guard a session
+  // lapsing while `mode` is `"renderings"` would flip it to `"translations"` the moment the hash
+  // became `#login`, unmounting `RenderingsView` (and whatever unsaved edit was live in it) even
+  // though `<App>` itself stayed mounted. Skipping the update here means `mode` sits still, hidden,
+  // for as long as the overlay is up, and the hash change back to the real route on a successful
+  // login resolves it correctly on its own — nothing here needs to remember to restore it.
   useEffect(() => {
-    const onHashChange = () => setMode(modeFromHash());
+    const onHashChange = () => {
+      if (window.location.hash === "#login") return;
+      setMode(modeFromHash());
+    };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
@@ -119,17 +148,28 @@ export function App() {
 
   return (
     <div className="flex h-screen flex-col bg-bg text-ink">
+      <EnvironmentBanner status={status} />
       <header className="shrink-0 border-b border-line bg-surface">
-        <div className="flex h-14 items-center gap-4 px-5">
-          <div className="flex items-center gap-2.5">
+        {/* Every child below is `shrink-0` so a control never squishes down to illegible,
+            letter-wrapped Korean text under real width pressure (a narrow phone) — the defect this
+            row exists to avoid, sign-out button included. The row itself *wraps* onto a second line
+            when it runs out of width (`flex-wrap` + `min-h-14`, not a fixed `h-14`) rather than
+            scrolling sideways: `overflow-x-auto` looked like the same fix, but setting `overflow-x`
+            forces the computed `overflow-y` to `auto` too — a box cannot have `visible` on one axis
+            and something else on the other — which turned this row into a clip box on *both* axes
+            and silently hid the storage-mode pill's hover popover just below (`top-full`,
+            absolutely positioned, taller than `h-14`) at every width, not only narrow ones.
+            Wrapping needs no `overflow` here at all, so nothing below can ever be clipped by it. */}
+        <div className="flex flex-wrap min-h-14 items-center gap-x-4 gap-y-2 px-5 py-2">
+          <div className="flex shrink-0 items-center gap-2.5">
             <span className="h-2.5 w-2.5 rounded-full bg-mint" />
-            <span className="text-[15px] font-semibold tracking-tight">
+            <span className="whitespace-nowrap text-[15px] font-semibold tracking-tight">
               Mantle KR <span className="text-faint font-normal">Review</span>
             </span>
           </div>
 
           {status && (
-            <div className="group relative">
+            <div className="group relative shrink-0">
               <span
                 className={`inline-flex cursor-default items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
                   isCloud ? "bg-mint-soft text-mint" : "bg-amber-soft text-amber-ink"
@@ -190,7 +230,7 @@ export function App() {
             </div>
           )}
 
-          <nav className="ml-2 inline-flex rounded-lg border border-line bg-bg p-0.5">
+          <nav className="ml-2 inline-flex shrink-0 rounded-lg border border-line bg-bg p-0.5">
             {(
               [
                 ["translations", "1차 검수 · 번역"],
@@ -200,7 +240,7 @@ export function App() {
               <button
                 key={m}
                 onClick={() => switchMode(m)}
-                className={`rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors ${
+                className={`whitespace-nowrap rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors ${
                   mode === m ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
                 }`}
               >
@@ -209,58 +249,68 @@ export function App() {
             ))}
           </nav>
 
-          {status && (
-            <div className="ml-auto hidden items-center gap-3 md:flex">
-              {/* Left of the funnel and set apart with a wider gap: these leave the dashboard,
-                  while everything to the right of them reports on it. Each appears only when its id
-                  is configured, so an empty GSHEET_QA_ID hides QA rather than linking nowhere. */}
-              {(status.sheetLinks.data || status.sheetLinks.qa) && (
-                <span className="mr-3 flex items-center gap-3 text-[13px]">
-                  {status.sheetLinks.data && (
-                    <a
-                      href={status.sheetLinks.data.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-medium text-mint underline-offset-2 hover:underline"
-                      title="팀 데이터 시트 — history · x-performance · targets"
-                    >
-                      {status.sheetLinks.data.title} ↗
-                    </a>
-                  )}
-                  {status.sheetLinks.qa && (
-                    <a
-                      href={status.sheetLinks.qa.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-medium text-amber-ink underline-offset-2 hover:underline"
-                      title="QA 시트 — 요청·이슈를 여기에 적어주세요 (점검 현황 · 미완 항목 · 변경 이력)"
-                    >
-                      {status.sheetLinks.qa.title} ↗
-                    </a>
-                  )}
+          {/* Wraps the (desktop-only) status funnel and the sign-out control together so the whole
+              group pushes to the header's right edge — on a narrow screen the funnel hides
+              (`hidden md:flex` below) but 로그아웃 still lands at the far right on its own. */}
+          <div className="ml-auto flex shrink-0 items-center gap-3">
+            {status && (
+              <div className="hidden items-center gap-3 md:flex">
+                {/* Left of the funnel and set apart with a wider gap: these leave the dashboard,
+                    while everything to the right of them reports on it. Each appears only when its id
+                    is configured, so an empty GSHEET_QA_ID hides QA rather than linking nowhere. */}
+                {(status.sheetLinks.data || status.sheetLinks.qa) && (
+                  <span className="mr-3 flex items-center gap-3 text-[13px]">
+                    {status.sheetLinks.data && (
+                      <a
+                        href={status.sheetLinks.data.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-mint underline-offset-2 hover:underline"
+                        title="팀 데이터 시트 — history · x-performance · targets"
+                      >
+                        {status.sheetLinks.data.title} ↗
+                      </a>
+                    )}
+                    {status.sheetLinks.qa && (
+                      <a
+                        href={status.sheetLinks.qa.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-amber-ink underline-offset-2 hover:underline"
+                        title="QA 시트 — 요청·이슈를 여기에 적어주세요 (점검 현황 · 미완 항목 · 변경 이력)"
+                      >
+                        {status.sheetLinks.qa.title} ↗
+                      </a>
+                    )}
+                  </span>
+                )}
+                <div className="flex items-center gap-1.5 text-[13px]">
+                  {FUNNEL_STEPS.map(([label, key], i) => (
+                    <div key={key} className="flex items-center gap-1.5">
+                      {i > 0 && <span className="text-line-strong">→</span>}
+                      <span className="text-muted">{label}</span>
+                      <span className="font-mono text-xs font-semibold tabular-nums">{status.funnel[key]}</span>
+                    </div>
+                  ))}
+                </div>
+                <span className="h-4 w-px bg-line" />
+                <span
+                  className={`inline-flex items-center gap-1.5 text-xs font-medium ${syncWarn ? "text-amber-ink" : "text-mint"}`}
+                  title="발행됨 · 재발행 필요 · 미발행"
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${syncWarn ? "bg-amber-ink" : "bg-mint"}`} />
+                  발행됨 {status.sync.synced}
+                  {status.sync.needsRepublish > 0 ? ` · 재발행 필요 ${status.sync.needsRepublish}` : ""}
+                  {status.sync.unpublished > 0 ? ` · 미발행 ${status.sync.unpublished}` : ""}
                 </span>
-              )}
-              <div className="flex items-center gap-1.5 text-[13px]">
-                {FUNNEL_STEPS.map(([label, key], i) => (
-                  <div key={key} className="flex items-center gap-1.5">
-                    {i > 0 && <span className="text-line-strong">→</span>}
-                    <span className="text-muted">{label}</span>
-                    <span className="font-mono text-xs font-semibold tabular-nums">{status.funnel[key]}</span>
-                  </div>
-                ))}
               </div>
-              <span className="h-4 w-px bg-line" />
-              <span
-                className={`inline-flex items-center gap-1.5 text-xs font-medium ${syncWarn ? "text-amber-ink" : "text-mint"}`}
-                title="발행됨 · 재발행 필요 · 미발행"
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${syncWarn ? "bg-amber-ink" : "bg-mint"}`} />
-                발행됨 {status.sync.synced}
-                {status.sync.needsRepublish > 0 ? ` · 재발행 필요 ${status.sync.needsRepublish}` : ""}
-                {status.sync.unpublished > 0 ? ` · 미발행 ${status.sync.unpublished}` : ""}
-              </span>
-            </div>
-          )}
+            )}
+            {/* The board's own `btn` geometry — the header's one control that acts rather than
+                reports, so it reads as a button among labels rather than inventing its own style. */}
+            <button onClick={onSignOut} className={`${btn} shrink-0 whitespace-nowrap`}>
+              로그아웃
+            </button>
+          </div>
         </div>
       </header>
 
@@ -291,7 +341,15 @@ export function App() {
           </section>
         </div>
       ) : (
-        <RenderingsView onDirtyChange={setDirty} />
+        <RenderingsView
+          onDirtyChange={setDirty}
+          authEpoch={authEpoch}
+          // Defaults open while `status` has not loaded yet (or failed to) rather than flashing
+          // every send button locked for a moment — the route enforces the real gate regardless of
+          // what this reads, so an over-optimistic default here costs nothing but a stale tooltip.
+          sendsEnabled={status?.sendsEnabled ?? true}
+          conversionEnabled={status?.conversionEnabled ?? true}
+        />
       )}
     </div>
   );

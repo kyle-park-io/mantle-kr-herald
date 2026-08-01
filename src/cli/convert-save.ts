@@ -2,13 +2,14 @@ import "./registerErrorHandler";
 import { argValue } from "./args";
 // src/cli/convert-save.ts
 import { readFile } from "node:fs/promises";
-import { JsonConversionStore } from "../adapters/store/JsonConversionStore";
+import { createDb } from "../adapters/db/createDb";
+import { loadDbConfig } from "../config";
+import { createStores } from "./stores";
 import { SaveConversion } from "../app/SaveConversion";
 import { readJsonFile } from "../shared/store/jsonFile";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
 import type { PendingVariant } from "../app/PrepareConversions";
 import { paths } from "../paths";
-import { buildLineage } from "./lineage-wiring";
 
 const id = argValue("--id");
 const type = argValue("--type") as ConversionType | undefined;
@@ -17,23 +18,29 @@ if (!id || !type || !file || !ALL_TYPES.includes(type)) {
   throw new Error(`Usage: pnpm convert:save --id <itemId> --type <${ALL_TYPES.join("|")}> --file <ko.txt>`);
 }
 
-const conversionStore = new JsonConversionStore(paths.variantsDir);
+const db = createDb(loadDbConfig());
+try {
+  const stores = createStores(db);
+  const conversionStore = stores.conversionStore;
 
-const pending = await readJsonFile<PendingVariant[]>(paths.variantsPending, []);
-let sourceKorean = pending.find((p) => p.itemId === id && p.type === type)?.sourceKorean;
-if (sourceKorean === undefined) {
-  // Not in the current worksheet batch — fall back to an already-saved variant, so you can
-  // re-save a rewritten variant after pending.json was overwritten by a later prepare.
-  const existing = (await conversionStore.loadAll()).find((v) => v.itemId === id && v.type === type);
-  if (!existing) {
-    throw new Error(`Variant ${id}/${type} not found in ${paths.variantsDir} (run convert:prepare first)`);
+  const pending = await readJsonFile<PendingVariant[]>(paths.variantsPending, []);
+  let sourceKorean = pending.find((p) => p.itemId === id && p.type === type)?.sourceKorean;
+  if (sourceKorean === undefined) {
+    // Not in the current worksheet batch — fall back to an already-saved variant, so you can
+    // re-save a rewritten variant after pending.json was overwritten by a later prepare.
+    const existing = (await conversionStore.loadAll()).find((v) => v.itemId === id && v.type === type);
+    if (!existing) {
+      throw new Error(`Variant ${id}/${type} not found in the database (run convert:prepare first)`);
+    }
+    sourceKorean = existing.sourceKorean;
   }
-  sourceKorean = existing.sourceKorean;
+
+  const convertedText = (await readFile(file, "utf8")).trim();
+
+  const usecase = new SaveConversion(conversionStore, undefined, stores.lineageStore);
+  const res = await usecase.run({ itemId: id, type, sourceKorean, convertedText });
+
+  console.log(`saved ${res.itemId}/${res.type} (run pnpm format next; approval happens in 2차)`);
+} finally {
+  await db.close();
 }
-
-const convertedText = (await readFile(file, "utf8")).trim();
-
-const usecase = new SaveConversion(conversionStore, undefined, buildLineage());
-const res = await usecase.run({ itemId: id, type, sourceKorean, convertedText });
-
-console.log(`saved ${res.itemId}/${res.type} (run pnpm format next; approval happens in 2차)`);

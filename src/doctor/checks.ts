@@ -1,4 +1,6 @@
 import type { CheckResult } from "./report";
+import { describeDbTarget, type DbConfig } from "../config";
+import type { Db } from "../adapters/db/Db";
 
 /** Run a config loader: ok if it doesn't throw, fail with its own message otherwise. */
 export function configCheck(name: string, run: () => void, okDetail = "configured"): CheckResult {
@@ -43,6 +45,84 @@ export function optionalCheck(name: string, run: () => void, absentDetail: strin
     return { name, status: "warn", detail: `${absentDetail} (${result.detail})` };
   }
   return result;
+}
+
+/**
+ * Runs `probe` (a real connectivity check, e.g. `select 1`) against the configured database and
+ * reports it — `ok`/`detail` rather than the `CheckResult` shape above, since this also backs
+ * `status.ts`'s first line, which is not a check report. The caller wraps this into a `CheckResult`
+ * for `doctor`.
+ *
+ * Never prints the password. `describeDbTarget` itself only ever returns host and database name,
+ * but `loadDbConfig` does not validate that `DATABASE_URL` parses as a URL at all, so
+ * `describeDbTarget`'s own `new URL(cfg.url)` can throw for a malformed value — and a `URL`
+ * constructor's error message is not guaranteed, across engines, not to echo the invalid input back
+ * (which could still contain `user:password@`). That parse step is therefore its own try/catch,
+ * reported with a fixed, generic message rather than whatever the thrown error says. Only once a
+ * `target` string has been safely built does the probe run, and only *that* branch's failure
+ * message (a driver error like `ECONNREFUSED`, never derived from `cfg.url`) is shown as-is — this
+ * must never throw past the caller, or one malformed value takes down the whole `doctor` report.
+ */
+export async function runDbCheck(cfg: DbConfig, probe: () => Promise<boolean>): Promise<{ ok: boolean; detail: string }> {
+  let target: string;
+  try {
+    target = `${cfg.env} · ${describeDbTarget(cfg)}`;
+  } catch {
+    return { ok: false, detail: `${cfg.env} — DATABASE_URL is not a valid URL` };
+  }
+  try {
+    await probe();
+    return { ok: true, detail: target };
+  } catch (err) {
+    return { ok: false, detail: `${target} — ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/**
+ * The literal line to paste, matching `storage/mode.ts`'s `REMEDY` register: a command, not a
+ * pointer to another command. `pnpm db:import --yes` (not a separate `pnpm db:schema`) is the fix
+ * because `importOutputTree` applies `applySchema` itself — every statement there is `create table
+ * if not exists`, so this is safe to run even against a database that already has the tables, and
+ * safe on one with no `output/` tree to import from (it creates the tables and imports zero rows).
+ * `--yes` is required in the text itself: the flagless preview path (`previewImport`/`previewExport`,
+ * `src/cli/db-import.ts`/`db-export.ts`) deliberately does **not** apply the schema any more — a
+ * preview must stay side-effect-free, reachable against production or a read-only role without
+ * risking a `CREATE` — so pointing an operator at a flagless `pnpm db:import` here would not
+ * actually apply it.
+ */
+export const SCHEMA_REMEDY = "Run pnpm db:import --yes to apply the schema (safe on an empty database — it also imports output/ into it once you are ready).";
+
+/**
+ * `select 1` — `doctor`'s probe before this function existed — passes on a database that has never
+ * had `applySchema` run against it, so `doctor` reported "ok" on exactly the database `db:import`
+ * cannot use. Only a Postgres "relation ... does not exist" error is rewritten to name the remedy;
+ * any other probe failure (bad credentials, network, TLS) is passed through unchanged so its real
+ * cause — not a schema guess — stays visible.
+ */
+export function describeSchemaProbeError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/relation .* does not exist/i.test(message)) {
+    return new Error(`Schema not applied — ${message}. ${SCHEMA_REMEDY}`);
+  }
+  return err instanceof Error ? err : new Error(message);
+}
+
+/**
+ * The real connectivity probe `doctor` runs, as a `runDbCheck`-shaped closure over an already-built
+ * `Db`. Touches an actual table (`deliveries` — any of the eleven `applySchema` creates would do;
+ * the check only cares that the query fails with "relation ... does not exist" when the schema was
+ * never applied) rather than `select 1`, which cannot tell a migrated database from a table-less
+ * one. Zero rows is not a failure — only the query itself throwing is.
+ */
+export function databaseProbe(db: Db): () => Promise<boolean> {
+  return async () => {
+    try {
+      await db.query("select 1 from deliveries limit 1");
+    } catch (err) {
+      throw describeSchemaProbeError(err);
+    }
+    return true;
+  };
 }
 
 /** A space-separated OAuth scope string → array (empties dropped). */

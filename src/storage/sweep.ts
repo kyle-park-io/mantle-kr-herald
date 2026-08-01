@@ -1,32 +1,45 @@
 import type { Stats } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { LOCK_STALE_MS, RECLAIM_CONFIRM_MS } from "../shared/store/fileLock";
 import { isErrnoException } from "../shared/store/jsonFile";
-import { isStrandedTempFile, lockGuarding } from "./retention";
+import { isStrandedTempFile } from "./retention";
 
 /**
- * How recently a piece of write debris must have been touched to still count as possibly-live.
+ * How old a piece of write debris must be before `pnpm clean` may remove it.
  *
- * Deliberately the lock's own reclaim point rather than a second number — **both halves of it.** A
- * lock may only be taken from its owner once it has looked stale for `LOCK_STALE_MS` *and* stayed
- * that way for `RECLAIM_CONFIRM_MS`, so a sweep that gated on `LOCK_STALE_MS` alone was the more
- * permissive of the two readers of one predicate: for one second per window, `pnpm clean --yes`
- * would delete a lock the lock module itself still refused to reclaim.
+ * 31_000 — `30_000 + 1_000` — is not a rounder number picked fresh; it is the exact effective gate
+ * the old file lock's age check plus its confirmation window (`LOCK_STALE_MS` + `RECLAIM_CONFIRM_MS`)
+ * produced before this module was simplified. Kept unchanged on purpose: nothing about retiring the
+ * lock made the risk this protects against smaller.
  *
- * The window's sizing argument lives on `LOCK_STALE_MS`, and it holds for a `.tmp-*` too — nothing
- * between an atomic write's `writeFile` and its `rename` waits on the network either.
+ * **The adversary this margin is sized against is a stepped wall clock, not a slow disk.**
+ * `writeJsonFileAtomic`'s own `writeFile` then `rename` is single-digit milliseconds on any disk this
+ * tool runs on, so a genuinely slow write is not what 31s of headroom is for. `mtime` is wall-clock
+ * time, and this machine's `CLOCK_REALTIME` steps by up to ~22.7s in either direction (WSL2's Hyper-V
+ * host time sync and an active `systemd-timesyncd` both stepping it) — a step lands on every file's
+ * apparent age at once, including one written a moment ago, inflating `now - mtime` by the step's
+ * whole size regardless of how recently the write actually happened. Against a ~22.7s excursion,
+ * 31s leaves only single-digit seconds of real margin — generous-looking, not generous in practice.
+ *
+ * **This cannot be hardened the way the old lock module was, and that is a known, accepted gap.**
+ * `withFileLock` survived the same clock hazard by having a live holder re-stamp its own lock's mtime
+ * on a heartbeat, so staleness meant "the owner's event loop has not run" rather than "old by the
+ * clock," plus a second, *monotonic*-time confirmation window that told a transient clock step apart
+ * from a genuinely dead holder by requiring the mtime to stay unmoved for a full second (a step here
+ * lasts ~0.26s). Nothing heartbeats any more — there is no live holder's mtime to keep fresh, since
+ * `.tmp-*`/`.lock` debris here means an abandoned write, not one in progress — so that confirmation
+ * mechanism has nothing left to confirm and cannot be brought back as-is. What is left is a single
+ * plain age check with no second signal to fall back on. Whoever revisits this number should know
+ * they are trading against clock-step size, not disk speed, and that today's margin above the
+ * largest step this machine has been measured producing is only ~7-8s.
  */
-const IN_PROGRESS_MS = LOCK_STALE_MS + RECLAIM_CONFIRM_MS;
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export const IN_PROGRESS_MS = 31_000;
 
 /**
  * `stat`, treating a path that vanished between the `readdir` and the `stat` as gone rather than
- * as an error. A sweep walks a live tree: lock files are the most transient thing in it — created
- * and deleted on *every* ledger write — so a send releasing its lock mid-walk is the normal case,
- * not an exceptional one. Letting that `ENOENT` propagate would abort the whole command precisely
- * when a send is running, which is the situation the staleness gate below exists to survive.
+ * as an error. A sweep walks a live tree: a send releasing its lock mid-walk used to be the normal
+ * case, and a `.tmp-*` being renamed away mid-walk still is — letting that `ENOENT` propagate would
+ * abort the whole command precisely when a send is running.
  */
 async function statIfPresent(path: string): Promise<Stats | null> {
   try {
@@ -37,14 +50,7 @@ async function statIfPresent(path: string): Promise<Stats | null> {
   }
 }
 
-/** A path old enough to look abandoned, and the lock whose liveness gets the last word on it. */
-interface Candidate {
-  path: string;
-  /** Absolute path of the lock from `lockGuarding` — for a lock, itself. */
-  guardian: string;
-}
-
-async function walk(dir: string, skipDir: string | undefined, now: number, found: Candidate[]): Promise<void> {
+async function walk(dir: string, skipDir: string | undefined, now: number, found: string[]): Promise<void> {
   let names: string[];
   try {
     names = await readdir(dir);
@@ -57,21 +63,9 @@ async function walk(dir: string, skipDir: string | undefined, now: number, found
       const debris = await statIfPresent(full);
       // Already gone while we walked — nothing to clean, and nothing to complain about.
       if (!debris) continue;
-      // Younger than the window: a live process may still be using it, and both kinds fail the same
-      // way if we take it.
-      //
-      // A lock that young may still belong to a running send. Removing it would let a second
-      // process interleave a read-modify-write of the same ledger and drop a row.
-      //
-      // A `.tmp-*` that young may be an atomic write in the gap between its `writeFile` and its
-      // `rename` — a window `pnpm clean --yes` runs straight into whenever a send is recording.
-      // Removing it there makes the `rename` throw ENOENT, and `SendChannels` reports that as
-      // "was SENT but could NOT be recorded in the ledger — a rerun will re-send it".
-      //
-      // Either way the cleanup command causes a duplicate live post, which is why the gate covers
-      // every name `isStrandedTempFile` matches rather than only the locks.
+      // Young enough that a live `writeJsonFileAtomic` call may still be using it — see `IN_PROGRESS_MS`.
       if (now - debris.mtimeMs < IN_PROGRESS_MS) continue;
-      found.push({ path: full, guardian: join(dir, lockGuarding(name)) });
+      found.push(full);
       continue;
     }
     const entry = await statIfPresent(full);
@@ -83,76 +77,15 @@ async function walk(dir: string, skipDir: string | undefined, now: number, found
 
 /**
  * Collects debris an interrupted write can leave next to a live store: the temp file of a killed
- * atomic write, and the lock file of a process that died mid-write. Live stores are never matched —
- * see `isStrandedTempFile`.
- *
- * **Age is not the whole test, because on a stepped clock age is not evidence.** `mtime` is compared
- * against `Date.now()`, and a wall clock that jumps forward adds its whole step to every path's
- * apparent age at once — including a lock a running send stamped milliseconds ago. (The machine this
- * was developed on steps `CLOCK_REALTIME` by ~22.7s in both directions; see `LOCK_STALE_MS`.) So
- * every candidate that passes the age gate is then checked against the lock that guards it, exactly
- * as `reclaimIfStale` checks before reclaiming:
- *
- * - **No lock at all** — nothing is holding this store, so the age gate stands on its own. That is
- *   also the only test a `.tmp-*` outside a lock ever had (the non-ledger stores write atomically
- *   without one), so nothing there is weakened.
- * - **A lock younger than `LOCK_STALE_MS`** — a live holder, beating. Everything it guards is left
- *   alone, which is what puts a `.tmp-*` back under the same verdict as the lock of the write that
- *   created it. That coupling used to be free (both were stamped once and aged together) and the
- *   heartbeat broke it, because only the lock is refreshed while the write runs.
- * - **An older lock** — wait `confirmMs` and look again. An mtime that MOVED is the holder's own
- *   proof of life and needs no clock to be read; one that did not move over a full confirmation
- *   window is a corpse, since a dead owner's mtime never changes again while a step is transient by
- *   construction.
- *
- * The wait is paid once per sweep, not once per candidate, and only when something actually reached
- * the third case. A lock older than a stale window that is genuinely being held is the pathological
- * case the heartbeat exists for; the ordinary sweep finds nothing and waits not at all.
+ * atomic write, plus a stray lock file from a build old enough to have written one (nothing does
+ * any more — see `isStrandedTempFile`). Live stores are never matched.
  *
  * Walks `dir` recursively, skipping `skipDir` (the archive, which has its own retention rule).
  * Returns absolute paths; deciding what to do with them is the caller's job, so this stays safe to
  * call and easy to test.
  */
-export async function collectWriteDebris(
-  dir: string,
-  opts: {
-    skipDir?: string;
-    /** How long a lock must sit unmoved to count as dead. Tests shorten it; nothing else passes it. */
-    confirmMs?: number;
-    /** Injectable so a test can assert the wait happens without paying for it. */
-    sleep?: (ms: number) => Promise<unknown>;
-  } = {},
-): Promise<string[]> {
-  const confirmMs = opts.confirmMs ?? RECLAIM_CONFIRM_MS;
-  const pause = opts.sleep ?? sleep;
-
-  const candidates: Candidate[] = [];
-  await walk(dir, opts.skipDir, Date.now(), candidates);
-  if (candidates.length === 0) return [];
-
-  /** Guardians that prove a live holder. Anything one of them guards is left for the next sweep. */
-  const live = new Set<string>();
-  /** Guardians old enough to need the confirmation window, against the mtime to compare after it. */
-  const watched = new Map<string, number>();
-  const seen = new Set<string>();
-  for (const { guardian } of candidates) {
-    if (seen.has(guardian)) continue;
-    seen.add(guardian);
-    const lock = await statIfPresent(guardian);
-    if (!lock) continue; // no lock on this store: the age gate is the whole test, as it always was
-    if (Date.now() - lock.mtimeMs <= LOCK_STALE_MS) live.add(guardian); // a live holder, beating
-    else watched.set(guardian, lock.mtimeMs);
-  }
-
-  if (watched.size > 0) {
-    await pause(confirmMs);
-    for (const [guardian, mtimeMs] of watched) {
-      const now = await statIfPresent(guardian);
-      // Gone: released while we waited, so whatever it guarded is no longer in use either. Moved:
-      // the holder's event loop ran, which is the one signal a stepped clock cannot fake.
-      if (now && now.mtimeMs !== mtimeMs) live.add(guardian);
-    }
-  }
-
-  return candidates.filter(({ guardian }) => !live.has(guardian)).map(({ path }) => path);
+export async function collectWriteDebris(dir: string, opts: { skipDir?: string } = {}): Promise<string[]> {
+  const found: string[] = [];
+  await walk(dir, opts.skipDir, Date.now(), found);
+  return found;
 }

@@ -8,6 +8,7 @@ import {
   loadLarkDriveConfig,
   loadGoogleAuthConfig,
   loadGoogleSheetConfig,
+  loadClientIpConfig,
 } from "../src/config";
 
 const original = process.env.TWITTERAPI_IO_KEY;
@@ -267,5 +268,156 @@ describe("loadGoogleSheetConfig", () => {
   it("throws when GSHEET_ID is missing", () => {
     delete process.env.GSHEET_ID;
     expect(() => loadGoogleSheetConfig()).toThrow(/GSHEET_ID/);
+  });
+});
+
+describe("loadDbConfig", () => {
+  const clear = () => { delete process.env.DATABASE_URL; delete process.env.HERALD_DB_ENV; };
+  beforeEach(clear);
+  afterEach(clear);
+
+  it("refuses when DATABASE_URL is absent", async () => {
+    const { loadDbConfig } = await import("../src/config");
+    process.env.HERALD_DB_ENV = "development";
+    expect(() => loadDbConfig()).toThrow(/DATABASE_URL/);
+  });
+
+  it("refuses when HERALD_DB_ENV is absent — it is never inferred from the URL", async () => {
+    const { loadDbConfig } = await import("../src/config");
+    process.env.DATABASE_URL = "postgres://localhost/herald";
+    expect(() => loadDbConfig()).toThrow(/HERALD_DB_ENV/);
+  });
+
+  it("refuses an HERALD_DB_ENV that is neither production nor development", async () => {
+    const { loadDbConfig } = await import("../src/config");
+    process.env.DATABASE_URL = "postgres://localhost/herald";
+    process.env.HERALD_DB_ENV = "staging";
+    expect(() => loadDbConfig()).toThrow(/production/);
+  });
+
+  it("returns both when both are stated", async () => {
+    const { loadDbConfig } = await import("../src/config");
+    process.env.DATABASE_URL = "postgres://localhost/herald";
+    process.env.HERALD_DB_ENV = "production";
+    expect(loadDbConfig()).toEqual({ url: "postgres://localhost/herald", env: "production" });
+  });
+});
+
+describe("loadSessionConfig", () => {
+  const clear = () => { delete process.env.HERALD_SESSION_SECRET; };
+  beforeEach(clear);
+  afterEach(clear);
+
+  it("refuses when HERALD_SESSION_SECRET is absent", async () => {
+    const { loadSessionConfig } = await import("../src/config");
+    expect(() => loadSessionConfig()).toThrow(/HERALD_SESSION_SECRET/);
+  });
+
+  it("refuses a secret shorter than 32 characters", async () => {
+    const { loadSessionConfig } = await import("../src/config");
+    process.env.HERALD_SESSION_SECRET = "a".repeat(31);
+    expect(() => loadSessionConfig()).toThrow(/too short/);
+  });
+
+  it("returns the secret and the session lifetime", async () => {
+    const { loadSessionConfig } = await import("../src/config");
+    const { SESSION_TTL_MS } = await import("../src/domain/auth/session");
+    process.env.HERALD_SESSION_SECRET = "a".repeat(32);
+    expect(loadSessionConfig()).toEqual({ secret: "a".repeat(32), ttlMs: SESSION_TTL_MS });
+  });
+});
+
+describe("loadDeploymentOrigin", () => {
+  const clear = () => { delete process.env.HERALD_DEPLOYMENT_ORIGIN; };
+  beforeEach(clear);
+  afterEach(clear);
+
+  it("refuses when unset — no safe default to guess at", async () => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    expect(() => loadDeploymentOrigin()).toThrow(/HERALD_DEPLOYMENT_ORIGIN/);
+  });
+
+  it("refuses a value that is not a URL at all", async () => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    process.env.HERALD_DEPLOYMENT_ORIGIN = "not a url";
+    expect(() => loadDeploymentOrigin()).toThrow(/not a URL/);
+  });
+
+  it("refuses a non-https origin", async () => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    process.env.HERALD_DEPLOYMENT_ORIGIN = "http://herald-review.vercel.app";
+    expect(() => loadDeploymentOrigin()).toThrow(/https/);
+  });
+
+  it.each([
+    ["a path", "https://herald-review.vercel.app/api"],
+    ["a query string", "https://herald-review.vercel.app/?x=1"],
+    ["a fragment", "https://herald-review.vercel.app/#top"],
+  ])("refuses an origin carrying %s", async (_label, value) => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    process.env.HERALD_DEPLOYMENT_ORIGIN = value;
+    expect(() => loadDeploymentOrigin()).toThrow(/origin only/);
+  });
+
+  it("normalizes to scheme + host, dropping a trailing slash", async () => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    process.env.HERALD_DEPLOYMENT_ORIGIN = "https://herald-review.vercel.app/";
+    expect(loadDeploymentOrigin()).toBe("https://herald-review.vercel.app");
+  });
+
+  it("returns an already-bare origin unchanged", async () => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    process.env.HERALD_DEPLOYMENT_ORIGIN = "https://herald-review.vercel.app";
+    expect(loadDeploymentOrigin()).toBe("https://herald-review.vercel.app");
+  });
+});
+
+describe("loadClientIpConfig", () => {
+  const keys = ["HERALD_TRUST_PROXY", "HERALD_TRUST_PROXY_HOPS"];
+  const original: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of keys) {
+      original[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterEach(() => {
+    for (const k of keys) {
+      if (original[k] === undefined) delete process.env[k];
+      else process.env[k] = original[k];
+    }
+  });
+
+  it("defaults to not trusting the proxy header, at 1 hop", () => {
+    expect(loadClientIpConfig()).toEqual({ trustProxy: false, trustedHopsFromEnd: 1 });
+  });
+
+  it("stays untrusted for anything other than the literal string 'true'", () => {
+    process.env.HERALD_TRUST_PROXY = "1";
+    expect(loadClientIpConfig().trustProxy).toBe(false);
+    process.env.HERALD_TRUST_PROXY = "TRUE";
+    expect(loadClientIpConfig().trustProxy).toBe(true); // case-insensitive is fine — only the value matters
+  });
+
+  it("trusts the proxy header only when explicitly set to true", () => {
+    process.env.HERALD_TRUST_PROXY = "true";
+    expect(loadClientIpConfig().trustProxy).toBe(true);
+  });
+
+  it("reads a custom hop count", () => {
+    process.env.HERALD_TRUST_PROXY = "true";
+    process.env.HERALD_TRUST_PROXY_HOPS = "3";
+    expect(loadClientIpConfig()).toEqual({ trustProxy: true, trustedHopsFromEnd: 3 });
+  });
+
+  it("refuses a non-positive-integer hop count", () => {
+    process.env.HERALD_TRUST_PROXY_HOPS = "0";
+    expect(() => loadClientIpConfig()).toThrow(/HERALD_TRUST_PROXY_HOPS/);
+    process.env.HERALD_TRUST_PROXY_HOPS = "-1";
+    expect(() => loadClientIpConfig()).toThrow(/HERALD_TRUST_PROXY_HOPS/);
+    process.env.HERALD_TRUST_PROXY_HOPS = "1.5";
+    expect(() => loadClientIpConfig()).toThrow(/HERALD_TRUST_PROXY_HOPS/);
+    process.env.HERALD_TRUST_PROXY_HOPS = "nope";
+    expect(() => loadClientIpConfig()).toThrow(/HERALD_TRUST_PROXY_HOPS/);
   });
 });

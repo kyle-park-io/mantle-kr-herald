@@ -3,14 +3,11 @@ import type { ChannelSentEntry } from "../../domain/send/channels";
 import type { DeliveryEntry } from "../../domain/delivery/models";
 import { deliveredToRoom, deliveryKey, migrateLegacyEntry } from "../../domain/delivery/models";
 import type { DeliveryLedger } from "../../ports/DeliveryLedger";
-import { withFileLock } from "../../shared/store/fileLock";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
-import { createSerializer } from "../../shared/store/serialWrites";
 
 export class JsonDeliveryLedger implements DeliveryLedger {
   private readonly path: string;
   private readonly legacyPath: string;
-  private readonly serial = createSerializer();
   constructor(private readonly dir: string) {
     this.path = join(dir, "deliveries.json");
     this.legacyPath = join(dir, "channels.json");
@@ -61,28 +58,50 @@ export class JsonDeliveryLedger implements DeliveryLedger {
   }
 
   /**
-   * The two layers of protection are deliberate and not redundant. `serial` orders writes issued by
-   * this instance — cheap, in-memory, no syscalls. `withFileLock` orders them against *other
-   * processes*: a `pnpm send:channels` run while the dashboard `pnpm serve` is up has two ledgers
-   * over one file, and read-modify-write across two processes drops whichever row lost the rename.
-   * A dropped row here is a send the ledger can no longer see, which the next run publishes again.
+   * A plain read-modify-write — read the file once, mutate a Map in memory, write it back
+   * atomically once. Correct for a single process with no concurrent writer, which is what this
+   * store is for once `PgDeliveryLedger` takes over the live send path (Task 17): its only
+   * remaining caller is `db:export`, run alone. Two overlapping callers on the same instance can
+   * still drop a row the way any read-modify-write can — see `PgDeliveryLedger`, which protects
+   * concurrent writers with a database transaction instead of the file lock and in-process queue
+   * this store used to wrap `add`/`remove` in.
+   *
+   * `add`, `remove` and `replace` all funnel through this single read + single write so that none
+   * of them ever leaves a gap of their own between reading the file and rewriting it — `replace` in
+   * particular needs that: reading once, deleting `previous`'s key and setting `next`'s key on the
+   * same in-memory Map before the one write back means there is no moment where the file on disk
+   * holds neither row.
    */
+  private async mutate(change: (byKey: Map<string, DeliveryEntry>) => void): Promise<void> {
+    const byKey = new Map((await this.loadAll()).map((e) => [deliveryKey(e), e]));
+    change(byKey);
+    await writeJsonFileAtomic(this.dir, this.path, [...byKey.values()]);
+  }
+
   async add(entry: DeliveryEntry): Promise<void> {
-    return this.serial(() =>
-      withFileLock(this.path, async () => {
-        const byKey = new Map((await this.loadAll()).map((e) => [deliveryKey(e), e]));
-        byKey.set(deliveryKey(entry), entry);
-        await writeJsonFileAtomic(this.dir, this.path, [...byKey.values()]);
-      }),
-    );
+    await this.mutate((byKey) => byKey.set(deliveryKey(entry), entry));
   }
 
   async remove(key: string): Promise<void> {
-    return this.serial(() =>
-      withFileLock(this.path, async () => {
-        const kept = (await this.loadAll()).filter((e) => deliveryKey(e) !== key);
-        await writeJsonFileAtomic(this.dir, this.path, kept);
-      }),
-    );
+    await this.mutate((byKey) => byKey.delete(key));
+  }
+
+  /**
+   * Deletes `previous`'s key and sets `next`'s key on the same in-memory Map — except when the two
+   * keys are equal, in which case the `delete` is skipped and only `set` runs. That distinction
+   * matters for order, not just correctness: `Map` iteration follows insertion order, and `set` on a
+   * key already present updates its value in place without moving it, while `delete` followed by
+   * `set` re-inserts the key at the end. `loadAll()`'s array order is exactly this Map's iteration
+   * order, and `sendToOutlet.ts`'s actual resend shape never changes a row's key — only its
+   * `status`/`postId`/`url` — so skipping the no-op delete keeps a same-key `replace()` from moving
+   * the row, matching `PgDeliveryLedger.replace`'s equivalent fast path for `ordinal`.
+   */
+  async replace(previous: DeliveryEntry, next: DeliveryEntry): Promise<void> {
+    await this.mutate((byKey) => {
+      const previousKey = deliveryKey(previous);
+      const nextKey = deliveryKey(next);
+      if (previousKey !== nextKey) byKey.delete(previousKey);
+      byKey.set(nextKey, next);
+    });
   }
 }

@@ -22,6 +22,7 @@ function fakeDeliveryLedger(rows: DeliveryEntry[]): DeliveryLedger {
     loadKeys: async () => new Set(rows.map((r) => `${r.itemId}:${r.type}:${r.outletId}`)),
     add: async () => {},
     remove: async () => {},
+    replace: async () => {},
   };
 }
 

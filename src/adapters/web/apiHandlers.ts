@@ -12,13 +12,17 @@ import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
 import { emitAll } from "../../domain/formatting/emitters";
 import type { ApiTranslation } from "./attachKind";
-import type { SheetLink } from "../../config";
+import type { SheetLink, ClientIpConfig } from "../../config";
 import type { BoardView } from "./board";
 import type { SaveOutletOverride } from "../../app/SaveOutletOverride";
 import type { MarkDelivery } from "../../app/MarkDelivery";
 import type { PrepareConversionRun } from "../../app/PrepareConversionRun";
 import type { FormatVariants } from "../../app/FormatVariants";
 import type { HeadroomView } from "../../domain/send/headroom";
+import type { LoginResult } from "../../app/Login";
+import { signSession, type SessionPayload } from "../../domain/auth/session";
+import type { SessionConfig } from "../../config";
+import { buildSessionCookie, CLEARED_SESSION_COOKIE } from "./sessionCookie";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -36,6 +40,23 @@ export interface StatusView {
   integrations: IntegrationStatus[];
   /** Header links to the team workbooks. A key is absent when its id is not configured. */
   sheetLinks: { data?: SheetLink; qa?: SheetLink };
+  /** The attached database's stated `HERALD_DB_ENV`. Consumed by the dashboard banner that warns
+   *  when this is not "production" (Plan C's work) — carried here so the two plans do not edit this
+   *  interface independently. */
+  dbEnv: "production" | "development";
+  /**
+   * Whether `POST /api/outlets/:id/:type/:outletId/send` is actually reachable — see
+   * `ApiDeps.sendToOutlet`'s own comment for the full story. Mirrors `deps.sendToOutlet !==
+   * undefined` exactly (`createDeps.ts` computes the one boolean and uses it for both), so the
+   * board's banner and the route's own refusal can never disagree about whether sends are open.
+   */
+  sendsEnabled: boolean;
+  /**
+   * Whether `POST /api/items/:id/convert-prepare` exists on this deployment — mirrors
+   * `deps.prepareConversionRun !== undefined` (`createDeps.ts` computes the one boolean and uses it
+   * for both), so the board never offers a [변환 준비] button whose route answers 404.
+   */
+  conversionEnabled: boolean;
 }
 
 export interface PublishStateRow {
@@ -54,6 +75,12 @@ export interface PublishStateRow {
 export interface ApiResult {
   status: number;
   json: unknown;
+  /**
+   * A `Set-Cookie` header value the caller (`HttpServer`) must send with this response. Present only
+   * for `POST /api/login` on success (issuing a session) and `POST /api/logout` (clearing it) —
+   * absent, and therefore not sent, for every other route.
+   */
+  setCookie?: string;
 }
 
 export interface ApiDeps {
@@ -80,9 +107,31 @@ export interface ApiDeps {
    * and `undefined > 0` on the board. Declared here so narrowing it is a compile error.
    */
   reconcilePublished: () => Promise<{ reconciled: number; retired: number; pending: number; error?: string }>;
-  sendToOutlet: (itemId: string, type: string, outletId: string, resend?: boolean) => Promise<{ sent: number; failed: number; error?: string }>;
-  /** Writes a conversion worksheet for the dashboard; the local agent still fills it in. */
-  prepareConversionRun: PrepareConversionRun;
+  /**
+   * Posts to a live Telegram room or the brand's X account. Optional — the SAME "route set is a
+   * property of the entry point" mechanism `prepareConversionRun` above already established, reused
+   * rather than duplicated: Kyle's decision was that the hosted dashboard ships with 1차/2차 approval
+   * working and sends refused by an environment flag (`HERALD_SENDS_ENABLED`, `config.ts`), flipped
+   * once the team trusts approvals. `createDeps.ts` omits this field entirely — for the hosted route
+   * set, until that flag is on — rather than supplying a function that would just refuse every call;
+   * `POST /api/outlets/:id/:type/:outletId/send` below checks for its absence before anything else,
+   * the same "refuse at the route, not the button" shape `prepareConversionRun` uses for
+   * `convert-prepare`. Unlike that route (permanently absent on hosted — there is no local agent to
+   * hand a worksheet to, ever), this one is only TEMPORARILY closed, so its refusal carries a Korean
+   * reason and the rebuilt board rather than a bare 404: an operator who clicks [발송] while it is
+   * closed is told why, through the exact response shape this route's other refusals already use
+   * (`SendChannels`-reported errors, just below).
+   */
+  sendToOutlet?: (itemId: string, type: string, outletId: string, resend?: boolean) => Promise<{ sent: number; failed: number; error?: string }>;
+  /**
+   * Writes a conversion worksheet for the dashboard; the local agent still fills it in. Optional —
+   * this is how the route set becomes a property of the entry point (`createDeps.ts`): the hosted
+   * deployment has no local agent to hand a worksheet to, so it omits this field entirely rather
+   * than supplying one that would misleadingly claim the capability exists. `POST
+   * /api/items/:id/convert-prepare` below answers 404 when it is absent — not merely hidden by the
+   * frontend, an actually-missing route, since there is no agent on the other end of it to reach.
+   */
+  prepareConversionRun?: PrepareConversionRun;
   /** Pure code — unlike conversion, the dashboard can run this one itself. */
   formatVariants: FormatVariants;
   /**
@@ -94,7 +143,57 @@ export interface ApiDeps {
    * always-200 `{ …, error? }` contract stay as they were, only the payload widens.
    */
   loadQuota: () => Promise<HeadroomView>;
+  /**
+   * Checks the dashboard's one credential behind the two-layer lockout (global + per-IP — see
+   * `attemptLimiter.ts`'s doc comment). `clientIp` is the request's own — pass `deps.clientIp`
+   * straight through, never a value computed independently, so the limiter this call actually
+   * consults and the address `HttpServer.ts` resolved for this same request can never disagree. See
+   * `src/app/Login.ts`.
+   */
+  login: (credentials: { username: string; password: string }, clientIp: string | undefined) => Promise<LoginResult>;
+  /**
+   * Secret and lifetime for signing a fresh session on a successful login. `HttpServer` reads the
+   * same `secret` to verify the request's cookie *before* `handleApi` is ever called — one
+   * `SessionConfig` (`loadSessionConfig()`, `src/config.ts`), not two, so the cookie a login hands
+   * out and the signature a later request is checked against can never drift onto different secrets
+   * or lifetimes.
+   */
+  sessionConfig: SessionConfig;
+  /**
+   * Whether — and how — `HttpServer` may trust `X-Forwarded-For` when it computes `clientIp` below
+   * for each request. Fixed for the process, unlike `clientIp` itself; see `loadClientIpConfig()`
+   * (`src/config.ts`) and `resolveClientIp` (`clientIp.ts`) for what this actually controls.
+   */
+  ipConfig: ClientIpConfig;
+  /**
+   * The address `resolveClientIp` (`clientIp.ts`) resolved for THIS request, or `undefined` when
+   * none could be trusted — computed by `HttpServer` before `handleApi` runs, the same per-request
+   * pattern `session` below already uses, and for the same reason: `handleApi` stays callable (and
+   * testable) without a real HTTP request or a real socket. Read by the login route only; every
+   * other route ignores it.
+   */
+  clientIp: string | undefined;
+  /**
+   * The verified session for THIS request, or `undefined` for none. Computed by `HttpServer` from
+   * the incoming `Cookie` header before `handleApi` runs — never derived in here, so `handleApi`
+   * stays callable (and testable) without a real HTTP request. Unlike every other field on
+   * `ApiDeps`, this one is not fixed for the process: each request gets its own value spread over
+   * the same base deps (see `HttpServer.ts`).
+   */
+  session: SessionPayload | undefined;
 }
+
+/**
+ * What an operator sees on a locked [발송] click while `deps.sendToOutlet` is closed. Says why,
+ * rather than a bare "not found" — see `ApiDeps.sendToOutlet`'s own comment for why this route's
+ * refusal shape differs from `convert-prepare`'s.
+ */
+// Exported so the dashboard (`web/src/types.ts`'s mirror of the same name) can say the identical
+// sentence up front — in the board's persistent banner and in a locked [발송]/[재발송] row's own
+// tooltip — rather than an operator reading two different Korean sentences for the same refusal
+// depending on whether they clicked through or just looked. `tests/web/typeMirror.test.ts` keeps the
+// two byte-identical.
+export const SENDS_CLOSED_MESSAGE = "발송이 아직 열려 있지 않습니다 — 1차·2차 승인이 자리잡으면 팀이 직접 엽니다.";
 
 /** Board mutations answer with the whole rebuilt board: one round trip, no stale rows on screen. */
 type BoardReply = { board: BoardView } & Record<string, unknown>;
@@ -103,9 +202,76 @@ async function findById(store: TranslationStore, id: string): Promise<Translatio
   return (await store.loadAll()).find((t) => t.itemId === id);
 }
 
+/**
+ * Whether `method`+`path` is `POST /api/login` — the one route exempt from the session gate.
+ * Exported so `HttpServer.ts` can ask the same question before it ever calls `handleApi` (to skip
+ * reading a body it is about to refuse anyway); computing this in one place means the pre-body-read
+ * gate there and the session gate in here can never disagree about what counts as the login route.
+ */
+export function isLoginRoute(method: string, path: string): boolean {
+  const segments = path.split("/").filter(Boolean);
+  return method === "POST" && segments.length === 2 && segments[0] === "api" && segments[1] === "login";
+}
+
 export async function handleApi(deps: ApiDeps, method: string, path: string, body: unknown): Promise<ApiResult> {
   const segments = path.split("/").filter(Boolean); // ["api", "translations", ...]
   if (segments[0] !== "api") return { status: 404, json: { error: "not found" } };
+
+  const isLogin = isLoginRoute(method, path);
+
+  /**
+   * The session gate: one check, before any route below is matched — the same shape
+   * `refusalReason()` uses in `HttpServer.ts` for the cross-site guard, so a route added below with
+   * no session check of its own is still covered rather than silently reachable.
+   *
+   * `POST /api/login` is the one exemption: it is what grants a session, so it cannot require one.
+   * Every other route — read or write, the board is not public — answers the same 401 with no further
+   * detail. Distinguishing "no cookie" from "an expired or forged one" would tell a guesser which
+   * half of the problem they still have to solve, the same reasoning the login refusal below applies
+   * to a wrong username vs. a wrong password.
+   */
+  if (!isLogin && !deps.session) {
+    return { status: 401, json: { error: "unauthenticated" } };
+  }
+
+  if (isLogin) {
+    const { username, password } = (body ?? {}) as { username?: unknown; password?: unknown };
+    if (typeof username !== "string" || typeof password !== "string") {
+      return { status: 400, json: { error: "아이디와 비밀번호가 필요합니다." } };
+    }
+    const result = await deps.login({ username, password }, deps.clientIp);
+    if (result.ok) {
+      const token = signSession({ issuedAt: new Date().toISOString() }, deps.sessionConfig.secret);
+      return { status: 200, json: { ok: true }, setCookie: buildSessionCookie(token, deps.sessionConfig.ttlMs) };
+    }
+    if (result.retryAfterMs > 0) {
+      return {
+        status: 429,
+        json: { error: "너무 많이 시도했습니다. 잠시 후 다시 시도해 주세요.", retryAfterMs: result.retryAfterMs },
+      };
+    }
+    // Says nothing about which half was wrong. With a single account, naming the field would tell
+    // someone probing when they had found the account name — half the secret — so both failures
+    // read identically.
+    return { status: 401, json: { error: "아이디 또는 비밀번호가 맞지 않습니다." } };
+  }
+
+  /**
+   * Clears the cookie in the browser — that is the whole of what this does. The token itself is not
+   * revoked: it stays valid, unchanged, until its own `issuedAt + ttlMs` lapses or someone rotates
+   * `HERALD_SESSION_SECRET` (see `HttpServer.ts`'s `refusalReason()` comment, and
+   * `docs/ko/team-runbook.md`'s rotation note). There is no server-side session list this could
+   * delete an entry from, so a copy of the token saved before logout and replayed directly against
+   * the API — never touching this browser again — is accepted exactly as before.
+   *
+   * Gated like every other route above (the only exemption is `/api/login`), which has a
+   * consequence worth stating rather than leaving implicit: a caller presenting an expired or forged
+   * cookie never reaches this branch — the gate above already answered 401, and no clearing header
+   * was ever sent. That is correct (there is no session there to clear), not a bug in this route.
+   */
+  if (method === "POST" && segments.length === 2 && segments[1] === "logout") {
+    return { status: 200, json: { ok: true }, setCookie: CLEARED_SESSION_COOKIE };
+  }
 
   // The frontend cannot know the server's storage mode, and it decides which publish targets to
   // offer — a local-mode dashboard defaulting to "google" would fail on every first click.
@@ -253,6 +419,10 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     // hands back where the worksheet landed. Filling it is the local agent's job; the operator asks
     // for that separately, which is why the reply carries a path rather than converted text.
     if (method === "POST" && segments[3] === "convert-prepare") {
+      // Absent on the hosted route set (`createDeps.ts`, `routes: "hosted"`) — the local agent that
+      // fills the worksheet is not there. A 404 here, checked before any body validation, is what
+      // makes the route genuinely not exist rather than merely reject every request it gets.
+      if (!deps.prepareConversionRun) return { status: 404, json: { error: "not found" } };
       const typesRaw = (body as { types?: unknown })?.types;
       if (!Array.isArray(typesRaw) || typesRaw.length === 0) {
         return { status: 400, json: { error: "types (non-empty array) required" } };
@@ -330,6 +500,16 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     }
 
     if (method === "POST" && segments.length === 6 && segments[5] === "send") {
+      // Checked before the resend flag, before anything else: `deps.sendToOutlet`'s own comment on
+      // `ApiDeps` has the full story. The board it carries back is what lets the row's [발송] click
+      // repaint from an accurate state rather than sitting on a stale one — the same reason the
+      // "already delivered" refusal a few lines below carries it too.
+      if (!deps.sendToOutlet) {
+        return {
+          status: 400,
+          json: { error: SENDS_CLOSED_MESSAGE, board: await deps.loadBoard(itemId) },
+        };
+      }
       // `resend` is opt-in per call rather than a separate route: it is the same delivery to the
       // same room, differing only in that the ledger already holds a row for it.
       const resend = (body as { resend?: unknown })?.resend === true;
