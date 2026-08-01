@@ -6,12 +6,25 @@ import { createDb } from "../adapters/db/createDb";
 import { applySchema } from "../adapters/db/schema";
 import { assertLedgerMigrated } from "./assertLedgerMigrated";
 import { startReconcileScheduler } from "./reconcileScheduler";
-import { loadDbConfig, loadTypefullyConfig } from "../config";
+import { loadDbConfig, loadTypefullyConfig, loadSessionConfig, loadClientIpConfig, loadAuthConfig } from "../config";
 import { REPO_ROOT, OUTPUT_DIR, paths } from "../paths";
 import { createDeps } from "../app/createDeps";
 
 const port = Number(process.env.PORT) || 5757;
 const dbConfig = loadDbConfig();
+
+// Fail fast, before ever opening a connection. These three throw on their own — a missing/short
+// `HERALD_SESSION_SECRET`, an invalid `HERALD_TRUST_PROXY_HOPS`, no dashboard account configured —
+// and a misconfigured deploy must learn that from a one-line message, not from `applySchema`'s DDL
+// or `assertLedgerMigrated`'s two selects failing against whatever `DATABASE_URL` happens to point
+// at. `createDeps` below calls these same three loaders again to build the values it actually
+// returns on `ApiDeps` — pure env reads with no side effect beyond throwing, so re-running them is
+// harmless — but the ordering here, before `createDb`, is what a misconfigured server actually
+// needs: the hosted entry point (Plan C Task 2) gets this from `createDeps` alone, since it never
+// owns the moment before `db` exists the way this long-lived process does.
+loadSessionConfig();
+loadClientIpConfig();
+loadAuthConfig();
 
 // One pool for the life of this process — a long-running server, unlike the one-shot CLI commands,
 // which each open and close their own.
