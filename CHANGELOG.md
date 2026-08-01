@@ -117,16 +117,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   self-clearing) stops one address from locking out anyone but itself, and the **global counter**
   stays as a backstop at a much higher threshold (50 failures/60s) so a genuinely distributed attempt
   across many addresses still trips something. A login is refused if either layer says so
-  (`src/app/Login.ts`). The client IP a per-IP row keys on is never read from a client-settable
-  header by default — `src/adapters/web/clientIp.ts`'s `resolveClientIp` uses the raw socket address
-  unless the new, opt-in `HERALD_TRUST_PROXY`/`HERALD_TRUST_PROXY_HOPS` (see `.env.example`)
-  explicitly says this server sits behind a specific reverse proxy that overwrites
-  `X-Forwarded-For` itself; trusting that header by default would let one attacker defeat per-IP
-  limiting entirely by forging a different address on every request. When no trustworthy IP can be
-  determined, the request falls back to the global counter alone rather than being keyed under one
-  shared bogus value. Per-IP rows are evicted by `recordFailure`'s own sweep (any row untouched for
-  over an hour is deleted on the next per-IP write), so an attacker rotating addresses cannot grow
-  `auth_attempts` without bound.
+  (`src/app/Login.ts`). Both counters now **decay**: a failure count with a gap since the last attempt
+  wider than the 60s lockout window is treated as the start of a fresh run rather than added to
+  whatever accumulated before the gap, so "N failures/60s" is a real rolling window rather than "N
+  failures ever, until a lockout happens to get served" — without decay, a single address could burst
+  to its own per-IP threshold, sit out that lockout for free (a refusal the per-IP layer already turns
+  away never reaches the counter), and repeat indefinitely, walking the GLOBAL counter up to its own
+  threshold over an unbounded stretch of wall-clock time and eventually locking out the whole team from
+  one address alone. The client IP a per-IP row keys on is never read from a client-settable header by
+  default — `src/adapters/web/clientIp.ts`'s `resolveClientIp` uses the raw socket address unless the
+  new, opt-in `HERALD_TRUST_PROXY`/`HERALD_TRUST_PROXY_HOPS` (see `.env.example`) explicitly says this
+  server sits behind a specific reverse proxy that appends to `X-Forwarded-For` itself; trusting that
+  header by default would let one attacker defeat per-IP limiting entirely by forging a different
+  address on every request. A trusted entry is also shape-checked (a coarse IPv4/IPv6 pattern, capped
+  at 64 characters) before it becomes a row id, so a misconfigured hop count landing on
+  client-controlled chain positions cannot hand an attacker an arbitrary primary key either. When no
+  trustworthy IP can be determined, the request falls back to the global counter alone rather than
+  being keyed under one shared bogus value — and this fallback is what actually happens for every
+  caller **unless `HERALD_TRUST_PROXY` is explicitly set for a deployment that really does sit behind a
+  reverse proxy**; without it, every request behind that proxy resolves to the proxy's own fixed
+  socket address, and per-IP limiting degrades to one shared bucket for the whole team, not a
+  bucket-per-visitor. Per-IP rows are evicted by a sweep that runs from both `recordFailure` and
+  `recordSuccess` (any row untouched for over an hour is deleted on the next per-IP write from
+  either) — both, not just `recordFailure`, because either can be the write that creates a fresh
+  per-IP row in the first place (a first-ever login from a new address that happens to be correct
+  creates a row exactly like a wrong one does), so an install where every login succeeds cannot grow
+  `auth_attempts` without bound either.
 - **`state:push` now backs up the reviewed text as well — seven files, not five.**
   `output/translations/translations.json` and `output/variants/variants.json` join the bundle. They
   were classed as derivable on the grounds that the pipeline can produce a translation and a
