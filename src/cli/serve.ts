@@ -44,9 +44,11 @@ import {
   loadDbConfig,
   loadAuthConfig,
   loadSessionConfig,
+  loadClientIpConfig,
 } from "../config";
 import { Login, type LoginResult } from "../app/Login";
 import { singleFlight } from "../shared/concurrency/singleFlight";
+import { ipRowId } from "../adapters/store/PgAttemptLimiter";
 import { createUploaders, resolveTargets } from "./uploaders";
 import type { PublishResult } from "../app/PublishTranslations";
 import { REPO_ROOT, OUTPUT_DIR, paths } from "../paths";
@@ -68,6 +70,11 @@ const dbConfig = loadDbConfig();
 // request both need this secret, so a server with none has no way to run the gate — see
 // `loadSessionConfig()`'s own doc comment for why this is a hard refusal, not an optional one.
 const sessionConfig = loadSessionConfig();
+
+// Off unless a deployment turns it on — see `loadClientIpConfig()`'s own doc comment for why trusting
+// `X-Forwarded-For` is never inferred, and `clientIp.ts`'s `resolveClientIp` for what a caller gets
+// back in either mode.
+const ipConfig = loadClientIpConfig();
 
 // Refuses to start without an account configured — see `loadAuthConfig()`'s own doc comment for why
 // this is required now, unlike the `tryLoadAuthConfig()` this used to call.
@@ -350,14 +357,48 @@ const prepareConversionRun = new PrepareConversionRun(
 // reformat renders byte-identical output to `pnpm format`.
 const formatVariants = new FormatVariants(conversionStore, formattingStore, undefined, loadXMaxWeighted());
 
+/** Shared by both lockout layers below — see `attemptLimiter.ts`'s doc comment for why there are two. */
+const LOGIN_LOCKOUT_MS = 60_000;
+
+/** Today's original threshold, unchanged — what stops a single address from locking out everyone else. */
+const PER_IP_LOGIN_MAX_FAILURES = 5;
+
+/**
+ * 10x the per-IP threshold. A backstop has to sit clearly above anything ordinary team noise could
+ * produce — several people mistyping the one shared password around the same time is, worst case, a
+ * handful of failures, nowhere near 50 — while still being low enough that a genuinely distributed
+ * attempt (many addresses, each staying under its own per-IP limit of 5 to avoid tripping that layer)
+ * still trips something before it could ever reach `singleFlight`'s own natural ceiling: at most one
+ * scrypt derivation in flight for the whole process, ~100–300ms each, so 50 failures is already a
+ * meaningful fraction of a minute's entire possible throughput, not a number an attacker reaches for
+ * free. `docs/ko/team-runbook.md`'s locked-out-login entry has the escape hatch for whichever counter
+ * is holding the lock — the one that actually matters for the whole team is this one.
+ */
+const GLOBAL_LOGIN_MAX_FAILURES = 50;
+
 /**
  * Backed by `auth_attempts` (`PgAttemptLimiter`), not memory, over the same `db` the stores use — so
  * failed attempts accumulate across restarts, and across the several instances a real deployment can
  * run at once, instead of each process getting its own fresh five-attempt allowance. `authConfig` is
  * checked non-optional above; by the time this line runs, refusing to start over a missing account
- * has already happened.
+ * has already happened. The global backstop, one of the two layers `Login.run` now consults — the
+ * per-IP layer is built fresh per request, just below, since its row key depends on that request's
+ * address.
  */
-const loginUseCase = new Login(authConfig, new PgAttemptLimiter(db));
+const loginUseCase = new Login(authConfig, new PgAttemptLimiter(db, { maxFailures: GLOBAL_LOGIN_MAX_FAILURES, lockoutMs: LOGIN_LOCKOUT_MS }));
+
+/**
+ * The per-IP layer for one request, or `undefined` when `clientIp.ts`'s `resolveClientIp` could not
+ * trust an address for it — `Login.run` already treats `undefined` as "only the global layer votes",
+ * so this never has to invent a fallback key. A fresh `PgAttemptLimiter` per call, not a cached map
+ * keyed by address: the class itself is a thin wrapper over `db` plus an id, cheap to construct, and
+ * a cache would itself be an unbounded structure keyed by attacker-influenced values — precisely what
+ * `PgAttemptLimiter.recordFailure`'s own eviction sweep exists to avoid doing to the DATABASE; doing
+ * it again in process memory would just move the same problem.
+ */
+function ipLoginLimiter(clientIp: string | undefined): PgAttemptLimiter | undefined {
+  return clientIp ? new PgAttemptLimiter(db, { id: ipRowId(clientIp), maxFailures: PER_IP_LOGIN_MAX_FAILURES, lockoutMs: LOGIN_LOCKOUT_MS }) : undefined;
+}
 
 /** How long a caller who hit the single-flight guard below is told to wait — see its own comment. */
 const LOGIN_BUSY_RETRY_MS = 1000;
@@ -372,7 +413,8 @@ const LOGIN_BUSY_RETRY_MS = 1000;
  * lockout is (`{ ok: false, retryAfterMs }`), not queued.
  */
 const login = singleFlight(
-  (credentials: { username: string; password: string }) => loginUseCase.run(credentials, new Date()),
+  (credentials: { username: string; password: string }, clientIp: string | undefined) =>
+    loginUseCase.run(credentials, new Date(), ipLoginLimiter(clientIp)),
   (): LoginResult => ({ ok: false, retryAfterMs: LOGIN_BUSY_RETRY_MS }),
 );
 
@@ -382,9 +424,11 @@ const deps: ApiDeps = {
   publishOne,
   login,
   sessionConfig,
-  // Overwritten per request by `HttpServer` from the incoming `Cookie` header — this base value is
-  // never read.
+  ipConfig,
+  // Overwritten per request by `HttpServer` from the incoming `Cookie` header (`session`) or socket
+  // /`X-Forwarded-For` (`clientIp`) — these base values are never read.
   session: undefined,
+  clientIp: undefined,
   storageMode,
   formattingStore,
   conversionStore,

@@ -8,6 +8,7 @@ import {
   loadLarkDriveConfig,
   loadGoogleAuthConfig,
   loadGoogleSheetConfig,
+  loadClientIpConfig,
 } from "../src/config";
 
 const original = process.env.TWITTERAPI_IO_KEY;
@@ -323,5 +324,55 @@ describe("loadSessionConfig", () => {
     const { SESSION_TTL_MS } = await import("../src/domain/auth/session");
     process.env.HERALD_SESSION_SECRET = "a".repeat(32);
     expect(loadSessionConfig()).toEqual({ secret: "a".repeat(32), ttlMs: SESSION_TTL_MS });
+  });
+});
+
+describe("loadClientIpConfig", () => {
+  const keys = ["HERALD_TRUST_PROXY", "HERALD_TRUST_PROXY_HOPS"];
+  const original: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of keys) {
+      original[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterEach(() => {
+    for (const k of keys) {
+      if (original[k] === undefined) delete process.env[k];
+      else process.env[k] = original[k];
+    }
+  });
+
+  it("defaults to not trusting the proxy header, at 1 hop", () => {
+    expect(loadClientIpConfig()).toEqual({ trustProxy: false, trustedHopsFromEnd: 1 });
+  });
+
+  it("stays untrusted for anything other than the literal string 'true'", () => {
+    process.env.HERALD_TRUST_PROXY = "1";
+    expect(loadClientIpConfig().trustProxy).toBe(false);
+    process.env.HERALD_TRUST_PROXY = "TRUE";
+    expect(loadClientIpConfig().trustProxy).toBe(true); // case-insensitive is fine — only the value matters
+  });
+
+  it("trusts the proxy header only when explicitly set to true", () => {
+    process.env.HERALD_TRUST_PROXY = "true";
+    expect(loadClientIpConfig().trustProxy).toBe(true);
+  });
+
+  it("reads a custom hop count", () => {
+    process.env.HERALD_TRUST_PROXY = "true";
+    process.env.HERALD_TRUST_PROXY_HOPS = "3";
+    expect(loadClientIpConfig()).toEqual({ trustProxy: true, trustedHopsFromEnd: 3 });
+  });
+
+  it("refuses a non-positive-integer hop count", () => {
+    process.env.HERALD_TRUST_PROXY_HOPS = "0";
+    expect(() => loadClientIpConfig()).toThrow(/HERALD_TRUST_PROXY_HOPS/);
+    process.env.HERALD_TRUST_PROXY_HOPS = "-1";
+    expect(() => loadClientIpConfig()).toThrow(/HERALD_TRUST_PROXY_HOPS/);
+    process.env.HERALD_TRUST_PROXY_HOPS = "1.5";
+    expect(() => loadClientIpConfig()).toThrow(/HERALD_TRUST_PROXY_HOPS/);
+    process.env.HERALD_TRUST_PROXY_HOPS = "nope";
+    expect(() => loadClientIpConfig()).toThrow(/HERALD_TRUST_PROXY_HOPS/);
   });
 });

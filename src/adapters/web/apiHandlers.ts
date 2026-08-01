@@ -12,7 +12,7 @@ import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
 import { emitAll } from "../../domain/formatting/emitters";
 import type { ApiTranslation } from "./attachKind";
-import type { SheetLink } from "../../config";
+import type { SheetLink, ClientIpConfig } from "../../config";
 import type { BoardView } from "./board";
 import type { SaveOutletOverride } from "../../app/SaveOutletOverride";
 import type { MarkDelivery } from "../../app/MarkDelivery";
@@ -108,8 +108,14 @@ export interface ApiDeps {
    * always-200 `{ …, error? }` contract stay as they were, only the payload widens.
    */
   loadQuota: () => Promise<HeadroomView>;
-  /** Checks the dashboard's one credential behind a lockout. See `src/app/Login.ts`. */
-  login: (credentials: { username: string; password: string }) => Promise<LoginResult>;
+  /**
+   * Checks the dashboard's one credential behind the two-layer lockout (global + per-IP — see
+   * `attemptLimiter.ts`'s doc comment). `clientIp` is the request's own — pass `deps.clientIp`
+   * straight through, never a value computed independently, so the limiter this call actually
+   * consults and the address `HttpServer.ts` resolved for this same request can never disagree. See
+   * `src/app/Login.ts`.
+   */
+  login: (credentials: { username: string; password: string }, clientIp: string | undefined) => Promise<LoginResult>;
   /**
    * Secret and lifetime for signing a fresh session on a successful login. `HttpServer` reads the
    * same `secret` to verify the request's cookie *before* `handleApi` is ever called — one
@@ -118,6 +124,20 @@ export interface ApiDeps {
    * or lifetimes.
    */
   sessionConfig: SessionConfig;
+  /**
+   * Whether — and how — `HttpServer` may trust `X-Forwarded-For` when it computes `clientIp` below
+   * for each request. Fixed for the process, unlike `clientIp` itself; see `loadClientIpConfig()`
+   * (`src/config.ts`) and `resolveClientIp` (`clientIp.ts`) for what this actually controls.
+   */
+  ipConfig: ClientIpConfig;
+  /**
+   * The address `resolveClientIp` (`clientIp.ts`) resolved for THIS request, or `undefined` when
+   * none could be trusted — computed by `HttpServer` before `handleApi` runs, the same per-request
+   * pattern `session` below already uses, and for the same reason: `handleApi` stays callable (and
+   * testable) without a real HTTP request or a real socket. Read by the login route only; every
+   * other route ignores it.
+   */
+  clientIp: string | undefined;
   /**
    * The verified session for THIS request, or `undefined` for none. Computed by `HttpServer` from
    * the incoming `Cookie` header before `handleApi` runs — never derived in here, so `handleApi`
@@ -172,7 +192,7 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     if (typeof username !== "string" || typeof password !== "string") {
       return { status: 400, json: { error: "아이디와 비밀번호가 필요합니다." } };
     }
-    const result = await deps.login({ username, password });
+    const result = await deps.login({ username, password }, deps.clientIp);
     if (result.ok) {
       const token = signSession({ issuedAt: new Date().toISOString() }, deps.sessionConfig.secret);
       return { status: 200, json: { ok: true }, setCookie: buildSessionCookie(token, deps.sessionConfig.ttlMs) };

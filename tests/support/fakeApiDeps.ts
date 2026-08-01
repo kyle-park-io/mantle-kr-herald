@@ -1,6 +1,10 @@
 // tests/support/fakeApiDeps.ts
 import type { ApiDeps } from "../../src/adapters/web/apiHandlers";
 import { SESSION_TTL_MS } from "../../src/domain/auth/session";
+import type { ClientIpConfig } from "../../src/config";
+
+/** Off — the safe default `loadClientIpConfig()` itself returns when `HERALD_TRUST_PROXY` is unset. */
+export const TEST_IP_CONFIG: ClientIpConfig = { trustProxy: false, trustedHopsFromEnd: 1 };
 
 /**
  * A fixed secret so a caller (`httpServer.test.ts`) can sign a matching cookie itself, rather than
@@ -66,6 +70,8 @@ export function fakeDeps(): ApiDeps {
     loadQuota: async () => ({ error: "not configured" }),
     login: async () => ({ ok: false, retryAfterMs: 0 }),
     sessionConfig: { secret: TEST_SESSION_SECRET, ttlMs: SESSION_TTL_MS },
+    ipConfig: TEST_IP_CONFIG,
+    clientIp: undefined,
     session: undefined,
   };
 }

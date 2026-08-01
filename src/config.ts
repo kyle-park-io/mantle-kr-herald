@@ -272,6 +272,40 @@ export function loadSessionConfig(): SessionConfig {
   return { secret, ttlMs: SESSION_TTL_MS };
 }
 
+export interface ClientIpConfig {
+  trustProxy: boolean;
+  trustedHopsFromEnd: number;
+}
+
+const DEFAULT_TRUSTED_HOPS_FROM_END = 1;
+
+/**
+ * Whether — and how — `resolveClientIp` (`src/adapters/web/clientIp.ts`) may trust `X-Forwarded-For`
+ * for the address the per-IP login lockout keys on. `HERALD_TRUST_PROXY` defaults to off: that
+ * header is entirely client-settable, and trusting it with no reverse proxy actually in front of
+ * this server would let one attacker defeat per-IP limiting outright by forging a fresh value on
+ * every request — see `resolveClientIp`'s own comment for exactly how. Turning it on is a claim
+ * about the deployment, not about this code, so it is opt-in and never inferred from anything (there
+ * being a proxy header present proves nothing — an attacker can send one too).
+ *
+ * `HERALD_TRUST_PROXY_HOPS` (only consulted when trust is on) states which position in the
+ * comma-separated `X-Forwarded-For` chain, counted from the END, the trusted proxy is guaranteed to
+ * have set itself — see `resolveClientIp`'s comment for why counting from the end (not the start) is
+ * the only direction that is ever safe. Defaults to 1: one reverse proxy directly in front of this
+ * server, the common case, reads the chain's last entry.
+ */
+export function loadClientIpConfig(): ClientIpConfig {
+  const trustProxy = (process.env.HERALD_TRUST_PROXY ?? "").trim().toLowerCase() === "true";
+  const hopsRaw = process.env.HERALD_TRUST_PROXY_HOPS?.trim();
+  const trustedHopsFromEnd = hopsRaw ? Number(hopsRaw) : DEFAULT_TRUSTED_HOPS_FROM_END;
+  if (!Number.isInteger(trustedHopsFromEnd) || trustedHopsFromEnd < 1) {
+    throw new Error(
+      `HERALD_TRUST_PROXY_HOPS must be a positive integer (got ${JSON.stringify(hopsRaw)}). It counts entries from the END of X-Forwarded-For that a trusted reverse proxy is guaranteed to have set itself.`,
+    );
+  }
+  return { trustProxy, trustedHopsFromEnd };
+}
+
 export interface TypefullyConfig {
   apiKey: string;
   socialSetId: string;

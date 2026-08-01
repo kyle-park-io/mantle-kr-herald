@@ -6,17 +6,27 @@ import { SESSION_COOKIE_NAME } from "../../../src/adapters/web/sessionCookie";
 const TEST_SECRET = "test-secret-at-least-32-characters-long";
 
 /**
- * The login route reads two deps (`login`, `sessionConfig`), so the rest of `ApiDeps` is left off
- * rather than stubbed: a hundred unused fields would bury what this test is about. `session` is
- * left `undefined` deliberately — `POST /api/login` is the one route reachable without one.
+ * The login route reads three deps (`login`, `sessionConfig`, `clientIp`), so the rest of `ApiDeps`
+ * is left off rather than stubbed: a hundred unused fields would bury what this test is about.
+ * `session` is left `undefined` deliberately — `POST /api/login` is the one route reachable without
+ * one. `clientIp` defaults to a fixed address rather than `undefined` so `seenIps` below has
+ * something to distinguish from "not passed at all" when a test does not care and does not override
+ * it.
  */
-function deps(result: LoginResult, seen: unknown[] = []): ApiDeps {
+function deps(result: LoginResult, opts: { seen?: unknown[]; seenIps?: (string | undefined)[]; clientIp?: string | undefined } = {}): ApiDeps {
+  const { seen = [], seenIps } = opts;
+  // Distinguished from a destructuring default, which cannot tell "the caller wrote `clientIp:
+  // undefined`" apart from "the caller omitted `clientIp` entirely" — both destructure to
+  // `undefined` — and the test right below this comment's sibling needs exactly that distinction.
+  const clientIp = "clientIp" in opts ? opts.clientIp : "203.0.113.9";
   return {
-    login: async (credentials: { username: string; password: string }) => {
+    login: async (credentials: { username: string; password: string }, ip: string | undefined) => {
       seen.push(credentials);
+      seenIps?.push(ip);
       return result;
     },
     sessionConfig: { secret: TEST_SECRET, ttlMs: 12 * 60 * 60 * 1000 },
+    clientIp,
     session: undefined,
   } as unknown as ApiDeps;
 }
@@ -46,8 +56,31 @@ describe("POST /api/login", () => {
 
   it("forwards the supplied credentials unchanged", async () => {
     const seen: unknown[] = [];
-    await handleApi(deps({ ok: true }, seen), "POST", "/api/login", { username: "herald", password: " pw " });
+    await handleApi(deps({ ok: true }, { seen }), "POST", "/api/login", { username: "herald", password: " pw " });
     expect(seen).toEqual([{ username: "herald", password: " pw " }]);
+  });
+
+  /**
+   * `apiHandlers.ts`'s own doc comment for `login` is explicit that `clientIp` must be
+   * `deps.clientIp` passed straight through, never a value computed independently — this is the one
+   * test that would catch a regression that dropped it, forgot it, or substituted a different value.
+   */
+  it("passes deps.clientIp straight through to login, unchanged", async () => {
+    const seenIps: (string | undefined)[] = [];
+    await handleApi(deps({ ok: true }, { seenIps, clientIp: "198.51.100.7" }), "POST", "/api/login", {
+      username: "herald",
+      password: "pw",
+    });
+    expect(seenIps).toEqual(["198.51.100.7"]);
+  });
+
+  it("passes an undefined clientIp through unchanged too — no trustworthy address is not an error", async () => {
+    const seenIps: (string | undefined)[] = [];
+    await handleApi(deps({ ok: true }, { seenIps, clientIp: undefined }), "POST", "/api/login", {
+      username: "herald",
+      password: "pw",
+    });
+    expect(seenIps).toEqual([undefined]);
   });
 
   it("answers 401 when the credentials are refused", async () => {
@@ -77,7 +110,7 @@ describe("POST /api/login", () => {
     ["a non-string password", { username: "herald", password: 1234 }],
   ])("answers 400 for %s, without consulting the credential check", async (_label, body) => {
     const seen: unknown[] = [];
-    const res = await handleApi(deps({ ok: true }, seen), "POST", "/api/login", body);
+    const res = await handleApi(deps({ ok: true }, { seen }), "POST", "/api/login", body);
     expect(res.status).toBe(400);
     expect(seen).toEqual([]);
   });

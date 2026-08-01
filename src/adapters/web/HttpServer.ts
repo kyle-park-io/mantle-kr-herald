@@ -5,6 +5,7 @@ import { join, normalize, extname, resolve, sep } from "node:path";
 import { handleApi, isLoginRoute, type ApiDeps } from "./apiHandlers";
 import { readSessionToken } from "./sessionCookie";
 import { verifySession, type SessionPayload } from "../../domain/auth/session";
+import { resolveClientIp } from "./clientIp";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -79,16 +80,26 @@ function isLoopbackOrigin(origin: string): boolean {
  * is loopback and browsers treat `localhost`/`127.0.0.1` as a secure context regardless of scheme —
  * listed here because this comment is written for the hosted future, where serving this over plain
  * HTTP to a real hostname would be exactly this failure, not proof it is already a problem.
- * The login lockout and the single-flight guard combine into a free denial of service on signing in,
- * not on anything behind the gate: a caller who alternates a wrong guess (tripping
- * `PgAttemptLimiter`'s lockout) with a flood of concurrent `POST /api/login`s (occupying
- * `singleFlight`'s one derivation slot in `serve.ts`) can keep the whole team out indefinitely at no
- * cost to themselves — a busy refusal never reaches the limiter, and a lockout refusal never reaches
- * scrypt, so neither guard ever pays for the other's refusal. This is deliberately not fixed here; see
- * `attemptLimiter.ts`'s own comment for why the lockout is not redesigned, and
- * `docs/ko/team-runbook.md`'s entry for a locked-out login for the escape hatch a locked-out team
- * actually has now that the lockout survives a restart (`delete from auth_attempts where id =
- * 'singleton'`).
+ * The single-flight guard is still a free denial of service on signing in, not on anything behind
+ * the gate: a caller who floods concurrent `POST /api/login`s occupies `singleFlight`'s one
+ * derivation slot in `serve.ts` for as long as they keep sending, and a busy refusal never reaches
+ * the limiter (so it costs the attacker nothing) but still answers every legitimate concurrent
+ * attempt "try again" instead of actually checking it. That much is deliberately not fixed here.
+ *
+ * What USED to sit right next to it — a single wrong guess, from anywhere, tripping one global
+ * lockout and holding the whole team out for a minute at a time, repeatably, forever, at zero cost —
+ * is: `attemptLimiter.ts`'s own comment describes the two-layer replacement (a per-IP counter at the
+ * original threshold, plus a global counter kept only as a backstop at a much higher one). A single
+ * stranger — or a single teammate's typo — can now lock out only themselves; reaching the global
+ * lockout that shuts out the whole team takes a genuinely distributed attempt across many distinct,
+ * trustworthy addresses, which `clientIp.ts`'s `resolveClientIp` — see its own comment — only ever
+ * reports when `HERALD_TRUST_PROXY` is deliberately turned on for a deployment that actually sits
+ * behind a proxy; today, with nothing in front of this loopback-only server, every caller resolves
+ * to the same socket address, and the two-layer split degenerates back to one shared counter. Still
+ * not zero benefit even then, since the global threshold alone is now far higher than the old one.
+ * `docs/ko/team-runbook.md`'s entry for a locked-out login has the escape hatch for whichever lockout
+ * is actually holding — a per-IP one clears itself; the global one, which is what actually locks out
+ * everyone, still needs it, since it survives a restart the same way the old single counter did.
  */
 export function refusalReason(method: string, origin?: string, contentType?: string): string | undefined {
   if (!STATE_CHANGING.has(method.toUpperCase())) return undefined;
@@ -189,6 +200,10 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
       }
       if (url.pathname.startsWith("/api/")) {
         session = currentSession(req, deps.sessionConfig.secret, deps.sessionConfig.ttlMs);
+        // Only the login route reads this (`apiHandlers.ts`'s `handleApi`) — computed once per
+        // request, here, the same place `session` is, so `clientIp.ts`'s `resolveClientIp` never has
+        // to run against anything but a real `IncomingMessage`'s real socket.
+        const clientIp = resolveClientIp(req, deps.ipConfig);
         // Refused before the body is ever read. `readBody` used to run unconditionally here, ahead
         // of this same gate inside `handleApi` — an unauthenticated 20 MB `PUT` was fully read and
         // concatenated before the 401 that was always coming ever went out. A request the gate is
@@ -212,7 +227,7 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
             throw err;
           }
         }
-        const result = await handleApi({ ...deps, session }, req.method ?? "GET", url.pathname, body);
+        const result = await handleApi({ ...deps, session, clientIp }, req.method ?? "GET", url.pathname, body);
         const payload = JSON.stringify(result.json);
         const headers: Record<string, string> = { "Content-Type": "application/json; charset=utf-8" };
         if (result.setCookie) headers["Set-Cookie"] = result.setCookie;

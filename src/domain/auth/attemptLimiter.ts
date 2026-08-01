@@ -12,24 +12,45 @@ export interface AttemptLimiter {
 /**
  * Failed-login throttling for the dashboard's one account.
  *
- * One counter, not one per client: there is a single credential, so every attempt is an attempt on
- * the same thing and keying by IP would only tell an attacker to rotate addresses. The cost is that
- * a stranger guessing can lock the team out for `lockoutMs` — acceptable at this size, and the
- * reason the window is a minute rather than an hour. That tradeoff was first accepted back when the
- * only implementation was this one, in-memory one, so restarting the process was always the fallback
- * escape hatch even in the worst case. `PgAttemptLimiter` deliberately gave that up — the whole point
- * of moving the lockout into the database is that it survives a restart — so for whichever
- * implementation an install is actually running, do not assume a restart clears a lockout; see
- * `docs/ko/team-runbook.md`'s entry for a locked-out login for the real recovery.
+ * `serve.ts` (the one composition root this project has) actually runs TWO of these, layered rather
+ * than one replacing the other:
  *
- * State is in memory, so it resets when the process does — a serverless deployment gets a fresh
- * limiter per instance and would need a shared store to be meaningful, which is what motivated
- * `PgAttemptLimiter` in the first place. `serve.ts`, the one composition root this project has, has
- * constructed a `PgAttemptLimiter` there ever since — not this function — so "adequate for a
- * long-lived server" is no longer a claim about anything actually running; nothing here reaches
- * production. What's left is `Login`'s own tests and its optional-`account` fallback caller (see
- * `Login`'s own comment for why that stays permissive) — a database-free `AttemptLimiter` for a
- * caller with no `Db` to hand it. See docs/superpowers/specs/2026-07-29-dashboard-auth-options.md.
+ * 1. **A global counter**, one row for the whole account (`PgAttemptLimiter`'s `'singleton'` row) —
+ *    every attempt counts against it, whatever its source. There is a single credential, so an
+ *    attempt from anywhere is an attempt on the same thing, and this layer alone is what closes that
+ *    gap. Its threshold is deliberately much higher than the per-IP one below (`serve.ts` picks the
+ *    number and says why): it exists to catch a genuinely distributed attack — many addresses, each
+ *    staying under its own per-IP limit — not an ordinary team's occasional mistyped password.
+ * 2. **A per-IP counter**, one row per client address (`PgAttemptLimiter`'s `ip:<address>` rows,
+ *    built fresh per request by `serve.ts` from whatever `resolveClientIp` — `clientIp.ts` — could
+ *    trust) — kept at today's original threshold. This is what stops a single stranger (or a single
+ *    teammate's typo) from locking out everyone else: without it, the global counter alone is what
+ *    used to make one wrong guess from anywhere cost the whole team a minute, indefinitely, for
+ *    free.
+ *
+ * A login is refused if EITHER layer says so, so neither one is optional: the global counter alone
+ * (the design this comment used to describe, and argued for on the grounds that "keying by IP would
+ * only tell an attacker to rotate addresses") is exactly the free denial-of-service `HttpServer.ts`'s
+ * own comment now documents as closed, one stranger away from locking out the whole team at zero
+ * cost. Dropping the global counter in favor of per-IP alone would just as surely be wrong the other
+ * direction — that IS the "rotate addresses" attack the original argument warned about, and per-IP
+ * alone gives it back for free. Both stay, because they defend against different attackers.
+ *
+ * `PgAttemptLimiter` survives a restart by design (state lives in the database, not the process), so
+ * for whichever counter is holding a lockout, do not assume a restart clears it; see
+ * `docs/ko/team-runbook.md`'s entry for a locked-out login for the real recovery — a per-IP lock
+ * clears itself within its own window with no action needed, but the global lock (the one that
+ * actually shuts out the whole team) still needs the database escape hatch documented there.
+ *
+ * `createAttemptLimiter`, this function — the in-memory implementation — is unaffected by any of
+ * this: it still is, and always was, a single counter with no per-IP concept, state kept in memory
+ * so it resets when the process does. That is fine because it never reaches production — `serve.ts`
+ * (the one composition root this project has) constructs a `PgAttemptLimiter` instead, and has ever
+ * since that class existed — so there is no free-DoS surface here for the two-layer design above to
+ * close. What is actually left calling this function is `Login`'s own tests and its
+ * optional-`account` fallback caller (see `Login`'s own comment for why that stays permissive) — a
+ * database-free `AttemptLimiter` for a caller with no `Db` to hand it. See
+ * docs/superpowers/specs/2026-07-29-dashboard-auth-options.md.
  */
 export function createAttemptLimiter(options: { maxFailures?: number; lockoutMs?: number } = {}): AttemptLimiter {
   const maxFailures = options.maxFailures ?? 5;

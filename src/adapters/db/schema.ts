@@ -178,27 +178,43 @@ const STATEMENTS: readonly string[] = [
   )`,
 
   // auth_attempts — the failed-login counter behind the dashboard's one shared credential
-  // (domain/auth/attemptLimiter.ts). One row, not one per client: there is a single credential, so
-  // every attempt is an attempt on the same thing, and keying by IP would only tell an attacker to
-  // rotate addresses — see that file's own comment. `locked_at` null means "not locked out"; set,
-  // it holds the ISO instant `PgAttemptLimiter` measures a lockout's remaining time against. No
-  // `ordinal`, unlike every other table here: that column exists so `db:export` can reproduce a
-  // file's insertion order (`order by ordinal`), and this table is not one of the stores `db:export`
-  // moves — it is server-side operational state, never exported. Adding one anyway would cost a
-  // sequence that advances on every failed login and imply an export contract that does not exist.
+  // (domain/auth/attemptLimiter.ts). Two layers share this one table, distinguished by `id`: the
+  // 'singleton' row is the global backstop (every attempt counts against it, whatever its source),
+  // and any number of `ip:<address>` rows are the per-IP counters `PgAttemptLimiter` keys on when a
+  // caller supplies a trustworthy client IP — see that class's own comment, and
+  // `domain/auth/attemptLimiter.ts`'s, for why both exist rather than one or the other. `locked_at`
+  // null means "not locked out"; set, it holds the ISO instant a lockout's remaining time is measured
+  // against. `last_attempt_at` is what `PgAttemptLimiter.recordFailure` evicts stale `ip:%` rows by —
+  // see its own comment for why `locked_at` alone cannot drive that (a row that never reached its
+  // failure threshold has a `locked_at` that was never set, so a sweep keyed only on an elapsed
+  // lockout would never touch it and the table would grow without bound as an attacker — or just
+  // churn — touches new addresses). No `ordinal`, unlike every other table here: that column exists
+  // so `db:export` can reproduce a file's insertion order (`order by ordinal`), and this table is not
+  // one of the stores `db:export` moves — it is server-side operational state, never exported. Adding
+  // one anyway would cost a sequence that advances on every failed login and imply an export contract
+  // that does not exist.
   `create table if not exists auth_attempts (
     id text primary key,
     failures integer not null,
-    locked_at text
+    locked_at text,
+    last_attempt_at text
   )`,
 
-  // Seeds the one row `auth_attempts` ever holds. Belt-and-braces, not load-bearing:
-  // `PgAttemptLimiter.recordFailure` guarantees this same row for itself, inside its own
-  // transaction, immediately before locking it with `select ... for update` — see that class's doc
-  // comment for why a lock needs a pre-existing row to mean anything. This seed just means the row
-  // is already there on a freshly migrated database, before any login has ever failed.
-  `insert into auth_attempts (id, failures, locked_at)
-   values ('singleton', 0, null)
+  // `last_attempt_at` did not exist when this table was first created — `add column if not exists`
+  // rather than folding it into the `create table` above so a database that already has the table
+  // (every install predating this) still gets the column applied, the same idempotent-migration
+  // shape every other `if not exists` statement in this file already relies on.
+  `alter table auth_attempts add column if not exists last_attempt_at text`,
+
+  // Seeds the one row `auth_attempts` held before per-IP rows existed. Belt-and-braces, not
+  // load-bearing: `PgAttemptLimiter.recordFailure` guarantees this same row for itself, inside its
+  // own transaction, immediately before locking it with `select ... for update` — see that class's
+  // doc comment for why a lock needs a pre-existing row to mean anything. This seed just means the
+  // row is already there on a freshly migrated database, before any login has ever failed. Per-IP
+  // rows need no equivalent seed: they do not exist until the first failure from that address creates
+  // one, the same in-transaction guarantee covers them, and there is no fixed set of them to seed.
+  `insert into auth_attempts (id, failures, locked_at, last_attempt_at)
+   values ('singleton', 0, null, null)
    on conflict (id) do nothing`,
 ];
 

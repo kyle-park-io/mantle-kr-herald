@@ -152,6 +152,40 @@ describe("startServer", () => {
       expect(cookie).toContain(`Max-Age=${SESSION_TTL_MS / 1000}`);
     });
 
+    /**
+     * `clientIp.ts`'s `resolveClientIp` and `apiHandlers.ts`'s `login` doc comment are both unit- and
+     * route-tested in isolation (`clientIp.test.ts`, `loginRoute.test.ts`); this is the one place that
+     * proves the real wiring between them — `HttpServer` actually calling `resolveClientIp` against a
+     * real `IncomingMessage`'s real socket, on the real request that reaches `POST /api/login`, not a
+     * hand-built one.
+     */
+    it("resolves the real socket address and passes it through to deps.login for POST /api/login", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "web-"));
+      await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+      const deps = fakeDeps();
+      const seenIps: (string | undefined)[] = [];
+      deps.login = async (_credentials, ip) => {
+        seenIps.push(ip);
+        return { ok: true };
+      };
+      const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
+      servers.push(server);
+      await new Promise((r) => server.once("listening", r));
+      const { port } = server.address() as AddressInfo;
+      const base = `http://127.0.0.1:${port}`;
+
+      // A forged X-Forwarded-For is included on purpose: fakeDeps()'s ipConfig has trustProxy off
+      // (the default), so this must be IGNORED — the resolved address must be the real loopback
+      // socket address, never the header, exactly the spoofing this whole design exists to resist.
+      await fetch(`${base}/api/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Forwarded-For": "203.0.113.9" },
+        body: JSON.stringify({ username: "herald", password: "pw" }),
+      });
+
+      expect(seenIps).toEqual(["127.0.0.1"]);
+    });
+
     it("POST /api/logout clears the session cookie", async () => {
       const dir = await mkdtemp(join(tmpdir(), "web-"));
       await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
@@ -256,6 +290,8 @@ describe("startServer", () => {
       loadQuota: async () => ({ error: "not configured" }),
       login: async () => ({ ok: false, retryAfterMs: 0 }),
       sessionConfig: { secret: TEST_SESSION_SECRET, ttlMs: 1000 },
+      ipConfig: { trustProxy: false, trustedHopsFromEnd: 1 },
+      clientIp: undefined,
       session: undefined,
     };
     const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });
@@ -301,6 +337,8 @@ describe("startServer", () => {
       loadQuota: async () => ({ error: "not configured" }),
       login: async () => ({ ok: false, retryAfterMs: 0 }),
       sessionConfig: { secret: TEST_SESSION_SECRET, ttlMs: 1000 },
+      ipConfig: { trustProxy: false, trustedHopsFromEnd: 1 },
+      clientIp: undefined,
       session: undefined,
     };
     const server = startServer(deps, { port: 0, staticDir: dir, localPublishDir: dir });

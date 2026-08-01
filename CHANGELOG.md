@@ -109,6 +109,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bounds that exposure window at 2 hours instead of 12. The cookie's `Max-Age` is derived from the
   same `SessionConfig.ttlMs` a caller passes to `verifySession`, so the two cannot drift; a test now
   pins that derivation to the constant rather than a copied literal.
+- **The login lockout is now two layers, not one.** A single global counter (5 failures/60s,
+  account-wide) meant one stranger sending a wrong guess from anywhere could hold the whole team out
+  of the dashboard indefinitely, at zero cost, and — since the lockout now survives a restart —
+  restarting the server was no longer a way out. `PgAttemptLimiter` (`src/adapters/store/PgAttemptLimiter.ts`)
+  now supports a row per scope: a **per-IP counter** at the original threshold (5 failures/60s,
+  self-clearing) stops one address from locking out anyone but itself, and the **global counter**
+  stays as a backstop at a much higher threshold (50 failures/60s) so a genuinely distributed attempt
+  across many addresses still trips something. A login is refused if either layer says so
+  (`src/app/Login.ts`). The client IP a per-IP row keys on is never read from a client-settable
+  header by default — `src/adapters/web/clientIp.ts`'s `resolveClientIp` uses the raw socket address
+  unless the new, opt-in `HERALD_TRUST_PROXY`/`HERALD_TRUST_PROXY_HOPS` (see `.env.example`)
+  explicitly says this server sits behind a specific reverse proxy that overwrites
+  `X-Forwarded-For` itself; trusting that header by default would let one attacker defeat per-IP
+  limiting entirely by forging a different address on every request. When no trustworthy IP can be
+  determined, the request falls back to the global counter alone rather than being keyed under one
+  shared bogus value. Per-IP rows are evicted by `recordFailure`'s own sweep (any row untouched for
+  over an hour is deleted on the next per-IP write), so an attacker rotating addresses cannot grow
+  `auth_attempts` without bound.
 - **`state:push` now backs up the reviewed text as well — seven files, not five.**
   `output/translations/translations.json` and `output/variants/variants.json` join the bundle. They
   were classed as derivable on the grounds that the pipeline can produce a translation and a
