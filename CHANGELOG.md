@@ -79,19 +79,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(method, path, body)` those already expect and turns the answer back into a `Response`, adding no
   routing or use-case logic of its own. One `pg.Pool` per function instance (`@vercel/functions`'
   `attachDatabasePool`), never one per request. The session gate runs, and the CSRF origin check
-  refuses a foreign origin, before the request body is ever read — carried over from the fix
-  `HttpServer.ts` already had for the same hazard (an unauthenticated caller buffering an arbitrarily
-  large body before the refusal that was always coming), including the 2 MiB cap. The CSRF allowlist
-  is `HERALD_DEPLOYMENT_ORIGIN`, a required environment variable rather than a hardcoded loopback
-  check — the default `*.vercel.app` domain means this deployment's own origin does not exist until
-  it is deployed, so guessing or defaulting permissively was not an option. `vercel.json` builds
-  `web/dist` as static output and disables all Git-triggered deployments
+  refuses a foreign origin, before THIS FUNCTION reads the request body — Vercel's own platform
+  already accepts up to 4.5 MB at the edge and delivers it with the invocation regardless (there is
+  no local-server equivalent of refusing the accept itself), so this ordering bounds the function's
+  own work and still enforces the existing 2 MiB cap for an authenticated caller, but it is not a
+  guarantee about what the platform already buffered for an unauthenticated one — see
+  `api/[...path].ts`'s own comment for the precise boundary. The CSRF allowlist is
+  `HERALD_DEPLOYMENT_ORIGIN`, a required environment variable rather than a hardcoded loopback check —
+  the default `*.vercel.app` domain means this deployment's own origin does not exist until it is
+  deployed, so guessing or defaulting permissively was not an option. The function also refuses to
+  start unless `HERALD_TRUST_PROXY=true`: a Vercel Function has no raw socket, so without it the
+  per-address login lockout has no address to key on and only the global 50-failure backstop is left.
+  `vercel.json` builds `web/dist` as static output and disables all Git-triggered deployments
   (`git.deploymentEnabled: false`) so no preview deployment — another public URL with a login page on
   it — is ever created automatically; the first (and every) deploy is `vercel deploy --prod` run by
   hand. No `crons` key: Vercel Hobby caps cron at once a day, so `pnpm send:reconcile` stays a local
   command. See `refusalReason` (now parameterized on which origins count as "this deployment",
-  `HttpServer.ts`) and `resolveClientIp` (now typed over a minimal structural request shape,
-  `clientIp.ts`, since a Vercel `Request` has no raw socket the way `node:http`'s does).
+  `HttpServer.ts`), `resolveClientIp` (now typed over a minimal structural request shape,
+  `clientIp.ts`, since a Vercel `Request` has no raw socket the way `node:http`'s does), and
+  `currentSession` (now exported from `HttpServer.ts` and reused here, over the same structural-type
+  move, rather than a second cookie-reading path).
 - **The hosted deployment's send routes ship closed, behind `HERALD_SENDS_ENABLED`.** The team gets
   1차/2차 approval working on the first deploy; `POST /api/outlets/:id/:type/:outletId/send` — the
   only route that can reach a live Telegram room or the brand's X account — refuses until this flag

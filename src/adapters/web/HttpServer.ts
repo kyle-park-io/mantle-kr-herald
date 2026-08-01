@@ -132,15 +132,29 @@ export function refusalReason(
 }
 
 /**
- * The verified session for this request, or `undefined`. Read from the `Cookie` header and checked
- * against `secret` and `ttlMs` once, right here — `HttpServer` is the one place a raw HTTP header
- * exists, and handing the already-verified payload to `handleApi` (via `ApiDeps.session`) keeps that
- * function testable without a real HTTP request. `verifySession` never throws, so a malformed or
- * absent cookie ends up `undefined` the same as a genuinely missing one. `ttlMs` is threaded through
- * from `sessionConfig` rather than left to `verifySession`'s own default, so the lifetime a session
- * was signed with and the lifetime it is checked against can never be two different `SessionConfig`s.
+ * Just enough of a request for `currentSession` to read. A real `IncomingMessage` satisfies this
+ * structurally without any change at its call sites below — `IncomingHttpHeaders` names `cookie`
+ * explicitly — and so does the small shim `api/[...path].ts` builds over a Vercel Web-standard
+ * `Request`, whose `headers` is a `Headers` object rather than a plain record and so cannot be
+ * handed to this function unchanged. Narrowed to the one field `currentSession` touches, the same
+ * move `clientIp.ts`'s `ClientIpRequest` already makes for `resolveClientIp`.
  */
-function currentSession(req: IncomingMessage, secret: string, ttlMs: number): SessionPayload | undefined {
+export interface SessionRequest {
+  headers: { cookie?: string };
+}
+
+/**
+ * The verified session for this request, or `undefined`. Read from the `Cookie` header and checked
+ * against `secret` and `ttlMs` once, right here — exported so the Vercel entry point
+ * (`api/[...path].ts`) reads a cookie exactly the way this local server does, rather than
+ * re-deriving the same three lines a second time: which secret, which ttl, and what a malformed
+ * cookie means (`verifySession` never throws, so a malformed or absent cookie ends up `undefined`
+ * the same as a genuinely missing one) would otherwise live in two places that could quietly drift.
+ * `ttlMs` is threaded through from `sessionConfig` rather than left to `verifySession`'s own
+ * default, so the lifetime a session was signed with and the lifetime it is checked against can
+ * never be two different `SessionConfig`s.
+ */
+export function currentSession(req: SessionRequest, secret: string, ttlMs: number): SessionPayload | undefined {
   const token = readSessionToken(req.headers.cookie);
   return token ? verifySession(token, secret, new Date(), ttlMs) : undefined;
 }

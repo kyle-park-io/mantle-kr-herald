@@ -234,7 +234,10 @@ In the Vercel project, production environment:
 | `HERALD_DB_ENV` | `production` |
 | `HERALD_SESSION_SECRET` | Newly generated. Not reused from anywhere |
 | `HERALD_AUTH_USERNAME`, `HERALD_AUTH_PASSWORD_HASH` | `pnpm auth:hash` |
-| `HERALD_STORAGE_MODE` | Existing value |
+| `HERALD_STORAGE_MODE` | `cloud` — **not** "existing value". A `local` install writes approved artifacts under `output/publish/local/`, which does not persist and is not even writable the same way on a Vercel Function; picking it here would offer a publish target that 404s on every link. |
+| `HERALD_DEPLOYMENT_ORIGIN` | The deployment's own origin once known, e.g. `https://<project>.vercel.app` — the CSRF allowlist (`api/[...path].ts`). Required; the function refuses to start without it. |
+| `HERALD_TRUST_PROXY` | `true`. Required on this deployment — a Vercel Function has no raw socket, so without it the per-address login lockout has no address to key on at all. The function refuses to start without it. |
+| `HERALD_SENDS_ENABLED` | Unset (closed) on this first deploy — see Task 6 Step 3, where it is turned on. |
 | `TYPEFULLY_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID_*` | Existing `.env` |
 | `GOOGLE_OAUTH_CLIENT_ID`, `_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `GDRIVE_*` | Existing `.env` |
 | `GSHEET_ID`, `GSHEET_QA_ID` | Existing `.env` |

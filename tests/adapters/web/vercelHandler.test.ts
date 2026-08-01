@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 import { createTestDb } from "../../support/testDb";
 import { createDeps } from "../../../src/app/createDeps";
-import { createHandler } from "../../../api/[...path]";
+import { createHandler, assertTrustProxy } from "../../../api/[...path]";
 import { signSession } from "../../../src/domain/auth/session";
 import { buildSessionCookie } from "../../../src/adapters/web/sessionCookie";
 import { MAX_API_BODY_BYTES } from "../../../src/adapters/web/HttpServer";
@@ -91,15 +91,27 @@ describe("the Vercel handler", () => {
     expect(res.status).toBe(403);
   });
 
+  /**
+   * `refusalReason` answers `undefined` for every non-state-changing method BEFORE it ever consults
+   * `isAllowedOrigin` (`HttpServer.ts`'s own `STATE_CHANGING` check runs first) — so a `GET` here
+   * would pass regardless of whether the origin allowlist works at all, and prove nothing about it.
+   * `POST /api/items/:id/reconcile` is the state-changing route this flag never closes (it stays
+   * open even with `HERALD_SENDS_ENABLED` off), so it is reachable on a freshly seeded hosted `deps`
+   * with no further setup.
+   */
   it("allows a state-changing request whose Origin is this deployment's own", async () => {
     const handle = await testHandler();
     const res = await handle(
-      new Request(`${DEPLOYMENT_ORIGIN}/api/translations`, {
-        method: "GET",
-        headers: { origin: DEPLOYMENT_ORIGIN, cookie: await sessionCookieHeader() },
+      new Request(`${DEPLOYMENT_ORIGIN}/api/items/x%3A1/reconcile`, {
+        method: "POST",
+        headers: { origin: DEPLOYMENT_ORIGIN, "content-type": "application/json", cookie: await sessionCookieHeader() },
       }),
     );
-    expect(res.status).toBe(200);
+    // Not 403 (the origin allowlist accepted this deployment's own origin) and not 401 (the session
+    // was valid) — whatever domain-level status `reconcile` itself answers with (400, since
+    // Typefully is not configured in this test env) is not the point here.
+    expect(res.status).not.toBe(403);
+    expect(res.status).not.toBe(401);
   });
 
   it("reaches a real route once authenticated, and returns handleApi's own json", async () => {
@@ -139,5 +151,21 @@ describe("the Vercel handler", () => {
     );
     expect(res.status).toBe(401);
     expect(res.headers.get("set-cookie")).toBeNull();
+  });
+});
+
+/**
+ * `getHandler()` itself (the real, env-reading singleton `fetch` calls) is not exercised directly —
+ * same reason `createDeps`'s own module-scope construction in `serve.ts` is not: it opens a real
+ * `Pool` against a real `DATABASE_URL`. `assertTrustProxy` is pulled out specifically so the refusal
+ * it wires in is testable without any of that.
+ */
+describe("assertTrustProxy", () => {
+  it("refuses when this deployment has no way to trust X-Forwarded-For", () => {
+    expect(() => assertTrustProxy({ trustProxy: false })).toThrow(/HERALD_TRUST_PROXY/);
+  });
+
+  it("passes once HERALD_TRUST_PROXY is on", () => {
+    expect(() => assertTrustProxy({ trustProxy: true })).not.toThrow();
   });
 });
