@@ -1,5 +1,21 @@
-import type { IncomingMessage } from "node:http";
 import type { ClientIpConfig } from "../../config";
+
+/**
+ * Just enough of a request for `resolveClientIp` to read — a real Node `IncomingMessage` satisfies
+ * this structurally without any change at its call site (`HttpServer.ts`), and so does the small
+ * shim `api/[...path].ts` builds over a Vercel Web-standard `Request`, which has no `.socket` at
+ * all. Narrowed to exactly the two fields this function touches rather than the full
+ * `IncomingMessage` shape, so a second runtime with a differently-shaped request object never has to
+ * fake fields it does not have.
+ */
+export interface ClientIpRequest {
+  socket: { remoteAddress?: string };
+  // An index signature, not a single named `"x-forwarded-for"` property: `IncomingHttpHeaders`
+  // itself only carries that header through ITS OWN index signature (`NodeJS.Dict`), and a target
+  // type with nothing but optional named properties trips TypeScript's "weak type" check against a
+  // source with no property of that exact name — an index signature on both sides sidesteps it.
+  headers: Record<string, string | string[] | undefined>;
+}
 
 /**
  * How long a trusted `X-Forwarded-For` entry may be before `resolveClientIp` refuses to use it as a
@@ -72,7 +88,7 @@ function looksLikeAnAddress(value: string): boolean {
  * proxy vouches for: it is a hedge against a MISCONFIGURED hop count landing on client-controlled
  * territory instead, not a doubt about a correctly configured proxy's own entry.
  */
-export function resolveClientIp(req: IncomingMessage, config: ClientIpConfig): string | undefined {
+export function resolveClientIp(req: ClientIpRequest, config: ClientIpConfig): string | undefined {
   if (!config.trustProxy) return req.socket.remoteAddress ?? undefined;
 
   const header = req.headers["x-forwarded-for"];

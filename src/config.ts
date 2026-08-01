@@ -306,6 +306,64 @@ export function loadClientIpConfig(): ClientIpConfig {
   return { trustProxy, trustedHopsFromEnd };
 }
 
+/**
+ * Follows `storage/mode.ts`'s register: a required value with a remedy restated on every refusal,
+ * because there is no safe default to fall back to.
+ */
+const DEPLOYMENT_ORIGIN_REMEDY =
+  "Add HERALD_DEPLOYMENT_ORIGIN=https://<your-project>.vercel.app (scheme + host only, no path) to the Vercel project's environment variables.";
+
+/**
+ * The exact origin the hosted (Vercel) deployment serves the dashboard from — the one value
+ * `api/[...path].ts`'s CSRF guard treats as "this deployment" when it calls the shared
+ * `refusalReason()` (`HttpServer.ts`). `HttpServer.ts`'s own local-only guard hardcodes "any
+ * loopback origin" because every loopback port genuinely is this machine; the hosted deployment has
+ * no equivalent constant to hardcode — Kyle's decision was the default `*.vercel.app` domain, so the
+ * deployment's own origin does not exist until Task 4/6 of the plan actually create it. Reading it
+ * from the environment and refusing to start without it (rather than defaulting to something
+ * permissive, or skipping the check) is the same failure this project refuses everywhere else a
+ * guess could be silently wrong: a CSRF guard that accepts any origin because none was configured is
+ * worse than no guard, since it looks like one.
+ *
+ * Origin-only, not a full URL: a path, query or fragment would never legitimately appear in a
+ * browser's `Origin` header, so accepting one here would just be a config mistake nobody yet caught.
+ */
+export function loadDeploymentOrigin(): string {
+  const raw = process.env.HERALD_DEPLOYMENT_ORIGIN?.trim();
+  if (!raw) {
+    throw new Error(`Missing required environment variable: HERALD_DEPLOYMENT_ORIGIN. ${DEPLOYMENT_ORIGIN_REMEDY}`);
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Invalid HERALD_DEPLOYMENT_ORIGIN: ${raw} (not a URL). ${DEPLOYMENT_ORIGIN_REMEDY}`);
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(`Invalid HERALD_DEPLOYMENT_ORIGIN: ${raw} (must be https). ${DEPLOYMENT_ORIGIN_REMEDY}`);
+  }
+  if ((url.pathname !== "/" && url.pathname !== "") || url.search || url.hash) {
+    throw new Error(`Invalid HERALD_DEPLOYMENT_ORIGIN: ${raw} (origin only — no path, query or fragment). ${DEPLOYMENT_ORIGIN_REMEDY}`);
+  }
+  return `${url.protocol}//${url.host}`;
+}
+
+/**
+ * Whether the hosted deployment's auto-send routes (`POST /api/outlets/:id/:type/:outletId/send`,
+ * the only route that reaches a live Telegram room or the brand's X account) are open. Consulted
+ * only by `createDeps.ts` for `routes: "hosted"` — the local entry point (`serve.ts`) always sends,
+ * exactly as it always has, unaffected by this flag.
+ *
+ * Unlike `HERALD_DB_ENV`/`HERALD_STORAGE_MODE`, an unset value here is not an ambiguous guess: Kyle's
+ * decision was that the hosted dashboard ships with 1차/2차 approval working and sends closed, so
+ * "not yet configured" and "deliberately still closed" are the same state, and defaulting to closed
+ * costs nothing — the unsafe direction would be defaulting to open. Flipping it to `true` later is
+ * meant to be exactly that: one variable, not a code change.
+ */
+export function loadSendsEnabled(): boolean {
+  return (process.env.HERALD_SENDS_ENABLED ?? "").trim().toLowerCase() === "true";
+}
+
 export interface TypefullyConfig {
   apiKey: string;
   socialSetId: string;

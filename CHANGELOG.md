@@ -73,6 +73,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`api/[...path].ts` + `vercel.json` — a Vercel Function entry point for the review dashboard,
+  alongside the existing `pnpm serve`.** A thin adapter over the same `handleApi`/`refusalReason`
+  that `HttpServer.ts` already uses: it turns a Vercel Function's Web-standard `Request` into the
+  `(method, path, body)` those already expect and turns the answer back into a `Response`, adding no
+  routing or use-case logic of its own. One `pg.Pool` per function instance (`@vercel/functions`'
+  `attachDatabasePool`), never one per request. The session gate runs, and the CSRF origin check
+  refuses a foreign origin, before the request body is ever read — carried over from the fix
+  `HttpServer.ts` already had for the same hazard (an unauthenticated caller buffering an arbitrarily
+  large body before the refusal that was always coming), including the 2 MiB cap. The CSRF allowlist
+  is `HERALD_DEPLOYMENT_ORIGIN`, a required environment variable rather than a hardcoded loopback
+  check — the default `*.vercel.app` domain means this deployment's own origin does not exist until
+  it is deployed, so guessing or defaulting permissively was not an option. `vercel.json` builds
+  `web/dist` as static output and disables all Git-triggered deployments
+  (`git.deploymentEnabled: false`) so no preview deployment — another public URL with a login page on
+  it — is ever created automatically; the first (and every) deploy is `vercel deploy --prod` run by
+  hand. No `crons` key: Vercel Hobby caps cron at once a day, so `pnpm send:reconcile` stays a local
+  command. See `refusalReason` (now parameterized on which origins count as "this deployment",
+  `HttpServer.ts`) and `resolveClientIp` (now typed over a minimal structural request shape,
+  `clientIp.ts`, since a Vercel `Request` has no raw socket the way `node:http`'s does).
 - **The two read-only "원문" panes now show a hover preview for every photo marker.** A post's photos
   ride through the pipeline as `![](url)` markers inside the reviewed text (video as `[영상]`, which
   carries no url); 1차's `원문` pane (`TranslationDetail`) and 2차's `변환 원문` pane

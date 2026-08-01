@@ -108,9 +108,23 @@ function isLoopbackOrigin(origin: string): boolean {
  * is actually holding — a per-IP one clears itself; the global one, which is what actually locks out
  * everyone, still needs it, since it survives a restart the same way the old single counter did.
  */
-export function refusalReason(method: string, origin?: string, contentType?: string): string | undefined {
+/**
+ * `isAllowedOrigin` is a parameter, not `isLoopbackOrigin` baked in directly, so the Vercel entry
+ * point (`api/[...path].ts`, Plan C Task 2) can reuse this exact function rather than reimplementing
+ * the CSRF rule a second time — the algorithm above (which methods are state-changing, which content
+ * types a form can produce, "absent origin passes through") is identical on both entry points; only
+ * WHICH origins count as "this deployment" differs, and that is entirely what the parameter
+ * expresses. `HttpServer.ts`'s own call site below passes `isLoopbackOrigin`; the Vercel handler
+ * passes a predicate built from `loadDeploymentOrigin()` (`config.ts`).
+ */
+export function refusalReason(
+  method: string,
+  origin: string | undefined,
+  contentType: string | undefined,
+  isAllowedOrigin: (origin: string) => boolean,
+): string | undefined {
   if (!STATE_CHANGING.has(method.toUpperCase())) return undefined;
-  if (origin !== undefined && !isLoopbackOrigin(origin)) return "cross-site request refused";
+  if (origin !== undefined && !isAllowedOrigin(origin)) return "cross-site request refused";
   if (contentType && FORM_TYPES.has(contentType.split(";")[0].trim().toLowerCase())) {
     return "form-encoded request refused";
   }
@@ -142,11 +156,15 @@ function currentSession(req: IncomingMessage, secret: string, ttlMs: number): Se
  * — is ~12,000 characters, under 50 KB even in the worst-case multi-byte UTF-8 encoding. The cap
  * exists to bound memory, not to police content size, so nothing here is expected to ever get close
  * to it.
+ *
+ * Exported so the Vercel entry point (`api/[...path].ts`) enforces the identical cap over its own
+ * Web-Streams body reader — one number, not two that could quietly drift apart.
  */
-const MAX_API_BODY_BYTES = 2 * 1024 * 1024;
+export const MAX_API_BODY_BYTES = 2 * 1024 * 1024;
 
-/** Thrown by `readBody` when a request body exceeds `MAX_API_BODY_BYTES`. */
-class BodyTooLargeError extends Error {}
+/** Thrown by `readBody` when a request body exceeds `MAX_API_BODY_BYTES`. Exported for the same
+ *  reason as the constant above — `api/[...path].ts` raises and catches the identical error type. */
+export class BodyTooLargeError extends Error {}
 
 async function readBody(req: import("node:http").IncomingMessage, maxBytes: number): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -174,7 +192,7 @@ export function startServer(deps: ApiDeps, opts: { port: number; staticDir: stri
     let session: SessionPayload | undefined;
     try {
       // Before any route: a state-changing request from somewhere else never reaches a use case.
-      const refusal = refusalReason(req.method ?? "GET", req.headers.origin, req.headers["content-type"]);
+      const refusal = refusalReason(req.method ?? "GET", req.headers.origin, req.headers["content-type"], isLoopbackOrigin);
       if (refusal) {
         res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({ error: refusal }));
         return;
