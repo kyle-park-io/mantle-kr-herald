@@ -37,8 +37,18 @@ export function OutletBoard(props: {
   /** The rendering list on the left carries status chips the card can change. */
   onGroupChanged: () => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
+  /**
+   * Bumped by `Root.tsx` on every successful login — see its own doc comment for the full story.
+   * `OutletBoard` is keyed by `itemId` (`RenderingsView`'s render site), so a session lapsing and the
+   * reviewer logging back in on the SAME item does not remount this component the way switching items
+   * does; without threading this through, `reload`'s and `loadQuota`'s effects below — both mount-only
+   * otherwise — would never retry, and the 발송판 (and the Typefully headroom banner) would sit on
+   * their last-fetched state (or, for a cold-start login landing straight on this screen, never load
+   * at all) until the reviewer manually re-selected the item.
+   */
+  authEpoch: number;
 }) {
-  const { itemId, onDirtyChange } = props;
+  const { itemId, onDirtyChange, authEpoch } = props;
   const [board, setBoard] = useState<BoardView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [headroom, setHeadroom] = useState<Headroom | null>(null);
@@ -88,18 +98,40 @@ export function OutletBoard(props: {
     [loadQuota],
   );
 
+  // Split from the reload effect below on purpose. `OutletBoard` is keyed by `itemId`
+  // (`RenderingsView`), so in practice this only ever runs once, on mount, for a fresh instance whose
+  // state already starts at exactly these defaults — but it must NOT also re-run on an `authEpoch`
+  // bump: an authEpoch-triggered re-auth happens on the SAME instance, possibly with a reviewer's
+  // in-progress edit live in a child `OutletCard`, and resetting `dirtyKeys` (or blanking `board`,
+  // which would unmount every `OutletCard` and throw its local draft away) would reintroduce, one
+  // level below it, the exact defect `Root.tsx`'s `authEpoch` mechanism exists to prevent in 1차.
   useEffect(() => {
     setBoard(null);
     setError(null);
     setDirtyKeys(new Set());
     setPrepareTypes(new Set());
     setPrepareResult(null);
-    void reload();
-  }, [itemId, reload]);
+  }, [itemId]);
 
+  // `authEpoch` (`Root.tsx`'s own doc comment has the full story) alongside `itemId`: a session that
+  // lapses while `reload` is in flight — or before it ever gets a session to succeed with — leaves
+  // `board` stuck on `null`/an error with no way to retry once the reviewer logs back in, since this
+  // component is not remounted by a re-auth alone (only an item switch, via `RenderingsView`'s
+  // `key={itemId}`, does that). Calling `reload()` again here on an `authEpoch` bump is what retries
+  // it — safely, because `reload` itself replaces `board` with the fetched value directly rather than
+  // nulling it first, so a successful refetch with no intervening save never unmounts an `OutletCard`
+  // that has an unsaved edit live (same value-based-reset guarantee `OutletCard`'s own effect relies
+  // on).
+  useEffect(() => {
+    void reload();
+  }, [itemId, authEpoch, reload]);
+
+  // Same reasoning as the effect above, for the Typefully headroom banner: `loadQuota` has no
+  // `itemId` dependency of its own (the account-wide quota is not per-item), so without `authEpoch`
+  // here a re-auth would leave a stale or blank banner behind rather than refreshing it.
   useEffect(() => {
     void loadQuota();
-  }, [loadQuota]);
+  }, [loadQuota, authEpoch]);
 
   const onDirty = useCallback((key: string, dirty: boolean) => {
     setDirtyKeys((prev) => {

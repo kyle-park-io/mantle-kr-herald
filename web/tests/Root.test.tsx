@@ -15,7 +15,7 @@ const { mountCounter } = vi.hoisted(() => ({ mountCounter: { current: 0 } }));
 vi.mock("../src/App", async () => {
   const { useEffect, useState } = await import("react");
   return {
-    App: () => {
+    App: (props: { onSignOut: () => void }) => {
       useEffect(() => {
         mountCounter.current += 1;
       }, []);
@@ -23,6 +23,7 @@ vi.mock("../src/App", async () => {
       return (
         <div data-testid="app-fake">
           <input aria-label="unsaved draft" value={draft} onChange={(e) => setDraft(e.target.value)} />
+          <button onClick={props.onSignOut}>로그아웃</button>
         </div>
       );
     },
@@ -35,6 +36,7 @@ function stubFetch() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/api/login")) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (url.endsWith("/api/logout")) return new Response(JSON.stringify({ ok: true }), { status: 200 });
     throw new Error(`unexpected fetch: ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -97,5 +99,33 @@ describe("Root", () => {
     const afterLogin = screen.getByLabelText("unsaved draft") as HTMLInputElement;
     expect(afterLogin.value).toBe("저장하지 않은 편집");
     expect(afterLogin).toBe(draftInput); // the exact same DOM node — never recreated
+  });
+
+  /**
+   * The opposite of the case above: a DELIBERATE sign-out, not a session loss. On a shared team
+   * account this must not just gate the screen behind the login overlay (that alone would leave
+   * everything readable one Back-button press away, and would hand the next person to log in this
+   * same reviewer's abandoned draft) — it has to destroy the state, not merely hide it.
+   */
+  it("tears down <App>'s state — the unsaved draft included — on a deliberate sign-out, unlike a session-loss bounce", async () => {
+    stubFetch();
+    render(<Root />);
+
+    expect(mountCounter.current).toBe(1);
+    const draftInput = screen.getByLabelText("unsaved draft") as HTMLInputElement;
+    fireEvent.change(draftInput, { target: { value: "reviewer A's abandoned edit" } });
+    expect(draftInput.value).toBe("reviewer A's abandoned edit");
+
+    fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
+
+    // <App> was actually remounted — a fresh instance, not the same node with its state left intact —
+    // so neither a Back-button press nor the next reviewer signing in inherits reviewer A's draft.
+    await waitFor(() => expect(mountCounter.current).toBe(2));
+    const freshDraft = screen.getByLabelText("unsaved draft") as HTMLInputElement;
+    expect(freshDraft.value).toBe("");
+    expect(freshDraft).not.toBe(draftInput);
+
+    // And, same as the session-loss case, the login overlay is what's showing now.
+    expect(screen.getByRole("button", { name: "로그인" })).toBeTruthy();
   });
 });

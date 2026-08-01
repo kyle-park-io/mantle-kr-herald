@@ -22,16 +22,6 @@ function goToLogin() {
 
 installUnauthenticatedHandler(goToLogin);
 
-async function signOut() {
-  try {
-    await api.logout();
-  } finally {
-    // Ends the visit locally even if the network call failed — a signed-out screen the operator
-    // asked for should not depend on the server being reachable to show it.
-    goToLogin();
-  }
-}
-
 /**
  * `#login` renders the sign-in screen, which checks the credential against the server and — since
  * Task 4 — receives a signed, `httpOnly` session cookie on success. Every other request now passes
@@ -71,10 +61,25 @@ async function signOut() {
  * for an in-progress draft for the same reason `TranslationDetail`/`OutletCard`'s own local text
  * state already relies on: each resets its draft only when the underlying field's *value* changes,
  * and a refetch with no intervening save returns that same value.
+ *
+ * `sessionKey` is the deliberate opposite of all of the above, and exists because "hide, never
+ * unmount" is only correct for the involuntary case (a lapsed or stolen-then-reused session — the
+ * reviewer intends to come right back to what they were doing). A deliberate 로그아웃 is a different
+ * event: on a shared team account, it means "the next person at this screen — or this same person
+ * after pressing Back — must see nothing of what I had open." Hiding `<App>` cannot provide that: the
+ * translation list, the selected item, and any unsaved draft all stay live in the DOM, one Back-button
+ * press away, and a second reviewer signing in afterward would inherit the first one's dirty textarea
+ * (`authEpoch`'s refetch only replaces a field's value if the SERVER value changed, so an abandoned
+ * local edit survives a refetch on purpose — exactly wrong for a new person's session). `signOut`
+ * bumps `sessionKey`, used as `<App>`'s React `key`, forcing a full unmount-and-remount — a brand-new
+ * instance with no memory of the old one — before the login overlay even appears; the 401 path above
+ * must never do this (it would throw away the very draft it exists to preserve), so only `signOut`
+ * touches it.
  */
 export function Root() {
   const [hash, setHash] = useState(() => window.location.hash);
   const [authEpoch, setAuthEpoch] = useState(0);
+  const [sessionKey, setSessionKey] = useState(0);
 
   useEffect(() => {
     const onHashChange = () => setHash(window.location.hash);
@@ -82,11 +87,26 @@ export function Root() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
+  async function signOut() {
+    try {
+      await api.logout();
+    } finally {
+      // Order matters only a little here (both settle before the login overlay is visible either
+      // way): bumping `sessionKey` first means the fresh, empty `<App>` this creates has already
+      // replaced the old one by the time `goToLogin` flips `showingLogin`, rather than the other way
+      // around.
+      setSessionKey((k) => k + 1);
+      // Ends the visit locally even if the network call failed — a signed-out screen the operator
+      // asked for should not depend on the server being reachable to show it.
+      goToLogin();
+    }
+  }
+
   const showingLogin = hash === "#login";
   return (
     <>
       <div className={showingLogin ? "hidden" : undefined}>
-        <App onSignOut={signOut} authEpoch={authEpoch} />
+        <App key={sessionKey} onSignOut={signOut} authEpoch={authEpoch} />
       </div>
       {showingLogin && (
         <LoginPage

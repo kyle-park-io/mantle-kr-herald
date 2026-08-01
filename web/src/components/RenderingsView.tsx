@@ -62,6 +62,7 @@ export function RenderingsView(props: { onDirtyChange: (dirty: boolean) => void;
               kind={selected.kind}
               onGroupChanged={refresh}
               onDirtyChange={setDirty}
+              authEpoch={authEpoch}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-10">
