@@ -97,6 +97,13 @@ function isLoopbackOrigin(origin: string): boolean {
  * behind a proxy; today, with nothing in front of this loopback-only server, every caller resolves
  * to the same socket address, and the two-layer split degenerates back to one shared counter. Still
  * not zero benefit even then, since the global threshold alone is now far higher than the old one.
+ * "Can now lock out only themselves" depends on `PgAttemptLimiter.recordFailure`'s decay (its own
+ * comment has the full argument): without it, one address could burst to its own per-IP threshold,
+ * serve that 60s lockout — which costs it nothing, since a refusal the per-IP layer already turns
+ * away never reaches `recordFailure` — and repeat, with each burst's failures still landing on the
+ * GLOBAL row, which would accumulate toward its own lockout across that unbounded wall-clock time. A
+ * single stranger, patient enough, would eventually be the "genuinely distributed attempt" this
+ * paragraph describes as needing many addresses. Decay is what actually makes that word operative.
  * `docs/ko/team-runbook.md`'s entry for a locked-out login has the escape hatch for whichever lockout
  * is actually holding — a per-IP one clears itself; the global one, which is what actually locks out
  * everyone, still needs it, since it survives a restart the same way the old single counter did.

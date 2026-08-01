@@ -5,6 +5,7 @@ import type { AttemptLimiter } from "../../domain/auth/attemptLimiter";
 interface AttemptsRow {
   failures: number;
   locked_at: string | null;
+  last_attempt_at: string | null;
 }
 
 /** The one row `PgAttemptLimiter` used before per-IP rows existed — still the global backstop's id. */
@@ -24,11 +25,11 @@ export function ipRowId(ip: string): string {
 }
 
 /**
- * How long a per-IP row may sit untouched before `recordFailure` sweeps it away, on the next write
- * that runs the sweep. An hour, not the 60s lockout window itself: the sweep must never delete a row
- * that is still actively enforcing a lockout, and an hour is generously past that with room to
- * spare. It is also, independent of lockouts, the actual bound on how many per-IP rows can
- * accumulate: `POST /api/login` runs through `singleFlight` (`serve.ts`) — at most one credential
+ * How long a per-IP row may sit untouched before `recordFailure` OR `recordSuccess` sweeps it away,
+ * on the next write that runs the sweep. An hour, not the 60s lockout window itself: the sweep must
+ * never delete a row that is still actively enforcing a lockout, and an hour is generously past that
+ * with room to spare. It is also, independent of lockouts, the actual bound on how many per-IP rows
+ * can accumulate: `POST /api/login` runs through `singleFlight` (`serve.ts`) — at most one credential
  * check in flight for the whole process at a time, each taking scrypt's ~100–300ms — so even under
  * sustained, maximally concurrent abuse this table cannot grow by more than roughly one row every
  * hundred milliseconds, comfortably bounded within any one-hour window regardless of how many
@@ -57,17 +58,34 @@ const PER_IP_ROW_RETENTION_MS = 60 * 60 * 1000;
  * `delete` instead of a reset) would silently degrade the lock to nothing, and two concurrent first
  * failures would both read "no row", both compute `failures = 1`, and one write would overwrite the
  * other — exactly the lost update the transaction exists to prevent. Per-IP rows have no seed at
- * all — they do not exist until a first failure from that address creates one, and the same
- * in-transaction guarantee covers that creation.
+ * all — they do not exist until the first attempt from that address (a failure via `recordFailure`,
+ * or a success via `recordSuccess` — a first-ever LOGIN from a fresh address that happens to be
+ * correct creates a row exactly the same as a wrong one does) creates one.
  *
  * Per-IP rows also need eviction, which the global row never did: an attacker (or ordinary churn
- * across many real addresses) can create one per address, and nothing else ever removes them.
- * `recordFailure` sweeps stale ones — see `PER_IP_ROW_RETENTION_MS`'s own comment for why that sweep
- * keys on `last_attempt_at`, a plain staleness clock, rather than "the lockout it once held has
- * lapsed": a row whose failures never reached the threshold has a `locked_at` that was never set, so
- * a sweep that only looked at expired lockouts would never touch it, and an attacker who
- * deliberately stays under the per-IP threshold on every address (or simple background noise doing
- * the same) would leave one permanent row per address it ever touched.
+ * across many real addresses) can create one per address, and nothing else ever removes them. BOTH
+ * `recordFailure` and `recordSuccess` sweep stale ones, because both can be the write that creates a
+ * fresh row in the first place — a `recordFailure`-only sweep would leave an install where every
+ * login happens to succeed accumulating one permanent row per distinct address forever. See
+ * `PER_IP_ROW_RETENTION_MS`'s own comment for why that sweep keys on `last_attempt_at`, a plain
+ * staleness clock, rather than "the lockout it once held has lapsed": a row whose failures never
+ * reached the threshold has a `locked_at` that was never set, so a sweep that only looked at expired
+ * lockouts would never touch it, and an attacker who deliberately stays under the per-IP threshold on
+ * every address (or simple background noise doing the same) would leave one permanent row per address
+ * it ever touched.
+ *
+ * `recordFailure` also decays: a failure count with a stale `last_attempt_at` (older than
+ * `this.lockoutMs`) is treated as the start of a fresh run rather than added to whatever accumulated
+ * before the gap. Without this, the count is "failures since the last success or the last lockout",
+ * unbounded in wall-clock time rather than the "N failures per `lockoutMs` window" the lockout
+ * thresholds are documented as (`serve.ts`, `.env.example`, `docs/ko/team-runbook.md`) — a single
+ * address could fail up to `maxFailures - 1` times, sit out its own per-IP lockout, and repeat
+ * indefinitely, and the GLOBAL row (which every attempt counts against regardless of source) would
+ * accumulate toward ITS OWN lockout across that unbounded wall-clock time, eventually locking out the
+ * whole team from one address alone — exactly the free denial of service the per-IP layer exists to
+ * close, reopened one level up. Decaying on a gap wider than `lockoutMs` closes it: by the time a
+ * single address's own per-IP lockout has lapsed and it resumes, its next attempt is always more than
+ * `lockoutMs` past its last one, so the global count it contributes to never carries across that wait.
  */
 export class PgAttemptLimiter implements AttemptLimiter {
   private readonly id: string;
@@ -90,6 +108,26 @@ export class PgAttemptLimiter implements AttemptLimiter {
     return remaining > 0 ? remaining : 0;
   }
 
+  /**
+   * Deletes stale per-IP rows — see `PER_IP_ROW_RETENTION_MS`'s own comment for why the retention
+   * window is what it is. Scoped to the per-IP layer only: the global row is one fixed id, never
+   * multiplies, and needs no sweep. Called from both `recordFailure` and `recordSuccess`, since
+   * either can be the write that creates a fresh per-IP row in the first place — see this class's own
+   * doc comment. `id <> this.id` leaves the row this same call just wrote alone, so a very slow clock
+   * or a huge retention window can never make a call delete the very row it is in the middle of
+   * recording. `db` is whichever connection the caller is already using — `recordFailure` passes its
+   * open transaction so the sweep joins it; `recordSuccess` has no transaction of its own to join.
+   */
+  private async sweepStalePerIpRows(db: Db, now: Date): Promise<void> {
+    if (!this.id.startsWith(IP_ROW_PREFIX)) return;
+    const cutoff = new Date(now.getTime() - PER_IP_ROW_RETENTION_MS).toISOString();
+    await db.query(`delete from auth_attempts where id like $1 and id <> $2 and last_attempt_at < $3`, [
+      `${IP_ROW_PREFIX}%`,
+      this.id,
+      cutoff,
+    ]);
+  }
+
   async retryAfterMs(now: Date): Promise<number> {
     const rows = await this.db.query<AttemptsRow>(
       `select failures, locked_at from auth_attempts where id = $1`,
@@ -110,7 +148,7 @@ export class PgAttemptLimiter implements AttemptLimiter {
         [this.id, nowIso],
       );
       const rows = await tx.query<AttemptsRow>(
-        `select failures, locked_at from auth_attempts where id = $1 for update`,
+        `select failures, locked_at, last_attempt_at from auth_attempts where id = $1 for update`,
         [this.id],
       );
       // The insert above guarantees exactly one row — no `?? 0` fallback here, so a regression that
@@ -118,6 +156,7 @@ export class PgAttemptLimiter implements AttemptLimiter {
       // than quietly recording a fresh count as if nothing had happened before.
       let failures = rows[0].failures;
       let lockedAt = rows[0].locked_at;
+      const lastAttemptAt = rows[0].last_attempt_at;
 
       // Serving the lockout buys back the whole allowance. Without this the count carries over, so
       // the first typo after the wait re-locks immediately and the operator never gets back in —
@@ -126,6 +165,18 @@ export class PgAttemptLimiter implements AttemptLimiter {
         failures = 0;
         lockedAt = null;
       }
+
+      // Decay: a gap since the last attempt wider than the lockout window means whatever run of
+      // failures produced this count is long over — see this class's own doc comment for the exploit
+      // this closes (a single address grinding out below-threshold failures, sitting out its own
+      // per-IP lockout, and repeating indefinitely, which — absent this — the GLOBAL row would keep
+      // accumulating toward its own lockout across, in unbounded wall-clock time). Independent of the
+      // lockout-expiry reset above: that one only fires once a lockout was actually SET, so it does
+      // nothing for a count still under `maxFailures` that simply went quiet for a while.
+      if (lastAttemptAt !== null && now.getTime() - new Date(lastAttemptAt).getTime() > this.lockoutMs) {
+        failures = 0;
+      }
+
       failures += 1;
       if (failures >= this.maxFailures) lockedAt = nowIso;
 
@@ -136,27 +187,18 @@ export class PgAttemptLimiter implements AttemptLimiter {
         [this.id, failures, lockedAt, nowIso],
       );
 
-      // Eviction, scoped to the per-IP layer only — the global row is one fixed id, never multiplies,
-      // and needs no sweep. Runs from the per-IP path because that is the only path that ever CREATES
-      // a new row (a failure); a success only ever updates a row that already exists. `id <> $1`
-      // leaves the row this same call just wrote alone, so a very slow clock or a huge retention
-      // window can never make a call delete the very row it is in the middle of recording.
-      if (this.id.startsWith(IP_ROW_PREFIX)) {
-        const cutoff = new Date(now.getTime() - PER_IP_ROW_RETENTION_MS).toISOString();
-        await tx.query(
-          `delete from auth_attempts where id like $1 and id <> $2 and last_attempt_at < $3`,
-          [`${IP_ROW_PREFIX}%`, this.id, cutoff],
-        );
-      }
+      await this.sweepStalePerIpRows(tx, now);
     });
   }
 
   async recordSuccess(): Promise<void> {
+    const now = new Date();
     await this.db.query(
       `insert into auth_attempts (id, failures, locked_at, last_attempt_at)
        values ($1, 0, null, $2)
        on conflict (id) do update set failures = excluded.failures, locked_at = excluded.locked_at, last_attempt_at = excluded.last_attempt_at`,
-      [this.id, new Date().toISOString()],
+      [this.id, now.toISOString()],
     );
+    await this.sweepStalePerIpRows(this.db, now);
   }
 }
