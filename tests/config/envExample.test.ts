@@ -28,7 +28,10 @@ async function readEnvVars(): Promise<Set<string>> {
 }
 
 async function readCodeVars(): Promise<Set<string>> {
-  const files = await sourceFiles(join(REPO_ROOT, "src"));
+  // `api/` (the Vercel entry point) is a second source root, outside `src/` — nothing in it reads
+  // `process.env` directly today (everything goes through `src/config.ts`'s loaders), but scanning
+  // only `src/` would let a future direct read there go undocumented with this test still green.
+  const files = [...(await sourceFiles(join(REPO_ROOT, "src"))), ...(await sourceFiles(join(REPO_ROOT, "api")))];
   const used = new Set<string>();
   for (const f of files) {
     const text = await readFile(f, "utf8");

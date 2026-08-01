@@ -327,6 +327,51 @@ describe("loadSessionConfig", () => {
   });
 });
 
+describe("loadDeploymentOrigin", () => {
+  const clear = () => { delete process.env.HERALD_DEPLOYMENT_ORIGIN; };
+  beforeEach(clear);
+  afterEach(clear);
+
+  it("refuses when unset — no safe default to guess at", async () => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    expect(() => loadDeploymentOrigin()).toThrow(/HERALD_DEPLOYMENT_ORIGIN/);
+  });
+
+  it("refuses a value that is not a URL at all", async () => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    process.env.HERALD_DEPLOYMENT_ORIGIN = "not a url";
+    expect(() => loadDeploymentOrigin()).toThrow(/not a URL/);
+  });
+
+  it("refuses a non-https origin", async () => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    process.env.HERALD_DEPLOYMENT_ORIGIN = "http://herald-review.vercel.app";
+    expect(() => loadDeploymentOrigin()).toThrow(/https/);
+  });
+
+  it.each([
+    ["a path", "https://herald-review.vercel.app/api"],
+    ["a query string", "https://herald-review.vercel.app/?x=1"],
+    ["a fragment", "https://herald-review.vercel.app/#top"],
+  ])("refuses an origin carrying %s", async (_label, value) => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    process.env.HERALD_DEPLOYMENT_ORIGIN = value;
+    expect(() => loadDeploymentOrigin()).toThrow(/origin only/);
+  });
+
+  it("normalizes to scheme + host, dropping a trailing slash", async () => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    process.env.HERALD_DEPLOYMENT_ORIGIN = "https://herald-review.vercel.app/";
+    expect(loadDeploymentOrigin()).toBe("https://herald-review.vercel.app");
+  });
+
+  it("returns an already-bare origin unchanged", async () => {
+    const { loadDeploymentOrigin } = await import("../src/config");
+    process.env.HERALD_DEPLOYMENT_ORIGIN = "https://herald-review.vercel.app";
+    expect(loadDeploymentOrigin()).toBe("https://herald-review.vercel.app");
+  });
+});
+
 describe("loadClientIpConfig", () => {
   const keys = ["HERALD_TRUST_PROXY", "HERALD_TRUST_PROXY_HOPS"];
   const original: Record<string, string | undefined> = {};
