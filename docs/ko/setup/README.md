@@ -1,9 +1,15 @@
-# 드라이브 셋업 가이드 (서브시스템 D) — 인덱스
+# 셋업 가이드 — 인덱스
+
+셋업 절차의 SSOT입니다. 다른 문서는 절차를 다시 설명하지 않고 여기로 링크합니다.
+
+- **[스티어링 설정 받기](./steering.md)** — `translation/`·`conversion/`의 실제 파일. git에 없으므로 팀에서 받아야 합니다. **먼저 읽으세요.**
+- **[Vercel 호스팅 배포 가이드](./vercel.md)** — 팀이 URL에서 검수·승인·발송하도록 대시보드를
+  올리는 절차. PostgreSQL, 대시보드 계정, `HERALD_TRUST_PROXY`, 오리진 되먹임, 발송 플래그
+
+## 드라이브 (서브시스템 D)
 
 `pnpm drive:publish`가 번역 결과를 두 드라이브에 올리려면 `.env`에 자격증명·폴더 값을 채워야 합니다.
 플랫폼별 상세 가이드를 참고하세요:
-
-- **[스티어링 설정 받기](./steering.md)** — `translation/`·`conversion/`의 실제 파일. git에 없으므로 팀에서 받아야 합니다. **먼저 읽으세요.**
 
 - **[Google Drive 셋업 가이드](./google-drive.md)** — 서비스 계정·JSON 키·폴더 ID
   (`GOOGLE_SA_KEY_FILE`, `GDRIVE_REVIEW_FOLDER_ID`, `GDRIVE_APPROVED_FOLDER_ID`)
