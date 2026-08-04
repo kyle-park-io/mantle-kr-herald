@@ -92,10 +92,13 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
             </p>
           ))}
           {request.toggle && (
-            <label className="mt-1 flex items-start gap-1.5 text-[13px] text-ink">
+            // Given the same bordered surface the copy preview below uses, rather than sitting flush
+            // in the paragraph stack: it is the one thing in this dialog the operator can still
+            // decide, and read as prose it looks like another consequence line.
+            <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-line bg-bg px-3 py-2.5 text-[13px] text-ink">
               <input
                 type="checkbox"
-                className="mt-0.5"
+                className="mt-0.5 cursor-pointer"
                 checked={toggled}
                 onChange={(e) => setToggled(e.target.checked)}
               />
