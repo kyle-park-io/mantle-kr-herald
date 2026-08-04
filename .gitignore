@@ -2,8 +2,7 @@
 design/
 
 # Secrets
-.env
-.env.*
+.env*
 !.env.example
 
 # Steering config — the example skeletons are tracked, the real team content is not.
@@ -23,6 +22,9 @@ keys/*
 # Dependencies / build
 node_modules/
 dist/
+
+# Vercel CLI local project link (project/org ids, pulled env)
+.vercel
 
 # Collector output (local JSON)
 output/
