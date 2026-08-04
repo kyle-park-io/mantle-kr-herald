@@ -26,6 +26,11 @@ dist/
 # Vercel CLI local project link (project/org ids, pulled env)
 .vercel
 
+# Agent skills ARE tracked (.agents/, skills-lock.json, the .claude/skills symlinks) — pinned by
+# hash so every machine resolves the same ones. Personal Claude Code state is not: this is the
+# file the tool writes per-machine permissions into, and tracking .claude/ must not invite it in.
+.claude/settings.local.json
+
 # Collector output (local JSON)
 output/
 
