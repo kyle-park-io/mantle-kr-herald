@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { readFile } from "node:fs/promises";
 import {
   loadConfig,
   loadLarkAppConfig,
@@ -11,10 +12,93 @@ import {
   loadClientIpConfig,
 } from "../src/config";
 
-const original = process.env.TWITTERAPI_IO_KEY;
+/**
+ * Every loader in `src/config.ts` reads `process.env` directly, and several return an object whose
+ * OPTIONAL fields are simply absent when their variable is unset. A `toEqual` in this file therefore
+ * asserts against the ambient environment as much as against what the test itself set: a key the test
+ * never mentions still lands in the result if the machine happens to have it.
+ *
+ * That is not hypothetical. `pnpm deploy:check` runs as `tsx --env-file-if-exists=.env` and spawns
+ * `pnpm test` as a child, so the suite inherits a fully populated `.env` — and on 2026-08-05 two tests
+ * here failed for exactly this reason (`GDRIVE_SENT_FOLDER_ID`, `LARK_DRIVE_SENT_FOLDER_TOKEN`,
+ * `LARK_WORKSPACE_URL`). The gate built to guard the deploy failed on every machine able to perform
+ * one, for a reason that had nothing to do with the deploy. A bare `vitest run` passed, which is what
+ * made it invisible.
+ *
+ * So the whole file runs from a cleared environment: a test sees exactly what it set, and nothing
+ * else. The per-`describe` save/restore blocks below stay — they are what each block documents about
+ * the keys it cares about — but they are no longer what makes the assertions correct.
+ */
+const CONFIG_ENV_KEYS = [
+  "DATABASE_URL",
+  "GDRIVE_APPROVED_FOLDER_ID",
+  "GDRIVE_CONFIG_FOLDER_ID",
+  "GDRIVE_PARENT_FOLDER_NAME",
+  "GDRIVE_REVIEW_FOLDER_ID",
+  "GDRIVE_SENT_FOLDER_ID",
+  "GDRIVE_SHARE_EMAILS",
+  "GDRIVE_STATE_FOLDER_ID",
+  "GOOGLE_AUTH_MODE",
+  "GOOGLE_OAUTH_CLIENT_ID",
+  "GOOGLE_OAUTH_CLIENT_SECRET",
+  "GOOGLE_OAUTH_REFRESH_TOKEN",
+  "GOOGLE_SA_KEY_FILE",
+  "GSHEET_ID",
+  "GSHEET_QA_ID",
+  "HERALD_AUTH_PASSWORD_HASH",
+  "HERALD_AUTH_USERNAME",
+  "HERALD_DB_ENV",
+  "HERALD_DEPLOYMENT_ORIGIN",
+  "HERALD_SENDS_ENABLED",
+  "HERALD_SESSION_SECRET",
+  "HERALD_STORAGE_MODE",
+  "HERALD_TRUST_PROXY",
+  "HERALD_TRUST_PROXY_HOPS",
+  "LARK_APP_ID",
+  "LARK_APP_SECRET",
+  "LARK_BASE_URL",
+  "LARK_CHAT_IDS",
+  "LARK_DRIVE_APPROVED_FOLDER_TOKEN",
+  "LARK_DRIVE_REVIEW_FOLDER_TOKEN",
+  "LARK_DRIVE_SENT_FOLDER_TOKEN",
+  "LARK_WORKSPACE_URL",
+  "TELEGRAM_BOT_TOKEN",
+  "TWITTERAPI_IO_KEY",
+  "TYPEFULLY_API_KEY",
+  "TYPEFULLY_SOCIAL_SET_ID",
+  "X_PREMIUM",
+] as const;
+
+/**
+ * `loadClientIpConfig`'s sibling reads its variable by computed name (`process.env[outlet.chatIdEnv]`,
+ * `src/config.ts:192`), so no fixed list can name those. They all share this prefix.
+ */
+const DYNAMIC_PREFIX = "TELEGRAM_CHAT_ID_";
+
+const savedEnv: Record<string, string | undefined> = {};
+beforeEach(() => {
+  for (const k of Object.keys(process.env)) {
+    if (!(CONFIG_ENV_KEYS as readonly string[]).includes(k) && !k.startsWith(DYNAMIC_PREFIX)) continue;
+    savedEnv[k] = process.env[k];
+    delete process.env[k];
+  }
+});
 afterEach(() => {
-  if (original === undefined) delete process.env.TWITTERAPI_IO_KEY;
-  else process.env.TWITTERAPI_IO_KEY = original;
+  for (const [k, v] of Object.entries(savedEnv)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+    delete savedEnv[k];
+  }
+});
+
+/**
+ * Keeps `CONFIG_ENV_KEYS` from rotting. A loader that starts reading a new variable without adding it
+ * here would reintroduce exactly the leak above — silently, and only under `deploy:check`.
+ */
+it("clears every variable src/config.ts reads by name", async () => {
+  const source = await readFile(new URL("../src/config.ts", import.meta.url), "utf8");
+  const read = new Set([...source.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map((m) => m[1]));
+  expect([...read].sort()).toEqual([...CONFIG_ENV_KEYS].sort());
 });
 
 describe("loadConfig", () => {
