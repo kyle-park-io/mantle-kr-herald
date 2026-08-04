@@ -1,6 +1,6 @@
 import "./registerErrorHandler";
-import { createInterface } from "node:readline";
 import { stdin, stdout } from "node:process";
+import { ask } from "./prompt";
 import { hashPassword, verifyPassword } from "../domain/auth/password";
 
 /**
@@ -20,21 +20,8 @@ async function readPiped(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8").replace(/\r?\n$/, "");
 }
 
-function ask(question: string, hidden: boolean): Promise<string> {
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: stdin, output: stdout, terminal: true });
-    if (hidden) {
-      // readline echoes each keystroke through this hook; silencing it is what hides the password.
-      (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = () => {};
-      stdout.write(question);
-    }
-    rl.question(hidden ? "" : question, (answer) => {
-      rl.close();
-      if (hidden) stdout.write("\n");
-      resolve(answer);
-    });
-  });
-}
+const prompt = (question: string, hidden = false) =>
+  ask(question, { hidden, input: stdin, output: stdout });
 
 if (!stdin.isTTY) {
   // Piped: the password on stdin, nothing to prompt for and nothing to confirm.
@@ -44,17 +31,17 @@ if (!stdin.isTTY) {
   }
   console.log(await hashPassword(password));
 } else {
-  const username = (await ask("아이디: ", false)).trim();
+  const username = (await prompt("아이디: ")).trim();
   if (!username) throw new Error("Username must not be empty.");
 
-  const password = await ask("비밀번호: ", true);
+  const password = await prompt("비밀번호: ", true);
   if (password.length < MIN_LENGTH) {
     throw new Error(
       `Password must be at least ${MIN_LENGTH} characters (got ${password.length}). ` +
         "One shared account in front of irreversible publishing is worth a long one.",
     );
   }
-  const again = await ask("비밀번호 확인: ", true);
+  const again = await prompt("비밀번호 확인: ", true);
   if (password !== again) throw new Error("The two entries do not match. Nothing was written.");
 
   const hash = await hashPassword(password);
