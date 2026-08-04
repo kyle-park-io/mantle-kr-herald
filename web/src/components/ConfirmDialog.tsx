@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface ConfirmRequest {
   title: string;
@@ -13,7 +13,13 @@ export interface ConfirmRequest {
   confirmLabel: string;
   /** `danger` for anything that reaches a live room or replaces a record of one. */
   tone?: "danger" | "primary";
-  onConfirm: () => void;
+  /**
+   * An opt-in checkbox, unchecked by default and reset every time a new request replaces this one.
+   * The dialog knows nothing about what the toggle means — that's on the caller reading `toggled`
+   * back out of `onConfirm`.
+   */
+  toggle?: { label: string; hint?: string };
+  onConfirm: (opts: { toggled: boolean }) => void;
 }
 
 /**
@@ -29,9 +35,13 @@ export interface ConfirmRequest {
  */
 export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest | null; onCancel: () => void }) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const [toggled, setToggled] = useState(false);
 
   useEffect(() => {
     if (!request) return;
+    // Every new request starts the toggle unchecked, whether it declares one or not — a tick left
+    // over from the previous dialog would otherwise survive into a request that never asked for it.
+    setToggled(false);
     confirmRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
@@ -73,6 +83,20 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
               {line}
             </p>
           ))}
+          {request.toggle && (
+            <label className="mt-1 flex items-start gap-1.5 text-[13px] text-ink">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={toggled}
+                onChange={(e) => setToggled(e.target.checked)}
+              />
+              <span>
+                {request.toggle.label}
+                {request.toggle.hint && <span className="block text-[12px] text-muted">{request.toggle.hint}</span>}
+              </span>
+            </label>
+          )}
           {request.pieces && request.pieces.length > 0 && (
             <div className="mt-3">
               <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
@@ -108,7 +132,7 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
             }`}
             onClick={() => {
               onCancel();
-              request.onConfirm();
+              request.onConfirm({ toggled });
             }}
           >
             {request.confirmLabel}
