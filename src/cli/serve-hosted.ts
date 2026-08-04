@@ -58,8 +58,10 @@ createServer((req, res) => {
     if (!path.startsWith("/api/")) {
       // All the reading happens before a single header is written — see `readStatic`'s own comment
       // for the two bugs that ordering fixes (a missing file used to end the process, and the path
-      // was not contained to `distDir`). `readStatic` also owns the `index.html` fallback for paths
-      // the SPA's own router handles, matching what `vercel.json`'s `outputDirectory` does.
+      // was not contained to `distDir`). `readStatic` also owns an `index.html` fallback for unknown
+      // paths, but that fallback is this rehearsal server's own leniency, not a stand-in for Vercel:
+      // real Vercel 404s an unknown path (no `rewrites` entry in `vercel.json`), which is fine
+      // because the dashboard is hash-routed and no deep link needs one. See `readStatic`'s comment.
       //
       // `no-store`: the SPA bundle is content-hashed but `index.html` is not, so a rebuild between
       // two rehearsal runs would otherwise be checked against the previous bundle — which is exactly

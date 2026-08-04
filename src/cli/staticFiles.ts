@@ -29,8 +29,13 @@ export interface StaticFile {
  * process. A single `GET /favicon.ico` from a browser was enough to kill the rehearsal server.
  * A caller that only writes headers once it holds a result cannot make that mistake.
  *
- * Unknown paths fall back to `index.html`, matching what Vercel's `outputDirectory` does for a
- * client-routed app: the SPA's own router owns `/renderings` and the like, not this function.
+ * Unknown paths fall back to `index.html` here. This does NOT match real Vercel: with no `rewrites`
+ * entry in `vercel.json`, Vercel's static layer answers an unknown path with a plain 404 — the
+ * dashboard is hash-routed (`web/src/Root.tsx`, `web/src/App.tsx`), so no deep link ever needs a
+ * server-side fallback, and none was added (see `docs/ko/setup/vercel.md`). This function's own
+ * fallback is this rehearsal server's own leniency (a stale bookmark, a typo while poking around
+ * `pnpm serve:hosted`) and stays exactly as lenient — `deploy:smoke` must not assume it of the real
+ * deployment, but there is no reason to make this local tool stricter than it needs to be either.
  *
  * A path that resolves outside `distDir` takes the same fallback rather than a distinct refusal.
  * `GET /../../package.json` used to return the repo's own file with a 200 — localhost-bound and a
