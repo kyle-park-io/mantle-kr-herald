@@ -51,9 +51,12 @@ DATABASE_URL=... pnpm db:import
 ## 3. 대시보드 계정과 세션 비밀키 만들기
 
 ```bash
-pnpm auth:hash                 # 비밀번호를 에코 없이 입력받아 붙여넣을 두 줄을 출력
+pnpm auth:hash                 # 비밀번호를 에코 없이 입력받아 붙여넣을 줄을 출력
 openssl rand -hex 32           # HERALD_SESSION_SECRET
 ```
+
+아이디 프롬프트는 **선택**입니다. Vercel에서는 `HERALD_AUTH_USERNAME`을 아래에서 따로 등록하니
+그냥 엔터를 쳐서 넘기면 해시 한 줄만 나옵니다.
 
 `auth:hash`가 출력하는 것은 scrypt 해시입니다 — **비밀번호 자체는 어디에도 적지 마세요.** 계정은
 팀이 공유하는 하나입니다(사람마다 하나가 아닙니다).
