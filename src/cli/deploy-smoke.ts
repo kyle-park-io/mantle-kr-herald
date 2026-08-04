@@ -1,5 +1,5 @@
 import "./registerErrorHandler";
-import { stdin, stdout } from "node:process";
+import { stdin, stderr } from "node:process";
 import { ask } from "./prompt";
 import { formatReport, type CheckResult } from "../doctor/report";
 import {
@@ -92,7 +92,7 @@ results.push(...checkAnonymous({ root, status: anonymousStatus, foreignOrigin })
 // --- logging in (spec: "Logging in") ---
 
 /** Same helper shape `src/cli/auth-hash.ts` already uses over the same `ask`. */
-const prompt = (question: string, hidden = false) => ask(question, { hidden, input: stdin, output: stdout });
+const prompt = (question: string, hidden = false) => ask(question, { hidden, input: stdin, output: stderr });
 
 const username = (await prompt("Username: ")).trim();
 const password = await prompt("Password: ", true);
