@@ -5,6 +5,7 @@ import { formatReport, type CheckResult } from "../doctor/report";
 import {
   checkAnonymous,
   checkLogin,
+  checkCredentials,
   checkStatus,
   checkConvertPrepare,
   checkLogout,
@@ -96,12 +97,20 @@ const prompt = (question: string, hidden = false) => ask(question, { hidden, inp
 const username = (await prompt("Username: ")).trim();
 const password = await prompt("Password: ", true);
 
-const loginRes = await request("/api/login", {
-  method: "POST",
-  headers: { origin, "content-type": "application/json" },
-  body: JSON.stringify({ username, password }),
-});
-results.push(checkLogin(loginRes?.status ?? -1));
+// Judged before the request. An empty entry cannot log in, and sending it anyway would spend one of
+// the five attempts this address gets per minute — see `checkCredentials`.
+const credentials = checkCredentials(username, password);
+results.push(credentials);
+
+const loginRes =
+  credentials.status === "ok"
+    ? await request("/api/login", {
+        method: "POST",
+        headers: { origin, "content-type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      })
+    : undefined;
+if (credentials.status === "ok") results.push(checkLogin(loginRes?.status ?? -1));
 
 // The session cookie, carried through every authenticated request below and dropped the moment
 // logout is called — never re-derived, so this file can never accidentally send a stale one.

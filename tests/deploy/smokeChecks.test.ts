@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  checkAnonymous, checkLogin, checkStatus, checkConvertPrepare, checkLogout,
+  checkAnonymous, checkLogin, checkCredentials, checkStatus, checkConvertPrepare, checkLogout,
   type StatusPayload,
 } from "../../src/deploy/smokeChecks";
 import { SESSION_COOKIE_NAME } from "../../src/adapters/web/sessionCookie";
@@ -72,6 +72,51 @@ describe("checkLogin", () => {
     const r = checkLogin(401);
     expect(r.status).toBe("fail");
     expect(r.detail).not.toMatch(/HERALD_DEPLOYMENT_ORIGIN/);
+  });
+
+  /**
+   * `Expected 200, got 401.` was all this said, and 401 is by far the most likely failure: it is
+   * every wrong password, and the deployment answers it identically for an empty one, a one-character
+   * one, and a wrong twelve-character one. An operator trying those three in a row sees the same line
+   * three times and reasonably concludes the prompt is not reading their input.
+   */
+  it("says what 401 means, and that attempts are rationed", () => {
+    const r = checkLogin(401);
+    expect(r.detail).toMatch(/아이디|비밀번호|username|password/i);
+    // The thing they cannot see coming: five wrong tries locks the address for a minute.
+    expect(r.detail).toMatch(/5|five/);
+  });
+
+  it("names the lockout on 429 instead of reporting it as an unexpected code", () => {
+    const r = checkLogin(429);
+    expect(r.status).toBe("fail");
+    expect(r.detail).toMatch(/60|잠긴|locked/i);
+    expect(r.detail).not.toMatch(/^Expected 200/);
+  });
+
+  it("still reports an unexpected code plainly", () => {
+    expect(checkLogin(500).detail).toMatch(/500/);
+  });
+});
+
+describe("checkCredentials", () => {
+  it("passes when both were typed", () => {
+    expect(checkCredentials("mantle-kr", "a-real-password").status).toBe("ok");
+  });
+
+  /**
+   * Refused locally, before the request. An empty password cannot succeed, and sending it would
+   * spend one of the five attempts the deployment allows per minute per address — the operator would
+   * be a fifth of the way to locking themselves out of production for nothing.
+   */
+  it("refuses an empty password without spending an attempt", () => {
+    const r = checkCredentials("mantle-kr", "");
+    expect(r.status).toBe("fail");
+    expect(r.detail).toMatch(/보내지 않았|not sent|sent nothing/i);
+  });
+
+  it("refuses an empty username the same way", () => {
+    expect(checkCredentials("", "a-real-password").status).toBe("fail");
   });
 });
 
