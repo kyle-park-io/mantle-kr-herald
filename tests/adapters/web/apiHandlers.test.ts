@@ -138,8 +138,8 @@ function makeDeps(
       },
     } as unknown as ApiDeps["markDelivery"],
     reconcilePublished: async () => ({ reconciled: 0, retired: 0, pending: 0 }),
-  sendToOutlet: async (itemId: string, type: string, outletId: string) => {
-      spy.sends.push({ itemId, type, outletId });
+    sendToOutlet: async (itemId: string, type: string, outletId: string, opts?: { resend?: boolean; pin?: boolean }) => {
+      spy.sends.push({ itemId, type, outletId, opts });
       return board.send?.() ?? { sent: 1, failed: 0 };
     },
     prepareConversionRun: {
@@ -469,7 +469,7 @@ describe("board routes", () => {
     const { spy, d } = spied();
     const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
     expect(res.status).toBe(200);
-    expect(spy.sends).toEqual([{ itemId: "x:1", type: "announcement", outletId: "tg-dev" }]);
+    expect(spy.sends).toEqual([{ itemId: "x:1", type: "announcement", outletId: "tg-dev", opts: { resend: false, pin: false } }]);
     expect(res.json).toMatchObject({ sent: 1, failed: 0 });
   });
 
@@ -518,6 +518,26 @@ describe("board routes", () => {
       board: { itemId: "x:1", groups: [], unconverted: [] },
     });
     expect(spy.sends).toEqual([]);
+  });
+
+  it("POST send forwards the body's pin flag", async () => {
+    const { spy, d } = spied();
+    await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", { pin: true });
+    expect(spy.sends).toEqual([{ itemId: "x:1", type: "announcement", outletId: "tg-dev", opts: { resend: false, pin: true } }]);
+  });
+
+  it("POST send without a body pins nothing", async () => {
+    const { spy, d } = spied();
+    await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", undefined);
+    expect(spy.sends).toEqual([{ itemId: "x:1", type: "announcement", outletId: "tg-dev", opts: { resend: false, pin: false } }]);
+  });
+
+  /** A live post that could not be pinned is still a live post: 200, and the board repaints. */
+  it("POST send that posted but could not pin answers 200 with the reason", async () => {
+    const { d } = spied({ send: () => ({ sent: 1, failed: 0, error: "맨틀 한국 데브방 (tg-dev): 글은 올라갔지만 고정하지 못했습니다" }) });
+    const res = await handleApi(d, "POST", "/api/outlets/x%3A1/announcement/tg-dev/send", { pin: true });
+    expect(res.status ?? 200).toBe(200);
+    expect((res.json as { error?: string }).error).toContain("고정하지 못했습니다");
   });
 });
 

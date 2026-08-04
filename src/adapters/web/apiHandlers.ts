@@ -121,8 +121,12 @@ export interface ApiDeps {
    * reason and the rebuilt board rather than a bare 404: an operator who clicks [발송] while it is
    * closed is told why, through the exact response shape this route's other refusals already use
    * (`SendChannels`-reported errors, just below).
+   *
+   * `opts` mirrors `SendOptions` in `cli/sendToOutlet.ts` (not imported by name, to keep this
+   * adapter's own types self-contained): `resend` re-posts to an already-`sent` room, `pin` asks the
+   * sender to pin what it posts. Both read straight off the request body below.
    */
-  sendToOutlet?: (itemId: string, type: string, outletId: string, resend?: boolean) => Promise<{ sent: number; failed: number; error?: string }>;
+  sendToOutlet?: (itemId: string, type: string, outletId: string, opts?: { resend?: boolean; pin?: boolean }) => Promise<{ sent: number; failed: number; error?: string }>;
   /**
    * Writes a conversion worksheet for the dashboard; the local agent still fills it in. Optional —
    * this is how the route set becomes a property of the entry point (`createDeps.ts`): the hosted
@@ -511,12 +515,17 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
         };
       }
       // `resend` is opt-in per call rather than a separate route: it is the same delivery to the
-      // same room, differing only in that the ledger already holds a row for it.
+      // same room, differing only in that the ledger already holds a row for it. `pin` reads the
+      // same way — a per-call opt-in on the same route, not a separate flag.
       const resend = (body as { resend?: unknown })?.resend === true;
-      const result = await deps.sendToOutlet(itemId, type, outletId, resend);
+      const pin = (body as { pin?: unknown })?.pin === true;
+      const result = await deps.sendToOutlet(itemId, type, outletId, { resend, pin });
       // Nothing went out and there is a reason for it (unconfigured room, manual room, sender
       // error): 400 so the dashboard's `json()` helper raises it. A partial send still answers
       // 200 with the board — something did reach a live room, and the rows must reflect that.
+      // That includes a `sent > 0` result carrying a pin-failure `error`: the post is live, so this
+      // is the SAME "something reached a live room" case, just with a reason attached, not the
+      // zero-send refusal below.
       //
       // The refusal carries the rebuilt board too. The commonest one is "already delivered to this
       // room", which means the server's view has moved on — someone ran `pnpm send:channels` in a
