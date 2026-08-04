@@ -1,5 +1,5 @@
 import "./registerErrorHandler";
-import { stdin, stdout } from "node:process";
+import { stdin, stderr } from "node:process";
 import { ask } from "./prompt";
 import { hashPassword } from "../domain/auth/password";
 import { interactiveAuthHash, MIN_PASSWORD_LENGTH } from "./authHash";
@@ -31,7 +31,7 @@ if (!stdin.isTTY) {
   console.log(await hashPassword(password));
 } else {
   const lines = await interactiveAuthHash((question, hidden = false) =>
-    ask(question, { hidden, input: stdin, output: stdout }),
+    ask(question, { hidden, input: stdin, output: stderr }),
   );
   for (const line of lines) console.log(line);
 }

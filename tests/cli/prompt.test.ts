@@ -1,7 +1,10 @@
 // tests/cli/prompt.test.ts
 import { describe, it, expect } from "vitest";
 import { PassThrough, Writable } from "node:stream";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { ask } from "../../src/cli/prompt";
+import { REPO_ROOT } from "../../src/paths";
 
 /**
  * Pins what the terminal actually *sees* while `pnpm auth:hash` asks for a password.
@@ -69,4 +72,33 @@ describe("ask", () => {
     // warning, which reads like a crash in the hashing code rather than a cancelled prompt.
     await expect(answer).rejects.toThrow(/cancell?ed|ended/i);
   });
+});
+
+/**
+ * Where a prompt is written decides whether `pnpm auth:hash > file` works at all.
+ *
+ * Both CLIs wrote their prompts to **stdout**, so redirecting stdout — the obvious way to capture a
+ * hash without it passing through a clipboard or a shell history — swallowed the prompts into the
+ * file and left the operator staring at a blank terminal, with the program waiting for input it had
+ * given no sign of wanting. Reported 2026-08-05 against exactly that command.
+ *
+ * A prompt is interface, not output. stderr is where it belongs, and then the redirect captures the
+ * two `.env` lines and nothing else.
+ *
+ * Asserted against the source because these two files run on import (top-level await) and cannot be
+ * imported by a test; the seam that IS testable — `ask` itself — already takes the stream as an
+ * argument and has no default to get wrong.
+ */
+describe("CLI prompt destination", () => {
+  const files = ["src/cli/auth-hash.ts", "src/cli/deploy-smoke.ts"];
+
+  for (const file of files) {
+    it(`${file} prompts on stderr, so stdout stays redirectable`, async () => {
+      const source = await readFile(join(REPO_ROOT, file), "utf8");
+      expect(source, `${file}: prompts written to stdout are captured by \`> file\``).not.toMatch(
+        /output:\s*stdout/,
+      );
+      expect(source).toMatch(/output:\s*stderr/);
+    });
+  }
 });
