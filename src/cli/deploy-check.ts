@@ -77,6 +77,23 @@ results.push(
       },
 );
 
+// Both `rev-list --count` calls below read the local `origin/main` remote-tracking ref, which is
+// only as fresh as the last fetch — nothing else in this command talks to the network first. Without
+// this, an operator who has not fetched today sees "0 commits behind" against a ref that is itself
+// stale, and deploys a tree that is genuinely behind. A failed fetch (offline, no network) is not
+// itself a deploy blocker — it only means the two counts below cannot be trusted — so it becomes a
+// `warn` naming that risk rather than a `fail` that would refuse to deploy over a network hiccup.
+const fetched = git(["fetch", "origin", "main"]);
+results.push(
+  fetched.ok
+    ? { name: "Git fetch origin/main", status: "ok", detail: "origin/main refreshed" }
+    : {
+        name: "Git fetch origin/main",
+        status: "warn",
+        detail: `git fetch origin main failed — ${fetched.error || "unknown error"}; the ahead/behind checks below may be comparing against a stale origin/main.`,
+      },
+);
+
 const ahead = git(["rev-list", "--count", "origin/main..HEAD"]);
 results.push(
   ahead.ok && ahead.stdout === "0"
@@ -238,6 +255,20 @@ results.push(
     ? { name: "pnpm doctor --live", status: "ok", detail: "exited 0" }
     : { name: "pnpm doctor --live", status: "fail", detail: `exited ${doctorLive.status ?? "with an error"} — see output above.` },
 );
+
+// The one gap this command (and `deploy:smoke`) cannot close — see `docs/superpowers/specs/
+// 2026-08-04-deploy-scripts-design.md`'s "The gap neither command closes". `doctor --live` just
+// above proves the LOCAL Google refresh token is alive; it says nothing about the copy sitting in
+// Vercel's env, and nothing here can check that without pulling a production secret to disk.
+// `createDeps` only checks presence, so a revoked deployed token still leaves `google` in
+// `availableTargets` — this line exists so that fact reaches the operator's screen instead of only
+// this doc, since a `doctor --live` pass reads like "Google is fine" otherwise.
+results.push({
+  name: "Google token liveness (deployed)",
+  status: "warn",
+  detail:
+    "Not checked — this only verifies the local token via doctor --live; a revoked deployed token still leaves \"google\" in availableTargets. Rotate in both places, and confirm with a real publish.",
+});
 
 console.log(formatReport(results, { title: "Mantle KR Herald — deploy check" }));
 if (results.some((r) => r.status === "fail")) process.exitCode = 1;

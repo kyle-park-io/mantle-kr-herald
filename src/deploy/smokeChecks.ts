@@ -1,4 +1,5 @@
 import type { CheckResult } from "../doctor/report";
+import { SESSION_COOKIE_NAME } from "../adapters/web/sessionCookie";
 
 /**
  * The parsed shape of a running deployment's `/api/status` response (`StatusView`,
@@ -13,13 +14,24 @@ export interface StatusPayload {
   sendsEnabled?: boolean;
   conversionEnabled?: boolean;
   availableTargets?: string[];
-  integrations?: { label: string; configured: boolean }[];
+  /** `key` is `IntegrationStatus.key` (`apiHandlers.ts`) — the stable identifier `checkStatus` grades
+   *  severity on. `label` is display text only, and must never be switched on: it is Korean for some
+   *  entries, English for others, and free to change without meaning anything changed underneath. */
+  integrations?: { key?: string; label: string; configured: boolean }[];
 }
 
 /**
- * Judges the four calls `deploy:smoke` makes before logging in — see the spec's "Before logging
+ * Judges the three calls `deploy:smoke` makes before logging in — see the spec's "Before logging
  * in" section. Each is its own `CheckResult` so a single wrong status code names itself instead of
  * being folded into one generic "anonymous checks failed" line.
+ *
+ * There is no unknown-path expectation here on purpose. This dashboard is hash-routed
+ * (`web/src/Root.tsx`, `web/src/App.tsx`), so no deep link ever needs a server-side SPA fallback,
+ * and `vercel.json` has no `rewrites` entry — Vercel's static layer answers an unknown path with a
+ * plain 404. A prior version of this check expected 200 there, verified only against
+ * `src/cli/staticFiles.ts`'s rehearsal-server fallback (see its own comment), which is the exact
+ * layer this command is supposed to be checking, not standing in for. Do not add a rewrite to make
+ * that expectation true — it would exist only to satisfy this script, not because anything needs it.
  *
  * `codes` itself is guarded before any property read, same reasoning as `checkStatus`'s top-level
  * guard: a caller that builds this object from something that failed upstream (a rejected
@@ -31,7 +43,6 @@ export function checkAnonymous(codes: {
   root: number;
   status: number;
   foreignOrigin: number;
-  unknownPath: number;
 }): CheckResult[] {
   if (codes === null || typeof codes !== "object") {
     const detail = `Expected an object of status codes, got ${JSON.stringify(codes)}.`;
@@ -39,7 +50,6 @@ export function checkAnonymous(codes: {
       { name: "GET /", status: "fail", detail },
       { name: "GET /api/status (anonymous)", status: "fail", detail },
       { name: "POST /api/login (foreign origin)", status: "fail", detail },
-      { name: "GET /unknown-path", status: "fail", detail },
     ];
   }
 
@@ -64,14 +74,6 @@ export function checkAnonymous(codes: {
         codes.foreignOrigin === 403
           ? "403 as expected"
           : `Expected 403, got ${codes.foreignOrigin} — the CSRF guard is not refusing a foreign Origin.`,
-    },
-    {
-      name: "GET /unknown-path",
-      status: codes.unknownPath === 200 ? "ok" : "fail",
-      detail:
-        codes.unknownPath === 200
-          ? "SPA served"
-          : `Expected 200, got ${codes.unknownPath} — an unknown path should fall through to the SPA, not error.`,
     },
   ];
 }
@@ -197,13 +199,28 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
       detail: "No integrations reported — expected the status payload to list at least one.",
     });
   } else {
+    // Severity keys off `key` (a stable identifier), never `label` (Korean display text that is
+    // free to change without meaning anything underneath changed). `google_drive` is the only `fail`:
+    // it is the record of truth in cloud mode, and its absence is the silent-degradation case these
+    // commands exist to catch. Everything else — the `collect` group (this hosted deployment never
+    // collects, so `docs/ko/setup/vercel.md` tells the operator not to register those keys at all),
+    // Lark Drive, Telegram, Typefully, Google Sheets, the local folder — degrades in silence exactly
+    // like `requirements.ts` already grades their env vars (`warn`, not `fail`); grading them `fail`
+    // here would make a correct, intentionally-minimal deployment exit 1.
     for (const integration of integrations) {
       const label = typeof integration?.label === "string" ? integration.label : "(unnamed)";
-      results.push(
-        integration?.configured === true
-          ? { name: `integration: ${label}`, status: "ok", detail: "configured" }
-          : { name: `integration: ${label}`, status: "fail", detail: `${label} is not configured.` },
-      );
+      const key = typeof integration?.key === "string" ? integration.key : undefined;
+      if (integration?.configured === true) {
+        results.push({ name: `integration: ${label}`, status: "ok", detail: "configured" });
+      } else if (key === "google_drive") {
+        results.push({
+          name: `integration: ${label}`,
+          status: "fail",
+          detail: `${label} is not configured — it is the record of truth in cloud mode.`,
+        });
+      } else {
+        results.push({ name: `integration: ${label}`, status: "warn", detail: `${label} is not configured.` });
+      }
     }
   }
 
@@ -227,14 +244,47 @@ export function checkConvertPrepare(code: number): CheckResult {
   };
 }
 
-/** Judges `/api/status` after logout — the session must be gone, so a fresh 401 is expected. */
-export function checkLogout(statusCodeAfterLogout: number): CheckResult {
-  if (statusCodeAfterLogout === 401) {
-    return { name: "logout", status: "ok", detail: "401 after logout, session cleared" };
-  }
-  return {
-    name: "logout",
-    status: "fail",
-    detail: `Expected 401 after logout, got ${statusCodeAfterLogout} — the session was not cleared.`,
-  };
+/**
+ * Judges `POST /api/logout`'s own response, not a second, unauthenticated `/api/status` probe made
+ * afterwards. That probe used to be this check's only signal — but sent with no cookie, it is
+ * byte-identical to the anonymous `/api/status` call `checkAnonymous` already asserts 401 on earlier
+ * in the same run, so it proves nothing about `/api/logout` itself: a deployment whose logout route
+ * 404s would still print a passing check.
+ *
+ * Per `apiHandlers.ts`'s own comment, the token is deliberately not revoked server-side — a copy of
+ * the old cookie saved before logout and replayed directly could legitimately still work — so
+ * asserting a fresh `/api/status` call now returns 401 would fail a correct deployment as easily as
+ * it would pass a broken one. The two assertions this function CAN make honestly are about the
+ * logout response itself: it returned 200, and its `Set-Cookie` actually clears the session cookie
+ * in the browser.
+ */
+export function checkLogout(statusCode: number, setCookieHeader: string | undefined): CheckResult[] {
+  const cleared = clearsSessionCookie(setCookieHeader);
+  return [
+    {
+      name: "POST /api/logout",
+      status: statusCode === 200 ? "ok" : "fail",
+      detail: statusCode === 200 ? "200 as expected" : `Expected 200, got ${statusCode}.`,
+    },
+    {
+      name: "POST /api/logout (Set-Cookie)",
+      status: cleared ? "ok" : "fail",
+      detail: cleared
+        ? `Set-Cookie clears ${SESSION_COOKIE_NAME}`
+        : `Expected a Set-Cookie clearing ${SESSION_COOKIE_NAME}, got ${JSON.stringify(setCookieHeader)} — the browser was not told to drop its session cookie.`,
+    },
+  ];
+}
+
+/** A `Set-Cookie` header clears the session when it names `SESSION_COOKIE_NAME` with an empty value
+ *  and `Max-Age=0` — the exact shape `CLEARED_SESSION_COOKIE` (`sessionCookie.ts`) builds. Matched by
+ *  parsing rather than string equality so this survives a header the runtime reorders or reformats. */
+function clearsSessionCookie(setCookieHeader: string | undefined): boolean {
+  if (!setCookieHeader) return false;
+  const [nameValue] = setCookieHeader.split(";");
+  const eq = nameValue.indexOf("=");
+  if (eq === -1) return false;
+  const name = nameValue.slice(0, eq).trim();
+  const value = nameValue.slice(eq + 1).trim();
+  return name === SESSION_COOKIE_NAME && value === "" && /max-age=0/i.test(setCookieHeader);
 }

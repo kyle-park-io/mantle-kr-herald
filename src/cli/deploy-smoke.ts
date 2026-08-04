@@ -86,8 +86,7 @@ const foreignOrigin = await statusOf("/api/login", {
   headers: { origin: "https://evil.example", "content-type": "application/json" },
   body: JSON.stringify({ username: "probe", password: "probe" }),
 });
-const unknownPath = await statusOf("/deploy-smoke-unknown-path");
-results.push(...checkAnonymous({ root, status: anonymousStatus, foreignOrigin, unknownPath }));
+results.push(...checkAnonymous({ root, status: anonymousStatus, foreignOrigin }));
 
 // --- logging in (spec: "Logging in") ---
 
@@ -126,10 +125,9 @@ if (cookie) {
   });
   results.push(checkConvertPrepare(convertPrepareCode));
 
-  await statusOf("/api/logout", { method: "POST", headers: { origin, cookie } });
+  const logoutRes = await request("/api/logout", { method: "POST", headers: { origin, cookie } });
   cookie = undefined; // the whole point of logging out: nothing sent after this line carries it
-  const statusAfterLogout = await statusOf("/api/status");
-  results.push(checkLogout(statusAfterLogout));
+  results.push(...checkLogout(logoutRes?.status ?? -1, logoutRes?.headers.get("set-cookie") ?? undefined));
 }
 
 // --- lockout, opt-in (spec: "What it does not do") ---
