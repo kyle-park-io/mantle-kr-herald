@@ -29,6 +29,18 @@ describe("checkAnonymous", () => {
   it("fails when a foreign origin is not refused", () => {
     expect(failures(checkAnonymous({ root: 200, status: 401, foreignOrigin: 200, unknownPath: 200 }))).not.toEqual([]);
   });
+
+  // Same class of bug checkStatus had: a caller-assembled object can be null/undefined before any
+  // property on it is ever read.
+  it("does not throw and fails everything when codes is null", () => {
+    expect(() => checkAnonymous(null as unknown as Parameters<typeof checkAnonymous>[0])).not.toThrow();
+    expect(failures(checkAnonymous(null as unknown as Parameters<typeof checkAnonymous>[0]))).not.toEqual([]);
+  });
+
+  it("does not throw and fails everything when codes is undefined", () => {
+    expect(() => checkAnonymous(undefined as unknown as Parameters<typeof checkAnonymous>[0])).not.toThrow();
+    expect(failures(checkAnonymous(undefined as unknown as Parameters<typeof checkAnonymous>[0]))).not.toEqual([]);
+  });
 });
 
 describe("checkLogin", () => {
@@ -90,6 +102,19 @@ describe("checkStatus", () => {
       integrations: [{ label: "Google Drive", configured: false }, { label: "Telegram", configured: true }],
     });
     expect(rs.some((r) => r.detail.includes("Google Drive"))).toBe(true);
+  });
+
+  // A JSON.parse'd response body can be a literal `null`, and an `as StatusPayload` cast lets
+  // `undefined` through the type system too. Neither should throw before the field-level guards
+  // ever run.
+  it("does not throw and fails everything when the payload is null", () => {
+    expect(() => checkStatus(null as unknown as StatusPayload)).not.toThrow();
+    expect(failures(checkStatus(null as unknown as StatusPayload))).not.toEqual([]);
+  });
+
+  it("does not throw and fails everything when the payload is undefined", () => {
+    expect(() => checkStatus(undefined as unknown as StatusPayload)).not.toThrow();
+    expect(failures(checkStatus(undefined as unknown as StatusPayload))).not.toEqual([]);
   });
 });
 

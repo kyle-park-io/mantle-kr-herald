@@ -20,6 +20,12 @@ export interface StatusPayload {
  * Judges the four calls `deploy:smoke` makes before logging in — see the spec's "Before logging
  * in" section. Each is its own `CheckResult` so a single wrong status code names itself instead of
  * being folded into one generic "anonymous checks failed" line.
+ *
+ * `codes` itself is guarded before any property read, same reasoning as `checkStatus`'s top-level
+ * guard: a caller that builds this object from something that failed upstream (a rejected
+ * `Promise.all`, a bad destructure) can hand this function `null`/`undefined` as easily as
+ * `JSON.parse` can hand `checkStatus` one, and this module never throws regardless of which
+ * function is asked to judge malformed input.
  */
 export function checkAnonymous(codes: {
   root: number;
@@ -27,6 +33,16 @@ export function checkAnonymous(codes: {
   foreignOrigin: number;
   unknownPath: number;
 }): CheckResult[] {
+  if (codes === null || typeof codes !== "object") {
+    const detail = `Expected an object of status codes, got ${JSON.stringify(codes)}.`;
+    return [
+      { name: "GET /", status: "fail", detail },
+      { name: "GET /api/status (anonymous)", status: "fail", detail },
+      { name: "POST /api/login (foreign origin)", status: "fail", detail },
+      { name: "GET /unknown-path", status: "fail", detail },
+    ];
+  }
+
   return [
     {
       name: "GET /",
@@ -88,8 +104,29 @@ export function checkLogin(code: number): CheckResult {
  * `availableTargets` missing `google` is `fail` — Google Drive is the record of truth in cloud
  * mode, so its absence means §3 credentials are missing and the deployment publishes nowhere.
  * Missing `lark` is only `warn` — Lark is an opt-in publish target, not a load-bearing one.
+ *
+ * The top-level `payload` itself is guarded the same way every field already was: `JSON.parse` of
+ * a response body can legitimately produce `null` (a literal `null` body) or `undefined` isn't far
+ * off either once an `as StatusPayload` cast is involved, and property access on either throws
+ * before any field-level guard runs. When that happens, every expectation this function would
+ * otherwise check comes back `fail` — never `warn`, since "malformed payload" cannot be
+ * distinguished from "lark absent" and defaulting to the milder verdict would hide the real
+ * problem — so the operator sees which checks could not be evaluated instead of a stack trace.
  */
 export function checkStatus(payload: StatusPayload): CheckResult[] {
+  if (payload === null || typeof payload !== "object") {
+    const detail = `Expected a status object, got ${JSON.stringify(payload)} — the response body did not parse into the expected shape.`;
+    return [
+      { name: "storageMode", status: "fail", detail },
+      { name: "dbEnv", status: "fail", detail },
+      { name: "sendsEnabled", status: "fail", detail },
+      { name: "conversionEnabled", status: "fail", detail },
+      { name: "availableTargets: google", status: "fail", detail },
+      { name: "availableTargets: lark", status: "fail", detail },
+      { name: "integrations", status: "fail", detail },
+    ];
+  }
+
   const results: CheckResult[] = [];
 
   results.push(
