@@ -141,14 +141,23 @@ done
 프로젝트 설정과 같은지, `GOOGLE_SA_KEY_FILE`과 `HERALD_SENDS_ENABLED`가 없는지, 그리고
 `pnpm doctor --live`로 로컬 자격 증명까지 확인합니다.
 
+Vercel 쪽을 보기 전에 **로컬 저장소 상태**도 같이 봅니다 — `main` 브랜치인지, 커밋되지 않은
+변경이 없는지, `origin/main`과 앞뒤로 차이가 없는지, 그리고 (`--skip-tests`가 없으면) `pnpm
+test`가 통과하는지. **`npx vercel deploy --prod`는 커밋이 아니라 지금 작업 디렉터리를 그대로
+올립니다** — 그래서 이 저장소 상태 자체가 검사 대상입니다. 커밋되지 않았거나 아직 push하지 않은
+변경은 이 명령을 돌린 사람의 화면에는 있어도 다음에 `git pull`하는 사람 눈에는 안 보이는 채로
+배포될 수 있습니다.
+
 ```bash
 pnpm deploy:check
 ```
 
 **기동을 막는 변수(위 필수 표의 여덟 개)가 하나라도 빠지면 경고가 아니라 거부합니다** — 종료
 코드 1로 끝나 배포를 진행하지 못합니다. 조용히 기능만 빠지는 나머지 변수들은 경고로 남아 배포를
-막지는 않습니다. 이미 테스트를 통과시킨 상태에서 Vercel 변수만 고쳐 다시 돌릴 때는
-`--skip-tests`로 그 단계만 건너뜁니다. **배포하기 전에는 항상 이 명령을 먼저 돌리세요.**
+막지는 않습니다. 저장소 상태 검사(브랜치·클린 여부·push/pull 동기화)와 테스트 실패도 같은
+방식으로 거부합니다 — 경고가 아니라 종료 코드 1입니다. 이미 테스트를 통과시킨 상태에서 Vercel
+변수만 고쳐 다시 돌릴 때는 `--skip-tests`로 그 단계만 건너뜁니다. **배포하기 전에는 항상 이
+명령을 먼저 돌리세요.**
 
 ## 5. 배포하고 오리진을 되먹이기
 
@@ -206,9 +215,10 @@ pnpm serve:hosted
 pnpm deploy:smoke https://mantle-kr-herald.vercel.app
 ```
 
-로그인하기 전에는 인증 없이 부른 `/api/status`가 **401**을, 다른 오리진에서 시도한 로그인이
-**403**을 돌려주는지부터 봅니다 — 403이 아니면 CSRF 방어가 낯선 오리진을 걸러내지 못하고
-있다는 뜻입니다. 알 수 없는 경로도 에러 없이 SPA로 떨어지는지 함께 봅니다.
+로그인하기 전에는 `GET /`이 **200**으로 SPA를 서빙하는지, 인증 없이 부른 `/api/status`가
+**401**을, 다른 오리진에서 시도한 로그인이 **403**을 돌려주는지부터 봅니다 — 403이 아니면
+CSRF 방어가 낯선 오리진을 걸러내지 못하고 있다는 뜻입니다. 알 수 없는 경로도 에러 없이
+SPA로 떨어지는지 함께 봅니다.
 
 로그인에 성공하면 이어서 `/api/status`가 다음을 보고하는지 확인합니다 — 각 항목이 뜻하는 바:
 
@@ -219,7 +229,7 @@ pnpm deploy:smoke https://mantle-kr-herald.vercel.app
 - `sendsEnabled`가 `false`인가 — 첫 배포는 발송이 닫힌 채로 나가야 합니다(§6)
 - `conversionEnabled`가 `false`인가 — 호스팅 라우트 세트에는 로컬 변환 에이전트가 없습니다
   (§7)
-- `availableTargets`에 `google`이 있는가 — 없으면 §3 Google 자격 증명이 빠진 것입니다
+- `availableTargets`에 `google`이 있는가 — 없으면 §4의 Google 인증·Drive 변수가 빠진 것입니다
 - 응답의 `integrations` 항목이 전부 `configured`인가
 
 이어서 `POST /api/items/:id/convert-prepare`가 거부가 아니라 **404**인지(라우트가 아예 없어야
@@ -247,6 +257,7 @@ pnpm deploy:smoke https://mantle-kr-herald.vercel.app
 | 팀원 한 명의 오타로 전원이 로그인 불가 | 프록시 뒤인데 trust-proxy가 꺼져 모두가 잠금 행 하나를 공유하는 상태입니다 |
 | 화면은 뜨는데 항목이 하나도 없음 | 데이터베이스가 비었거나 `HERALD_DB_ENV`가 개발 쪽을 가리킵니다. `pnpm db:import` 확인 |
 | `relation "x_threads" does not exist` | 스키마 미적용. `pnpm db:import`를 한 번 돌리세요 (§2) |
+| 환경변수는 다 맞는데 `pnpm deploy:check`가 종료 코드 1을 냄 | `main`이 아니거나, 커밋 안 된 변경이 있거나, `origin/main`과 앞뒤로 차이가 있는 상태입니다(§4). `vercel deploy --prod`는 작업 디렉터리를 그대로 올리므로 이것도 거부 대상입니다 |
 
 ## 다음으로
 
