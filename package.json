@@ -34,6 +34,7 @@
     "sheet:init": "tsx --env-file-if-exists=.env src/cli/sheet-init.ts",
     "doctor": "tsx --env-file-if-exists=.env src/cli/doctor.ts",
     "deploy:check": "tsx --env-file-if-exists=.env src/cli/deploy-check.ts",
+    "deploy:smoke": "tsx --env-file-if-exists=.env src/cli/deploy-smoke.ts",
     "status": "tsx --env-file-if-exists=.env src/cli/status.ts",
     "lineage": "tsx --env-file-if-exists=.env src/cli/lineage.ts",
     "archive": "tsx src/cli/archive.ts",
