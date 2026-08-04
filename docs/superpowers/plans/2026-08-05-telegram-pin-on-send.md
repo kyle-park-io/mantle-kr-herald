@@ -23,7 +23,7 @@ Tests are given as **code — write them verbatim**. Implementation steps are gi
 - Code, comments, commit messages, CHANGELOG in **English**. Anything an operator reads on the dashboard in **Korean**.
 - Exact warning text, defined once in `TelegramBotSender` and asserted by tests in three files — keep them in sync:
   `글은 올라갔지만 고정하지 못했습니다 (<API error>) — 봇을 이 방의 관리자로 올리고, 그룹은 '메시지 고정', 채널은 '메시지 수정' 권한을 주세요`
-- Run `pnpm test` (root) and `pnpm --filter herald-web test` (web) before each commit. Never send to a live room to test anything.
+- Run `pnpm test` (root) and `pnpm test` (root vitest also runs `web/tests/**` — there is no separate web package) (web) before each commit. Never send to a live room to test anything.
 
 ## File map
 
@@ -484,7 +484,7 @@ describe("ConfirmDialog — the optional toggle", () => {
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `pnpm --filter herald-web test -- ConfirmDialog`
+Run: `pnpm vitest run web/tests/ConfirmDialog.test.tsx`
 Expected: FAIL — `toggle` is not part of `ConfirmRequest`.
 
 - [ ] **Step 3: Implement**
@@ -498,7 +498,7 @@ Invariants:
 
 - [ ] **Step 4: Run the web tests**
 
-Run: `pnpm --filter herald-web test`
+Run: `pnpm test` (root vitest also runs `web/tests/**` — there is no separate web package)
 Expected: PASS, including the existing dialog-free suites.
 
 - [ ] **Step 5: Commit**
@@ -566,7 +566,7 @@ The last test needs the card's `api` to be stubbable. Read how the existing suit
 
 - [ ] **Step 2: Run them and watch them fail**
 
-Run: `pnpm --filter herald-web test -- OutletCard`
+Run: `pnpm vitest run web/tests/OutletCard.test.tsx`
 Expected: FAIL — no toggle is declared.
 
 - [ ] **Step 3: Implement**
@@ -581,7 +581,7 @@ Invariants:
 
 - [ ] **Step 4: Run the web suite**
 
-Run: `pnpm --filter herald-web test`
+Run: `pnpm test` (root vitest also runs `web/tests/**` — there is no separate web package)
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -619,7 +619,7 @@ Expected: PASS — no broken links, no command that does not exist.
 
 - [ ] **Step 3: Full suite, both projects**
 
-Run: `pnpm test` and `pnpm --filter herald-web test`
+Run: `pnpm test` and `pnpm test` (root vitest also runs `web/tests/**` — there is no separate web package)
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
@@ -633,7 +633,7 @@ git commit -m "docs: state the admin right pinning needs, and the --pin flag"
 
 ## Verification before the PR
 
-- [ ] `pnpm test` and `pnpm --filter herald-web test` both green, output pasted into the summary.
+- [ ] `pnpm test` and `pnpm test` (root vitest also runs `web/tests/**` — there is no separate web package) both green, output pasted into the summary.
 - [ ] `git log --oneline` shows one commit per task.
 - [ ] Grep the diff for `unpin` — there must be no hit.
 - [ ] Confirm by reading `SendChannels`' send block that no new `throw` sits between the sender call and the ledger write.
