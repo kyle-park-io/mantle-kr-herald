@@ -70,7 +70,8 @@ export const MUST_BE_SET: readonly EnvExpectation[] = [
   {
     name: "GOOGLE_AUTH_MODE",
     severity: "warn",
-    consequence: "Google publish target disappears silently — createDeps swallows the config error, button just goes inactive.",
+    consequence:
+      "Not fatal — loadGoogleAuthConfig infers oauth/service_account from whichever credential is set; setting this explicitly only removes that inference.",
   },
   {
     name: "GOOGLE_OAUTH_CLIENT_ID",
