@@ -145,6 +145,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write requests per minute per user, and a month's sweep can produce ~200 rows; one request per row
   did not fit, and the 429 landed mid-run. Used by `kol-telegram:record`, which now buffers every
   write and flushes it as one append plus one batch update.
+- **Pin a Telegram send, from `pnpm send:channels --pin` or the dashboard's 핀으로 고정하기 checkbox
+  on a Telegram room's 발송/재발송 confirm.** Both default off. `TelegramBotSender` pins the message
+  that carries the post's text — the photo, when the whole text went out as its caption — one message
+  per send, silently (`disable_notification: true`), and never removes a room's existing pin. Pinning
+  needs the bot to be an **administrator** of the room: `can_pin_messages` in a group/supergroup, or
+  `can_edit_messages` in a channel. A missing right does not block the send — the post still goes
+  out, and the run reports "글은 올라갔지만 고정하지 못했습니다 (…) — 봇을 이 방의 관리자로 올리고,
+  그룹은 '메시지 고정', 채널은 '메시지 수정' 권한을 주세요" as a warning, which the dashboard shows as
+  an error banner while the row settles to 발송됨. See `TelegramBotSender.send`
+  (`src/adapters/send/TelegramBotSender.ts`), `SendChannelsInput.pin`/`SendChannelsResult.warnings`
+  (`src/app/SendChannels.ts`), and `OutletCard`'s `pinOffered` (`web/src/components/OutletCard.tsx`).
 
 ### Changed
 
