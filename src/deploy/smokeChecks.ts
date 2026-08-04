@@ -95,7 +95,54 @@ export function checkLogin(code: number): CheckResult {
       detail: "403 — HERALD_DEPLOYMENT_ORIGIN likely does not match this deployment's real origin.",
     };
   }
+  /**
+   * By far the most likely failure, and the one a bare `Expected 200, got 401.` served worst. The
+   * deployment answers 401 identically for an empty password, a one-character one and a wrong
+   * full-length one (an empty string is still a string, so `handleApi` reaches the login rather than
+   * refusing with 400). An operator trying those three in a row therefore sees the same line three
+   * times and reasonably concludes the prompt is not reading their input — which is what happened on
+   * 2026-08-05. Say what 401 means, and say that the attempts are rationed, because the next thing
+   * they will do is try again.
+   */
+  if (code === 401) {
+    return {
+      name: "POST /api/login",
+      status: "fail",
+      detail:
+        "401 — wrong username or password. Every wrong value answers 401 the same way, so retrying " +
+        "variations tells you nothing. 5 failed attempts from one address lock it for 60 seconds.",
+    };
+  }
+  if (code === 429) {
+    return {
+      name: "POST /api/login",
+      status: "fail",
+      detail:
+        "429 — this address is locked out: 5 failed logins within 60 seconds. Wait a minute before " +
+        "retrying. Nothing is wrong with the deployment.",
+    };
+  }
   return { name: "POST /api/login", status: "fail", detail: `Expected 200, got ${code}.` };
+}
+
+/**
+ * Judged before the request, not after: an empty username or password cannot succeed, and sending
+ * one anyway spends one of the five attempts the deployment allows per address per minute. Losing a
+ * fifth of that budget to a keystroke that never registered is exactly how an operator ends up
+ * locked out of production while trying to verify it.
+ */
+export function checkCredentials(username: string, password: string): CheckResult {
+  const missing = [!username.trim() && "username", !password && "password"].filter(Boolean).join(" and ");
+  if (!missing) {
+    return { name: "Credentials entered", status: "ok", detail: "username and password both given" };
+  }
+  return {
+    name: "Credentials entered",
+    status: "fail",
+    detail:
+      `No ${missing} was typed — an empty one cannot succeed, so it was not sent. ` +
+      "Each attempt spends one of the 5 this address gets per minute.",
+  };
 }
 
 /**
