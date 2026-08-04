@@ -412,7 +412,7 @@ describe("media markers", () => {
 
 describe("OutletCard — 핀 고정 is offered where it exists", () => {
   it("offers the pin toggle on a telegram room's 발송", () => {
-    const { confirms } = mount(group({ channel: "telegram", rows: [row({ deliveryStatus: "pending" })] }));
+    const { confirms } = mount(group({ channel: "telegram", rows: [row()] }));
 
     fireEvent.click(screen.getByRole("button", { name: "발송" }));
 
@@ -431,7 +431,7 @@ describe("OutletCard — 핀 고정 is offered where it exists", () => {
 
   /** X posts are published through Typefully; there is nothing to pin. */
   it("does not offer it on an X room", () => {
-    const { confirms } = mount(group({ channel: "x", rows: [row({ deliveryStatus: "pending" })] }));
+    const { confirms } = mount(group({ channel: "x", rows: [row()] }));
 
     fireEvent.click(screen.getByRole("button", { name: "발송" }));
 
@@ -445,7 +445,7 @@ describe("OutletCard — 핀 고정 is offered where it exists", () => {
    */
   it("does not offer it on a manual telegram room", () => {
     const { confirms } = mount(
-      group({ channel: "telegram", rows: [row({ delivery: "manual", deliveryStatus: "pending" })] }),
+      group({ channel: "telegram", rows: [row({ delivery: "manual" })] }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "전달함 ☐" }));
@@ -455,7 +455,7 @@ describe("OutletCard — 핀 고정 is offered where it exists", () => {
 
   it("sends the toggle's answer to the API", async () => {
     const sent: unknown[] = [];
-    const { confirms } = mount(group({ channel: "telegram", rows: [row({ deliveryStatus: "pending" })] }), {
+    const { confirms } = mount(group({ channel: "telegram", rows: [row()] }), {
       api: {
         sendOutlet: async (...args: Parameters<typeof api.sendOutlet>) => {
           sent.push(args);
