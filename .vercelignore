@@ -1,0 +1,48 @@
+# What does NOT get uploaded by `npx vercel deploy --prod`.
+#
+# That command uploads the local directory, not a commit — so without this file, what ships is
+# whatever happens to be sitting in the working tree. This repo's working tree holds a Google
+# service account private key (`keys/mantle-sa.json`) and a `.env` with every live credential, both
+# gitignored and therefore invisible to `git status`. Whether the CLI falls back to `.gitignore`
+# when this file is absent is not something the deploy should depend on: state it here instead.
+#
+# `vercel.json` is uploaded regardless of what this file says — the platform needs it to build.
+
+# --- credentials. The reason this file exists ---
+.env
+.env.*
+keys/
+
+# --- pipeline data. The database is the record of truth (docs/ko/env.md); `output/` is only the
+#     import/export format for `pnpm db:export` and `pnpm db:import`, both of which run locally.
+output/
+
+# --- steering corpus. Read through `FileConversionConfig`/`JsonGlossaryStore`, which `createDeps`
+#     builds ONLY under `if (conversionEnabled)` — false on the hosted route set, where
+#     `convert-prepare` is a 404 (src/app/createDeps.ts:356). The deployment cannot reach these.
+conversion/
+translation/
+
+# --- installed on Vercel from the lockfile; uploading them wastes the whole upload ---
+node_modules/
+web/node_modules/
+
+# --- build artefacts. `buildCommand: pnpm build:web` regenerates `web/dist` on Vercel; shipping a
+#     local copy would let a stale bundle win over the one the platform just built.
+web/dist/
+.vercel/
+
+# --- not part of the running deployment ---
+tests/
+web/tests/
+docs/
+design/
+.github/
+.playwright-mcp/
+.claude/
+.agents/
+.superpowers/
+*.md
+*.xlsx
+vitest.config.ts
+vitest.probe.config.ts
