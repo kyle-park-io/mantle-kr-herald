@@ -160,11 +160,17 @@ export const api = {
   /** Deletes the override: the room falls back to the group text *and* the group's approval. */
   revertOutlet: (itemId: string, type: ConversionType, outletId: string) =>
     putOutlet(itemId, type, outletId, { revert: true }),
-  sendOutlet: (itemId: string, type: ConversionType, outletId: string, resend = false) =>
+  /**
+   * `opts.pin` asks the server to pin what it posts — meaningful only on a Telegram room; the
+   * dashboard only ever sets it there (`OutletCard`'s `pinOffered`), but the route itself accepts it
+   * unconditionally, the same way the CLI's `--pin` does, so this stays a plain pass-through rather
+   * than a channel check duplicated on the client.
+   */
+  sendOutlet: (itemId: string, type: ConversionType, outletId: string, opts: { resend?: boolean; pin?: boolean } = {}) =>
     json<SendReply>(`${oPath(itemId, type, outletId)}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ resend }),
+      body: JSON.stringify({ resend: opts.resend ?? false, pin: opts.pin ?? false }),
     }),
   markOutlet: (itemId: string, type: ConversionType, outletId: string, delivered: boolean) =>
     json<BoardReply>(`${oPath(itemId, type, outletId)}/mark`, {
