@@ -31,6 +31,7 @@ One send can produce several messages. `TelegramBotSender` already distinguishes
 | Send shape | Pinned |
 |---|---|
 | single photo + short single segment (text goes as the caption) | that photo message |
+| single photo + text too long or split into 2+ segments for a caption | the **text** message, not the photo |
 | media group + text as a separate reply | the **text** message, not the album |
 | text only, one or more segments | the first segment |
 
