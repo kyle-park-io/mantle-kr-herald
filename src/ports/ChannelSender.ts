@@ -10,11 +10,15 @@ export interface SendRequest {
   photos?: string[];
   /** Overrides the sender's configured chat id. Set per outlet; absent = the configured one. */
   chatId?: string;
+  /** Pin the posted message in the room. Only Telegram acts on it. */
+  pin?: boolean;
 }
 
 export interface SendResult {
   postId?: string;
   url?: string;
+  /** Something after the post went wrong; the post itself is live. Never a reason to treat the send as failed. */
+  warning?: string;
 }
 
 export interface ChannelSender {
