@@ -26,6 +26,13 @@ jobs:
       - name: Type-check
         run: pnpm typecheck
 
+      # A separate tsconfig (web/tsconfig.json) — the root `pnpm typecheck` above does not include
+      # web/, so a type error there (e.g. web/tests/OutletCard.test.tsx#L415) would otherwise land
+      # on main unnoticed, since `pnpm test` runs through Vitest/esbuild and strips types rather
+      # than checking them.
+      - name: Type-check (web)
+        run: pnpm typecheck:web
+
       # Live twitterapi.io probes are skipped without TWITTERAPI_IO_KEY,
       # so CI needs no secrets and makes no network calls.
       - name: Test
