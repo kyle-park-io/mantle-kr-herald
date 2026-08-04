@@ -2,6 +2,7 @@ import { parseStorageMode, tryParseStorageMode, type StorageMode } from "./stora
 import { X_MAX_WEIGHTED, X_PREMIUM_MAX_WEIGHTED } from "./domain/formatting/weightedLength";
 import { ALL_OUTLETS } from "./domain/outlet/models";
 import { SESSION_TTL_MS } from "./domain/auth/session";
+import { isPasswordHash } from "./domain/auth/password";
 
 export interface Config {
   apiKey: string;
@@ -209,14 +210,35 @@ export interface AuthConfig {
  * constructor is that caller today, staying permissive by design (see its own comment) for whatever
  * else might construct it unconfigured, a test included.
  */
+const AUTH_REMEDY = "Generate one with `pnpm auth:hash` and add the two printed lines to .env.";
+
 export function tryLoadAuthConfig(): AuthConfig | undefined {
   const username = process.env.HERALD_AUTH_USERNAME?.trim();
   const passwordHash = process.env.HERALD_AUTH_PASSWORD_HASH?.trim();
   if (!username || !passwordHash) return undefined;
+  /**
+   * Absent is tolerated above; *present and unusable* is not, and the difference matters. A hash
+   * `verifyPassword` cannot parse makes it return `false` for every password — so the app starts
+   * cleanly, the login screen appears, and every attempt is refused forever with nothing anywhere
+   * saying why. That cost hours on 2026-08-05 against the production deployment, where
+   * `HERALD_AUTH_PASSWORD_HASH` is registered `sensitive` and therefore cannot even be read back
+   * to compare.
+   *
+   * The check is `decodePasswordHash`'s own, not a second opinion about what a hash looks like —
+   * a loader that accepts what the verifier rejects is exactly how this happens.
+   */
+  if (!isPasswordHash(passwordHash)) {
+    throw new Error(
+      "HERALD_AUTH_PASSWORD_HASH is set but is not a usable scrypt hash, so every login would be " +
+        "refused. Expected `scrypt$N$r$p$salt$key` — six `$`-separated fields. A common cause is " +
+        "the shell: the hash contains `$65536$8$1`, and inside double quotes `$8` and `$1` expand " +
+        "to nothing. Pass it on stdin instead of `--value \"…\"`. " +
+        AUTH_REMEDY,
+    );
+  }
   return { username, passwordHash };
 }
 
-const AUTH_REMEDY = "Generate one with `pnpm auth:hash` and add the two printed lines to .env.";
 
 /**
  * Required. The dashboard used to run loopback-only, where an unconfigured account was harmless:

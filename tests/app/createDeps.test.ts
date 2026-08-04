@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, beforeEach, beforeAll, afterAll } from
 import { createTestDb } from "../support/testDb";
 import { createDeps } from "../../src/app/createDeps";
 import { handleApi, type ApiDeps } from "../../src/adapters/web/apiHandlers";
+import { VALID_PASSWORD_HASH } from "../support/authFixtures";
 
 /**
  * `createDeps` calls `loadAuthConfig()`/`loadSessionConfig()` — required now that the session gate
@@ -18,7 +19,7 @@ let savedEnv: Record<string, string | undefined> = {};
 beforeAll(() => {
   savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   process.env.HERALD_AUTH_USERNAME = "test-user";
-  process.env.HERALD_AUTH_PASSWORD_HASH = "scrypt$test$test";
+  process.env.HERALD_AUTH_PASSWORD_HASH = VALID_PASSWORD_HASH;
   process.env.HERALD_SESSION_SECRET = "test-only-session-secret-do-not-use-in-prod!!!!";
   process.env.HERALD_STORAGE_MODE = "local";
   process.env.HERALD_DB_ENV = "development";
