@@ -16,12 +16,22 @@ export function summarize(results: CheckResult[]): { ok: number; warn: number; f
   };
 }
 
-export function formatReport(results: CheckResult[], opts: { live: boolean } = { live: false }): string {
+/**
+ * `title` defaults to doctor's own header so `src/cli/doctor.ts` (and every existing test) keeps
+ * working unchanged; `deploy:check` (`src/cli/deploy-check.ts`) is the other caller and passes its
+ * own title, since printing "setup check" there would misname a report this command produced.
+ */
+export function formatReport(
+  results: CheckResult[],
+  opts: { live?: boolean; title?: string } = {},
+): string {
+  const live = opts.live ?? false;
+  const title = opts.title ?? "Mantle KR Herald — setup check";
   const width = results.reduce((w, r) => Math.max(w, r.name.length), 0);
   const lines = results.map((r) => `  ${GLYPH[r.status]} ${r.name.padEnd(width)}  ${r.detail}`);
   const s = summarize(results);
   return [
-    `Mantle KR Herald — setup check${opts.live ? " (--live)" : ""}`,
+    `${title}${live ? " (--live)" : ""}`,
     "",
     ...lines,
     "",
