@@ -39,9 +39,6 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
 
   useEffect(() => {
     if (!request) return;
-    // Every new request starts the toggle unchecked, whether it declares one or not — a tick left
-    // over from the previous dialog would otherwise survive into a request that never asked for it.
-    setToggled(false);
     confirmRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
@@ -49,6 +46,17 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [request, onCancel]);
+
+  useEffect(() => {
+    // Every new request starts the toggle unchecked, whether it declares one or not — a tick left
+    // over from the previous dialog would otherwise survive into a request that never asked for it.
+    // Deliberately keyed on `request` alone, not `onCancel`: the one real caller
+    // (`OutletBoard.tsx`) passes an inline `() => setConfirm(null)`, a fresh function identity on
+    // every one of its own re-renders, so folding this into the effect above would flip a checked
+    // box back to unchecked while the dialog sits open for the very request that ticked it.
+    if (!request) return;
+    setToggled(false);
+  }, [request]);
 
   if (!request) return null;
   const danger = request.tone !== "primary";
