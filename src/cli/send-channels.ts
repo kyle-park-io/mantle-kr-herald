@@ -32,6 +32,14 @@ if (notSendable.length > 0) {
   console.warn(`[send] ${notSendable.join(", ")}: not delivered by send:channels (a manual room, or a room with its own pipeline) — ignored.`);
 }
 
+const pin = process.argv.includes("--pin");
+// Forwarded unchanged to SendChannels — see SendChannelsInput.pin for why this is not gated per
+// channel there. Warned here instead, once, since a `--pin` run with no telegram target would
+// otherwise silently do nothing.
+if (pin && !targets.includes("telegram")) {
+  console.warn("[send] --pin has no effect: nothing can be pinned on a channel other than telegram.");
+}
+
 const senders = createSenders(targets);
 const idsArg = argValue("--ids");
 const ids = idsArg ? new Set(idsArg.split(",").map((s) => s.trim()).filter((s) => s.length > 0)) : undefined;
@@ -68,13 +76,16 @@ try {
     loadTelegramChatIds(),
     overrides,
     headroomReader(targets, ledger, articleLedger),
-  ).run({ targets, ids, outletIds });
+  ).run({ targets, ids, outletIds, pin });
   // The extra segments appear only when they happened, so an ordinary run prints the line it always
   // printed. Both are kept out of `failed`: neither is a send that went wrong.
   const parts = [`sent ${result.sent}`, `skipped ${result.skipped} (already sent)`, `failed ${result.failed}`];
   if (result.unconfigured > 0) parts.push(`미설정 ${result.unconfigured} (${result.unconfiguredEnv.join(", ")})`);
   if (result.withheld > 0) parts.push(`보류 ${result.withheld} (첫 발송 — --outlets 로 방을 지정하세요)`);
   console.log(parts.join(" · "));
+  // Each warning names the room it happened to, so a batch that pinned nine of ten rooms names the
+  // tenth instead of leaving the operator to guess from the summary counts alone.
+  for (const w of result.warnings) console.warn(`[send] ${w.key}: ${w.error}`);
   if (result.quotaBlocked) {
     const { needed, available, resetsAt } = result.quotaBlocked;
     // `available` (remaining − inFlight) can be negative when a stale in-flight row overcounts —
