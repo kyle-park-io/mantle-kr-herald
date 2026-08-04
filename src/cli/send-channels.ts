@@ -84,8 +84,10 @@ try {
   if (result.withheld > 0) parts.push(`보류 ${result.withheld} (첫 발송 — --outlets 로 방을 지정하세요)`);
   console.log(parts.join(" · "));
   // Each warning names the room it happened to, so a batch that pinned nine of ten rooms names the
-  // tenth instead of leaving the operator to guess from the summary counts alone.
-  for (const w of result.warnings) console.warn(`[send] ${w.key}: ${w.error}`);
+  // tenth instead of leaving the operator to guess from the summary counts alone. Worded
+  // differently from SendChannels' own `[send] <key>: …` line (printed as each send happens) so
+  // this recap after the summary reads as a recap, not the same failure printed twice.
+  for (const w of result.warnings) console.warn(`⚠ 고정 실패 — ${w.key}: ${w.error}`);
   if (result.quotaBlocked) {
     const { needed, available, resetsAt } = result.quotaBlocked;
     // `available` (remaining − inFlight) can be negative when a stale in-flight row overcounts —
