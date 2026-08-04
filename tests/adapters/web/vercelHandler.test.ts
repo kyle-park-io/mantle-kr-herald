@@ -6,6 +6,7 @@ import { createHandler, assertTrustProxy, assertCloudStorage } from "../../../sr
 import { signSession } from "../../../src/domain/auth/session";
 import { buildSessionCookie } from "../../../src/adapters/web/sessionCookie";
 import { MAX_API_BODY_BYTES } from "../../../src/adapters/web/HttpServer";
+import { VALID_PASSWORD_HASH } from "../../support/authFixtures";
 
 /**
  * `createDeps` refuses to build without an account, a session secret and a stated storage mode
@@ -19,7 +20,7 @@ let savedEnv: Record<string, string | undefined> = {};
 beforeAll(() => {
   savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   process.env.HERALD_AUTH_USERNAME = "test-user";
-  process.env.HERALD_AUTH_PASSWORD_HASH = "scrypt$test$test";
+  process.env.HERALD_AUTH_PASSWORD_HASH = VALID_PASSWORD_HASH;
   process.env.HERALD_SESSION_SECRET = "test-only-session-secret-do-not-use-in-prod!!!!";
   process.env.HERALD_STORAGE_MODE = "local";
   process.env.HERALD_DB_ENV = "development";
