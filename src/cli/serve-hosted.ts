@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { Pool } from "pg";
 import { wrapPool } from "../adapters/db/createDb";
 import { createDeps } from "../app/createDeps";
-import { createHandler, assertTrustProxy } from "../../api/[...path]";
+import { createHandler, assertTrustProxy } from "../vercel/entry";
 import { loadDbConfig, loadClientIpConfig } from "../config";
 import { readStatic } from "./staticFiles";
 import { REPO_ROOT } from "../paths";
