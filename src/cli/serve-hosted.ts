@@ -14,13 +14,13 @@ import "./registerErrorHandler";
 // Vercel's static layer (which serves `outputDirectory` itself) and its edge, which is why the
 // origin below is passed directly instead of read through `loadDeploymentOrigin()`.
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
-import { join, extname } from "node:path";
+import { join } from "node:path";
 import { Pool } from "pg";
 import { wrapPool } from "../adapters/db/createDb";
 import { createDeps } from "../app/createDeps";
 import { createHandler, assertTrustProxy } from "../../api/[...path]";
 import { loadDbConfig, loadClientIpConfig } from "../config";
+import { readStatic } from "./staticFiles";
 import { REPO_ROOT } from "../paths";
 
 const port = Number(process.env.PORT) || 5758;
@@ -51,47 +51,27 @@ const pool = new Pool({ connectionString: dbConfig.url });
 const deps = createDeps({ db: wrapPool(pool), routes: "hosted" });
 const handle = createHandler(deps, origin);
 
-const CONTENT_TYPE: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".woff2": "font/woff2",
-  ".woff": "font/woff",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".ico": "image/x-icon",
-};
-
 createServer((req, res) => {
   void (async () => {
     const path = (req.url ?? "/").split("?")[0];
 
     if (!path.startsWith("/api/")) {
+      // All the reading happens before a single header is written — see `readStatic`'s own comment
+      // for the two bugs that ordering fixes (a missing file used to end the process, and the path
+      // was not contained to `distDir`). `readStatic` also owns the `index.html` fallback for paths
+      // the SPA's own router handles, matching what `vercel.json`'s `outputDirectory` does.
+      //
       // `no-store`: the SPA bundle is content-hashed but `index.html` is not, so a rebuild between
       // two rehearsal runs would otherwise be checked against the previous bundle — which is exactly
       // what happened the first time this was used, and cost a wrong conclusion about a fix.
-      const requested = path === "/" ? "index.html" : path.slice(1);
-      const send = async (file: string) =>
+      const file = await readStatic(distDir, path);
+      if (!file) {
         res
-          .writeHead(200, {
-            "content-type": CONTENT_TYPE[extname(file)] ?? "application/octet-stream",
-            "cache-control": "no-store",
-          })
-          .end(await readFile(join(distDir, file)));
-      try {
-        await send(requested);
-      } catch {
-        // Unknown path — the SPA's own router owns it (`#login`, `#renderings`). Matches what
-        // `vercel.json`'s `outputDirectory` build does for a client-routed app.
-        try {
-          await send("index.html");
-        } catch {
-          res
-            .writeHead(500, { "content-type": "text/plain; charset=utf-8" })
-            .end(`No web/dist — run \`pnpm build:web\` first.`);
-        }
+          .writeHead(500, { "content-type": "text/plain; charset=utf-8" })
+          .end(`No web/dist — run \`pnpm build:web\` first.`);
+        return;
       }
+      res.writeHead(200, { "content-type": file.contentType, "cache-control": "no-store" }).end(file.body);
       return;
     }
 
