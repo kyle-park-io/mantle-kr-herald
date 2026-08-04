@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 import { createTestDb } from "../../support/testDb";
 import { createDeps } from "../../../src/app/createDeps";
-import { createHandler, assertTrustProxy, assertCloudStorage } from "../../../api/[...path]";
+import { createHandler, assertTrustProxy, assertCloudStorage } from "../../../src/vercel/entry";
 import { signSession } from "../../../src/domain/auth/session";
 import { buildSessionCookie } from "../../../src/adapters/web/sessionCookie";
 import { MAX_API_BODY_BYTES } from "../../../src/adapters/web/HttpServer";
