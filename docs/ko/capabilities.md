@@ -13,8 +13,9 @@
 맞게 변환·포맷하고, 사람이 두 차례(1차: 번역, 2차: 채널 포맷) 검수·승인한 결과만 저장 모드에 따라
 Google Drive/Lark Drive 또는 로컬 폴더(`output/publish/local/`)에 올립니다. 승인된 텔레그램·X
 렌더링은 `pnpm send:channels`로 실제 채널에도 보낼 수 있습니다(§8). `cloud` 모드에서는
-Google Sheet에 게시 이력도 남깁니다. 모든 단계는 개별 CLI 명령(`pnpm <script>`)으로 실행되며,
-자동으로 다음 단계가 실행되지 않습니다 — 사람이 각 단계 사이를 직접 잇습니다.
+Google Sheet에 게시 이력도 남깁니다. 각 단계는 개별 CLI 명령(`pnpm <script>`)으로 실행되며,
+자동으로 다음 단계가 실행되지 않습니다 — 사람이 각 단계 사이를 직접 잇습니다. **검수·승인·발송은
+CLI 없이 Vercel에 배포된 대시보드에서도 할 수 있습니다** ([capabilities.md] §3 "실행 환경").
 
 ## 2. 파이프라인
 
@@ -90,6 +91,34 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 `output/publish/local/`(업로드 대상 목록은 [`artifacts.md`](artifacts.md) 참고). Google Sheet는
 `cloud` 모드 전용입니다
 
+### 실행 환경 — 두 개의 엔트리포인트, 하나의 데이터베이스
+
+**진실의 기록은 PostgreSQL 한 곳이고, 로컬 CLI와 호스팅 대시보드가 같은 데이터베이스를 봅니다.**
+저장소 드라이버가 둘로 갈라진 게 아니라 **엔트리포인트가 둘**입니다 — 요청이 무엇을 뜻하는지
+정하는 라우팅·유스케이스·세션 게이트·CSRF 방어는 양쪽이 같은 코드를 씁니다.
+
+| | 로컬 (`pnpm serve`) | 호스팅 (Vercel) |
+|---|---|---|
+| 실행 | 운영자가 직접 띄우는 `node:http` 서버 | Vercel Function (`api/[...path].ts`, Node 런타임) |
+| 접근 | `127.0.0.1`(로컬호스트) | `HERALD_DEPLOYMENT_ORIGIN`에 적은 배포 주소 |
+| 검수·승인 | ○ | ○ |
+| 발송 | ○ | `HERALD_SENDS_ENABLED=true`일 때만 |
+| 에이전트 준비 단계 | ○ | ✕ (아래 §4) |
+
+호스팅 배포에 필요한 것: `DATABASE_URL`, 대시보드 계정(`HERALD_AUTH_USERNAME` /
+`HERALD_AUTH_PASSWORD_HASH`), `HERALD_SESSION_SECRET`, `HERALD_DEPLOYMENT_ORIGIN`, 그리고
+**`HERALD_TRUST_PROXY=true`**. 마지막 항목은 선택이 아니라 기동 조건입니다 — Vercel 엣지 네트워크가
+클라이언트 연결을 대신 끊기 때문에, 이 설정이 없으면 모든 요청이 "믿을 만한 주소 없음"으로 풀려
+주소별 로그인 잠금이 셀 키를 못 얻습니다. 그래서 함수가 아예 뜨지 않습니다. 값은 `.env.example`의
+호스팅 배포 절을 참고하세요.
+
+> **왜 Drive가 아니라 Postgres인가.** `HERALD_STORAGE_MODE=cloud`가 이미 있으니 Drive가 자연스러운
+> 후보처럼 보이지만, Drive는 내구성은 주고 **원자성과 잠금은 주지 않습니다.** 저장소들은 파일
+> 전체를 읽고-고쳐-쓰는 방식이고, 두 발송 원장은 인프로세스 큐(`serialWrites.ts`)와 프로세스 간
+> 파일 락(`fileLock.ts`) 두 겹에 안전성을 기대고 있는데 **서버리스에서는 두 겹 모두 증발합니다.**
+> 원장에서 행 하나가 빠지면 이미 나간 공지를 다음 실행이 한 번 더 발송합니다. Postgres는 유니크
+> 인덱스로 이 문제를 닫을 수 있고 Drive는 닫을 수 없습니다.
+
 ## 4. 할 수 없는 것
 
 이 프로젝트가 실제로 하지 않는 일은, 하는 일 만큼 분명하게 알아야 합니다.
@@ -118,9 +147,19 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
   `output/*/worksheets/batch-<타임스탬프>.md` 워크시트를 만들면, 로컬 에이전트가 그 안의 번역/변환
   섹션을 채우고 `pnpm translate:save`/`pnpm convert:save`로 저장합니다. 코드베이스 어디에도
   Anthropic/Claude API 키나 호출이 없으며, 자율적으로 번역이 이루어지는 경로는 없습니다.
-- **모든 실행은 한 명의 운영자의 로컬 머신에 한정됩니다.** `pnpm serve`가 띄우는 검수 대시보드도
-  `127.0.0.1`(로컬호스트)에만 바인딩되는 로컬 웹 서버이며, 로그인·세션·다중 사용자 개념이 없습니다.
-  공유 서버나 상시 구동되는 런타임은 없습니다.
+- **대시보드 계정은 하나뿐이고, 누가 승인했는지 남지 않습니다.** 호스팅 배포는 팀이 공유하는 단일
+  자격증명 하나로 들어갑니다(`HERALD_AUTH_USERNAME` / `HERALD_AUTH_PASSWORD_HASH`). 사용자별 계정도,
+  사용자별 감사 추적도 없습니다 — 트레이드오프를 알고 받아들인 결정입니다. 승인·발송 기록은 남지만
+  **그 행동을 한 사람이 누구인지는 기록되지 않습니다.**
+- **에이전트에게 넘기는 준비 단계는 로컬 CLI 전용입니다.** `translate:prepare` / `convert:prepare`가
+  만드는 워크시트는 로컬 에이전트가 채워야 하므로, 호스팅 엔트리포인트는 이 라우트를 아예 등록하지
+  않습니다(대시보드의 `[변환 준비]`가 그것입니다). 호스팅 쪽에서 요청을 큐에 쌓아 두는 방식은
+  보류했습니다.
+- **발송 상태 대조(reconcile)는 로컬에 남습니다.** `pnpm send:reconcile`은 운영자 쪽 크론으로 2분
+  주기로 돌아갑니다 — Vercel Hobby 플랜의 크론 상한이 하루 한 번이라 호스팅으로 옮길 수 없습니다.
+- **호스팅 대시보드의 발송은 기본적으로 닫혀 있습니다.** `HERALD_SENDS_ENABLED=true`를 명시해야
+  열립니다. 닫힌 상태에서는 화면의 `발송`/`재발송` 버튼도 함께 잠기므로, 눌러 놓고 나간 줄 아는
+  일이 생기지 않습니다.
 - **Lark는 아직 채널 포맷 대상이 아닙니다.** §6 채널 포맷은 `x` · `telegram` · `kakao` ·
   `pr_mail` 네 개만 지원합니다(`Channel` 타입). `pnpm lark:send`가 존재하지만, 이는 `--text`
   인자를 그대로 전송하는 독립적인 메시지 전송 명령일 뿐 파이프라인 콘텐츠(번역/변환/포맷 결과)와
@@ -282,8 +321,11 @@ KOL list 읽기 → X 계정 조회 → 월간 집계 → x-performance 탭에 u
   `output/publish/local/sent/`(local) 또는 Drive `sent/` 폴더(cloud, `GDRIVE_SENT_FOLDER_ID`/
   `LARK_DRIVE_SENT_FOLDER_TOKEN` 설정 시)에 저장됩니다 — 미설정이어도 발송 자체는 그대로
   진행됩니다.
-- **범위 밖.** 카카오·메일(`pr_mail`) 채널의 자동 전송, 이미지·미디어 첨부, 예약 발행, 대시보드의
-  "발송" 버튼은 아직 없습니다 — 이 명령은 CLI 전용이며 텔레그램·X 텍스트만 다룹니다.
+- **범위 밖.** 카카오·메일(`pr_mail`) 채널의 자동 전송, 이미지·미디어 첨부, 예약 발행은 아직
+  없습니다 — 이 명령이 다루는 것은 텔레그램·X 텍스트뿐입니다. **다만 "CLI 전용"은 더 이상 아닙니다:**
+  2차 검수 화면에서 방마다 바로 발송할 수 있고([capabilities.md] §2의 예외), 그 화면은 로컬과
+  호스팅 양쪽에서 뜹니다. `pnpm send:channels`는 여러 항목·여러 방을 한 번에 훑는 배치 실행으로
+  남아 있습니다.
 
 **사전 조건** — 텔레그램은 `TELEGRAM_BOT_TOKEN` + 방별 `TELEGRAM_CHAT_ID_COMMUNITY`/
 `TELEGRAM_CHAT_ID_DEV`(레거시 `TELEGRAM_CHAT_ID`는 커뮤니티방 폴백), X(Typefully)는

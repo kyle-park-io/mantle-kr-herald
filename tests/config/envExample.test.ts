@@ -62,6 +62,32 @@ describe(".env.example", () => {
     expect(unused, ".env.example lists these but no source file reads them").toEqual([]);
   });
 
+  /**
+   * The profile table at the top of the file says, per variable, which of the three run profiles
+   * (`pnpm serve` local / `pnpm serve` cloud / the Vercel deployment) actually reads it. That is a
+   * third copy of information the section headers and the per-variable tags already carry, so it is
+   * exactly the kind of thing that goes stale first: a variable added below with no row above reads
+   * as "not needed anywhere" to whoever is filling in a Vercel environment.
+   *
+   * Rows may name a variable outright or cover a family with a `*` (GDRIVE_*, LARK_DRIVE_*), which
+   * is what keeps the table readable — nine GDRIVE_ ids listed one per line would bury the six that
+   * matter.
+   */
+  it("accounts for every variable in the profile table", async () => {
+    const text = await readFile(join(REPO_ROOT, ".env.example"), "utf8");
+    const table = text.slice(0, text.indexOf("═══ 1."));
+    const documented = await readEnvVars();
+
+    const covered = (name: string): boolean => {
+      if (table.includes(name)) return true;
+      // A `PREFIX_*` row stands in for every variable starting with that prefix.
+      return [...table.matchAll(/([A-Z][A-Z0-9_]*)_\*/g)].some((m) => name.startsWith(`${m[1]}_`));
+    };
+
+    const missing = [...documented].filter((v) => !covered(v)).sort();
+    expect(missing, "these variables are documented below but appear in no profile-table row").toEqual([]);
+  });
+
   it("tags every variable REQUIRED, OPTIONAL or PICK ONE", async () => {
     const lines = (await readFile(join(REPO_ROOT, ".env.example"), "utf8")).split("\n");
     const isVar = (s: string): boolean => /^[A-Z][A-Z0-9_]*=/.test(s);

@@ -21,7 +21,8 @@ import type { ApiDeps } from "../src/adapters/web/apiHandlers";
 import { handleApi, isLoginRoute } from "../src/adapters/web/apiHandlers";
 import { refusalReason, currentSession, MAX_API_BODY_BYTES, BodyTooLargeError } from "../src/adapters/web/HttpServer";
 import { resolveClientIp, type ClientIpRequest } from "../src/adapters/web/clientIp";
-import { loadDbConfig, loadDeploymentOrigin, loadClientIpConfig } from "../src/config";
+import { loadDbConfig, loadDeploymentOrigin, loadClientIpConfig, loadStorageMode } from "../src/config";
+import type { StorageMode } from "../src/config";
 
 export const config = { runtime: "nodejs" };
 
@@ -215,6 +216,33 @@ export function assertTrustProxy(config: { trustProxy: boolean }): void {
 }
 
 /**
+ * The same refusal, for the other variable this deployment can be pointed at the wrong place with.
+ *
+ * `HERALD_STORAGE_MODE` is [REQUIRED] for every entry point, so `loadStorageMode()` already catches
+ * an unset value here — but not a wrong one, and `local` is wrong here in a way nothing downstream
+ * reports: publishing resolves to the local target (`resolveTargets`, src/cli/uploaders.ts), which
+ * writes approved documents onto this function's own ephemeral filesystem. The upload returns
+ * success, the dashboard shows a published row, and the links are dead — the files left with the
+ * instance. That is the same class of silent-degradation `assertTrustProxy` exists to refuse, so it
+ * is refused the same way, at startup, rather than left to a note in `.env.example`.
+ *
+ * Not pushed down into `loadStorageMode()` itself: `local` is the correct, documented value for
+ * `pnpm serve` (`.env.example` §1 ships it, and the whole pipeline is meant to run that way before
+ * any cloud credential exists). This is a statement about where the code is running, not about the
+ * value — which is why it lives in the hosted entry point, next to the other one.
+ */
+export function assertCloudStorage(mode: StorageMode): void {
+  if (mode !== "cloud") {
+    throw new Error(
+      `HERALD_STORAGE_MODE must be "cloud" on the hosted deployment (got "${mode}"). With "local", ` +
+        "approved documents are written to this function's ephemeral filesystem and every published " +
+        "link is dead, with nothing reporting a failure. Set HERALD_STORAGE_MODE=cloud in the Vercel " +
+        "project's environment variables — see .env.example's hosted-deployment section.",
+    );
+  }
+}
+
+/**
  * Built once per function instance, lazily on first request rather than at module load — so merely
  * IMPORTING this file (as the test file above does, to reach `createHandler`) never requires a real
  * `DATABASE_URL` or opens a real connection. `attachDatabasePool` + a fresh `pg.Pool` here, not
@@ -231,6 +259,7 @@ function getHandler(): (request: Request) => Promise<Response> {
     const dbConfig = loadDbConfig();
     const deploymentOrigin = loadDeploymentOrigin();
     assertTrustProxy(loadClientIpConfig());
+    assertCloudStorage(loadStorageMode());
 
     const pool = new Pool({ connectionString: dbConfig.url });
     attachDatabasePool(pool);
