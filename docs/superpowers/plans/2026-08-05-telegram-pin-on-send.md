@@ -21,8 +21,8 @@ Tests are given as **code — write them verbatim**. Implementation steps are gi
 - Never `unpinChatMessage` / `unpinAllChatMessages`. Existing pins are other people's.
 - `disable_notification: true` on every pin.
 - Code, comments, commit messages, CHANGELOG in **English**. Anything an operator reads on the dashboard in **Korean**.
-- Exact warning text, defined once in `TelegramBotSender` and asserted by tests in three files — keep them in sync:
-  `글은 올라갔지만 고정하지 못했습니다 (<API error>) — 봇을 이 방의 관리자로 올리고, 그룹은 '메시지 고정', 채널은 '메시지 수정' 권한을 주세요`
+- Exact warning text, defined once in `TelegramBotSender` and asserted by tests in three files — keep them in sync. (Shipped wording, after the final review moved the raw API detail behind the remedy:)
+  `글은 올라갔지만 고정하지 못했습니다 — 봇을 이 방의 관리자로 올리고, 그룹은 '메시지 고정', 채널은 '메시지 수정' 권한을 주세요 (<API error>)`
 - Run `pnpm test` (root) and `pnpm test` (root vitest also runs `web/tests/**` — there is no separate web package) (web) before each commit. Never send to a live room to test anything.
 
 ## File map
