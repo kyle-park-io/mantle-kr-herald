@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 import { createTestDb } from "../../support/testDb";
 import { createDeps } from "../../../src/app/createDeps";
-import { createHandler, assertTrustProxy } from "../../../api/[...path]";
+import { createHandler, assertTrustProxy, assertCloudStorage } from "../../../api/[...path]";
 import { signSession } from "../../../src/domain/auth/session";
 import { buildSessionCookie } from "../../../src/adapters/web/sessionCookie";
 import { MAX_API_BODY_BYTES } from "../../../src/adapters/web/HttpServer";
@@ -167,5 +167,28 @@ describe("assertTrustProxy", () => {
 
   it("passes once HERALD_TRUST_PROXY is on", () => {
     expect(() => assertTrustProxy({ trustProxy: true })).not.toThrow();
+  });
+});
+
+/**
+ * The other half of "this deployment is configured for somewhere it is not". `HERALD_STORAGE_MODE`
+ * is already [REQUIRED] everywhere, so an UNSET value is caught for both entry points by
+ * `loadStorageMode()` — but the wrong VALUE was caught by nothing. On a hosted deployment `local`
+ * resolves publishing to the local target (`resolveTargets` in src/cli/uploaders.ts), which writes
+ * approved documents onto the function's own ephemeral filesystem: the upload reports success, the
+ * links are dead, and the files are gone with the instance. Nothing in the dashboard looks wrong.
+ *
+ * Refused at startup for the same reason `assertTrustProxy` is, and deliberately NOT by making
+ * `loadStorageMode()` itself reject `local`: `pnpm serve` in local mode is the documented starting
+ * point (`.env.example` §1 ships `local`), so this is a statement about the hosted entry point, not
+ * about the value.
+ */
+describe("assertCloudStorage", () => {
+  it("refuses a hosted deployment configured for local storage", () => {
+    expect(() => assertCloudStorage("local")).toThrow(/HERALD_STORAGE_MODE/);
+  });
+
+  it("passes on cloud", () => {
+    expect(() => assertCloudStorage("cloud")).not.toThrow();
   });
 });
