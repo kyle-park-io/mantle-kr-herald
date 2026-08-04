@@ -6,43 +6,53 @@
 # gitignored and therefore invisible to `git status`. Whether the CLI falls back to `.gitignore`
 # when this file is absent is not something the deploy should depend on: state it here instead.
 #
+# ⚠ EVERY DIRECTORY PATTERN HERE IS ANCHORED WITH A LEADING `/`, and `tests/deploy/vercelignore.test.ts`
+# fails the build if one is not. This is gitignore syntax: an unanchored `translation/` matches a
+# directory of that name AT ANY DEPTH. The first version of this file was unanchored, which quietly
+# excluded `src/domain/translation/` and `src/domain/conversion/` — the function then deployed
+# "successfully" and every API request died with
+# `ERR_MODULE_NOT_FOUND: /var/task/src/adapters/db/createDb`, because the bundler had nothing to
+# inline. The static SPA still served a 200, so the deployment looked fine from the outside.
+#
 # `vercel.json` is uploaded regardless of what this file says — the platform needs it to build.
 
-# --- credentials. The reason this file exists ---
+# --- credentials. The reason this file exists. Unanchored on purpose: an `.env` at any depth is
+#     the same mistake wherever it is.
 .env
 .env.*
-keys/
+/keys/
 
 # --- pipeline data. The database is the record of truth (docs/ko/env.md); `output/` is only the
 #     import/export format for `pnpm db:export` and `pnpm db:import`, both of which run locally.
-output/
+/output/
 
-# --- steering corpus. Read through `FileConversionConfig`/`JsonGlossaryStore`, which `createDeps`
-#     builds ONLY under `if (conversionEnabled)` — false on the hosted route set, where
-#     `convert-prepare` is a 404 (src/app/createDeps.ts:356). The deployment cannot reach these.
-conversion/
-translation/
+# --- steering corpus at the REPO ROOT (not `src/domain/conversion`, which the function needs).
+#     Read through `FileConversionConfig`/`JsonGlossaryStore`, which `createDeps` builds ONLY under
+#     `if (conversionEnabled)` — false on the hosted route set, where `convert-prepare` is a 404
+#     (src/app/createDeps.ts:356). The deployment cannot reach these.
+/conversion/
+/translation/
 
-# --- installed on Vercel from the lockfile; uploading them wastes the whole upload ---
+# --- installed on Vercel from the lockfile; uploading them wastes the whole upload. Unanchored on
+#     purpose: a nested `node_modules/` is just as pointless to ship.
 node_modules/
-web/node_modules/
 
 # --- build artefacts. `buildCommand: pnpm build:web` regenerates `web/dist` on Vercel; shipping a
 #     local copy would let a stale bundle win over the one the platform just built.
-web/dist/
-.vercel/
+/web/dist/
+/.vercel/
 
 # --- not part of the running deployment ---
-tests/
-web/tests/
-docs/
-design/
-.github/
-.playwright-mcp/
-.claude/
-.agents/
-.superpowers/
+/tests/
+/web/tests/
+/docs/
+/design/
+/.github/
+/.playwright-mcp/
+/.claude/
+/.agents/
+/.superpowers/
+/vitest.config.ts
+/vitest.probe.config.ts
 *.md
 *.xlsx
-vitest.config.ts
-vitest.probe.config.ts
