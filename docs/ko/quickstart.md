@@ -18,7 +18,14 @@ Drive·Sheet) 자격 증명 없이 파이프라인을 그대로 실행할 수 �
 **필수**
 
 - Node.js + pnpm
+- **Postgres** — 자격 증명이 아니라 파이프라인의 기록 원본입니다. 아래 §1.5 참고
 - 번역·변환·채널 포맷의 에이전트 단계를 위한 [Claude Code](https://claude.com/claude-code)
+
+> **"모든 자격 증명은 선택"에 Postgres는 포함되지 않습니다.** `HERALD_STORAGE_MODE=local`의
+> "local"은 **발행 산출물이 어디로 가느냐**(`output/` vs Drive)이지, 데이터베이스를 안 쓴다는
+> 뜻이 아닙니다. 번역·변환·렌더링·발송 이력 같은 **원장**은 Postgres에 있고, 로컬 모드에서도
+> 그렇습니다. 24개 명령이 데이터베이스를 엽니다 — `DATABASE_URL` 없이 도는 건
+> `config:init`·`glossary`·`archive`·`clean`·`tm:promote`·`auth:hash` 여섯 개뿐입니다.
 
 **선택 (쓰려는 소스/채널의 것만)**
 
@@ -28,20 +35,61 @@ Drive·Sheet) 자격 증명 없이 파이프라인을 그대로 실행할 수 �
 | Lark 앱 | Lark 수집 (`pnpm collect-lark`), Lark 메시지 전송 (`pnpm lark:send`) | [`setup/lark.md`](setup/lark.md) |
 | Google OAuth | Drive 업로드, Google Sheet 데이터 허브 | [`setup/google-drive.md`](setup/google-drive.md), [`setup/README.md`](setup/README.md) |
 
+## 1.5. Postgres 하나 띄우기
+
+이미 쓰는 Postgres가 있으면 그걸 써도 됩니다. 없으면 도커 한 줄이 제일 빠릅니다:
+
+```bash
+docker run -d --name herald-db \
+  -e POSTGRES_PASSWORD=herald -e POSTGRES_DB=herald \
+  -p 5432:5432 postgres:16-alpine
+```
+
+그리고 `.env`에 두 줄:
+
+```
+DATABASE_URL=postgres://postgres:herald@127.0.0.1:5432/herald
+HERALD_DB_ENV=development
+```
+
+**테이블은 직접 만들지 않습니다.** 빈 데이터베이스에 한 번만:
+
+```bash
+pnpm db:import --yes
+```
+
+`--yes` 없이 돌리면 무엇이 들어갈지 미리 보여주고 아무것도 쓰지 않습니다. 새로 클론했다면
+`output/`이 비어 있으니 이 명령은 **스키마만 만들고 끝납니다** — 가져올 게 없으니까요.
+멱등이라 여러 번 돌려도 됩니다.
+
+> 이 단계를 건너뛰면 `pnpm doctor`가
+> `✗ Database — Schema not applied — relation "deliveries" does not exist`로 알려주고,
+> 고치는 명령까지 같이 출력합니다. `pnpm status`는 그냥 실패합니다.
+
+`HERALD_DB_ENV`는 추론되지 않습니다 — 접속 문자열만 봐서는 내 노트북 DB인지 팀 공용 DB인지
+구분할 수 없어서, 어느 쪽인지 **직접 말해야** 합니다. 로컬이면 `development`이고, 그러면
+대시보드 상단에 `개발 데이터베이스` 배너가 뜹니다.
+
 ## 2. 5분 시작
 
 ```bash
 pnpm install
 cp .env.example .env
+# .env를 열어 §1.5의 DATABASE_URL / HERALD_DB_ENV 두 줄을 채웁니다
+pnpm db:import --yes    # 스키마 생성 (빈 DB에 한 번)
 pnpm config:init
-pnpm doctor
+pnpm doctor             # 전부 ✓/⚠ 여야 하고, ✗ 는 없어야 정상입니다
 pnpm status
 ```
 
 - `pnpm install` — 의존성 설치.
 - `cp .env.example .env` — 환경변수 스켈레톤 복사. 기본값 `HERALD_STORAGE_MODE=local`이라
-  그대로 두면 `drive:init`/`sheet:init`/`targets:list`/`history:record`/`impressions:record`는 스킵되지만 나머지는
+  그대로 두면 `drive:init`/`sheet:init`/`targets:list`/`history:record`/`impressions:record`/`metrics:record`/`kol-telegram:record`는 스킵되지만 나머지는
   전부 동작합니다 — `pnpm drive:publish`도 포함해서, 결과물은 `output/publish/local/`에 쌓입니다.
+  **`DATABASE_URL`은 비워두면 안 됩니다** — `pnpm doctor`가 `✗ Database`로 표시하고
+  `pnpm status`는 아예 실패합니다.
+- `pnpm db:import --yes` — 스키마를 만듭니다(그리고 `output/`에 뭔가 있으면 가져옵니다).
+  새 클론이면 `output/`이 비어 있어서 스키마만 생깁니다.
 - `pnpm config:init` — `translation/*.example.*`, `conversion/*.example.*`를 실제 파일
   (`translation/glossary.json` 등)로 복사합니다. 이미 있는 파일은 절대 덮어쓰지 않습니다.
 - `pnpm doctor` — 저장 모드와 스티어링 설정 상태를 오프라인으로 점검합니다.

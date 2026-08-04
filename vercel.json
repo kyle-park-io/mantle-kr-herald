@@ -2,6 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "pnpm build:web",
   "outputDirectory": "web/dist",
+  "regions": ["sin1"],
   "git": {
     "deploymentEnabled": false
   }
