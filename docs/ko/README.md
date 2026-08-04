@@ -10,6 +10,7 @@
 | **번역·문구를 검수하고 승인만 하면 된다** | [`review.md`](review.md) | **필요 없음** |
 | 내 컴퓨터에 설치해서 돌려보고 싶다 | [`quickstart.md`](quickstart.md) | 필요 |
 | 팀 계정으로 매주 운영한다 | [`team-runbook.md`](team-runbook.md) | 필요 |
+| **호스팅 대시보드를 재배포하거나 비밀번호를 바꿔야 한다** | [`deploy.md`](deploy.md) | 필요 |
 | **팀 용어집·문체 규칙을 받아야 한다** | [`setup/steering.md`](setup/steering.md) | 필요 |
 | 자격 증명(Lark·Google)을 발급해야 한다 | [`setup/`](setup/) | 필요 |
 | 어떤 명령이 어떤 파일을 건드리는지 확인해야 한다 | [`artifacts.md`](artifacts.md) | 필요 |
@@ -26,6 +27,8 @@ ko/
   review.md          검수 가이드 — 브라우저 화면에서 읽고·고치고·승인하기
   quickstart.md      빠른 시작 — 자격 증명 없이 로컬 모드로 5분 안에
   team-runbook.md    팀 운영 매뉴얼 — 주간 루틴, 클라우드 모드, 사고 대응
+  deploy.md          배포 운영 — 이미 올라간 뒤의 재배포·비밀번호 교체·발송 열기·롤백,
+                     "배포가 정말 살아 있는지" 확인하는 법, 배포 전에는 안 보이는 함정
   artifacts.md       산출물 지도 — 명령별 입출력 계약, 보존 정책
   env.md             환경변수 레퍼런스 — 기본값, 안 넣었을 때 어디서 멈추고 무엇이
                      스킵되는지, 조용히 축소되는 구간(cloud 모드)은 어디인지
@@ -36,6 +39,8 @@ ko/
     steering.md        스티어링 설정(용어집·문체·변환 규칙) 받기 — git에 없음
     google-drive.md    Google OAuth·서비스 계정·폴더 ID
     lark.md            Lark 앱·스코프·Drive 폴더 token
+    channels.md        텔레그램·X 발송 채널
+    vercel.md          호스팅 대시보드를 **처음 한 번** 세우는 절차 → 그 뒤는 deploy.md
 ```
 
 ## 규칙
