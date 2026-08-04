@@ -36,6 +36,14 @@ const distDir = join(REPO_ROOT, "web", "dist");
 
 // Same fail-fast order the real entry point uses, and for the same reason: a rehearsal that quietly
 // ran without the per-IP lockout would be rehearsing a deployment nobody is going to ship.
+//
+// `getHandler()`'s other startup refusal, `assertCloudStorage`, is deliberately NOT mirrored here —
+// this is the second place this file knowingly differs, alongside the http origin above. The
+// rehearsal runs against a disposable local Postgres with no cloud credentials at all
+// (DEPLOY.md §5-1), which is the whole point: it exercises the hosted ROUTE SET without touching the
+// team's Drive. Asserting cloud storage here would make that impossible. What the assertion protects
+// — approved documents landing on an ephemeral filesystem — cannot happen to a rehearsal that is
+// itself throwaway.
 const dbConfig = loadDbConfig();
 assertTrustProxy(loadClientIpConfig());
 
