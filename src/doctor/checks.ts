@@ -195,3 +195,38 @@ export function quotaResult(
     detail: `publishing quota ${q.remaining} left of ${q.used + q.remaining} on the account${resets}`,
   };
 }
+
+/**
+ * Whichever output root is actually in effect — the invariant `src/paths.ts`'s OUTPUT_DIR doc
+ * comment names directly: "a non-default root is never silent." Pulled out of `doctor.ts` (which
+ * has no test coverage of its own — it's a top-level script with real side effects at import time)
+ * so this can be asserted and mutation-tested the same way every other check in this file already
+ * is, rather than shipping as an inline `results.push({...})` nothing ever exercises. Always `ok`:
+ * this states a fact, it never fails or warns on its own.
+ */
+export function outputRootResult(outputDir: string, override: string | undefined): CheckResult {
+  return {
+    name: "Output root",
+    status: "ok",
+    detail: override ? `${outputDir} (HERALD_OUTPUT_DIR override)` : `${outputDir} (default)`,
+  };
+}
+
+/**
+ * `deploy/herald-notify-failure.sh` needs BOTH `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID_OPS` to
+ * post anything at all — checking only one would let this say "configured — will post here" while
+ * the hook still silently sends nothing for lack of the other. Warn, never fail: `pnpm doctor`
+ * itself never talks to Telegram, so missing either one doesn't stop doctor from being useful; it
+ * just means the watch scheduler's `OnFailure=` hook will exit 0 without telling anyone until both
+ * are set.
+ */
+export function telegramOpsChatResult(botToken: string | undefined, chatIdOps: string | undefined): CheckResult {
+  const configured = Boolean(botToken) && Boolean(chatIdOps);
+  return {
+    name: "Telegram ops chat (watch failures)",
+    status: configured ? "ok" : "warn",
+    detail: configured
+      ? "configured — deploy/herald-notify-failure.sh will post here"
+      : "not set — pnpm watch's OnFailure hook will run silently until TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID_OPS are both set",
+  };
+}

@@ -22,7 +22,7 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * `translate:prepare`/`translate:align` always hand `WatchTick` an **absolute** worksheet path:
- * `paths.translationsWorksheets` (`src/paths.ts`) is built from `REPO_ROOT`, which is resolved from
+ * `paths.translationsWorksheets` (`src/paths.ts`) is built from `OUTPUT_DIR`, which is resolved from
  * this module's own file location via `import.meta.url` — never from `process.cwd()`. Claude Code's
  * `Read`/`Edit` permission rules treat a bare `path/**` pattern as relative to the *spawned
  * process's* cwd (confirmed against Claude Code's own permission-rule docs,
@@ -39,8 +39,20 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
  * still needs `pnpm` to run from the repo root to find the `translate:save` script — that's
  * `pnpm`'s own script resolution, unrelated to Claude Code's permission system, and this change
  * doesn't affect it.
+ *
+ * This reasoning predates `OUTPUT_DIR` gaining its `HERALD_OUTPUT_DIR` override (Task 5): the
+ * worksheets directory used to always sit under `REPO_ROOT`, the same directory `spawnCapture.ts`
+ * pins as the child's `cwd`. Once the watch scheduler sets `HERALD_OUTPUT_DIR=%h/.herald/output`,
+ * `paths.translationsWorksheets` moves *outside* that cwd entirely — and `--allowedTools` alone
+ * does not reach there: `claude --help` documents a separate `--add-dir <directories...>` flag,
+ * "Additional directories to allow tool access to", which is what actually widens the addressable
+ * workspace boundary. An allow *rule* only scopes what is permitted once a path is already
+ * reachable; without `--add-dir` naming this directory, every read/write the rule allows is denied
+ * before the rule is ever consulted — so both the rule (below) and the flag (`fill()`, at the
+ * bottom of this file) are required, and neither substitutes for the other.
  */
-const ABSOLUTE_WORKSHEETS_DIR = `/${paths.translationsWorksheets}`;
+const WORKSHEETS_DIR = paths.translationsWorksheets;
+const ABSOLUTE_WORKSHEETS_DIR = `/${WORKSHEETS_DIR}`;
 
 /**
  * Deliberately narrow: read and edit only inside the worksheets directory, and the only shell
@@ -244,6 +256,13 @@ export class ClaudeCodeAgent implements WorksheetAgent {
       ...ALLOWED_TOOLS,
       "--disallowedTools",
       ...DISALLOWED_TOOLS,
+      // Widens the workspace boundary itself — separate from, and required in addition to, the
+      // Read/Edit rules above. See WORKSHEETS_DIR's doc comment for why: once HERALD_OUTPUT_DIR
+      // moves the worksheets directory outside spawnCapture.ts's cwd (REPO_ROOT), the allow rules
+      // alone can no longer reach it. Plain directory path, not the rule syntax's "//" form —
+      // `--add-dir` takes real filesystem paths.
+      "--add-dir",
+      WORKSHEETS_DIR,
     ];
 
     // A wedged `claude` process must not hang the tick forever — systemd would then see the unit

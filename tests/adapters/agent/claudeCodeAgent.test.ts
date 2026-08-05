@@ -70,6 +70,24 @@ describe("ClaudeCodeAgent", () => {
     expect(seen).toContain(`Edit(/${paths.translationsWorksheets}/**)`);
   });
 
+  it("widens the workspace to the worksheets directory with --add-dir", async () => {
+    let seen: string[] = [];
+    const agent = new ClaudeCodeAgent(async (_cmd, args) => {
+      seen = args;
+      return { code: 0, stdout: VALID_ENVELOPE, stderr: "" };
+    });
+
+    await agent.fill(`${paths.translationsWorksheets}/batch-X.md`, "translation");
+
+    // Required in addition to (not instead of) the Read/Edit rules: once HERALD_OUTPUT_DIR moves
+    // the worksheets directory outside the spawned process's cwd (REPO_ROOT), an allow rule alone
+    // cannot reach it — --add-dir is the flag that widens the addressable workspace itself. Plain
+    // path, no "//" prefix: that rule-syntax quirk doesn't apply to a directory argument.
+    const addDirIndex = seen.indexOf("--add-dir");
+    expect(addDirIndex).toBeGreaterThanOrEqual(0);
+    expect(seen[addDirIndex + 1]).toBe(paths.translationsWorksheets);
+  });
+
   it("succeeds on a clean envelope: exit 0, is_error false, no permission denials", async () => {
     const agent = new ClaudeCodeAgent(ok(VALID_ENVELOPE));
     const result = await agent.fill("w.md", "translation");

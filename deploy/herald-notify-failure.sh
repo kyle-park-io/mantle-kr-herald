@@ -26,12 +26,28 @@ UNIT="herald-watch.service"
 # HERALD_DB_ENV (see herald-watch.service's own comment). This unit is a separate process from
 # `pnpm watch`, so nothing hands it that environment automatically; it has to read the file itself.
 #
-# Reads the two lines it needs with grep+cut rather than `source`-ing the whole file: .env is
-# dotenv-format, not shell syntax, and this script has no business executing the couple hundred
-# other lines in it (nor risking a value that isn't valid shell) just to read two variables.
+# Reads the line it needs directly rather than `source`-ing the whole file: .env is dotenv-format,
+# not shell syntax, and this script has no business executing the couple hundred other lines in it
+# just to read two variables. Handles the three ways this can otherwise disagree with how Node's
+# own `--env-file` parses the same file (verified against synthetic examples, not assumed):
+#   - `KEY="value"` / `KEY='value'` — Node strips one matching pair of surrounding quotes; a bare
+#     grep+cut would hand the quotes themselves to curl as part of the token/chat id.
+#   - `export KEY=value` — Node accepts the shell-style `export ` prefix; a plain `^KEY=` anchor
+#     would not match the line at all and silently read as unset.
+#   - a CRLF line ending — Node trims it; a bare grep+cut would leave a trailing \r baked into the
+#     value (invisible in a terminal, but a literal byte in the HTTP request built below).
+# Not attempted: nested/escaped quotes, multi-line values, variable interpolation — none of which
+# this repo's own .env uses for these two variables, and full dotenv-parity is not the goal here.
 read_env_var() {
   [ -f "$ENV_FILE" ] || return 0
-  grep -m1 "^$1=" "$ENV_FILE" 2>/dev/null | cut -d '=' -f2-
+  local line
+  line="$(grep -m1 -E "^[[:space:]]*(export[[:space:]]+)?$1=" "$ENV_FILE" 2>/dev/null)" || return 0
+  line="${line%$'\r'}"    # CRLF line ending
+  line="${line#*=}"       # strip the "[export ]KEY=" prefix — cuts at the first '=' in the line
+  if [[ "$line" == \"*\" && "$line" == *\" ]] || [[ "$line" == \'*\' && "$line" == *\' ]]; then
+    line="${line:1:${#line}-2}"    # one matching pair of surrounding quotes, same as Node's parser
+  fi
+  printf '%s' "$line"
 }
 
 TELEGRAM_BOT_TOKEN="$(read_env_var TELEGRAM_BOT_TOKEN)"
@@ -46,13 +62,16 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
   # -4: this machine's IPv6 route to api.telegram.org is known broken while the AAAA record still
   # resolves (see src/cli/preferIpv4.ts) — curl itself is unaffected by that bug, but there is no
   # reason to let Happy Eyeballs race a dead route on every failure notice. -m 10: a hung request
-  # here must not hold the unit open; -fsS: fail on HTTP errors, silent otherwise, but still let
-  # stderr through for `journalctl` to capture on a genuine failure.
+  # here must not hold the unit open; -fsS: fail (non-zero exit) on an HTTP error, silent on
+  # stdout otherwise, but -S still prints the error to stderr — deliberately NOT redirected to
+  # /dev/null (a 2>&1 here would make -S pointless), so a 401 on a stale token, a 400 on a bad chat
+  # id, or any other Telegram-side rejection lands in `journalctl --user -u
+  # herald-notify-failure.service` instead of vanishing along with the message that never sent.
   curl -4 -fsS -m 10 \
     -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
     -H "Content-Type: application/json" \
     -d "$(printf '{"chat_id":"%s","text":"%s"}' "$TELEGRAM_CHAT_ID_OPS" "$TEXT")" \
-    >/dev/null 2>&1 || true
+    >/dev/null || true
 fi
 
 exit 0
