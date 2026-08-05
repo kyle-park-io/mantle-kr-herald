@@ -296,7 +296,27 @@ git commit -m "feat(watch): sequence the translate and align passes"
   `run: pnpm translate:save --id <id> --file <korean.txt> [--approve]`
   as its closing line (`src/cli/translate-prepare.ts:57`), and the worksheet carries similar guidance. An unattended agent reading its own tooling's instructions is being actively invited to approve. Say plainly that a human performs 1차 검수 and the agent never approves. Consider also excluding `--approve` from the `--allowedTools` Bash pattern, so the allowlist enforces what the prompt asks for.
 - A non-zero exit → `{ ok: false }` with `stderr` (truncated) as the detail.
-- Exit 0 with **unparseable** stdout → `{ ok: false }`. Do not treat it as success. This is the single most important behaviour in the file: a crashed agent that still exits 0 would otherwise be recorded as a completed translation pass.
+- Exit 0 with **unparseable** stdout → `{ ok: false }`. Do not treat it as success. A crashed agent that still exits 0 would otherwise be recorded as a completed translation pass.
+
+`--output-format json` emits a single-line object. Captured from a real run on this machine — these
+are the fields that matter, not a guess:
+
+```json
+{"is_error":false,"subtype":"success","type":"result","result":"ok",
+ "stop_reason":"end_turn","terminal_reason":"completed","permission_denials":[],
+ "num_turns":1,"session_id":"c910…","total_cost_usd":0.21331}
+```
+
+Three success conditions, all required:
+
+- **exit code 0**
+- **`is_error === false`**
+- **`permission_denials` is empty** — this one is not optional and is easy to miss. If the
+  `--allowedTools` allowlist is too narrow to let the agent run `translate:save`, the run still
+  exits 0 with `is_error: false`; the only trace is an entry here. Treating that as success gives
+  exactly the failure this whole feature is built to avoid: a scheduler reporting green forever
+  while saving nothing. A non-empty `permission_denials` is a failure, and its contents belong in
+  the detail so the Telegram message names the tool that was blocked.
 - The prompt text lives in this file as a named constant, so a reviewer can read what the unattended agent is told without running anything.
 
 Consult `claude --help` (under a pty: `script -qec 'stty cols 200; claude --help' /dev/null`) for the exact spelling of every flag before writing them.
