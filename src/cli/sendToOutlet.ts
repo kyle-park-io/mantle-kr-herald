@@ -102,6 +102,18 @@ export interface SendToOutletDeps {
 }
 
 /**
+ * `resend` re-posts to a room the ledger already marks `sent` (see the doc comment on the returned
+ * function below); `pin` asks the sender to pin what it posts (`ChannelSender.send`'s own `pin`).
+ * Grouped into one options object rather than left as adjacent positional booleans — two booleans in
+ * a row on a function that posts to a live room is the defect a caller flips silently, and a third
+ * flag here would only make that worse.
+ */
+export interface SendOptions {
+  resend?: boolean;
+  pin?: boolean;
+}
+
+/**
  * Builds the board's per-row [발송]. Pulled out of `serve.ts` so the resend restore below — the
  * invariant a previous PR broke by adding an early return between the ledger `remove` and the
  * restores — is something a test can drive, rather than something only reachable by starting the
@@ -115,7 +127,7 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
   itemId: string,
   type: string,
   outletId: string,
-  resend?: boolean,
+  opts?: SendOptions,
 ) => Promise<{ sent: number; failed: number; error?: string }> {
   const {
     formattingStore,
@@ -406,7 +418,8 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
    * exactly as cheap as the `add()` it replaces (see that method's doc for why a naive
    * DELETE-then-INSERT would have been a regression, not a simplification, on `ordinal`).
    */
-  return async (itemId: string, type: string, outletId: string, resend = false): Promise<{ sent: number; failed: number; error?: string }> => {
+  return async (itemId: string, type: string, outletId: string, opts: SendOptions = {}): Promise<{ sent: number; failed: number; error?: string }> => {
+    const { resend = false, pin } = opts;
     const outlet = outletById(outletId);
     if (!outlet) return { sent: 0, failed: 0, error: `unknown outlet: ${outletId}` };
     if (!deliveredByChannelSender(outlet) || !isSendableChannel(outlet.channel)) {
@@ -469,7 +482,7 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
         // the ledger then records the room as `sent` and a `sent` row can never be unmarked.
         overrideStore,
         makeHeadroomReader([channel], deliveryLedger, articleLedger),
-      ).run({ targets: [channel], ids: new Set([itemId]), types: [type], outletIds: [outletId] });
+      ).run({ targets: [channel], ids: new Set([itemId]), types: [type], outletIds: [outletId], pin });
 
       // A quota refusal is not a plain zero-send: the operator needs to know the account is at its
       // ceiling, not that this row failed to send for some ordinary reason.
@@ -497,6 +510,14 @@ export function makeSendToOutlet(deps: SendToOutletDeps): (
           : "no approved copy to send";
         if (pending) await deliveryLedger.replace(pending.previous, pending.restore); // nothing went out — see `pending`
         return { sent: 0, failed: result.failed, error: `${outlet.label} (${outlet.id}): ${reason}` };
+      }
+      // A pin that did not take is not a failed send — the post is live and the ledger row is
+      // written — so it surfaces as `error` on an otherwise-successful result rather than turning
+      // `sent` into 0. Same prefix and join as `failures` above, for the same reason: one room, one
+      // outlet name worth repeating per line.
+      if (result.warnings.length > 0) {
+        const error = result.warnings.map((w) => `${outlet.label} (${outlet.id}): ${w.error}`).join(" · ");
+        return { sent: result.sent, failed: result.failed, error };
       }
       return { sent: result.sent, failed: result.failed };
     } catch (err) {

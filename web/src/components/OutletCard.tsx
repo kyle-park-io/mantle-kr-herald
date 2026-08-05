@@ -57,6 +57,15 @@ const stampFull = (iso?: string): string | undefined => {
 const SAVE_FIRST = "편집 내용을 먼저 저장하세요";
 const APPROVED_LOCK = "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요.";
 
+/**
+ * The pin checkbox offered on a Telegram `auto` room's 발송/재발송 confirm (see `pinOffered` in
+ * `Row` below). The hint names the one failure an operator would otherwise only meet AFTER the post
+ * already went out — a pin failure does not fail the send (`post()`'s `reply.error` path), so
+ * without this the bot's missing admin rights would surface as a surprise error on an already-live
+ * post instead of something known going in.
+ */
+const PIN_TOGGLE = { label: "핀으로 고정하기", hint: "봇이 이 방의 관리자여야 고정할 수 있습니다." };
+
 /** The `_paste` segments of an emission set, or `null` when they have not loaded. */
 const pasteSegments = (em: Emissions | undefined, channel: BoardGroup["channel"]): string[] | null =>
   em?.[PASTE_DESTINATION[channel]]?.segments.map((s) => s.text) ?? null;
@@ -707,6 +716,14 @@ function Row(props: {
   const rowPieces = props.segments ?? [row.text];
 
   /**
+   * Only a Telegram bot can pin what it just posted. An X post is published through Typefully, with
+   * nothing on this side to pin; a `manual` room has no bot in it at all, only a human pasting — and
+   * in practice never reaches `askSend`/`askResend` to begin with (see the `row.delivery === "auto"`
+   * branch below), so this is a second, explicit gate rather than reliance on that routing alone.
+   */
+  const pinOffered = group.channel === "telegram" && row.delivery === "auto";
+
+  /**
    * `quotaMayHaveChanged` defaults to false: every other caller of `apply` (전달함, 저장, 승인,
    * 되돌리기, below) is a ledger/override mutation that never touches Typefully, and refetching the
    * quota on each of those would be a wasted call on the smallest rate-limit bucket for no reason —
@@ -717,11 +734,11 @@ function Row(props: {
     props.onBoard(reply.board, quotaMayHaveChanged);
   };
 
-  const post = (resend: boolean) =>
+  const post = (resend: boolean, pin: boolean) =>
     run(async () => {
       let reply: SendReply;
       try {
-        reply = await api.sendOutlet(itemId, type, row.outletId, resend);
+        reply = await api.sendOutlet(itemId, type, row.outletId, { resend, pin });
       } catch (e) {
         // A refusal usually means the server already knows something this screen does not
         // ("already delivered to this room" — someone ran `send:channels` in a terminal). Repaint
@@ -746,7 +763,8 @@ function Row(props: {
       lines: ["실제 채널에 올라갑니다. 되돌릴 수 없습니다."],
       pieces: rowPieces,
       confirmLabel: "발송",
-      onConfirm: () => void post(false),
+      toggle: pinOffered ? PIN_TOGGLE : undefined,
+      onConfirm: ({ toggled }) => void post(false, toggled),
     });
 
   /**
@@ -797,7 +815,8 @@ function Row(props: {
       }[resendKind(row, group.channel)],
       pieces: rowPieces,
       confirmLabel: "다시 발송",
-      onConfirm: () => void post(true),
+      toggle: pinOffered ? PIN_TOGGLE : undefined,
+      onConfirm: ({ toggled }) => void post(true, toggled),
     });
 
   return (

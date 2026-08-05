@@ -144,7 +144,7 @@ describe("makeSendToOutlet — the resend ledger restore", () => {
       headroom: quotaHeadroom(0), // needs 1, has 0
     }));
 
-    const result = await sendToOutlet("x:1", "x", "x-post", true);
+    const result = await sendToOutlet("x:1", "x", "x-post", { resend: true });
 
     expect(result.sent).toBe(0);
     expect(result.failed).toBe(0);
@@ -169,7 +169,7 @@ describe("makeSendToOutlet — the resend ledger restore", () => {
       senders: () => ({ telegram: sender, x: undefined }),
     }));
 
-    const result = await sendToOutlet("x:2", "announcement", "tg-community", true);
+    const result = await sendToOutlet("x:2", "announcement", "tg-community", { resend: true });
 
     expect(result.sent).toBe(0);
     expect(result.error).toContain("no approved copy to send");
@@ -193,7 +193,7 @@ describe("makeSendToOutlet — the resend ledger restore", () => {
       senders: () => ({ telegram: throwingSender("telegram-bot"), x: undefined }),
     }));
 
-    const result = await sendToOutlet("x:3", "announcement", "tg-community", true);
+    const result = await sendToOutlet("x:3", "announcement", "tg-community", { resend: true });
 
     expect(result.sent).toBe(0);
     expect(result.failed).toBe(1);
@@ -216,7 +216,7 @@ describe("makeSendToOutlet — the resend ledger restore", () => {
       recorder: async () => { throw new Error("recorder boom"); },
     }));
 
-    const result = await sendToOutlet("x:5", "announcement", "tg-community", true);
+    const result = await sendToOutlet("x:5", "announcement", "tg-community", { resend: true });
 
     expect(result.sent).toBe(0);
     expect(result.failed).toBe(1);
@@ -236,7 +236,7 @@ describe("makeSendToOutlet — the resend ledger restore", () => {
       senders: () => ({ telegram: okSender("telegram-bot", "new-post", "https://t.me/new"), x: undefined }),
     }));
 
-    const result = await sendToOutlet("x:4", "announcement", "tg-community", true);
+    const result = await sendToOutlet("x:4", "announcement", "tg-community", { resend: true });
 
     expect(result.sent).toBe(1);
     expect(result.error).toBeUndefined();
@@ -295,7 +295,7 @@ describe("makeSendToOutlet — guards that return before any send", () => {
       deliveryLedger: fakeDeliveryLedger([]), // nothing ledgered for this room at all
       senders: () => ({ telegram: { name: "t", send: async () => { sends += 1; return {}; } }, x: undefined }),
     }));
-    const result = await sendToOutlet("x:1", "announcement", "tg-community", true);
+    const result = await sendToOutlet("x:1", "announcement", "tg-community", { resend: true });
     expect(result).toEqual({
       sent: 0, failed: 0,
       error: `${outlet.label} (${outlet.id}): nothing has been sent to this room yet`,
@@ -429,7 +429,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => ({ state: "published", xUrl: "https://x.com/a/status/777", xId: "777" }));
     const { sendToOutlet, counter } = sendableX("x:6", ledger, lookup.lookup);
 
-    const result = await sendToOutlet("x:6", "x", "x-post", true);
+    const result = await sendToOutlet("x:6", "x", "x-post", { resend: true });
 
     expect(counter.sends).toBe(0); // THE assertion: the original is live, so nothing may go out
     expect(result.sent).toBe(0);
@@ -445,7 +445,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
     const { sendToOutlet, counter } = sendableX("x:7", ledger, lookup.lookup);
 
-    const result = await sendToOutlet("x:7", "x", "x-post", true);
+    const result = await sendToOutlet("x:7", "x", "x-post", { resend: true });
 
     expect(lookup.cancels).toEqual(["draft-abc"]); // the ORIGINAL draft id, not the new one
     expect(result.sent).toBe(1);
@@ -459,7 +459,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), false);
     const { sendToOutlet, counter } = sendableX("x:8", ledger, lookup.lookup);
 
-    const result = await sendToOutlet("x:8", "x", "x-post", true);
+    const result = await sendToOutlet("x:8", "x", "x-post", { resend: true });
 
     expect(counter.sends).toBe(0); // THE assertion: the original may still publish
     expect(result.sent).toBe(0);
@@ -477,7 +477,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
     const { sendToOutlet, counter } = sendableX("x:10", ledger, lookup.lookup, quotaSequence([9, 10]));
 
-    const result = await sendToOutlet("x:10", "x", "x-post", true);
+    const result = await sendToOutlet("x:10", "x", "x-post", { resend: true });
 
     expect(counter.sends).toBe(0); // THE assertion: the original is live, a resend is the double post
     expect(result.sent).toBe(0);
@@ -526,7 +526,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
     const { sendToOutlet, counter } = sendableX("x:16", ledger, lookup.lookup, quotaSequence([9, 10], 3));
 
-    const result = await sendToOutlet("x:16", "x", "x-post", true);
+    const result = await sendToOutlet("x:16", "x", "x-post", { resend: true });
 
     expect(counter.sends).toBe(0); // ambiguous still refuses — a resend is the irreversible move
     expect(result.error).toContain("게시됐을 수 있습니다"); // hedged — the sole-draft case says "보입니다"
@@ -552,7 +552,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => { q.publish(); return { state: "scheduled" }; }, true);
     const { sendToOutlet, counter } = sendableX("x:14", ledger, lookup.lookup, q.headroom);
 
-    const result = await sendToOutlet("x:14", "x", "x-post", true);
+    const result = await sendToOutlet("x:14", "x", "x-post", { resend: true });
 
     expect(counter.sends).toBe(0); // THE assertion: it published during the lookup, so nothing may go out
     expect(result.error).toContain("취소하는 사이에 원본이 게시된 것으로 보입니다");
@@ -574,7 +574,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
       q.publish(); // the counter catches up during the wait, which is the whole point of waiting
     });
 
-    const result = await sendToOutlet("x:15", "x", "x-post", true);
+    const result = await sendToOutlet("x:15", "x", "x-post", { resend: true });
 
     expect(counter.sends).toBe(0); // THE assertion: without the wait this reads as a clean cancel
     expect(result.error).toContain("취소하는 사이에 원본이 게시된 것으로 보입니다");
@@ -591,7 +591,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
     const { sendToOutlet, counter } = sendableX("x:17", ledger, lookup.lookup, quotaSequence([undefined, 9]));
 
-    const result = await sendToOutlet("x:17", "x", "x-post", true);
+    const result = await sendToOutlet("x:17", "x", "x-post", { resend: true });
 
     expect(counter.sends).toBe(0);
     expect(result.sent).toBe(0);
@@ -608,7 +608,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     // nothing to look up, so it does not read the quota at all.
     const { sendToOutlet, counter } = sendableX("x:11", ledger, lookup.lookup, quotaSequence([9, undefined, 9]));
 
-    const result = await sendToOutlet("x:11", "x", "x-post", true);
+    const result = await sendToOutlet("x:11", "x", "x-post", { resend: true });
 
     expect(counter.sends).toBe(0); // an unread quota is not evidence that nothing published
     expect(result.sent).toBe(0);
@@ -631,7 +631,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     // And the way out, which is what makes "assume it published" the recoverable direction: with no
     // draft id there is nothing left to race, so pressing 재발송 again sends. The refusal costs the
     // operator one more click, not a room.
-    const second = await sendToOutlet("x:11", "x", "x-post", true);
+    const second = await sendToOutlet("x:11", "x", "x-post", { resend: true });
     expect(second.sent).toBe(1);
     expect(counter.sends).toBe(1);
   });
@@ -648,7 +648,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }), true);
     const { sendToOutlet, counter } = sendableX("x:18", ledger, lookup.lookup, quotaSequence([14, 0]));
 
-    const result = await sendToOutlet("x:18", "x", "x-post", true);
+    const result = await sendToOutlet("x:18", "x", "x-post", { resend: true });
 
     expect(lookup.cancels).toEqual(["draft-month-turn"]);
     expect(counter.sends).toBe(0); // THE assertion: this used to send, on top of a post that may be live
@@ -670,7 +670,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
 
     // The way out — and the whole reason refusing is affordable. This window is a few seconds wide
     // once a month, and it costs the operator one more click, not a room.
-    const second = await sendToOutlet("x:18", "x", "x-post", true);
+    const second = await sendToOutlet("x:18", "x", "x-post", { resend: true });
     expect(second.sent).toBe(1);
     expect(counter.sends).toBe(1);
   });
@@ -687,7 +687,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const readings = quotaReadings([{ used: 9, remaining: 6 }, { used: 9, remaining: 5 }]);
     const { sendToOutlet, counter } = sendableX("x:19", ledger, lookup.lookup, readings);
 
-    const result = await sendToOutlet("x:19", "x", "x-post", true);
+    const result = await sendToOutlet("x:19", "x", "x-post", { resend: true });
 
     expect(counter.sends).toBe(0);
     expect(result.error).toContain("앞뒤 숫자가 서로 맞지 않습니다");
@@ -701,7 +701,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => { throw new Error("ECONNRESET"); });
     const { sendToOutlet, counter } = sendableX("x:9", ledger, lookup.lookup);
 
-    const result = await sendToOutlet("x:9", "x", "x-post", true);
+    const result = await sendToOutlet("x:9", "x", "x-post", { resend: true });
 
     expect(counter.sends).toBe(0); // unknown is not "safe to send" — the reconcile can wait, this cannot
     expect(result.sent).toBe(0);
@@ -715,7 +715,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => ({ state: "gone" }));
     const { sendToOutlet, counter } = sendableX("x:10", ledger, lookup.lookup);
 
-    const result = await sendToOutlet("x:10", "x", "x-post", true);
+    const result = await sendToOutlet("x:10", "x", "x-post", { resend: true });
 
     expect(lookup.cancels).toEqual([]); // nothing to cancel — it was already deleted
     expect(result.sent).toBe(1);
@@ -735,7 +735,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
       draftLookup: lookup.lookup,
     }));
 
-    const result = await sendToOutlet("x:11", "announcement", "tg-community", true);
+    const result = await sendToOutlet("x:11", "announcement", "tg-community", { resend: true });
 
     expect(lookup.lookups).toEqual([]);
     expect(lookup.cancels).toEqual([]);
@@ -750,7 +750,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => ({ state: "scheduled" }));
     const { sendToOutlet, counter } = sendableX("x:12", ledger, lookup.lookup);
 
-    const result = await sendToOutlet("x:12", "x", "x-post", true);
+    const result = await sendToOutlet("x:12", "x", "x-post", { resend: true });
 
     expect(lookup.lookups).toEqual([]);
     expect(result.sent).toBe(1);
@@ -761,7 +761,7 @@ describe("makeSendToOutlet — a resend must not race the original's scheduled p
     const lookup = fakeDraftLookup(async () => ({ state: "published", xUrl: "https://x.com/a/status/1", xId: "1" }));
     const { sendToOutlet, counter } = sendableX("x:13", fakeDeliveryLedger([]), lookup.lookup);
 
-    const result = await sendToOutlet("x:13", "x", "x-post", false);
+    const result = await sendToOutlet("x:13", "x", "x-post", { resend: false });
 
     expect(lookup.lookups).toEqual([]);
     expect(result.sent).toBe(1);
@@ -801,7 +801,7 @@ describe("makeSendToOutlet — a cancelled original is retired, not restored as 
       draftLookup: lookup.lookup,
     }));
 
-    const result = await sendToOutlet("x:20", "x", "x-post", true);
+    const result = await sendToOutlet("x:20", "x", "x-post", { resend: true });
 
     expect(result.sent).toBe(0);
     expect(result.error).toContain("쿼터");
@@ -822,7 +822,7 @@ describe("makeSendToOutlet — a cancelled original is retired, not restored as 
       headroom: quotaSequence([9, 9]), // the quota did not move: nothing published while we cancelled
     }));
 
-    const result = await sendToOutlet("x:21", "x", "x-post", true);
+    const result = await sendToOutlet("x:21", "x", "x-post", { resend: true });
 
     expect(result.sent).toBe(0);
     expect(result.error).toContain("no approved copy to send");
@@ -844,7 +844,7 @@ describe("makeSendToOutlet — a cancelled original is retired, not restored as 
       headroom: quotaSequence([9, 9]), // the quota did not move: nothing published while we cancelled
     }));
 
-    const result = await sendToOutlet("x:22", "x", "x-post", true);
+    const result = await sendToOutlet("x:22", "x", "x-post", { resend: true });
 
     expect(result.sent).toBe(0);
     expect(result.failed).toBe(1);
@@ -867,7 +867,7 @@ describe("makeSendToOutlet — a cancelled original is retired, not restored as 
       draftLookup: lookup.lookup,
     }));
 
-    const result = await sendToOutlet("x:23", "announcement", "tg-community", true);
+    const result = await sendToOutlet("x:23", "announcement", "tg-community", { resend: true });
 
     expect(result.sent).toBe(0);
     expect(lookup.cancels).toEqual([]);
@@ -891,10 +891,38 @@ describe("makeSendToOutlet — a cancelled original is retired, not restored as 
       draftLookup: lookup.lookup,
     }));
 
-    await sendToOutlet("x:24", "x", "x-post", true);
+    await sendToOutlet("x:24", "x", "x-post", { resend: true });
 
     expect(lookup.cancels).toEqual([]);
     expect(await ledger.loadAll()).toEqual([previous]);
+  });
+});
+
+describe("makeSendToOutlet — pinning", () => {
+  it("reports a pin warning as an error while still counting the send", async () => {
+    const sends: { pin?: boolean }[] = [];
+    const sendToOutlet = makeSendToOutlet(makeDeps({
+      // `senders` alone is not enough to reach a sender: `makeDeps`' own defaults have no approved
+      // copy at all, and `deliverable()` in `SendChannels` needs both an approved rendering and its
+      // approved translation source before a room is ever a candidate — see `sendBlock`.
+      formattingStore: fakeFormattingStore([rendering({ itemId: "x:2" })]),
+      translationStore: fakeTranslationStore([source("x:2")]),
+      senders: () => ({
+        telegram: {
+          name: "telegram",
+          send: async (req: { pin?: boolean }) => {
+            sends.push({ pin: req.pin });
+            return { postId: "p", url: "u", warning: "글은 올라갔지만 고정하지 못했습니다 (not enough rights)" };
+          },
+        },
+        x: undefined,
+      }),
+    }));
+    const result = await sendToOutlet("x:2", "announcement", "tg-community", { pin: true });
+    expect(sends).toEqual([{ pin: true }]);
+    expect(result.sent).toBe(1);
+    expect(result.error).toContain("고정하지 못했습니다");
+    expect(result.error).toContain("맨틀 한국 커뮤니티");
   });
 });
 

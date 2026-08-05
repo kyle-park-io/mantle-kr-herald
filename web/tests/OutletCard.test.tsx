@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OutletCard } from "../src/components/OutletCard";
+import { api } from "../src/api";
 import type { ConfirmRequest } from "../src/components/ConfirmDialog";
 import { SENDS_CLOSED_MESSAGE, type BoardGroup, type BoardRow, type BoardView } from "../src/types";
 
@@ -62,12 +63,26 @@ function stubFetch(handler?: (url: string, init?: RequestInit) => unknown) {
 }
 
 /**
+ * `api` is a module-level singleton — `OutletCard`/`Row` import it directly rather than taking it as
+ * a prop, so a test that wants to observe or answer a call (the send tests below) has to patch that
+ * shared object rather than pass one in. Snapshotting it once, before any test runs, is what lets
+ * `afterEach` put it back: without that, a `sendOutlet` stub installed by one test would leak into
+ * whichever test runs next and silently swallow its `fetch` traffic.
+ */
+const defaultApi = { ...api };
+
+/**
  * Renders one card and hands back the confirm requests it raised and the errors it reported, plus a
  * `rerender` that re-mounts with a new `group` — same component instance, same React state — for
  * tests that need to simulate the board repainting under an editor the reviewer already has open
  * (e.g. a room going `sent` from outside this tab while a draft still sits in its editor).
+ *
+ * `o.api` patches the shared `api` singleton for the duration of the test (see `defaultApi` above) —
+ * only the tests that care about what reaches `api.sendOutlet` need it, so every other call site in
+ * this file keeps mounting with just `{ convertedText?, sendsEnabled? }` and never sees the patch.
  */
-function mount(g: BoardGroup, o: { convertedText?: string; sendsEnabled?: boolean } = {}) {
+function mount(g: BoardGroup, o: { convertedText?: string; sendsEnabled?: boolean; api?: Partial<typeof api> } = {}) {
+  if (o.api) Object.assign(api, o.api);
   const confirms: ConfirmRequest[] = [];
   const errors: (string | null)[] = [];
   const boards: { board: BoardView; quotaMayHaveChanged?: boolean }[] = [];
@@ -106,6 +121,7 @@ beforeEach(() => stubFetch());
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  Object.assign(api, defaultApi);
 });
 
 describe("OutletCard — 재발송 asks about the row it was clicked on", () => {
@@ -391,5 +407,67 @@ describe("media markers", () => {
     // The textarea falls back to the stored text (no marker); the notice must agree with it.
     expect((within(own()).getByRole("textbox") as HTMLTextAreaElement).value).toBe("이 방 글");
     expect(own().textContent).not.toContain("미리보기");
+  });
+});
+
+describe("OutletCard — 핀 고정 is offered where it exists", () => {
+  it("offers the pin toggle on a telegram room's 발송", () => {
+    const { confirms } = mount(group({ channel: "telegram", rows: [row()] }));
+
+    fireEvent.click(screen.getByRole("button", { name: "발송" }));
+
+    expect(confirms[0].toggle?.label).toContain("고정");
+  });
+
+  it("offers it on 재발송 too", () => {
+    const { confirms } = mount(
+      group({ channel: "telegram", rows: [row({ deliveryStatus: "sent", at: "2026-07-30T01:00:00.000Z" })] }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "재발송" }));
+
+    expect(confirms[0].toggle?.label).toContain("고정");
+  });
+
+  /** X posts are published through Typefully; there is nothing to pin. */
+  it("does not offer it on an X room", () => {
+    const { confirms } = mount(group({ channel: "x", rows: [row()] }));
+
+    fireEvent.click(screen.getByRole("button", { name: "발송" }));
+
+    expect(confirms[0].toggle).toBeUndefined();
+  });
+
+  /**
+   * A manual room has no bot in it, so it never renders 발송/재발송 in the first place — only
+   * 전달함 (a human already pasted). This is belt-and-suspenders on top of that routing: it fails
+   * loudly if a future change ever lets a manual row reach the confirm dialog at all.
+   */
+  it("does not offer it on a manual telegram room", () => {
+    const { confirms } = mount(
+      group({ channel: "telegram", rows: [row({ delivery: "manual" })] }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "전달함 ☐" }));
+
+    expect(confirms).toHaveLength(0);
+  });
+
+  it("sends the toggle's answer to the API", async () => {
+    const sent: unknown[] = [];
+    const { confirms } = mount(group({ channel: "telegram", rows: [row()] }), {
+      api: {
+        sendOutlet: async (...args: Parameters<typeof api.sendOutlet>) => {
+          sent.push(args);
+          return { sent: 1, failed: 0, board: board() };
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "발송" }));
+    confirms[0].onConfirm({ toggled: true });
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect((sent[0] as unknown[])[3]).toEqual({ resend: false, pin: true });
   });
 });

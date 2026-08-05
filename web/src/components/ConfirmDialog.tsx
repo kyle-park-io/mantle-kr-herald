@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface ConfirmRequest {
   title: string;
@@ -13,7 +13,13 @@ export interface ConfirmRequest {
   confirmLabel: string;
   /** `danger` for anything that reaches a live room or replaces a record of one. */
   tone?: "danger" | "primary";
-  onConfirm: () => void;
+  /**
+   * An opt-in checkbox, unchecked by default and reset every time a new request replaces this one.
+   * The dialog knows nothing about what the toggle means — that's on the caller reading `toggled`
+   * back out of `onConfirm`.
+   */
+  toggle?: { label: string; hint?: string };
+  onConfirm: (opts: { toggled: boolean }) => void;
 }
 
 /**
@@ -29,6 +35,7 @@ export interface ConfirmRequest {
  */
 export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest | null; onCancel: () => void }) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const [toggled, setToggled] = useState(false);
 
   useEffect(() => {
     if (!request) return;
@@ -39,6 +46,17 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [request, onCancel]);
+
+  useEffect(() => {
+    // Every new request starts the toggle unchecked, whether it declares one or not — a tick left
+    // over from the previous dialog would otherwise survive into a request that never asked for it.
+    // Deliberately keyed on `request` alone, not `onCancel`: the one real caller
+    // (`OutletBoard.tsx`) passes an inline `() => setConfirm(null)`, a fresh function identity on
+    // every one of its own re-renders, so folding this into the effect above would flip a checked
+    // box back to unchecked while the dialog sits open for the very request that ticked it.
+    if (!request) return;
+    setToggled(false);
+  }, [request]);
 
   if (!request) return null;
   const danger = request.tone !== "primary";
@@ -73,6 +91,23 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
               {line}
             </p>
           ))}
+          {request.toggle && (
+            // Given the same bordered surface the copy preview below uses, rather than sitting flush
+            // in the paragraph stack: it is the one thing in this dialog the operator can still
+            // decide, and read as prose it looks like another consequence line.
+            <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-line bg-bg px-3 py-2.5 text-[13px] text-ink">
+              <input
+                type="checkbox"
+                className="mt-0.5 cursor-pointer"
+                checked={toggled}
+                onChange={(e) => setToggled(e.target.checked)}
+              />
+              <span>
+                {request.toggle.label}
+                {request.toggle.hint && <span className="block text-[12px] text-muted">{request.toggle.hint}</span>}
+              </span>
+            </label>
+          )}
           {request.pieces && request.pieces.length > 0 && (
             <div className="mt-3">
               <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
@@ -108,7 +143,7 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
             }`}
             onClick={() => {
               onCancel();
-              request.onConfirm();
+              request.onConfirm({ toggled });
             }}
           >
             {request.confirmLabel}

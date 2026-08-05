@@ -35,6 +35,13 @@ export interface SendChannelsInput {
   types?: string[];
   /** Restrict delivery to these outlet ids (`--outlets`). Absent = every auto room on the channel. */
   outletIds?: string[];
+  /**
+   * Pin the posted message in every room this run delivers to. Forwarded to `sender.send()`
+   * unchanged and untranslated — not gated on the channel, because the sender that cannot pin
+   * (X, today) already ignores it. Gating it here would mean this use-case has to know which
+   * channels can pin, which is exactly the knowledge `TelegramBotSender` already encapsulates.
+   */
+  pin?: boolean;
 }
 export interface SendChannelsResult {
   sent: number;
@@ -66,6 +73,14 @@ export interface SendChannelsResult {
    * use case, and "the send failed — check the server log" is not something they can act on.
    */
   failures: { key: string; error: string }[];
+  /**
+   * A `sent` delivery that did not go entirely as asked — today, only a pin that did not take.
+   * Same family as `unconfigured` and `quotaBlocked` above, not `failures`: the post reached the
+   * room and the ledger row is written, so the run is not broken and the next run must not retry
+   * it. Always present, even when empty, so a caller can read it without an `?? []` the way
+   * `quotaBlocked` (genuinely absent when the gate never ran) requires.
+   */
+  warnings: { key: string; error: string }[];
 }
 
 /** A rendering already narrowed to a channel this use-case can actually send. */
@@ -127,6 +142,7 @@ export class SendChannels {
     let skipped = 0;
     let failed = 0;
     const failures: { key: string; error: string }[] = [];
+    const warnings: { key: string; error: string }[] = [];
 
     const overrideRows = this.overrides ? await this.overrides.loadAll() : [];
     const overrideByKey = new Map(overrideRows.map((o) => [overrideKey(o), o] as const));
@@ -231,7 +247,7 @@ export class SendChannels {
           const chatId = outlet.chatIdEnv ? this.chatIds[outlet.id] : undefined;
           try {
             const segments = emitResult.segments.map((s) => s.text);
-            const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments, photos, chatId });
+            const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments, photos, chatId, pin: input.pin });
             if (videos.length > 0) console.warn(`[send] ${key}: ${videos.length} video(s) present in the rendering, not attached this cycle`);
             const sentAt = this.now();
             // The send already happened — a ledger-write failure from here on must NOT be
@@ -240,6 +256,13 @@ export class SendChannels {
               await this.ledger.add({ itemId: r.itemId, type: r.type, outletId: outlet.id, status: "sent", at: sentAt, by: "auto", postId: res.postId, url: res.url, senderName: sender.name });
             } catch (err) {
               console.warn(`[send] ⚠ ${key} was SENT but could NOT be recorded in the ledger: ${(err as Error).message} — a rerun will re-send it; reconcile manually.`);
+            }
+            // The pin (or whatever else a future sender warns about) happened after the post
+            // itself, so it belongs after the ledger write too: the row above is what makes this
+            // delivery `sent` no matter what follows, and a pin failure must never undo that.
+            if (res.warning) {
+              console.warn(`[send] ${key}: ${res.warning}`);
+              warnings.push({ key, error: res.warning });
             }
             if (this.record) {
               try {
@@ -265,7 +288,7 @@ export class SendChannels {
         }
       }
     }
-    return { sent, skipped, failed, unconfigured: unconfiguredEnv.length, unconfiguredEnv, withheld, failures, quotaBlocked };
+    return { sent, skipped, failed, unconfigured: unconfiguredEnv.length, unconfiguredEnv, withheld, failures, quotaBlocked, warnings };
   }
 
   /**

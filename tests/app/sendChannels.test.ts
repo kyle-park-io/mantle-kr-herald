@@ -82,7 +82,7 @@ const fork = (o: Partial<OutletOverride>): OutletOverride => ({
 
 /** A full result with everything at zero, so a test states only what it is about. */
 const result = (o: Partial<SendChannelsResult> = {}): SendChannelsResult => ({
-  sent: 0, skipped: 0, failed: 0, unconfigured: 0, unconfiguredEnv: [], withheld: 0, failures: [], ...o,
+  sent: 0, skipped: 0, failed: 0, unconfigured: 0, unconfiguredEnv: [], withheld: 0, failures: [], warnings: [], ...o,
 });
 
 /**
@@ -809,5 +809,69 @@ describe("SendChannels — the source translation gate", () => {
 
     expect(res.sent).toBe(1);
     expect(posts.map((p) => p.chatId)).toEqual(["-100111"]); // 커뮤니티만 — 데브방은 잠긴 채
+  });
+});
+
+describe("SendChannels — pinning", () => {
+  it("passes the run's pin flag to the sender", async () => {
+    const seen: boolean[] = [];
+    const sender: ChannelSender = {
+      name: "telegram",
+      send: async (req) => { seen.push(req.pin === true); return { postId: "p", url: "u" }; },
+    };
+    await new SendChannels(
+      fakeStore([rendering({})]), { telegram: sender, x: undefined },
+      fakeLedger().ledger, fakeTranslations(), undefined, undefined, undefined, 280,
+      outletsForChannel, TG_CHAT_IDS, fakeOverrides(),
+    ).run({ targets: ["telegram"], pin: true, outletIds: ["tg-community"] });
+    expect(seen).toEqual([true]);
+  });
+
+  it("leaves pin absent when the run did not ask for it", async () => {
+    const seen: unknown[] = [];
+    const sender: ChannelSender = {
+      name: "telegram",
+      send: async (req) => { seen.push(req.pin); return { postId: "p", url: "u" }; },
+    };
+    await new SendChannels(
+      fakeStore([rendering({})]), { telegram: sender, x: undefined },
+      fakeLedger().ledger, fakeTranslations(), undefined, undefined, undefined, 280,
+      outletsForChannel, TG_CHAT_IDS, fakeOverrides(),
+    ).run({ targets: ["telegram"], outletIds: ["tg-community"] });
+    expect(seen).toEqual([undefined]);
+  });
+
+  /**
+   * THE regression test of this change. A post that reached the room but could not be pinned is a
+   * `sent` with a ledger row — anything else and the next run posts it again.
+   */
+  it("counts a send whose pin failed as sent, writes its ledger row, and reports the warning", async () => {
+    const { ledger, added } = fakeLedger();
+    const sender: ChannelSender = {
+      name: "telegram",
+      send: async () => ({ postId: "p", url: "u", warning: "글은 올라갔지만 고정하지 못했습니다 (not enough rights)" }),
+    };
+    const result: SendChannelsResult = await new SendChannels(
+      fakeStore([rendering({})]), { telegram: sender, x: undefined },
+      ledger, fakeTranslations(), undefined, undefined, undefined, 280,
+      outletsForChannel, TG_CHAT_IDS, fakeOverrides(),
+    ).run({ targets: ["telegram"], pin: true, outletIds: ["tg-community"] });
+
+    expect(result.sent).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.failures).toEqual([]);
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ outletId: "tg-community", status: "sent" });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].error).toContain("고정하지 못했습니다");
+  });
+
+  it("reports no warnings for an ordinary send", async () => {
+    const result = await new SendChannels(
+      fakeStore([rendering({})]), { telegram: okSender("telegram"), x: undefined },
+      fakeLedger().ledger, fakeTranslations(), undefined, undefined, undefined, 280,
+      outletsForChannel, TG_CHAT_IDS, fakeOverrides(),
+    ).run({ targets: ["telegram"], outletIds: ["tg-community"] });
+    expect(result.warnings).toEqual([]);
   });
 });
