@@ -1,0 +1,26 @@
+# deploy/herald-notify-failure.service
+#
+# The unit herald-watch.service's `OnFailure=` names. systemd's OnFailure= can only activate a
+# unit, never a bare script (see `man systemd.unit`'s own OnFailure= example, which wires a
+# notification script through exactly this kind of one-line wrapper) — this file and
+# herald-notify-failure.sh together are what the design doc's Files table calls the single
+# "failure hook".
+#
+# Not templated (no `herald-notify-failure@.service` + `%i`): herald-watch.service is the only
+# unit in this design that can ever fail into this hook, so passing the failed unit's name through
+# as an instance parameter is complexity this does not need yet. herald-notify-failure.sh hardcodes
+# the one unit name it ever reports; see its own header for how to generalise if a second scheduled
+# unit is ever added.
+#
+# NOT installed by any committed script — see herald-watch.service's header.
+
+[Unit]
+Description=Herald watch scheduler — Telegram failure notice
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/kyle/code/mantle-kr-herald
+# A generous but bounded backstop over the script's own internal 10s curl timeout — this must never
+# be the reason a failure notice hangs.
+TimeoutStartSec=30
+ExecStart=/home/kyle/code/mantle-kr-herald/deploy/herald-notify-failure.sh

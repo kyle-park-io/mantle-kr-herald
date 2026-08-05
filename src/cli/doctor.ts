@@ -33,6 +33,7 @@ import {
 } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
+import { OUTPUT_DIR } from "../paths";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -75,6 +76,14 @@ async function runDatabaseCheck(): Promise<CheckResult> {
 }
 
 // --- config checks (offline) ---
+// Always reported, override or not: an invisible HERALD_OUTPUT_DIR would recreate the "silently
+// created a second output/ tree" trap src/paths.ts's REPO_ROOT comment warns about — see the
+// override's own doc comment there for the incident that made this required.
+results.push({
+  name: "Output root",
+  status: "ok",
+  detail: process.env.HERALD_OUTPUT_DIR ? `${OUTPUT_DIR} (HERALD_OUTPUT_DIR override)` : `${OUTPUT_DIR} (default)`,
+});
 results.push(configCheck("Storage mode", () => loadStorageMode(), `mode: ${process.env.HERALD_STORAGE_MODE?.trim() ?? "(unset)"}`));
 results.push(await runDatabaseCheck());
 // twitterapi.io / Lark app are source credentials — you need one only if you collect from that
@@ -94,6 +103,19 @@ results.push(cloudCheck("Google Drive (D)", () => loadGoogleDriveConfig(), local
 results.push(optionalCheck("Google Sheet (§9a)", () => loadGoogleSheetConfig(), "optional — only for the Sheet data hub (§9a)"));
 // X delivery is opt-in — a Telegram-only install is a valid setup, not a broken one.
 results.push(optionalCheck("Typefully (X)", () => loadTypefullyConfig(), "only needed to send to X"));
+// Read directly rather than through a config loader: this is `deploy/herald-notify-failure.sh`'s
+// variable, not any TypeScript command's, so there is no `load*Config` for it to go through — this
+// line is the only thing in `src/` that ever reads it. Warn, not fail: `pnpm doctor` itself never
+// sends to Telegram, so an unset value here doesn't stop doctor from being useful — it just means
+// the watch scheduler's OnFailure hook will exit 0 without telling anyone, silently, which is worth
+// surfacing before the timer is armed rather than after the first missed failure.
+results.push({
+  name: "Telegram ops chat (watch failures)",
+  status: process.env.TELEGRAM_CHAT_ID_OPS ? "ok" : "warn",
+  detail: process.env.TELEGRAM_CHAT_ID_OPS
+    ? "configured — deploy/herald-notify-failure.sh will post here"
+    : "not set — pnpm watch's OnFailure hook will run silently until TELEGRAM_CHAT_ID_OPS is set",
+});
 
 // Presence is not enough: `config:init` writes empty skeletons, so a file can exist and steer
 // nothing. Reporting ok there would hide exactly the failure that matters — translating with an

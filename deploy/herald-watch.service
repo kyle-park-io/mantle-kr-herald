@@ -1,0 +1,57 @@
+# deploy/herald-watch.service
+#
+# systemd --user unit for one `pnpm watch` tick — collect, and (only if collect found anything new)
+# translate:prepare + claude -p, then translate:align + claude -p. See
+# docs/superpowers/specs/2026-08-05-watch-scheduler-design.md for the full design.
+#
+# NOT installed by any committed script. Copying this into ~/.config/systemd/user/ and running
+# `systemctl --user daemon-reload` is a later, human-supervised step (see the team runbook).
+#
+# Machine-specific by design, not templated: every absolute path below was found with
+# `command -v pnpm|node|claude` on the one machine this runs on (2026-08-05, kyle@this box). A
+# different machine needs its own copy of this file with its own paths, not a parameterised one.
+
+[Unit]
+Description=Mantle KR Herald watch scheduler — one tick (collect -> translate:prepare -> translate:align)
+# `OnFailure=` can only name a unit, never a bare script, so the actual notification logic lives in
+# deploy/herald-notify-failure.sh, run via the small wrapper unit below. Fires on ANY non-zero exit
+# from ExecStart, including this unit's own TimeoutStartSec= below — a silently dead scheduler is
+# the one failure this whole feature exists to prevent.
+OnFailure=herald-notify-failure.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/kyle/code/mantle-kr-herald
+
+# pnpm, node, and claude — none of them are on a systemd user unit's default PATH. node must be
+# reachable even though pnpm is invoked below by its absolute path: pnpm's own file starts with
+# `#!/usr/bin/env node`, and `env` resolves "node" via this PATH, not via ExecStart='s path.
+# claude is spawned from inside the Node process by ClaudeCodeAgent (src/adapters/agent/).
+Environment=PATH=/home/kyle/.nvm/versions/node/v24.14.0/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# The scheduler's own artifact tree — never the repo's own output/. This is what keeps the
+# file-backed collect watermark (output/x/state.json; see src/cli/stores.ts's doc comment on why it
+# stayed file-backed when everything else moved to Postgres) from being shared with a hand-run
+# local `pnpm collect`. During this plan's own implementation, a dev-database run advanced that one
+# shared file past 39 threads a production run would then have skipped forever — see src/paths.ts's
+# OUTPUT_DIR doc comment for the full incident and why the override is resolved to an absolute path.
+Environment=HERALD_OUTPUT_DIR=%h/.herald/output
+
+# Exactly two lines — DATABASE_URL and HERALD_DB_ENV=production — chmod 600, created by Kyle by
+# hand (a production connection string does not pass through an agent session). Everything else
+# (TWITTERAPI_IO_KEY, TELEGRAM_*, ...) still comes from the repo's own .env via `pnpm watch`'s own
+# `tsx --env-file-if-exists=.env`: a shell-exported variable wins over Node's --env-file (verified
+# on this machine), so these two override .env's local-Docker DATABASE_URL without this unit ever
+# touching .env itself.
+EnvironmentFile=%h/.herald/prod.env
+
+# Outer bound on a wedged run. ClaudeCodeAgent already times out at 10 minutes per `claude -p` call
+# (src/adapters/agent/ClaudeCodeAgent.ts), and one tick makes at most two of those (translation,
+# then alignment): 2 x 600s = 1200s. collect / translate:prepare / translate:align are ordinary
+# network+DB calls that normally finish in seconds, but get a generous 600s of their own on top
+# rather than trimming the agent headroom: 1200s + 600s = 1800s (30 minutes) total. Without this,
+# a wedged `claude -p` would leave the unit "active" forever, and systemd skips every later timer
+# fire while a unit is still active — a scheduler that looks armed but has silently stopped.
+TimeoutStartSec=1800
+
+ExecStart=/home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm watch

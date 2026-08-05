@@ -8,8 +8,23 @@ import { fileURLToPath } from "node:url";
  */
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Root of all pipeline artifacts. Fixed by design — see the storage design spec. */
-export const OUTPUT_DIR = join(REPO_ROOT, "output");
+/**
+ * Root of all pipeline artifacts. Fixed by design — see the storage design spec — with one
+ * override: `HERALD_OUTPUT_DIR`, which lets `pnpm watch` (the unattended scheduler) point at its
+ * own tree so a scheduled run and a hand-run local command never share the file-backed collect
+ * watermark (`output/x/state.json` — deliberately not in Postgres, see `src/cli/stores.ts`). A dev
+ * run once advanced that single file past threads production had not collected yet, which would
+ * have made production skip them forever.
+ *
+ * `resolve()`d rather than used as-is for the same reason `REPO_ROOT` above is not
+ * `process.cwd()`: a relative override would be invisible in the same way, silently landing under
+ * whatever directory the process happened to start in instead of failing loudly. `pnpm doctor`
+ * (`src/cli/doctor.ts`) reports whichever root is actually in effect, so a non-default one is never
+ * silent either.
+ */
+export const OUTPUT_DIR = process.env.HERALD_OUTPUT_DIR
+  ? resolve(process.env.HERALD_OUTPUT_DIR)
+  : join(REPO_ROOT, "output");
 
 export const paths = {
   xDir: join(OUTPUT_DIR, "x"),

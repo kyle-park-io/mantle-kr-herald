@@ -1,0 +1,24 @@
+# deploy/herald-watch.timer
+#
+# Fires herald-watch.service every two hours, off the hour, at :17. Deliberately conservative while
+# this is new (docs/superpowers/specs/2026-08-05-watch-scheduler-design.md) — hourly (`*-*-* *:17:00`)
+# is a one-line change once it has run unattended for a few days without surprises. The minute is
+# pinned off :00 on purpose: every scheduler on the planet fires there and there is no reason to
+# join it.
+#
+# Verified before committing: `systemd-analyze calendar '*-*-* 0/2:17:00'` parses cleanly and
+# reports "every two hours at :17" (see task-5-report.md for the captured output).
+#
+# NOT installed by any committed script — see herald-watch.service's header.
+
+[Unit]
+Description=Timer for herald-watch.service — Mantle KR Herald watch scheduler
+
+[Timer]
+OnCalendar=*-*-* 0/2:17:00
+# Runs the tick once on the next boot/login if the machine was off (or the user manager wasn't
+# running — WSL2's usual failure mode) through a scheduled fire, instead of silently skipping it.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
