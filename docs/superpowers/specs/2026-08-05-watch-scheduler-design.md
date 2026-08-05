@@ -72,8 +72,16 @@ The `PATH` row is the one that bites first and looks like a broken script when i
 - `crontab -l` → `no crontab for kyle`. Nothing to collide with.
 - `flock` is present.
 
-Schedule: `OnCalendar=*-*-* *:17:00` — hourly, but off the hour. Not the `hourly` shorthand, which
-expands to `*:00:00`; every scheduler on the planet fires there and there is no reason to join it.
+Schedule: **`OnCalendar=*-*-* 0/2:17:00`** — every two hours, off the hour. Deliberately
+conservative while this is new; hourly (`*-*-* *:17:00`) is a one-line change once it has run
+unattended for a few days without surprises.
+
+The minute is pinned off `:00` on purpose. Not the `hourly` shorthand either, which expands to
+`*:00:00` — every scheduler on the planet fires there and there is no reason to join it.
+
+**The interval is not the test lever.** `systemctl --user start herald-watch.service` runs one tick
+immediately, on demand, as many times as you like; the timer only decides when it happens without
+you. Verify behaviour that way and let the interval stay boring.
 
 ## Talking to the right database
 
@@ -162,7 +170,7 @@ it just stops growing, and nobody notices for days.
 | --- | --- |
 | `scripts/herald-watch.sh` | the tick: flock, env, early exit, two agent calls, exit codes |
 | `scripts/herald-watch.service` | `Type=oneshot`, `OnFailure=`, explicit `PATH` and `WorkingDirectory` |
-| `scripts/herald-watch.timer` | `OnCalendar=*-*-* *:17:00`, `Persistent=true` |
+| `scripts/herald-watch.timer` | `OnCalendar=*-*-* 0/2:17:00`, `Persistent=true` |
 | `scripts/herald-notify-failure.sh` | the `OnFailure=` target — one Telegram line |
 | `docs/ko/team-runbook.md` | a section: install, inspect, pause, read logs |
 | `.env.example` | the new Telegram chat id, in the right section with a comment |
