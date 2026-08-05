@@ -2,10 +2,11 @@
 # deploy/herald-notify-failure.sh
 #
 # The OnFailure= target for herald-watch.service (via the deploy/herald-notify-failure.service
-# wrapper unit — OnFailure= can only name a unit, never a script directly). Sends ONE line to
-# Telegram naming the unit that failed and the journalctl command to read why, then exits 0
-# unconditionally: a failure-handler that can itself fail is a loop, not a safety net, and nothing
-# here is worth the timer never firing again over.
+# wrapper unit — OnFailure= can only name a unit, never a script directly). Sends ONE Telegram
+# message naming the unit that failed, a short tail of its own journal captured right now, and the
+# `journalctl` command to read more, then exits 0 unconditionally: a failure-handler that can
+# itself fail is a loop, not a safety net, and nothing here is worth the timer never firing again
+# over.
 #
 # Hardcodes the one unit this ever fires for (herald-watch.service). Generalise only once a second
 # scheduled unit needs the same hook: turn this into `herald-notify-failure@.service` (`%i` as the
@@ -20,6 +21,27 @@ set -uo pipefail
 REPO_DIR="/home/kyle/code/mantle-kr-herald"
 ENV_FILE="$REPO_DIR/.env"
 UNIT="herald-watch.service"
+
+# Captured immediately, before anything else in this script runs, because it may not be readable
+# for long: journald on this machine rotates on every backwards clock step (this box's WSL2 +
+# timesyncd combination steps the clock constantly), and the readable window has been measured at
+# roughly eight minutes. Pointing the reader at `journalctl` and letting them run it themselves
+# later — the old behaviour — means the thing that would explain the failure can already be gone
+# by the time anyone reads the alert. `--output=cat` drops journalctl's own timestamp/hostname
+# prefix (redundant here — the alert's own arrival time already says when) so the phone-readable
+# budget below goes entirely to the actual message text. Never fatal on its own: an unreadable
+# journal (permissions, journald down) degrades to an empty excerpt via `|| true`, not a script
+# failure — this hook still has to reach `exit 0` regardless.
+LOG_TAIL_LINES=5
+LOG_EXCERPT="$(journalctl --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat 2>/dev/null)" || LOG_EXCERPT=""
+
+# Cap the excerpt independent of how long the captured lines actually are — a single stack-trace
+# or a long `claude -p` error can dwarf a phone screen on its own. Keeps the tail (the most recent,
+# and usually most relevant, output) rather than the head.
+LOG_EXCERPT_MAX_CHARS=500
+if [ "${#LOG_EXCERPT}" -gt "$LOG_EXCERPT_MAX_CHARS" ]; then
+  LOG_EXCERPT="…(truncated)…${LOG_EXCERPT: -$LOG_EXCERPT_MAX_CHARS}"
+fi
 
 # Telegram credentials live in the repo's own .env — the same file `pnpm watch` reads via
 # `tsx --env-file-if-exists=.env` — not in ~/.herald/prod.env, which holds only DATABASE_URL and
@@ -53,12 +75,38 @@ read_env_var() {
 TELEGRAM_BOT_TOKEN="$(read_env_var TELEGRAM_BOT_TOKEN)"
 TELEGRAM_CHAT_ID_OPS="$(read_env_var TELEGRAM_CHAT_ID_OPS)"
 
+# Minimal JSON-string escaping for $TEXT below: the captured log excerpt is the failed unit's own
+# output, not attacker input, but it is not format-free either — a stray `"` or `\` from a stack
+# trace, or the newline this script itself inserts between the excerpt and the journalctl pointer,
+# would otherwise land unescaped inside the hand-built payload a few lines down (built with
+# printf, not a JSON library). Unescaped, either the message Telegram receives is corrupted or the
+# request body stops being valid JSON and curl's -fsS turns that into a silent send failure — the
+# same "alert looks sent but says nothing useful" outcome this whole hook exists to prevent for
+# herald-watch.service itself, just one layer further in.
+json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\r'/}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\t'/\\t}
+  printf '%s' "$s"
+}
+
 # Unset means: no scheduler-failures room configured yet (.env.example documents it as
 # [REQUIRED for the pnpm watch scheduler's failure hook], but nothing enforces that before the
 # timer is installed). Exiting 0 with nothing sent is the same fail-safe posture as a Telegram
 # outage below — this hook never turns "not configured yet" into a failed systemd unit.
 if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
-  TEXT="⚠ ${UNIT} failed — journalctl --user -u ${UNIT} -n 50 --no-pager"
+  if [ -n "$LOG_EXCERPT" ]; then
+    TEXT="⚠ ${UNIT} failed
+${LOG_EXCERPT}
+— journalctl --user -u ${UNIT} -n 50 --no-pager"
+  else
+    # journalctl above returned nothing (or failed outright) — still send the alert; the pointer
+    # is the fallback the excerpt exists to make unnecessary, not a replacement for it.
+    TEXT="⚠ ${UNIT} failed (no journal lines captured) — journalctl --user -u ${UNIT} -n 50 --no-pager"
+  fi
   # -4: this machine's IPv6 route to api.telegram.org is known broken while the AAAA record still
   # resolves (see src/cli/preferIpv4.ts) — curl itself is unaffected by that bug, but there is no
   # reason to let Happy Eyeballs race a dead route on every failure notice. -m 10: a hung request
@@ -70,7 +118,7 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
   curl -4 -fsS -m 10 \
     -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
     -H "Content-Type: application/json" \
-    -d "$(printf '{"chat_id":"%s","text":"%s"}' "$TELEGRAM_CHAT_ID_OPS" "$TEXT")" \
+    -d "$(printf '{"chat_id":"%s","text":"%s"}' "$TELEGRAM_CHAT_ID_OPS" "$(json_escape "$TEXT")")" \
     >/dev/null || true
 fi
 

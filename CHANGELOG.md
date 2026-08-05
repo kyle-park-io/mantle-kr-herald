@@ -166,11 +166,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   board something to review, never publish it. Both `claude -p` calls run with `--output-format json`
   and a narrow `--allowedTools` list, never `--dangerously-skip-permissions` — the one process here
   that is unattended and reaches the production database is the one place that flag is least
-  defensible. See `src/cli/watch.ts`, `src/app/WatchTick.ts` (the sequencing decisions — collect 0 →
-  the agent is never invoked; align "nothing to align" → the second agent call is skipped; any
-  unrecognised stage output is treated as a failure, never as success),
-  `src/adapters/agent/ClaudeCodeAgent.ts`, and
-  `docs/superpowers/specs/2026-08-05-watch-scheduler-design.md`.
+  defensible. Before any stage runs, `watch.ts` also prints one line naming which output root and
+  which database this tick is attached to (`watchStartupLine`, `src/cli/watchStartup.ts`) — the
+  wrong-tree-or-database mistake that cost 39 threads once now shows up in every single tick's
+  `journalctl --user -u herald-watch`, not only when someone happens to run `pnpm doctor` first.
+  See `src/cli/watch.ts`, `src/app/WatchTick.ts` (the sequencing decisions — collect 0 → the agent
+  is never invoked; align "nothing to align" → the second agent call is skipped; any unrecognised
+  stage output is treated as a failure, never as success), `src/adapters/agent/ClaudeCodeAgent.ts`,
+  and `docs/superpowers/specs/2026-08-05-watch-scheduler-design.md`.
 - **`deploy/` — the systemd user units that run `pnpm watch` on a schedule, plus its Telegram failure
   hook. Not installed by anything committed** — see [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md)
   §6 for the copy-and-enable steps, which stay manual on purpose: the paths are machine-specific
@@ -182,13 +185,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exclusion is the concurrency guard here, not a lock file or an advisory lock — with an explicit
   `PATH` (a systemd user unit has none of `pnpm`/`node`/`claude` on it by default), a
   `TimeoutStartSec=1800` outer bound so a wedged run cannot leave the unit "active" through the next
-  scheduled fire, and `OnFailure=herald-notify-failure.service`. **Four unit files, not three:**
-  `OnFailure=` can only name a unit, never a bare script (`man systemd.unit`), so
-  `herald-notify-failure.service` is a thin wrapper around `herald-notify-failure.sh`, which sends one
-  Telegram line naming the failed unit and the `journalctl` command to read why, then exits `0`
-  unconditionally — a failure handler that can itself fail is a loop, not a safety net. Skipping the
-  wrapper unit leaves `OnFailure=` pointing at a unit that doesn't exist, and the failure notice
-  silently never fires — exactly the failure class this whole feature exists to prevent.
+  scheduled fire, and `OnFailure=herald-notify-failure.service`. **Four files, but only three get
+  installed:** `OnFailure=` can only name a unit, never a bare script (`man systemd.unit`), so
+  `herald-notify-failure.service` is a thin wrapper unit around `herald-notify-failure.sh`, which
+  sends one Telegram message naming the failed unit, a short tail of that unit's own journal
+  captured at the moment the hook fires (`journalctl --output=cat`, capped at 500 characters, kept
+  even when the unit's log is otherwise gone by the time a human reads the alert — journald on the
+  target machine rotates on every backwards clock step, and the readable window has been measured
+  at roughly eight minutes), and the `journalctl` command to read more, then exits `0`
+  unconditionally — a failure handler that can itself fail is a loop, not a safety net. The excerpt
+  is JSON-escaped before it reaches the hand-built request body, since it is the failed unit's own
+  output rather than a fixed string and can itself contain quotes, backslashes or newlines. Skipping
+  the wrapper *unit* leaves `OnFailure=` pointing at a unit that doesn't exist, and the failure notice
+  silently never fires — exactly the failure class this whole feature exists to prevent. The `.sh`
+  itself is **not** copied alongside the three units: the wrapper's own `ExecStart=` names its path
+  inside the repo directly, so a copy would never run and would only drift from the original the
+  first time either is edited — it just has to stay executable where it already lives.
   `.vercelignore` gained an anchored `/deploy/` entry: unanchored, `deploy/` would also match, and
   drop, `src/deploy/` from the Vercel Function bundle — the same mistake `translation/`'s own entry
   already exists to guard against.

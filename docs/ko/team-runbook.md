@@ -525,11 +525,14 @@ psql "$DATABASE_URL" -c "delete from auth_attempts where id = 'singleton';"
 
 ## 6. watch 스케줄러 (자동화)
 
-`pnpm watch`는 systemd 사용자 타이머가 두 시간마다 한 번씩 대신 실행해 주는 명령입니다. 한 번
-실행될 때마다 `pnpm collect` → (새 글이 있을 때만) `pnpm translate:prepare` → 에이전트가 번역
-워크시트를 채움 → `pnpm translate:align` → (정렬할 선례가 있을 때만) 에이전트가 정렬 워크시트를
-채움, 순서로 §2 1~5단계를 그대로 밟습니다. 대부분의 실행은 `collect`에서 새 글을 찾지 못하고
-그대로 끝나며, 그럴 때는 에이전트를 아예 부르지 않습니다.
+`pnpm watch`는 systemd 사용자 타이머가 두 시간마다, 정각을 피해 매 짝수 시 17분에
+(`OnCalendar=*-*-* 0/2:17:00`) 대신 실행해 주는 명령입니다. 한 번 실행될 때마다 `pnpm
+collect`(X만) → (새 글이 있을 때만) `pnpm translate:prepare` → 에이전트가 번역 워크시트를 채움 →
+`pnpm translate:align` → (정렬할 선례가 있을 때만) 에이전트가 정렬 워크시트를 채움, 순서로 §2
+1~5단계 중 **X 수집분만** 그대로 밟습니다. **`pnpm collect-lark`(Lark 그룹 채팅 수집)는 이
+타이머가 대신해 주지 않으므로 계속 손으로 돌려야 합니다** — 그러지 않으면 Lark 쪽 수집만 조용히
+멈추는데, 보드는 겉으로는 계속 정상으로 보입니다. 대부분의 실행은 `collect`에서 새 글을 찾지
+못하고 그대로 끝나며, 그럴 때는 에이전트를 아예 부르지 않습니다.
 
 **이 스케줄러는 아무것도 승인하지 않습니다.** 도달하는 지점은 언제나 `status: "translated"`이고,
 저장할 때 `--approve`가 붙는 일은 없습니다 — `pnpm convert:*`도 `pnpm send:*`도 `pnpm
@@ -541,7 +544,13 @@ drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케�
 한 번만 하면 되는 절차이고, 팀 자격 증명이 아니라 **프로덕션 DB 접속 정보**가 필요하므로 아무것도
 자동으로 만들지 않습니다 — 아래는 전부 사람이 손으로 하는 절차입니다.
 
-1. **`~/.herald/prod.env`를 두 줄로 직접 만듭니다(Kyle이 직접 — 프로덕션 DSN은 에이전트 세션을
+1. **`~/.herald` 디렉터리부터 만듭니다** — 기본적으로 존재하지 않고, `herald-watch.service`의
+   `EnvironmentFile=%h/.herald/prod.env`는 접두사(`-`) 없이 걸려 있어서 이 파일이 없으면 유닛이
+   첫 실행부터 그대로 실패합니다:
+   ```bash
+   mkdir -p ~/.herald
+   ```
+   그 안에 **`prod.env`를 두 줄로 직접 만듭니다(Kyle이 직접 — 프로덕션 DSN은 에이전트 세션을
    거치지 않습니다)**:
    ```
    DATABASE_URL=<프로덕션 Neon 접속 문자열>
@@ -551,17 +560,22 @@ drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케�
    있어도 됩니다 — `TWITTERAPI_IO_KEY` 같은 나머지 값은 여전히 `.env`에서 오고, 이 두 줄만
    `DATABASE_URL`/`HERALD_DB_ENV`를 덮어씁니다.
 
-2. **네 파일을 전부 `~/.config/systemd/user/`로 복사합니다**(하나도 빠짐없이):
+2. **세 유닛 파일을 `~/.config/systemd/user/`로 복사합니다** (`.sh`는 복사하지 않습니다 — 바로
+   아래 참고):
    ```bash
    cp deploy/herald-watch.service deploy/herald-watch.timer \
-      deploy/herald-notify-failure.service deploy/herald-notify-failure.sh \
+      deploy/herald-notify-failure.service \
       ~/.config/systemd/user/
    ```
-   **셋이 아니라 넷입니다.** `OnFailure=`는 유닛만 가리킬 수 있고 스크립트를 직접 가리킬 수
-   없어서, `herald-notify-failure.sh`를 실행하는 얇은 래퍼 유닛(`herald-notify-failure.service`)이
-   따로 있습니다. 이걸 빠뜨리면 `herald-watch.service`의 `OnFailure=`가 존재하지 않는 유닛을
-   가리키게 되어, 실패해도 알림이 조용히 나가지 않습니다 — 이 기능이 막으려는 바로 그 실패
-   상황입니다.
+   **셋 다 필요합니다.** `OnFailure=`는 유닛만 가리킬 수 있고 스크립트를 직접 가리킬 수 없어서,
+   `herald-notify-failure.sh`를 실행하는 얇은 래퍼 유닛(`herald-notify-failure.service`)이 따로
+   있습니다. 이걸 빠뜨리면 `herald-watch.service`의 `OnFailure=`가 존재하지 않는 유닛을 가리키게
+   되어, 실패해도 알림이 조용히 나가지 않습니다 — 이 기능이 막으려는 바로 그 실패 상황입니다.
+   반면 **`herald-notify-failure.sh` 자체는 복사하지 않습니다** — 방금 복사한 래퍼 유닛의
+   `ExecStart=`가 저장소 안 경로(`/home/kyle/code/mantle-kr-herald/deploy/herald-notify-failure.sh`)를
+   직접 가리키고 있어서 복사본은 애초에 실행되지 않고, systemd도 유닛 디렉터리 안에 놓인 `.sh`
+   파일 자체는 그냥 무시합니다. 복사해 두면 오히려 둘 중 하나만 고쳤을 때 조용히 서로 어긋나는
+   사본이 생깁니다. 저장소의 실행 권한만 그대로 유지하면 됩니다.
 
 3. **켭니다**:
    ```bash
@@ -572,21 +586,41 @@ drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케�
 ### 확인
 
 - **다음/마지막 실행 시각** — `systemctl --user list-timers`
-- **타이머·서비스 상태** — `systemctl --user status`
+- **타이머·서비스 상태** — `systemctl --user status herald-watch.timer herald-watch.service`
+  (유닛 이름 없이 `systemctl --user status`만 실행하면 systemd 사용자 매니저 전체 상태만 보이고,
+  타이머가 켜져 있든 멈춰 있든 설치조차 안 됐든 화면이 똑같습니다 — 여기서는 반드시 유닛 이름을
+  붙이세요)
 - **로그** — `journalctl --user -u herald-watch`
+- **알림 자체가 안 갔는지 확인** — `journalctl --user -u herald-notify-failure.service`.
+  `herald-watch.service`의 로그와는 별도 유닛이라, "실패는 났는데 텔레그램에 아무것도 안 왔다"를
+  진단하려면 이쪽을 봐야 합니다.
 - **지금 당장 한 번 돌려보고 싶을 때** — `systemctl --user start herald-watch.service`. 인터벌은
   타이머가 *언제* 도는지만 정할 뿐이고, 이 명령은 그것과 무관하게 즉시 한 번 tick을 실행합니다.
 
-**타이머가 켜져 있는 동안 `pnpm watch`를 터미널에서 직접 실행하지 마세요.** `herald-watch.service`는
-`Type=oneshot`이라 이전 tick이 끝나기 전에는 systemd가 다음 tick을 시작하지 않지만, 이 상호
-배제는 systemd가 시작한 실행끼리만 성립합니다 — 손으로 `pnpm watch`를 치면 systemd가 알지 못하는
-별도 프로세스가 되어 예약된 실행과 겹쳐 돌 수 있습니다. 지금 한 번 돌려보고 싶으면 위의
-`systemctl --user start herald-watch.service`를 쓰세요 — systemd가 순서를 제대로 맞춰 줍니다.
+**⚠ 그래도 타이머가 켜져 있는 동안 `pnpm watch`를 터미널에서 직접 실행하지는 마세요 — 다만
+데이터가 깨질까 봐는 아닙니다.** 손으로 돌린 `pnpm watch`는 그냥 `.env`(로컬 Docker DB)와 저장소
+안 `output/`을 읽습니다. 반면 예약된 tick은 `herald-watch.service`의
+`EnvironmentFile=%h/.herald/prod.env`(프로덕션 Neon)와
+`Environment=HERALD_OUTPUT_DIR=%h/.herald/output`(별도 output 루트)를 함께 받습니다 — 셸에서
+내보낸 값이 Node의 `--env-file-if-exists=.env`보다 항상 이긴다는 점은 이 머신에서 직접
+확인했습니다. 그래서 두 실행은 DB도 다르고 output 루트도 달라서 `pending.json`·워크시트·수집
+워터마크가 전부 갈립니다 — **서로의 데이터를 깨뜨릴 수는 없습니다.** 실제로 겹치면 공유되는 건
+twitterapi.io 쿼터, Claude 구독 하나, CPU뿐이고, 최악의 경우도 둘이 리소스를 다투다 한쪽이 실패해
+알림이 한 번 뜨는 정도입니다 — 다음 tick에서 다시 정상으로 돌아옵니다. 그래도 굳이 겹칠 이유가
+없으니, 지금 한 번 돌려보고 싶으면 위의 `systemctl --user start herald-watch.service`를 쓰세요 —
+systemd가 순서를 맞춰 주니 신경 쓸 일이 없어집니다.
 
 ### 멈추기
 
-- **일시 정지**(유닛은 그대로 두고 다음 예약 실행만 막음) — `systemctl --user stop herald-watch.timer`
-- **완전히 끄기** — `systemctl --user disable --now herald-watch.timer`
+- **일시 정지**(유닛은 그대로 두고 다음 예약 실행만 막음) — `systemctl --user stop
+  herald-watch.timer`. **단, 이 정지는 재시작을 넘기지 못합니다.** `stop`은 지금 켜져 있는
+  타이머를 멈출 뿐 `enable` 상태(자동 시작 등록)는 그대로 남기므로, WSL을 재시작하면 로그인 시
+  `timers.target`과 함께 다시 살아납니다 — 그런데 `herald-watch.timer`의 `Persistent=true`는
+  "타이머가 꺼져 있던 동안 놓친 실행이 있으면 다시 켜지자마자 한 번 즉시 실행한다"고 정의돼
+  있습니다(`man systemd.timer`). 그래서 "정지해 두고 재시작"은 계속 멈춰 있는 게 아니라
+  **재시작 순간 tick이 한 번 바로 도는** 결과가 됩니다.
+- **재시작을 넘겨서까지 확실히 멈춰 있어야 하면** — `systemctl --user disable --now
+  herald-watch.timer`. `enable` 자체를 해제하므로 재시작해도 돌아오지 않습니다.
 
 ### 스케줄러 전용 output/ 트리
 
@@ -608,7 +642,10 @@ drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케�
 기본값이면 `(default)`, `HERALD_OUTPUT_DIR`가 걸려 있으면 `(HERALD_OUTPUT_DIR override)`라고
 실제 경로와 함께 뜹니다. 실패 알림용 텔레그램 방(`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID_OPS`)이
 아직 설정되지 않았으면 같은 명령의 `Telegram ops chat (watch failures)` 줄이 경고로 알려줍니다 —
-설정 전까지는 실패해도 알림이 조용히 나가지 않습니다.
+설정 전까지는 실패해도 알림이 조용히 나가지 않습니다. 같은 사실이 매 tick의 로그에도 남습니다 —
+`journalctl --user -u herald-watch`의 첫 줄이 그 실행이 어느 output 루트·어느 데이터베이스를
+향했는지 매번 적어 두므로, `pnpm doctor`를 따로 돌리지 않아도 지난 tick이 어디를 향했는지
+로그만으로 확인할 수 있습니다.
 
 ## 7. 다음으로
 
