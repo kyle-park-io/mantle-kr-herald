@@ -220,9 +220,16 @@ it just stops growing, and nobody notices for days.
 | `src/adapters/agent/ClaudeCodeAgent.ts` | spawns `claude -p`, parses `--output-format json` |
 | `src/ports/WorksheetAgent.ts` | the port `WatchTick` depends on, so tests substitute a stub |
 | `package.json` | the `watch` script |
-| `deploy/herald-watch.service` | `Type=oneshot`, `OnFailure=`, explicit `PATH`, `WorkingDirectory` |
+| `deploy/herald-watch.service` | `Type=oneshot`, `OnFailure=`, explicit `PATH`, `WorkingDirectory`, `TimeoutStartSec=` |
 | `deploy/herald-watch.timer` | `OnCalendar=*-*-* 0/2:17:00`, `Persistent=true` |
-| `deploy/herald-notify-failure.sh` | the `OnFailure=` target — one Telegram line |
+| `deploy/herald-notify-failure.service` | the wrapper `OnFailure=` actually names |
+| `deploy/herald-notify-failure.sh` | what that wrapper runs — one Telegram line |
+
+**Four unit files, not three.** `OnFailure=` takes a list of **units**; it cannot name a bare
+script (`man systemd.unit`, systemd 255). So the hook needs a wrapper unit, and **all four files
+must be installed** — if the wrapper is skipped, `OnFailure=` points at a unit that does not exist
+and the failure notice silently never fires, which is the failure class this design exists to
+prevent.
 | `.vercelignore` | `/deploy/` — anchored, so `src/deploy/` survives |
 | `docs/ko/team-runbook.md` | a section: install, inspect, pause, read logs |
 | `.env.example` | the new Telegram chat id, in the right section with a comment |
