@@ -72,12 +72,21 @@ describe("realClaudeSpawn (src/cli/claudeSpawn.ts)", () => {
     });
     child.stderr.resume();
 
-    const start = Date.now();
+    // Monotonic, deliberately not `Date.now()`: this machine's wall clock steps by roughly 31s
+    // periodically (`dmesg` shows repeated `systemd-journald: Time jumped backwards, rotating.`,
+    // independent of load — the same clock-step hazard `src/storage/sweep.ts`'s `IN_PROGRESS_MS`
+    // comment documents for mtime-based checks). `Date.now() - start` straddling a step either
+    // produces a spurious ~31s "failure" or, worse, a spurious PASS when the step lands as a
+    // backward jump and the subtraction goes negative — trivially satisfying `toBeLessThan(1500)`
+    // while proving nothing about whether the kill actually happened fast. `performance.now()` is
+    // immune to wall-clock steps, matching the convention already used for a timing assertion in
+    // `tests/domain/auth/credentials.test.ts`. Do not "simplify" this back to `Date.now()`.
+    const start = performance.now();
     const exitCode = await new Promise<number>((resolve, reject) => {
       child.on("error", reject);
       child.on("exit", (code) => resolve(code ?? -1));
     });
-    const elapsed = Date.now() - start;
+    const elapsed = performance.now() - start;
 
     expect(exitCode).toBe(0);
     // The stub sleeps 2000ms before writing its marker; if `realClaudeSpawn` genuinely killed it
