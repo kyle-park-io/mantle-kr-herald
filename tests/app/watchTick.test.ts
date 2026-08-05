@@ -5,13 +5,15 @@ import type { StageResult, WorksheetAgent } from "../../src/ports/WorksheetAgent
 
 function recordingAgent() {
   const calls: string[] = [];
+  const paths: string[] = [];
   const agent: WorksheetAgent = {
-    async fill(_path, kind) {
+    async fill(path, kind) {
       calls.push(kind);
+      paths.push(path);
       return { ok: true, stdout: "saved" };
     },
   };
-  return { agent, calls };
+  return { agent, calls, paths };
 }
 
 describe("WatchTick", () => {
@@ -105,7 +107,7 @@ describe("WatchTick", () => {
   });
 
   it("never passes --approve to any stage", async () => {
-    const { agent } = recordingAgent();
+    const { agent, paths } = recordingAgent();
     const ran: string[] = [];
     // Real `translate-prepare.ts` prints this exact second line, containing "--approve" in
     // running text. The mock must include it — a stdout with no "--approve" substring anywhere
@@ -125,7 +127,15 @@ describe("WatchTick", () => {
     await new WatchTick(run, agent).run();
 
     expect(ran.length).toBeGreaterThan(1); // guard: a no-op tick would pass vacuously
+    // Cheap guard against a hardcoded literal — `ran` is built entirely from hardcoded argument
+    // arrays ([] and ["--limit","3"]), so it can never contain "--approve" no matter how badly
+    // the stdout parse breaks. It is not the assertion that matters.
     expect(ran.join(" ")).not.toContain("--approve");
+    // The value that *is* derived from stdout is the worksheet path handed to the agent. A regex
+    // that swallowed the hint line (e.g. matching the whole buffer instead of one line) would put
+    // "--approve" into this path even though `ran` stays clean — this is the assertion that
+    // actually exercises the trap.
+    expect(paths).toEqual(["output/translations/worksheets/batch-X.md"]);
   });
 
   it("still skips alignment when 'nothing to align' carries the tm:promote hint suffix", async () => {
