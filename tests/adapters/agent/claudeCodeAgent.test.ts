@@ -136,9 +136,13 @@ describe("ClaudeCodeAgent", () => {
 
   it("returns a failure instead of hanging when the child never responds", async () => {
     const agent = new ClaudeCodeAgent(() => new Promise(() => {}), 50);
-    const start = Date.now();
+    // performance.now(), not Date.now(): this machine's wall clock steps by ~31s periodically
+    // (see src/storage/sweep.ts's IN_PROGRESS_MS comment) — a step straddling the measurement
+    // can produce a spurious ~31s failure or, worse, a spurious PASS via a negative elapsed
+    // value. performance.now() is monotonic and immune to wall-clock steps.
+    const start = performance.now();
     const result = await agent.fill("w.md", "translation");
-    expect(Date.now() - start).toBeLessThan(2000);
+    expect(performance.now() - start).toBeLessThan(2000);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.detail).toContain("50ms");
   });

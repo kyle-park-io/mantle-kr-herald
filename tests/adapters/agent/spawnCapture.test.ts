@@ -82,13 +82,17 @@ describe("spawnCapture", () => {
       // ["ignore", ...]` exists to remove. A short, explicit timeout (well under the correct,
       // near-instant real duration) turns a regression here into a fast, clear failure instead of
       // waiting out vitest's full default test timeout.
-      const start = Date.now();
+      // performance.now(), not Date.now(): this machine's wall clock steps by ~31s periodically
+      // (see src/storage/sweep.ts's IN_PROGRESS_MS comment) — a step straddling the measurement
+      // can produce a spurious ~31s failure or, worse, a spurious PASS via a negative elapsed
+      // value. performance.now() is monotonic and immune to wall-clock steps.
+      const start = performance.now();
       const result = await spawnCapture("node", [
         "-e",
         "process.stdin.on('end', () => { console.log('eof'); process.exit(0); }); process.stdin.resume();",
       ]);
       expect(result.stdout.trim()).toBe("eof");
-      expect(Date.now() - start).toBeLessThan(2000);
+      expect(performance.now() - start).toBeLessThan(2000);
     },
     3000,
   );
