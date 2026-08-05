@@ -1,20 +1,46 @@
 import { z } from "zod";
 import type { StageResult, WorksheetAgent } from "../../ports/WorksheetAgent";
+import { paths } from "../../paths";
 
 export type ClaudeSpawnResult = { code: number; stdout: string; stderr: string };
-export type ClaudeSpawnFn = (cmd: string, args: string[]) => Promise<ClaudeSpawnResult>;
+/**
+ * `signal` is a hook for a real implementation to actually kill the child on timeout (e.g.
+ * `child_process.spawn(cmd, args, { signal })`, which sends SIGTERM when the signal aborts) — see
+ * `fill()`'s own timeout handling for why this adapter can't rely on that alone. A spawnFn that
+ * ignores the third parameter (every test in this file does) remains a valid `ClaudeSpawnFn`: a
+ * function declaring fewer parameters is assignable wherever more are expected.
+ */
+export type ClaudeSpawnFn = (cmd: string, args: string[], signal: AbortSignal) => Promise<ClaudeSpawnResult>;
 
 const CLAUDE_CMD = "claude";
 
+/** Generous on purpose: a three-item translation or alignment pass should finish in single-digit
+ *  minutes. This bounds `fill()` itself (see below); Task 5 adds an outer `TimeoutStartSec=` at the
+ *  systemd level as a second, independent backstop in case a real `ClaudeSpawnFn` implementation
+ *  ignores the abort signal and the child survives past this timeout anyway. */
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+
 /**
- * Where `translate:prepare`/`translate:align` write every worksheet (`src/paths.ts`), and the only
- * directory this agent may touch. Written relative to cwd — Claude Code's `--allowedTools` path
- * rules resolve a bare `path/**` pattern against the directory the `claude` process was started
- * from (see the design doc, "Running `claude -p` unattended"), which is the repo root here because
- * `pnpm watch` and its systemd unit both run from there. That means whichever `ClaudeSpawnFn` Task 4
- * wires up must not change the child process's cwd, or this pattern stops matching anything.
+ * `translate:prepare`/`translate:align` always hand `WatchTick` an **absolute** worksheet path:
+ * `paths.translationsWorksheets` (`src/paths.ts`) is built from `REPO_ROOT`, which is resolved from
+ * this module's own file location via `import.meta.url` — never from `process.cwd()`. Claude Code's
+ * `Read`/`Edit` permission rules treat a bare `path/**` pattern as relative to the *spawned
+ * process's* cwd (confirmed against Claude Code's own permission-rule docs,
+ * `code.claude.com/docs/en/permissions`, "Read and Edit" — this isn't covered by `claude --help`),
+ * so a relative pattern here would only ever match by coincidence, and would silently deny every
+ * read/write the first time it didn't. An absolute pattern needs the documented `//` prefix
+ * ("Absolute path from filesystem root": `Read(//Users/alice/secrets/**)` matches
+ * `/Users/alice/secrets/**`) — one extra leading `/` in front of the real absolute path.
+ *
+ * Deriving this from `paths.translationsWorksheets`, rather than writing either form by hand, means
+ * it can't drift from the path the rest of the pipeline actually uses, and it removes the cwd
+ * dependency entirely for the Read/Edit rules: they're now anchored to a fixed filesystem path
+ * computed once, in this process, at import time. The `Bash(pnpm translate:save …)` rule below
+ * still needs `pnpm` to run from the repo root to find the `translate:save` script — that's
+ * `pnpm`'s own script resolution, unrelated to Claude Code's permission system, and this change
+ * doesn't affect it.
  */
-const WORKSHEETS_DIR = "output/translations/worksheets";
+const ABSOLUTE_WORKSHEETS_DIR = `/${paths.translationsWorksheets}`;
 
 /**
  * Deliberately narrow: read and edit only inside the worksheets directory, and the only shell
@@ -24,14 +50,16 @@ const WORKSHEETS_DIR = "output/translations/worksheets";
  * tool calls against `Edit(path)` rules only and silently ignores a `Write(path)` rule, so a
  * `Write(...)` entry here would grant nothing.
  *
- * This allowlist is intentionally never wide enough to include `--dangerously-skip-permissions`.
- * It's also not, by itself, a guarantee against `--approve`: a Bash rule's trailing `*` matches any
- * characters including further flags, so this allowlist alone cannot *structurally* stop an
- * appended flag after `--file <path>`. The deny rule below is the actual backstop for that.
+ * This allowlist is intentionally never wide enough to include `--dangerously-skip-permissions` (or
+ * `--permission-mode bypassPermissions`, the same capability under a different flag — neither is
+ * ever added to `fill()`'s argv, full stop, so there's no allowlist entry to reason about for
+ * either). It's also not, by itself, a guarantee against `--approve`: a Bash rule's trailing `*`
+ * matches any characters including further flags, so this allowlist alone cannot *structurally*
+ * stop an appended flag after `--file <path>`. The deny rule below is the actual backstop for that.
  */
 const ALLOWED_TOOLS = [
-  `Read(${WORKSHEETS_DIR}/**)`,
-  `Edit(${WORKSHEETS_DIR}/**)`,
+  `Read(${ABSOLUTE_WORKSHEETS_DIR}/**)`,
+  `Edit(${ABSOLUTE_WORKSHEETS_DIR}/**)`,
   "Bash(pnpm translate:save --id * --file *)",
 ];
 
@@ -40,6 +68,12 @@ const ALLOWED_TOOLS = [
  * deny, then ask, then allow, and the first match wins — so this is the one control here that
  * isn't just an instruction the model could decide to ignore. `*--approve*` matches the flag
  * anywhere it appears in a Bash command, in any position among `translate:save`'s other flags.
+ *
+ * Unconfirmed: whether Claude Code's Bash-rule wildcard matching actually honors a *leading* `*`
+ * this way (vs. being prefix-anchored in practice), since this was verified against the permission-
+ * rules documentation rather than a real `claude -p` run — spending one wasn't in scope this round.
+ * Task 7's first real run against production settles this; if the leading wildcard turns out not to
+ * match, the prompt-level prohibition in `APPROVAL_BOUNDARY` is still the primary control.
  */
 const DISALLOWED_TOOLS = ["Bash(*--approve*)"];
 
@@ -47,10 +81,9 @@ const DISALLOWED_TOOLS = ["Bash(*--approve*)"];
  * The rule an unattended agent is most likely to break. `translate:save` accepts a flag that marks
  * a draft approved, skipping the human review gate for good — `translate:prepare`'s own closing
  * line (`src/cli/translate-prepare.ts:57`) prints that flag as a routine, bracketed option, and the
- * worksheet's own instructions carry the same tone. Says `--approve` plainly, by name, rather than
- * describing it around the edges: this text is what an unattended model reads while deciding
- * whether to approve someone's published translation, and obfuscating the very token being
- * forbidden would be exactly the wrong trade there.
+ * worksheet's own instructions carry the same tone. Says `--approve` plainly, by name: this text is
+ * what an unattended model reads while deciding whether to approve someone's published translation,
+ * and obfuscating the very token being forbidden would be exactly the wrong trade there.
  */
 const APPROVAL_BOUNDARY = [
   "You never approve a translation. Never pass `--approve` to `translate:save`, under any",
@@ -75,6 +108,16 @@ const ITEM_ID_NOTE = [
   "up to the first space — never include `[article]` or anything after it in the id.",
 ].join("\n");
 
+/**
+ * `translate:save --file <path>` takes exactly one item's Korean text per invocation
+ * (`src/cli/translate-save.ts`) — the worksheet holds many items in one file, so there is no way
+ * to call `translate:save` without first splitting each item's translation out into its own file.
+ * The `.ko.txt` scratch files this leaves behind are not cleaned up, which matches the existing,
+ * already-uncleaned convention for this directory: `translate:prepare`/`translate:align` already
+ * leave every worksheet they ever write in `output/translations/worksheets/` indefinitely (there is
+ * an archive step for `pending.json`, but none for this directory), so one more small file per item
+ * is consistent with how the directory already behaves, not an addition to it.
+ */
 const SAVE_STEPS = [
   "For every item, once its `번역:` section is filled in, write that item's Korean translation —",
   "and nothing else — to a new file in the same directory as the worksheet, named after the item",
@@ -82,11 +125,13 @@ const SAVE_STEPS = [
   "`.ko.txt` suffix (item `x:123` → `x-123.ko.txt`), using the Write tool.",
   "",
   "Then run, for that same item and in exactly this order: `pnpm translate:save --id <id> --file",
-  "<path to that file>`. Read the approval rule below before you run it.",
+  "<path to that file>`. Use the item's real id for `--id` — the one from its `### ` heading (for",
+  "example `x:123`) — never the sanitized filename you just created (`x-123`); `translate:save`",
+  "looks the item up by its real id. Read the approval rule below before you run this command.",
   "",
-  "Repeat this for every item in the worksheet before finishing. You have no tools beyond Read and",
-  "Edit inside the worksheet's own directory, and this one shape of `translate:save` command —",
-  "anything else you attempt will be refused.",
+  "Repeat this for every item in the worksheet before finishing. You have no tools beyond Read,",
+  "Edit and Write inside the worksheet's own directory, and this one shape of `translate:save`",
+  "command — anything else you attempt will be refused.",
 ].join("\n");
 
 const TRANSLATION_TASK = [
@@ -183,7 +228,10 @@ function describeDenials(denials: unknown[]): string {
 }
 
 export class ClaudeCodeAgent implements WorksheetAgent {
-  constructor(private readonly spawn: ClaudeSpawnFn) {}
+  constructor(
+    private readonly spawn: ClaudeSpawnFn,
+    private readonly timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  ) {}
 
   async fill(worksheetPath: string, kind: "translation" | "alignment"): Promise<StageResult> {
     const stage = `claude-agent:${kind}`;
@@ -198,7 +246,35 @@ export class ClaudeCodeAgent implements WorksheetAgent {
       ...DISALLOWED_TOOLS,
     ];
 
-    const { code, stdout, stderr } = await this.spawn(CLAUDE_CMD, args);
+    // A wedged `claude` process must not hang the tick forever — systemd would then see the unit
+    // as still running and skip every later scheduled fire, leaving a silently dead scheduler. The
+    // abort signal gives a well-behaved `spawn` implementation a way to actually kill the child;
+    // racing against an independent timer means `fill()` itself returns on time even if the
+    // injected implementation ignores that signal entirely.
+    const controller = new AbortController();
+    const timedOut = new Promise<"timeout">((resolve) => {
+      controller.signal.addEventListener("abort", () => resolve("timeout"), { once: true });
+    });
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    let raced: ClaudeSpawnResult | "timeout";
+    try {
+      raced = await Promise.race([this.spawn(CLAUDE_CMD, args, controller.signal), timedOut]);
+    } catch (err) {
+      clearTimeout(timer);
+      return { ok: false, stage, detail: `claude -p invocation threw: ${truncate(String(err))}` };
+    }
+    clearTimeout(timer);
+
+    if (raced === "timeout") {
+      return {
+        ok: false,
+        stage,
+        detail: `claude -p did not finish within ${this.timeoutMs}ms; the child was signalled to stop`,
+      };
+    }
+
+    const { code, stdout, stderr } = raced;
 
     if (code !== 0) {
       const stderrText = truncate(stderr);
