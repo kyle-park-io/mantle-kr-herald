@@ -1,10 +1,43 @@
 import { describe, it, expect } from "vitest";
 import { ClaudeCodeAgent } from "../../../src/adapters/agent/ClaudeCodeAgent";
+import type { WorksheetKind } from "../../../src/ports/WorksheetAgent";
 import { paths } from "../../../src/paths";
 
 const ok = (stdout: string) => async () => ({ code: 0, stdout, stderr: "" });
 
 const VALID_ENVELOPE = JSON.stringify({ is_error: false, permission_denials: [], result: "ok" });
+
+/** Both worksheet kinds are the same thing from a permissions standpoint: a second `claude -p`
+ *  call, running the same `SAVE_STEPS`, with the same ability to reach `translate:save`. Anything
+ *  asserted about one has to hold for the other, or the alignment pass becomes an unguarded second
+ *  door to an approved translation. */
+const KINDS: WorksheetKind[] = ["translation", "alignment"];
+
+/** The argv `fill()` handed to `claude`. */
+async function argvFor(kind: WorksheetKind): Promise<string[]> {
+  let seen: string[] = [];
+  const agent = new ClaudeCodeAgent(async (_cmd, args) => {
+    seen = args;
+    return { code: 0, stdout: VALID_ENVELOPE, stderr: "" };
+  });
+  await agent.fill(`${paths.translationsWorksheets}/batch-X.md`, kind);
+  return seen;
+}
+
+/**
+ * The values `claude` would attach to a multi-value flag: everything from just after the flag up
+ * to the next one. Reading `--allowedTools`/`--disallowedTools` this way, rather than asking
+ * whether some string appears anywhere in argv, is what makes the assertions below able to tell
+ * "this rule is in the allow list" from "this rule is in the deny list" — the two lists share the
+ * `Bash(...)` syntax and are only distinguishable by position.
+ */
+function valuesOf(args: string[], flag: string): string[] {
+  const start = args.indexOf(flag);
+  if (start === -1) return [];
+  const values: string[] = [];
+  for (let i = start + 1; i < args.length && !args[i].startsWith("--"); i++) values.push(args[i]);
+  return values;
+}
 
 describe("ClaudeCodeAgent", () => {
   it("asks for json output and never skips permissions", async () => {
@@ -37,14 +70,12 @@ describe("ClaudeCodeAgent", () => {
     expect(seen).not.toContain("bypassPermissions");
   });
 
-  it("tells the model plainly, in the prompt itself, never to pass --approve", async () => {
-    let seen: string[] = [];
-    const agent = new ClaudeCodeAgent(async (_cmd, args) => {
-      seen = args;
-      return { code: 0, stdout: VALID_ENVELOPE, stderr: "" };
-    });
-
-    await agent.fill("output/translations/worksheets/batch-X.md", "translation");
+  // Both kinds, not just translation: the alignment pass is a second `claude -p` call running the
+  // same SAVE_STEPS against the same `translate:save`, so it is an equal path to an approved
+  // translation. A prompt test that only ever called fill(..., "translation") stayed green when
+  // buildPrompt was changed to omit APPROVAL_BOUNDARY for `kind === "alignment"`.
+  it.each(KINDS)("tells the model plainly, in the %s prompt itself, never to pass --approve", async (kind) => {
+    const seen = await argvFor(kind);
 
     // Located by position, not content: "-p"'s value is always the prompt, unambiguously.
     const promptIndex = seen.indexOf("-p");
@@ -53,6 +84,43 @@ describe("ClaudeCodeAgent", () => {
     // The prohibitive phrasing itself, not just the substring "--approve" — a flipped instruction
     // like "Always pass `--approve`" also contains that substring and must not pass this test.
     expect(prompt).toContain("Never pass `--approve`");
+    // The rest of the boundary, so deleting all but the first sentence is caught too: the whole
+    // point of this block is that it argues with the `[--approve]` hint the model will see in
+    // `translate:prepare`'s own output, rather than just forbidding the flag once.
+    expect(prompt).toContain("A human performs 1차 검수");
+    // Guard against the two kinds silently collapsing into one prompt: each must still carry its
+    // own task text, or "both kinds are covered" would be true only in the trivial sense.
+    expect(prompt).toContain(kind === "translation" ? "translation worksheet" : "alignment worksheet");
+  });
+
+  // The deny rule is the only control in this file that is not an instruction the model may
+  // decide to ignore — a deny beats every allow rule regardless of specificity, and it is what
+  // structurally stops an `--approve` appended after `--file <path>`, which the allow rule's own
+  // trailing `*` would otherwise match. Deleting it from the argv left the whole suite green.
+  it.each(KINDS)("passes a --disallowedTools rule that denies --approve, on the %s pass", async (kind) => {
+    const denied = valuesOf(await argvFor(kind), "--disallowedTools");
+
+    // The exact list, not "contains something": a rule that no longer names `--approve` (or one
+    // appended after a broader rule that never matches) is the mutation this has to catch, and
+    // both are invisible to a containment check on the flag alone.
+    expect(denied).toEqual(["Bash(*--approve*)"]);
+  });
+
+  // Untested in both directions before this: deleting the Bash rule (after which nothing can ever
+  // save, and every tick fails) was green, and widening it to `Bash(*)` — arbitrary shell for an
+  // unattended agent attached to the production database — was equally green.
+  it.each(KINDS)("allows exactly one shape of Bash command, on the %s pass", async (kind) => {
+    const allowed = valuesOf(await argvFor(kind), "--allowedTools");
+    const bashRules = allowed.filter((rule) => rule.startsWith("Bash("));
+
+    // Equality on the Bash rules, so both directions fail: removing the rule empties this list,
+    // and widening it — `Bash(*)`, `Bash(pnpm *)`, or an extra rule alongside this one — changes
+    // it. The command, both flags and the order they must appear in are all pinned, because the
+    // rule is what confines the agent to `translate:save`.
+    expect(bashRules).toEqual(["Bash(pnpm translate:save --id * --file *)"]);
+    // Said once more as a statement about capability rather than about a string, since this is the
+    // consequence that matters: no rule here may grant shell beyond that one command.
+    expect(allowed.some((rule) => /^Bash\(\*+\)$/.test(rule))).toBe(false);
   });
 
   it("scopes the Read/Edit rules to the real, absolute worksheets directory", async () => {

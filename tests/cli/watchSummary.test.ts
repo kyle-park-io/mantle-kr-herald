@@ -34,6 +34,34 @@ describe("watchOutcome", () => {
     expect(outcome.line).toContain("claude-agent:translation: claude -p was denied permission for: Bash");
   });
 
+  it("keeps a huge multi-line detail down to one line the failure alert can still show whole", () => {
+    // The alert path, end to end: this line is printed with `console.log`, journald stores one
+    // entry per line, `deploy/herald-notify-failure.sh` reads the last 5 entries back with
+    // `journalctl -n 5` and then keeps only the last 500 characters. So a multi-line detail costs
+    // the alert its prefix twice over — once by filling all five entries, once by the tail-slice —
+    // and the operator's phone shows the middle of a stack trace with nothing naming the stage.
+    // `runStage` caps the stderr it puts in a detail, but not every detail comes from there:
+    // `ClaudeCodeAgent` builds its own, and this is the last place any of them can be bounded.
+    const report: TickReport = {
+      ok: false,
+      stagesRun: ["collect", "translate:prepare"],
+      failure: {
+        stage: "translate:prepare",
+        detail: `Error: connect ETIMEDOUT\n${"    at Socket.onTimeout (node:net:1234:5)\n".repeat(60)}`,
+      },
+    };
+
+    const { line } = watchOutcome(report);
+
+    expect(line).not.toContain("\n");
+    // What the hook actually reads. The prefix has to survive its tail-slice, not merely exist.
+    expect(line.slice(-500)).toContain("watch: FAILED — translate:prepare:");
+    expect(line).toContain("Error: connect ETIMEDOUT");
+    // The stage list is at the end of the line, so it is the first thing an unbounded detail
+    // would push out.
+    expect(line).toContain("(ran collect → translate:prepare)");
+  });
+
   it("stops after collect and still exits 0 when nothing new was found", () => {
     // The realistic "normal outcome" tick: only `collect` ran, agent never touched.
     const report: TickReport = { ok: true, stagesRun: ["collect"] };

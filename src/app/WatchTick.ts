@@ -1,4 +1,4 @@
-import type { StageResult, StageRunner, WorksheetAgent } from "../ports/WorksheetAgent";
+import { agentStage, type StageResult, type StageRunner, type WorksheetAgent } from "../ports/WorksheetAgent";
 
 export type TickReport = {
   ok: boolean;
@@ -9,13 +9,20 @@ export type TickReport = {
 const COLLECT_STAGE = "collect";
 const PREPARE_STAGE = "translate:prepare";
 const ALIGN_STAGE = "translate:align";
+const STATUS_STAGE = "status";
 
 // `src/cli/collect.ts:42` prints exactly one line of this shape:
 //   collected 3 threads (7 tweets) for @Mantle_Official — covered 2026-08-05T… ~ 2026-08-05T…
 //   collected 0 threads (0 tweets) for @Mantle_Official — nothing new in window
 // Only the leading count is load-bearing here; the rest of the line (coverage window,
 // gap notice) is free text we don't need to parse.
-const COLLECT_LINE = /^collected (\d+) threads \(\d+ tweets\) for @\S+ — /;
+//
+// `m`, like every pattern below, and for a reason that is not about `collect` itself: every stage
+// here is spawned as `pnpm <script>` (src/adapters/agent/runStage.ts), and pnpm writes its own
+// lines — `Already up to date`, `Done in 463ms using pnpm v11.20.0` — to *stdout*, ahead of and
+// after the script's own output, whenever it does install work. Without `m` (and with the buffer
+// anchored at `^`), one such leading line makes every single tick fail at collect.
+const COLLECT_LINE = /^collected (\d+) threads \(\d+ tweets\) for @\S+ — /m;
 
 // `src/cli/translate-prepare.ts:56` prints this as the first of two lines — a second line (the
 // `pnpm translate:save ... [--approve]` hint) always follows, so match a single line with the
@@ -32,6 +39,15 @@ const PREPARED_LINE = /^prepared (\d+) item\(s\) → (.+)$/m;
 //   nothing to align · skipped 1 (no precedent)
 const ALIGNED_LINE = /^aligned (\d+) · skipped (\d+) \(no precedent\) → (.+)$/m;
 const NOTHING_TO_ALIGN_LINE = /^nothing to align · skipped (\d+) \(no precedent\)/m;
+
+// `src/status/pipeline.ts`'s `formatStatus` pads the label column to the widest label and the
+// count column to the widest count, so both runs of spaces are variable:
+//   Pipeline status
+//
+//     Collected (X + Lark)  128
+//     Translated             41   (approved 12)
+// Only the Translated total is read here — see `translatedCount` below for what it is for.
+const TRANSLATED_LINE = /^\s*Translated\s+(\d+)/m;
 
 /**
  * Returns the thread count `collect` reported, or `undefined` if the stdout doesn't match the
@@ -64,6 +80,13 @@ function parseAligned(stdout: string): { worksheetPath: string } | null | undefi
   if (alignedMatch) return { worksheetPath: alignedMatch[3] };
   if (NOTHING_TO_ALIGN_LINE.test(stdout)) return null;
   return undefined;
+}
+
+/** Same "unrecognised → undefined, caller must fail" contract as the parsers above. */
+function parseTranslatedCount(stdout: string): number | undefined {
+  const match = TRANSLATED_LINE.exec(stdout);
+  if (!match) return undefined;
+  return Number(match[1]);
 }
 
 export class WatchTick {
@@ -119,9 +142,50 @@ export class WatchTick {
     // calling the agent on it would spend a subscription turn translating nothing. This happens
     // whenever `collect` re-reads a thread that is already translated.
     if (prepared.count > 0) {
+      // Bracket the agent pass with the one number that proves it did the job. A clean
+      // `claude -p` — exit 0, `is_error: false`, no `permission_denials` — proves the process ran
+      // and was never blocked; it does NOT prove the model ever called `translate:save`. A model
+      // that reads the worksheet, decides it is done, and stops has exactly the same envelope as
+      // one that saved every item, and reading that as success is the "green forever while saving
+      // nothing" outcome the denial gate's own comment claims to prevent: that gate covers the
+      // *denied* variant, this covers the *never tried* one.
+      //
+      // Not a re-run of `translate:prepare --limit 3` with a "did the count drop?" rule, which was
+      // the first fix considered: `PrepareTranslations` selects the first `--limit` of *every*
+      // untranslated item, so with a backlog larger than the limit (the design's own "a burst of
+      // ten posts drains over several ticks") the count is 3 before the pass and 3 after it even
+      // when all three were saved — that rule fails the tick hardest exactly when the scheduler is
+      // working hardest. `pnpm status`'s Translated total has no such ambiguity: `prepare` only
+      // ever hands over items with no translation row at all, so each save moves this total by
+      // exactly one, and it is a read-only query with no worksheet or `pending.json` side effects.
+      const before = await this.translatedCount(stagesRun);
+      if (typeof before !== "number") {
+        return this.fail(stagesRun, before);
+      }
+
       const translation = await this.agent.fill(prepared.worksheetPath, "translation");
       if (!translation.ok) {
         return this.fail(stagesRun, translation);
+      }
+
+      const after = await this.translatedCount(stagesRun);
+      if (typeof after !== "number") {
+        return this.fail(stagesRun, after);
+      }
+
+      // Fails the tick, deliberately, rather than warning: an unsaved batch is invisible
+      // downstream — `collect` gates the next tick on *new* threads, so nothing retries these
+      // items until unrelated content happens to arrive, and each later `translate:prepare`
+      // archives the unsaved batch on its way past (`src/cli/translate-prepare.ts`). A warning in
+      // a journal nobody reads is how that stays unnoticed for days.
+      if (after - before < prepared.count) {
+        return this.fail(stagesRun, {
+          ok: false,
+          stage: agentStage("translation"),
+          detail:
+            `claude -p exited cleanly but saved ${after - before} of the ${prepared.count} item(s) it was given ` +
+            `(translated count ${before} → ${after})`,
+        });
       }
     }
 
@@ -149,6 +213,25 @@ export class WatchTick {
     }
 
     return { ok: true, stagesRun };
+  }
+
+  /**
+   * How many translations exist right now, per `pnpm status` — or the failure to report when that
+   * stage either failed outright or printed something this doesn't recognise. Unrecognised stdout
+   * is a failure here for the same reason it is for every other stage in this file: a status line
+   * that stopped matching would otherwise silently disable the check that depends on it.
+   */
+  private async translatedCount(stagesRun: string[]): Promise<number | Extract<StageResult, { ok: false }>> {
+    const result = await this.runStage(STATUS_STAGE, []);
+    stagesRun.push(STATUS_STAGE);
+
+    if (!result.ok) return result;
+
+    const count = parseTranslatedCount(result.stdout);
+    if (count === undefined) {
+      return { ok: false, stage: STATUS_STAGE, detail: `unrecognised status output: "${result.stdout}"` };
+    }
+    return count;
   }
 
   private fail(stagesRun: string[], failure: Extract<StageResult, { ok: false }>): TickReport {

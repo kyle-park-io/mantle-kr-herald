@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { StageResult, WorksheetAgent } from "../../ports/WorksheetAgent";
+import { agentStage, type StageResult, type WorksheetAgent, type WorksheetKind } from "../../ports/WorksheetAgent";
 import { paths } from "../../paths";
 
 export type ClaudeSpawnResult = { code: number; stdout: string; stderr: string };
@@ -178,7 +178,7 @@ const ALIGNMENT_TASK = [
   SAVE_STEPS,
 ].join("\n");
 
-function buildPrompt(worksheetPath: string, kind: "translation" | "alignment"): string {
+function buildPrompt(worksheetPath: string, kind: WorksheetKind): string {
   const task = kind === "translation" ? TRANSLATION_TASK : ALIGNMENT_TASK;
   return [task, "", `Worksheet file: ${worksheetPath}`, "", APPROVAL_BOUNDARY].join("\n");
 }
@@ -245,8 +245,8 @@ export class ClaudeCodeAgent implements WorksheetAgent {
     private readonly timeoutMs: number = DEFAULT_TIMEOUT_MS,
   ) {}
 
-  async fill(worksheetPath: string, kind: "translation" | "alignment"): Promise<StageResult> {
-    const stage = `claude-agent:${kind}`;
+  async fill(worksheetPath: string, kind: WorksheetKind): Promise<StageResult> {
+    const stage = agentStage(kind);
     const args = [
       "-p",
       buildPrompt(worksheetPath, kind),

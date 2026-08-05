@@ -10,8 +10,8 @@ usually work.
 
 ## The goal, in one sentence
 
-Every hour, if @Mantle_Official posted something new, have it collected, translated, and aligned by
-the time Kyle opens the board — and stop dead at the human gate.
+Every two hours, if @Mantle_Official posted something new, have it collected, translated, and
+aligned by the time Kyle opens the board — and stop dead at the human gate.
 
 ## Where it stops
 
@@ -30,11 +30,29 @@ This is the same gate `translate:align`'s own plan states: *"a saved alignment s
 ```
 pnpm watch                      ← one command, run by the systemd unit
   ├ collect                     → 0 new? stop here. No agent call.
-  ├ translate:prepare --limit 3
+  ├ translate:prepare --limit 3 → prepared 0? skip ①
+  ├ status                      → the Translated total, before
   ├ claude -p  ①                → fill the translation worksheet → translate:save (no --approve)
+  ├ status                      → grew by the whole batch? no → fail the tick
   ├ align --limit 3             → "aligned 0"? skip ②
   └ claude -p  ②                → fill the alignment worksheet → translate:save
 ```
+
+**Every stage's stdout is parsed, and unrecognised stdout is a failure — never "nothing to do".**
+A stage that exits 0 having printed something this doesn't recognise has told us nothing about
+what it did, and reading that as the quiet early-exit is how a broken collector becomes a
+scheduler that succeeds forever while doing nothing.
+
+**A clean `claude -p` is not proof that anything was saved.** Exit 0, `is_error: false` and an
+empty `permission_denials` prove the process ran and was never blocked; a model that reads the
+worksheet, decides it is done and stops produces exactly that envelope. So the tick brackets the
+translation pass with `pnpm status` and requires the `Translated` total to have grown by the whole
+prepared batch. Not a second `translate:prepare` with a "did the count drop?" rule, which was the
+obvious version and is wrong: `PrepareTranslations` selects the first `--limit` of *every*
+untranslated item, so with a backlog bigger than the limit — the same "burst of ten posts drains
+over several ticks" this design describes below — that count reads 3 before and 3 after a perfect
+pass. `status` is read-only and moves by exactly one per saved item, because `prepare` only ever
+hands over items that have no translation row at all.
 
 **A TypeScript CLI, not a shell script.** This repo has zero shell scripts and no `scripts/`
 directory; it has forty-odd `src/cli/*.ts` entrypoints and a vitest suite. Writing this one stage in
@@ -191,8 +209,18 @@ time; adding it later would mean revisiting the script for no benefit now.
 
 ## Knowing when it breaks
 
-`OnFailure=` fires a one-line Telegram message: what failed, and the `journalctl` command to read
-it. `TELEGRAM_BOT_TOKEN` already exists; only a chat id is new.
+`OnFailure=` fires a one-line Telegram message: what failed, a short excerpt of that unit's own
+journal captured the moment the hook runs (`journalctl -n 5 --output=cat`, capped at 500
+characters), and the `journalctl` command to read the rest. The excerpt is not a nicety —
+journald on this machine rotates on every backwards clock step, and the readable window has been
+measured at roughly eight minutes, so a message carrying only the pointer can easily point at
+nothing by the time anyone reads it. `TELEGRAM_BOT_TOKEN` already exists; only a chat id
+(`TELEGRAM_CHAT_ID_OPS`) is new.
+
+That 500-character budget is also why nothing upstream may hand this hook an unbounded string: the
+tick prints one line, journald splits a multi-line detail across entries, and the hook keeps the
+*tail*, so an untruncated stack trace costs the alert the `watch: FAILED — <stage>:` prefix
+entirely. `runStage` and `watchOutcome` both collapse whitespace and truncate for that reason.
 
 A scheduler that dies quietly is worse than no scheduler, because the board keeps looking correct —
 it just stops growing, and nobody notices for days.
@@ -213,30 +241,43 @@ it just stops growing, and nobody notices for days.
 
 ## Files
 
+The table below is what shipped, not what was sketched: the four entrypoint-and-unit files this
+started as grew a handful of small modules, each pulled out for the same reason — a top-level
+script has no test coverage of its own, so every decision that matters had to move somewhere a
+test could reach it.
+
 | | |
 | --- | --- |
-| `src/cli/watch.ts` | the tick: stage sequencing, early exits, exit codes |
+| `src/cli/watch.ts` | the entrypoint: prints the startup line, wires the tick, sets the exit code |
 | `src/app/WatchTick.ts` | the use-case — decides which stages run, given each stage's result |
-| `src/adapters/agent/ClaudeCodeAgent.ts` | spawns `claude -p`, parses `--output-format json` |
 | `src/ports/WorksheetAgent.ts` | the port `WatchTick` depends on, so tests substitute a stub |
+| `src/adapters/agent/ClaudeCodeAgent.ts` | spawns `claude -p`, parses `--output-format json` |
+| `src/adapters/agent/runStage.ts` | the `StageRunner`: `pnpm <script> <args…>`, non-zero → a failure with its stderr |
+| `src/adapters/agent/spawnCapture.ts` | the one real `spawn` — argv array (never a shell), fixed cwd, `signal`, stdin closed |
+| `src/cli/claudeSpawn.ts` | the real `ClaudeSpawnFn`, named so a test can prove the abort signal is forwarded |
+| `src/cli/watchSummary.ts` | `TickReport` → the one line printed and the exit code systemd reads |
+| `src/cli/watchStartup.ts` | the line printed before any stage: which output root, which database |
+| `src/shared/text/condense.ts` | one-line, length-capped details, so the failure alert keeps its prefix |
+| `src/doctor/checks.ts` | `outputRootResult` (a non-default root is never silent) and `telegramOpsChatResult` (the hook can reach Telegram) |
+| `src/paths.ts` | `OUTPUT_DIR`'s `HERALD_OUTPUT_DIR` override, resolved to an absolute path |
 | `package.json` | the `watch` script |
-| `deploy/herald-watch.service` | `Type=oneshot`, `OnFailure=`, explicit `PATH`, `WorkingDirectory`, `TimeoutStartSec=` |
+| `deploy/herald-watch.service` | `Type=oneshot`, `OnFailure=`, explicit `PATH`, `WorkingDirectory`, `TimeoutStartSec=`, `EnvironmentFile=`, `HERALD_OUTPUT_DIR` |
 | `deploy/herald-watch.timer` | `OnCalendar=*-*-* 0/2:17:00`, `Persistent=true` |
 | `deploy/herald-notify-failure.service` | the wrapper `OnFailure=` actually names |
 | `deploy/herald-notify-failure.sh` | what that wrapper runs — one Telegram line |
+| `.vercelignore` | `/deploy/` — anchored, so `src/deploy/` survives |
+| `docs/ko/team-runbook.md` | §6: install, inspect, pause, read logs, and which board the output lands on |
+| `.env.example` | the new Telegram chat id, in the right section with a comment |
 
-**Four files, but only three get installed.** `OnFailure=` takes a list of **units**; it cannot name
-a bare script (`man systemd.unit`, systemd 255), so the hook needs a wrapper unit. Skip that wrapper
-and `OnFailure=` points at a unit that does not exist — the failure notice silently never fires,
-which is the failure class this design exists to prevent.
+**Of the four `deploy/` files, only three get installed.** `OnFailure=` takes a list of **units**;
+it cannot name a bare script (`man systemd.unit`, systemd 255), so the hook needs a wrapper unit.
+Skip that wrapper and `OnFailure=` points at a unit that does not exist — the failure notice
+silently never fires, which is the failure class this design exists to prevent.
 
 The **three units** are copied to `~/.config/systemd/user/`. The `.sh` is **not**: the wrapper's
 `ExecStart=` names its path in the repo, systemd ignores a non-unit file in the unit directory
 anyway, and a copy would silently diverge from the repo original the first time either is edited.
 It only has to stay executable where it is.
-| `.vercelignore` | `/deploy/` — anchored, so `src/deploy/` survives |
-| `docs/ko/team-runbook.md` | a section: install, inspect, pause, read logs |
-| `.env.example` | the new Telegram chat id, in the right section with a comment |
 
 `deploy/` is a **new** top-level directory (only `src/deploy/` and `tests/deploy/` exist today).
 Because `vercel deploy --prod` uploads the working directory, it needs a `.vercelignore` entry, and
@@ -260,7 +301,20 @@ runs against a stub `WorksheetAgent` that records its calls, so nothing spawns `
 - Any stage failing → non-zero exit, and the failing stage's name appears in the message.
 - The `translate:save` invocation **never** contains `--approve`. Worth pinning on its own: it is
   the one invariant whose violation is silent and unrecoverable.
+- Unrecognised stdout from `collect`, `translate:prepare`, `translate:align` or `status` → the tick
+  fails. One test per stage, because the guards are per stage and each was independently deletable.
+- A clean agent pass that saved nothing, or only part of the batch → the tick fails; the same
+  wiring with a full save → it succeeds. Both halves, or a check that failed unconditionally would
+  satisfy the first one on its own.
+- `collect`'s line is still read when pnpm printed `Already up to date` above it. Every stage runs
+  as `pnpm <script>`, and pnpm writes those to stdout ahead of the script's own output.
 
 `ClaudeCodeAgent` gets its own narrower tests for parsing `--output-format json` — including a
 malformed payload, since a scheduler that reads a crashed agent's output as success is exactly the
-silent failure the Telegram hook exists to prevent.
+silent failure the Telegram hook exists to prevent — and for the argv it builds, which is where
+this feature's real containment lives: the `--disallowedTools` deny rule that beats every allow
+rule, the single `Bash(pnpm translate:save --id * --file *)` allow rule (pinned by equality, so
+both deleting it and widening it to `Bash(*)` fail), and the approval boundary in the prompt.
+Every one of those is asserted for **both** worksheet kinds: the alignment pass is a second
+`claude -p` call running the same save steps, and therefore an equal path to an approved
+translation.

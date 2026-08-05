@@ -1,5 +1,5 @@
-import { outputRootResult } from "../doctor/checks";
-import { describeDbTarget, type DbConfig } from "../config";
+import { outputRootResult, tryDescribeDbTarget, INVALID_DB_URL } from "../doctor/checks";
+import type { DbConfig } from "../config";
 
 /**
  * The one line `watch.ts` prints before any stage runs, naming which output root and which
@@ -18,11 +18,18 @@ import { describeDbTarget, type DbConfig } from "../config";
  * matters — what this line says — has to live somewhere testable.
  *
  * Reuses `outputRootResult`'s own `(default)` / `(HERALD_OUTPUT_DIR override)` wording, so this
- * line and `pnpm doctor`'s never describe the same fact two different ways, and `describeDbTarget`
- * so the database is named the same way `pnpm status`'s first line already does — host and
- * database name only, never the password embedded in `DATABASE_URL`.
+ * line and `pnpm doctor`'s never describe the same fact two different ways, and
+ * `tryDescribeDbTarget` so the database is named the same way `pnpm status`'s first line already
+ * does — host and database name only, never the password embedded in `DATABASE_URL`.
+ *
+ * `tryDescribeDbTarget`, not `describeDbTarget`: this is the *first* statement `watch.ts` runs, so
+ * a malformed DSN in `~/.herald/prod.env` would otherwise throw straight out of the entry point,
+ * and `registerErrorHandler` would print the thrown message — which is a `URL` constructor's, and
+ * therefore not guaranteed to have dropped the `user:password@` it was handed. That message goes
+ * to the journal, and from there into a Telegram alert via the `OnFailure=` hook's journal
+ * excerpt. `src/doctor/checks.ts` already refused to take that risk one file over.
  */
 export function watchStartupLine(outputDir: string, outputOverride: string | undefined, db: DbConfig): string {
   const root = outputRootResult(outputDir, outputOverride).detail;
-  return `watch: output root ${root} · database ${db.env} · ${describeDbTarget(db)}`;
+  return `watch: output root ${root} · database ${db.env} · ${tryDescribeDbTarget(db) ?? INVALID_DB_URL}`;
 }

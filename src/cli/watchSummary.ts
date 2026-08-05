@@ -1,6 +1,18 @@
 import type { TickReport } from "../app/WatchTick";
+import { condense } from "../shared/text/condense";
 
 export type WatchOutcome = { line: string; exitCode: 0 | 1 };
+
+/**
+ * The last place a failure detail can still be made one line long. `runStage` already caps the
+ * stderr it puts in a detail, but not every detail comes from there — `ClaudeCodeAgent` builds its
+ * own from `claude -p`'s stderr or its `result` text, and a `WorksheetAgent` implementation added
+ * later needn't cap anything at all. Capping here means the invariant that actually matters — the
+ * printed line is one journal entry, short enough that
+ * `deploy/herald-notify-failure.sh`'s 500-character tail-slice still contains the
+ * `watch: FAILED — <stage>:` prefix — holds no matter who produced the detail.
+ */
+const MAX_DETAIL_CHARS = 300;
 
 /**
  * Turns a `TickReport` into the one line `watch.ts` prints and the exit code it sets. Pulled out of
@@ -16,6 +28,8 @@ export function watchOutcome(report: TickReport): WatchOutcome {
     return { line: `watch: ok — ran ${stages}`, exitCode: 0 };
   }
 
-  const detail = report.failure ? `${report.failure.stage}: ${report.failure.detail}` : "unknown failure";
+  const detail = report.failure
+    ? condense(`${report.failure.stage}: ${report.failure.detail}`, MAX_DETAIL_CHARS)
+    : "unknown failure";
   return { line: `watch: FAILED — ${detail} (ran ${stages})`, exitCode: 1 };
 }

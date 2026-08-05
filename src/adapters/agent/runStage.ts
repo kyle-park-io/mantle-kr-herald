@@ -1,5 +1,17 @@
 import type { StageResult, StageRunner } from "../../ports/WorksheetAgent";
+import { condense } from "../../shared/text/condense";
 import { spawnCapture } from "./spawnCapture";
+
+/**
+ * A failing stage's stderr is raw: a Node stack trace, a pg driver error with a query in it, a
+ * pnpm banner. It ends up inside the single line `watch.ts` prints, which
+ * `deploy/herald-notify-failure.sh` reads back out of the journal with `journalctl -n 5` and then
+ * tail-slices to 500 characters — so an untruncated multi-line stderr costs the alert its
+ * `watch: FAILED — <stage>:` prefix entirely. 300 leaves room for that prefix and for
+ * `watchSummary`'s `(ran …)` suffix inside the hook's budget while still carrying the first, most
+ * diagnostic part of the message. See `condense`'s own doc comment for the mechanics.
+ */
+const MAX_STDERR_CHARS = 300;
 
 /**
  * The `StageRunner` `WatchTick` drives every pipeline stage (`collect`, `translate:prepare`,
@@ -29,6 +41,6 @@ export const runStage: StageRunner = async (script, args): Promise<StageResult> 
     return { ok: true, stdout: result.stdout };
   }
 
-  const detail = result.stderr.trim() || `pnpm ${script} exited with code ${result.code}`;
+  const detail = condense(result.stderr, MAX_STDERR_CHARS) || `pnpm ${script} exited with code ${result.code}`;
   return { ok: false, stage: script, detail };
 };

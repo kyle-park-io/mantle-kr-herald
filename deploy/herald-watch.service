@@ -47,8 +47,9 @@ EnvironmentFile=%h/.herald/prod.env
 
 # Outer bound on a wedged run. ClaudeCodeAgent already times out at 10 minutes per `claude -p` call
 # (src/adapters/agent/ClaudeCodeAgent.ts), and one tick makes at most two of those (translation,
-# then alignment): 2 x 600s = 1200s. collect / translate:prepare / translate:align are ordinary
-# network+DB calls that normally finish in seconds, but get a generous 600s of their own on top
+# then alignment): 2 x 600s = 1200s. collect / translate:prepare / status (twice, bracketing the
+# translation pass — see WatchTick) / translate:align are ordinary network+DB calls that normally
+# finish in seconds, but together get a generous 600s of their own on top
 # rather than trimming the agent headroom: 1200s + 600s = 1800s (30 minutes) total. Without this,
 # a wedged `claude -p` would leave the unit "active" forever, and systemd skips every later timer
 # fire while a unit is still active — a scheduler that looks armed but has silently stopped. The

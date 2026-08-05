@@ -170,6 +170,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which database this tick is attached to (`watchStartupLine`, `src/cli/watchStartup.ts`) — the
   wrong-tree-or-database mistake that cost 39 threads once now shows up in every single tick's
   `journalctl --user -u herald-watch`, not only when someone happens to run `pnpm doctor` first.
+  A clean `claude -p` is not accepted as proof that anything was saved: exit 0, `is_error: false`
+  and an empty `permission_denials` are equally true of a model that read the worksheet, decided it
+  was done and stopped, so the tick brackets the translation pass with `pnpm status` and **fails**
+  unless the `Translated` total grew by the whole prepared batch. Without that, an agent that never
+  called `translate:save` produced a green tick over an unsaved batch that nothing downstream would
+  ever notice — `collect` gates the next tick on *new* threads, so those items are not retried
+  until unrelated content arrives, and the next `translate:prepare` archives them on its way past.
+  Failure details are collapsed to one line and truncated (`src/shared/text/condense.ts`) so the
+  `OnFailure=` hook's 500-character journal excerpt still contains the `watch: FAILED — <stage>:`
+  prefix rather than the tail of someone's stack trace. **The scheduler's output is reviewed on the
+  deployed board, not on `pnpm serve`** — it writes to production Neon while `pnpm serve` reads
+  `.env`'s local `DATABASE_URL`, so a local dashboard will never show a scheduled tick's work
+  ([`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §6 says so explicitly).
   See `src/cli/watch.ts`, `src/app/WatchTick.ts` (the sequencing decisions — collect 0 → the agent
   is never invoked; align "nothing to align" → the second agent call is skipped; any unrecognised
   stage output is treated as a failure, never as success), `src/adapters/agent/ClaudeCodeAgent.ts`,

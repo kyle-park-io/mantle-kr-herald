@@ -47,6 +47,41 @@ describe("runStage", () => {
     }
   });
 
+  it("flattens a multi-line stderr into one line", async () => {
+    // A stack trace is the normal shape of a failing stage's stderr, and this detail does not stay
+    // a string: `watch.ts` prints it as one `console.log`, journald splits it into one entry per
+    // line, and `deploy/herald-notify-failure.sh` reads back only the last five entries. Five
+    // lines of stack trace are enough to push the `watch: FAILED — <stage>:` prefix — the only
+    // part that says what broke — out of the alert entirely.
+    const result = await runStage("exec", [
+      "node",
+      "-e",
+      "console.error('boom-marker\\n    at first (/a.ts:1:1)\\n    at second (/b.ts:2:2)\\n    at third (/c.ts:3:3)\\n    at fourth (/d.ts:4:4)\\n    at fifth (/e.ts:5:5)'); process.exit(2)",
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.detail).not.toContain("\n");
+      expect(result.detail).toContain("boom-marker");
+      // Flattened, not merely stripped at the ends: the frames are still there, separated by
+      // single spaces.
+      expect(result.detail).toContain("boom-marker at first (/a.ts:1:1)");
+    }
+  });
+
+  it("truncates a very long stderr rather than passing all of it on", async () => {
+    // The other half of the same budget: the hook keeps only the last 500 characters of what it
+    // reads back, so a single enormous line costs the alert its prefix just as surely as five
+    // short ones do.
+    const result = await runStage("exec", ["node", "-e", "console.error('E'.repeat(5000)); process.exit(2)"]);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.detail.length).toBeLessThanOrEqual(301); // 300 + the ellipsis
+      expect(result.detail.endsWith("…")).toBe(true);
+    }
+  });
+
   it("carries the failing script's stderr into the detail", async () => {
     // `pnpm exec <cmd> <args...>` runs an arbitrary command through pnpm without needing a real
     // package script, the database, or the network — `pnpm this-script-does-not-exist` above can't
