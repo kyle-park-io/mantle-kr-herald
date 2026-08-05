@@ -225,11 +225,15 @@ it just stops growing, and nobody notices for days.
 | `deploy/herald-notify-failure.service` | the wrapper `OnFailure=` actually names |
 | `deploy/herald-notify-failure.sh` | what that wrapper runs — one Telegram line |
 
-**Four unit files, not three.** `OnFailure=` takes a list of **units**; it cannot name a bare
-script (`man systemd.unit`, systemd 255). So the hook needs a wrapper unit, and **all four files
-must be installed** — if the wrapper is skipped, `OnFailure=` points at a unit that does not exist
-and the failure notice silently never fires, which is the failure class this design exists to
-prevent.
+**Four files, but only three get installed.** `OnFailure=` takes a list of **units**; it cannot name
+a bare script (`man systemd.unit`, systemd 255), so the hook needs a wrapper unit. Skip that wrapper
+and `OnFailure=` points at a unit that does not exist — the failure notice silently never fires,
+which is the failure class this design exists to prevent.
+
+The **three units** are copied to `~/.config/systemd/user/`. The `.sh` is **not**: the wrapper's
+`ExecStart=` names its path in the repo, systemd ignores a non-unit file in the unit directory
+anyway, and a copy would silently diverge from the repo original the first time either is edited.
+It only has to stay executable where it is.
 | `.vercelignore` | `/deploy/` — anchored, so `src/deploy/` survives |
 | `docs/ko/team-runbook.md` | a section: install, inspect, pause, read logs |
 | `.env.example` | the new Telegram chat id, in the right section with a comment |
