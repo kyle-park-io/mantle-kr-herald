@@ -343,7 +343,10 @@ describe("ClaudeCodeAgent", () => {
     expect(seen).toContain("--output-format");
     expect(seen).toContain("json");
     expect(seen).not.toContain("--dangerously-skip-permissions");
-    expect(seen.join(" ")).not.toContain("--approve");
+    // Array membership, NOT `seen.join(" ")`. The invariant is that `--approve` is never
+    // passed as its own argument. Joining would also forbid the prompt from naming the flag
+    // it is telling the agent not to use — which is the one place the words must be plain.
+    expect(seen).not.toContain("--approve");
   });
 
   it("fails when the agent exits non-zero", async () => {
