@@ -107,16 +107,46 @@ describe("WatchTick", () => {
   it("never passes --approve to any stage", async () => {
     const { agent } = recordingAgent();
     const ran: string[] = [];
+    // Real `translate-prepare.ts` prints this exact second line, containing "--approve" in
+    // running text. The mock must include it — a stdout with no "--approve" substring anywhere
+    // can only catch a hardcoded literal in the implementation, not the realistic bug: a parse
+    // that forwards a stdout *line* into an argument list.
+    const prepareStdout = [
+      "prepared 2 item(s) → output/translations/worksheets/batch-X.md",
+      "Translate each item's 원문 into the 번역 section, then run: pnpm translate:save --id <id> --file <korean.txt> [--approve]",
+    ].join("\n");
     const run = async (script: string, args: string[]): Promise<StageResult> => {
       ran.push([script, ...args].join(" "));
       if (script === "collect") return { ok: true, stdout: "collected 1 threads (2 tweets) for @x — covered a ~ b" };
-      return { ok: true, stdout: "prepared 2 item(s) → output/translations/worksheets/batch-X.md" };
+      if (script === "translate:prepare") return { ok: true, stdout: prepareStdout };
+      return { ok: true, stdout: "nothing to align · skipped 0 (no precedent)" };
     };
 
     await new WatchTick(run, agent).run();
 
     expect(ran.length).toBeGreaterThan(1); // guard: a no-op tick would pass vacuously
     expect(ran.join(" ")).not.toContain("--approve");
+  });
+
+  it("still skips alignment when 'nothing to align' carries the tm:promote hint suffix", async () => {
+    const { agent, calls } = recordingAgent();
+    const run = async (script: string): Promise<StageResult> => {
+      if (script === "collect") return { ok: true, stdout: "collected 1 threads (2 tweets) for @x — covered a ~ b" };
+      if (script === "translate:prepare")
+        return { ok: true, stdout: "prepared 2 item(s) → output/translations/worksheets/batch-X.md" };
+      // Real `translate-align.ts:36` appends this suffix whenever `skipped > 0`. This is the
+      // branch `NOTHING_TO_ALIGN_LINE` is deliberately not end-anchored for.
+      return {
+        ok: true,
+        stdout: "nothing to align · skipped 1 (no precedent) — run `pnpm tm:promote` to add precedent pairs",
+      };
+    };
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(report.stagesRun).toEqual(["collect", "translate:prepare", "translate:align"]);
+    expect(calls).toEqual(["translation"]);
   });
 
   // Task 1's "reports the failing stage" test only ever exercised `collect`, so it couldn't
