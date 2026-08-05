@@ -191,7 +191,7 @@ src/cli/translate-align.ts:36     nothing to align · skipped 1 (no precedent)
       if (script === "collect") return { ok: true, stdout: "collected 2 threads (5 tweets) for @x — covered a ~ b" };
       if (script === "translate:prepare")
         return { ok: true, stdout: "prepared 2 item(s) → output/translations/worksheets/batch-X.md" };
-      return { ok: true, stdout: "aligned 2 · skipped 0 → output/translations/worksheets/align-X.md" };
+      return { ok: true, stdout: "aligned 2 · skipped 0 (no precedent) → output/translations/worksheets/align-X.md" };
     };
 
     const report = await new WatchTick(run, agent).run();
