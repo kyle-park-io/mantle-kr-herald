@@ -85,7 +85,6 @@ The `PATH` row is the one that bites first and looks like a broken script when i
   it runs as Kyle and therefore sees `~/.claude`'s subscription credential and the repo without any
   extra plumbing.
 - `crontab -l` → `no crontab for kyle`. Nothing to collide with.
-- `flock` is present.
 
 Schedule: **`OnCalendar=*-*-* 0/2:17:00`** — every two hours, off the hour. Deliberately
 conservative while this is new; hourly (`*-*-* *:17:00`) is a one-line change once it has run
