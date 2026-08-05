@@ -28,14 +28,29 @@ This is the same gate `translate:align`'s own plan states: *"a saved alignment s
 ## One tick
 
 ```
-flock -n                        → a previous tick still running? skip this one, silently, exit 0
-export production DSN           → ~/.herald/prod.env, two lines
-pnpm collect                    → 0 new? exit here. No agent call.
-pnpm translate:prepare --limit 3
-claude -p  ①                    → fill the translation worksheet → translate:save (no --approve)
-pnpm translate:align --limit 3  → "aligned 0"? skip ②
-claude -p  ②                    → fill the alignment worksheet → translate:save
+pnpm watch                      ← one command, run by the systemd unit
+  ├ collect                     → 0 new? stop here. No agent call.
+  ├ translate:prepare --limit 3
+  ├ claude -p  ①                → fill the translation worksheet → translate:save (no --approve)
+  ├ align --limit 3             → "aligned 0"? skip ②
+  └ claude -p  ②                → fill the alignment worksheet → translate:save
 ```
+
+**A TypeScript CLI, not a shell script.** This repo has zero shell scripts and no `scripts/`
+directory; it has forty-odd `src/cli/*.ts` entrypoints and a vitest suite. Writing this one stage in
+bash would mean building a shell-stubbing harness from nothing just to assert the decisions below,
+while the same assertions are ordinary unit tests under `tests/cli/`. The systemd unit invokes
+`pnpm watch`.
+
+**No lock.** `Type=oneshot` will not start a second instance while the first is still running, so
+systemd is the mutual exclusion for the scheduled path — a `flock` would have been carrying
+crontab's weight, not systemd's. A Postgres advisory lock was considered and rejected: `createDb`
+returns a `Pool`, so a session-scoped lock lands on a borrowed connection and a later query may get
+a different one. A file lock was rejected for a stronger reason — this repo already paid for that
+mechanism's mtime-and-liveness failure modes once.
+
+What stays uncovered is running `pnpm watch` by hand while the timer is armed. The runbook says to
+use `systemctl --user start herald-watch.service` instead, which systemd serializes correctly.
 
 **The early exit is the design.** Most ticks find nothing and end after `collect`, spending one
 twitterapi.io call and no agent time at all. A scheduler that woke Claude 24 times a day to be told
@@ -168,23 +183,41 @@ it just stops growing, and nobody notices for days.
 
 | | |
 | --- | --- |
-| `scripts/herald-watch.sh` | the tick: flock, env, early exit, two agent calls, exit codes |
-| `scripts/herald-watch.service` | `Type=oneshot`, `OnFailure=`, explicit `PATH` and `WorkingDirectory` |
-| `scripts/herald-watch.timer` | `OnCalendar=*-*-* 0/2:17:00`, `Persistent=true` |
-| `scripts/herald-notify-failure.sh` | the `OnFailure=` target — one Telegram line |
+| `src/cli/watch.ts` | the tick: stage sequencing, early exits, exit codes |
+| `src/app/WatchTick.ts` | the use-case — decides which stages run, given each stage's result |
+| `src/adapters/agent/ClaudeCodeAgent.ts` | spawns `claude -p`, parses `--output-format json` |
+| `src/ports/WorksheetAgent.ts` | the port `WatchTick` depends on, so tests substitute a stub |
+| `package.json` | the `watch` script |
+| `deploy/herald-watch.service` | `Type=oneshot`, `OnFailure=`, explicit `PATH`, `WorkingDirectory` |
+| `deploy/herald-watch.timer` | `OnCalendar=*-*-* 0/2:17:00`, `Persistent=true` |
+| `deploy/herald-notify-failure.sh` | the `OnFailure=` target — one Telegram line |
+| `.vercelignore` | `/deploy/` — anchored, so `src/deploy/` survives |
 | `docs/ko/team-runbook.md` | a section: install, inspect, pause, read logs |
 | `.env.example` | the new Telegram chat id, in the right section with a comment |
+
+`deploy/` is a **new** top-level directory (only `src/deploy/` and `tests/deploy/` exist today).
+Because `vercel deploy --prod` uploads the working directory, it needs a `.vercelignore` entry, and
+that entry must be anchored: an unanchored `deploy/` matches at every depth and would silently drop
+`src/deploy/` from the function — the exact failure `.vercelignore`'s own comment records for
+`translation/`. `tests/deploy/vercelignore.test.ts` guards this.
 
 Units are installed by copying to `~/.config/systemd/user/` — not committed there, so the repo stays
 the source and the install step is explicit.
 
+The port/adapter split exists for one reason: `WatchTick`'s decisions are the whole risk of this
+feature, and they are only cheaply testable if the thing that shells out to `claude` is substitutable.
+
 ## Tests
 
-The shell script is the risk, so the tests target its decisions, not its plumbing:
+`WatchTick`'s sequencing decisions are the risk, so the tests target those, not the plumbing. Each
+runs against a stub `WorksheetAgent` that records its calls, so nothing spawns `claude`:
 
-- `collect` reports 0 new → the agent is never invoked (assert on a stub recording its calls).
+- `collect` reports 0 new → the agent is never invoked, and the tick reports success.
 - `align` reports `aligned 0` → the second agent call is never invoked.
-- A held lock → exit 0 and no pipeline command runs.
-- Any stage failing → non-zero exit, and the notify hook receives the failing stage's name.
-- The generated `translate:save` invocation **never** contains `--approve`. This one is worth
-  pinning explicitly: it is the invariant whose violation is silent and unrecoverable.
+- Any stage failing → non-zero exit, and the failing stage's name appears in the message.
+- The `translate:save` invocation **never** contains `--approve`. Worth pinning on its own: it is
+  the one invariant whose violation is silent and unrecoverable.
+
+`ClaudeCodeAgent` gets its own narrower tests for parsing `--output-format json` — including a
+malformed payload, since a scheduler that reads a crashed agent's output as success is exactly the
+silent failure the Telegram hook exists to prevent.
