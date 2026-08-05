@@ -62,9 +62,20 @@
 **Invariants this task must satisfy** (do not copy an implementation from here — derive it):
 
 - `run()` calls `collect` first, always.
-- If `collect`'s stdout indicates **zero new items**, `run()` returns `ok: true` and **never touches `agent`**. Read `src/cli/collect.ts` and run `pnpm collect` against the dev database to see the exact wording it prints for a no-new-data run before deciding how to detect it. Prefer a parse that fails loudly over one that silently treats unknown output as "nothing new" — the latter turns a broken collector into a permanently idle scheduler.
+- If `collect`'s stdout indicates **zero new threads**, `run()` returns `ok: true` and **never touches `agent`**.
+
+  `src/cli/collect.ts:42` prints exactly one line of this shape:
+
+  ```
+  collected 3 threads (7 tweets) for @Mantle_Official — covered 2026-08-05T… ~ 2026-08-05T…
+  collected 0 threads (0 tweets) for @Mantle_Official — nothing new in window
+  ```
+
+  Match the leading count. **Unrecognised stdout is a failure, not "nothing new"** — the lenient
+  reading turns a broken collector into a scheduler that reports success forever while doing
+  nothing, which is the one failure mode nobody would notice.
 - A failing stage short-circuits: no later stage runs, and `failure.stage` names the stage that failed.
-- `WatchTick` performs no I/O of its own — no `spawn`, no `fs`, no `process.exit`. Everything arrives through `run` and `agent`.
+- `WatchTick` performs no I/O of its own — no `spawn`, no `fs`, no `process.exit`. Everything arrives through `run` and `agent`. Parsing a stage's stdout is string work, not I/O.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -91,7 +102,7 @@ describe("WatchTick", () => {
     const ran: string[] = [];
     const run = async (script: string): Promise<StageResult> => {
       ran.push(script);
-      return { ok: true, stdout: "collected 0" };
+      return { ok: true, stdout: "collected 0 threads (0 tweets) for @x — nothing new in window" };
     };
 
     const report = await new WatchTick(run, agent).run();
@@ -155,8 +166,18 @@ git commit -m "feat(watch): gate the tick on collect finding new items"
 
 - With new items, the order is exactly: `collect` → `translate:prepare` → agent(`translation`) → `translate:align` → agent(`alignment`).
 - Both `translate:prepare` and `translate:align` are invoked with `--limit 3`.
-- When `translate:align` reports it aligned nothing, the **alignment** agent call is skipped and the tick still reports success. Read `src/cli/translate-align.ts` for the exact `nothing to align` wording.
+- **`prepared 0 item(s)` skips the translation agent call** and goes straight to `translate:align`. `translate-prepare.ts` writes a worksheet unconditionally, so a zero-item batch still produces a file — calling the agent on it would spend a subscription turn to translate nothing. This happens whenever `collect` re-reads a thread that is already translated.
+- When `translate:align` reports it aligned nothing, the **alignment** agent call is skipped and the tick still reports success.
 - The worksheet path handed to `agent.fill` is the one the preceding stage printed — parse it from that stage's stdout rather than re-deriving a timestamped filename, which would race the stage that wrote it.
+
+Exact stdout shapes, verified by reading the two CLIs. Both print a **second** line after the one
+you parse, so match a line, not the whole buffer:
+
+```
+src/cli/translate-prepare.ts:56   prepared 2 item(s) → output/translations/worksheets/batch-<stamp>.md
+src/cli/translate-align.ts:42     aligned 2 · skipped 1 (no precedent) → output/translations/worksheets/align-<stamp>.md
+src/cli/translate-align.ts:36     nothing to align · skipped 1 (no precedent)
+```
 - **No argument list this class builds ever contains `--approve`.**
 
 - [ ] **Step 1: Write the failing tests**
@@ -167,9 +188,9 @@ git commit -m "feat(watch): gate the tick on collect finding new items"
     const ran: string[] = [];
     const run = async (script: string, args: string[]): Promise<StageResult> => {
       ran.push([script, ...args].join(" "));
-      if (script === "collect") return { ok: true, stdout: "collected 2" };
+      if (script === "collect") return { ok: true, stdout: "collected 2 threads (5 tweets) for @x — covered a ~ b" };
       if (script === "translate:prepare")
-        return { ok: true, stdout: "wrote output/translations/worksheets/batch-X.md" };
+        return { ok: true, stdout: "prepared 2 item(s) → output/translations/worksheets/batch-X.md" };
       return { ok: true, stdout: "aligned 2 · skipped 0 → output/translations/worksheets/align-X.md" };
     };
 
@@ -187,9 +208,9 @@ git commit -m "feat(watch): gate the tick on collect finding new items"
   it("translates but skips alignment when there is no precedent", async () => {
     const { agent, calls } = recordingAgent();
     const run = async (script: string): Promise<StageResult> => {
-      if (script === "collect") return { ok: true, stdout: "collected 1" };
+      if (script === "collect") return { ok: true, stdout: "collected 1 threads (2 tweets) for @x — covered a ~ b" };
       if (script === "translate:prepare")
-        return { ok: true, stdout: "wrote output/translations/worksheets/batch-X.md" };
+        return { ok: true, stdout: "prepared 2 item(s) → output/translations/worksheets/batch-X.md" };
       return { ok: true, stdout: "nothing to align · skipped 1 (no precedent)" };
     };
 
@@ -201,13 +222,28 @@ git commit -m "feat(watch): gate the tick on collect finding new items"
     expect(calls).toEqual(["translation"]);
   });
 
+  it("skips the translation pass when the batch prepared nothing", async () => {
+    const { agent, calls } = recordingAgent();
+    const run = async (script: string): Promise<StageResult> => {
+      if (script === "collect") return { ok: true, stdout: "collected 1 threads (2 tweets) for @x — covered a ~ b" };
+      if (script === "translate:prepare")
+        return { ok: true, stdout: "prepared 0 item(s) → output/translations/worksheets/batch-X.md" };
+      return { ok: true, stdout: "nothing to align · skipped 0 (no precedent)" };
+    };
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(calls).toEqual([]);
+  });
+
   it("never passes --approve to any stage", async () => {
     const { agent } = recordingAgent();
     const ran: string[] = [];
     const run = async (script: string, args: string[]): Promise<StageResult> => {
       ran.push([script, ...args].join(" "));
-      if (script === "collect") return { ok: true, stdout: "collected 1" };
-      return { ok: true, stdout: "wrote output/translations/worksheets/batch-X.md" };
+      if (script === "collect") return { ok: true, stdout: "collected 1 threads (2 tweets) for @x — covered a ~ b" };
+      return { ok: true, stdout: "prepared 2 item(s) → output/translations/worksheets/batch-X.md" };
     };
 
     await new WatchTick(run, agent).run();
@@ -256,6 +292,9 @@ git commit -m "feat(watch): sequence the translate and align passes"
 **Invariants:**
 
 - Builds a `claude -p` invocation carrying `--output-format json` and an `--allowedTools` allowlist narrow enough to read the worksheet, write the Korean text, and run `translate:save`. It must **not** pass `--dangerously-skip-permissions`.
+- **The prompt must forbid `--approve` in so many words.** This is not belt-and-braces: `translate:prepare` itself prints
+  `run: pnpm translate:save --id <id> --file <korean.txt> [--approve]`
+  as its closing line (`src/cli/translate-prepare.ts:57`), and the worksheet carries similar guidance. An unattended agent reading its own tooling's instructions is being actively invited to approve. Say plainly that a human performs 1차 검수 and the agent never approves. Consider also excluding `--approve` from the `--allowedTools` Bash pattern, so the allowlist enforces what the prompt asks for.
 - A non-zero exit → `{ ok: false }` with `stderr` (truncated) as the detail.
 - Exit 0 with **unparseable** stdout → `{ ok: false }`. Do not treat it as success. This is the single most important behaviour in the file: a crashed agent that still exits 0 would otherwise be recorded as a completed translation pass.
 - The prompt text lives in this file as a named constant, so a reviewer can read what the unattended agent is told without running anything.
