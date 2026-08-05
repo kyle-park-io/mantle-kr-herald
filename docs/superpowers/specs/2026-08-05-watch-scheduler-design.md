@@ -124,11 +124,44 @@ inside this repo.
 
 **Kyle creates this file.** A production DSN does not pass through an agent session.
 
+### The database is not the only thing that needs separating
+
+Pointing the scheduler at production Neon isolates the *database*. It does not isolate the
+**collect watermark**, and that gap is not theoretical — it fired during implementation.
+
+`src/cli/stores.ts` states the rule plainly: the `WatermarkStore` half of `LocalJsonStore`
+(`output/x/state.json`) deliberately stayed file-backed when everything else moved to Postgres,
+because "`collect` is a local job". So one file answers "how far have I collected?" for **every**
+database. A local dev `pnpm collect` advances it; a later production run reads the advanced value
+and skips everything in between — permanently, and silently.
+
+That is exactly what happened on 2026-08-05: a run against the dev database pulled 39 threads and
+moved the watermark from `2026-07-21T04:24:50.000Z` to `2026-08-04T17:15:30.000Z`. Production would
+never have seen those threads. Recovered by reading the pre-run value out of `output/x/runs.json`'s
+`requested.since` and restoring it.
+
+**The fix is a separate output root for the scheduler**, chosen deliberately rather than as a
+patch: this project is not yet fully in production, and the priority is an environment where
+experimenting locally cannot disturb the scheduled run, or vice versa. `src/paths.ts` derives every
+path from a single `OUTPUT_DIR` constant, so an `HERALD_OUTPUT_DIR` override is one line and the
+whole tree follows — including `ClaudeCodeAgent`'s permission rules, which Task 3 already derives
+from `paths.translationsWorksheets` rather than a literal.
+
+**The override must be loud.** `REPO_ROOT`'s own comment records why `OUTPUT_DIR` was fixed in the
+first place: a relative path once "silently created a second `output/` tree instead of failing". An
+invisible override recreates that bug wearing a different hat. So: resolve the value to an absolute
+path, have `pnpm doctor` report which root is in effect, and have any command running against a
+non-default root say so on startup. A wrong tree must never be a quiet outcome.
+
 ### The consequence worth stating
 
 `output/` drifts further from the database, because the scheduler writes rows the local file tree
 never sees. That is already true and already documented; the scheduler makes it true faster.
 `pnpm db:export` remains the way to re-mirror.
+
+Note the scheduler's own tree is now a third thing: its worksheets and `pending.json` live under
+its root, not in the repo. That is intended — it is the isolation — but it means a worksheet the
+scheduler prepared is not where a hand-run `pnpm translate:prepare` would have put it.
 
 ## Running `claude -p` unattended
 

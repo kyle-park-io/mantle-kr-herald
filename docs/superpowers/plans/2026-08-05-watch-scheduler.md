@@ -440,17 +440,87 @@ git commit -m "feat(watch): add the pnpm watch entrypoint"
 
 ---
 
-## Task 5: systemd units, the failure hook, and `.vercelignore`
+## Task 5: an isolated output root, systemd units, and the failure hook
 
 **Files:**
+- Modify: `src/paths.ts`, `src/cli/doctor.ts`
 - Create: `deploy/herald-watch.service`, `deploy/herald-watch.timer`, `deploy/herald-notify-failure.sh`
 - Modify: `.vercelignore`, `.env.example`
-- Test: `tests/deploy/vercelignore.test.ts` (extend)
+- Test: `tests/paths.outputRoot.test.ts` (new), `tests/deploy/vercelignore.test.ts` (extend)
 
-**Invariants:**
+### Why the output root moves
+
+Pointing the scheduler at production Neon isolates the database but **not** the collect watermark.
+`src/cli/stores.ts` documents that `output/x/state.json` deliberately stayed file-backed, so one
+file answers "how far have I collected?" for every database. During this plan's own implementation
+a dev run advanced it past 39 threads that production would then have skipped forever.
+
+`src/paths.ts` derives everything from one `OUTPUT_DIR` constant, so the override is one line and
+the whole tree follows — including `ClaudeCodeAgent`'s permission rules, which already derive from
+`paths.translationsWorksheets`.
+
+**Invariants — output root:**
+
+- `OUTPUT_DIR` honours `HERALD_OUTPUT_DIR` when set, and falls back to `join(REPO_ROOT, "output")`.
+- The value is **resolved to an absolute path**. `REPO_ROOT`'s existing comment records why: a
+  relative path once "silently created a second `output/` tree instead of failing".
+- **A non-default root is never silent.** `pnpm doctor` reports which root is in effect. Read
+  `src/cli/doctor.ts` and follow however it already renders check lines — do not invent a format.
+- Do not change any other path in `src/paths.ts`; they all derive from `OUTPUT_DIR` already.
+
+- [ ] **Step 1: Write the failing test**
+
+```typescript
+// tests/paths.outputRoot.test.ts
+import { describe, it, expect } from "vitest";
+
+describe("OUTPUT_DIR", () => {
+  it("honours HERALD_OUTPUT_DIR and resolves it to an absolute path", async () => {
+    const prev = process.env.HERALD_OUTPUT_DIR;
+    process.env.HERALD_OUTPUT_DIR = "some/relative/root";
+    try {
+      const mod = await import(`../src/paths?outputRootTest=${Date.now()}`);
+      expect(mod.OUTPUT_DIR.startsWith("/")).toBe(true);
+      expect(mod.OUTPUT_DIR.endsWith("some/relative/root")).toBe(true);
+      expect(mod.paths.translationsWorksheets.startsWith(mod.OUTPUT_DIR)).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.HERALD_OUTPUT_DIR;
+      else process.env.HERALD_OUTPUT_DIR = prev;
+    }
+  });
+
+  it("falls back to the repo's own output/ when unset", async () => {
+    const prev = process.env.HERALD_OUTPUT_DIR;
+    delete process.env.HERALD_OUTPUT_DIR;
+    try {
+      const mod = await import(`../src/paths?outputRootDefault=${Date.now()}`);
+      expect(mod.OUTPUT_DIR).toBe(`${mod.REPO_ROOT}/output`);
+    } finally {
+      if (prev !== undefined) process.env.HERALD_OUTPUT_DIR = prev;
+    }
+  });
+});
+```
+
+The cache-busting query string is what lets a module-level constant be re-evaluated per test. If
+that import form does not work under this repo's vitest setup, find one that does — do not weaken
+the test into asserting nothing.
+
+- [ ] **Step 2: Run it and confirm it fails**
+
+- [ ] **Step 3: Implement the override and the `doctor` line**
+
+- [ ] **Step 4: Verify by mutation**
+
+Delete the `resolve()` call and confirm the absolute-path assertion goes red. Restore it. Report
+both outcomes.
+
+### Invariants — units, hook, and ignore rules
 
 - `.vercelignore` gains **`/deploy/`** — anchored with a leading slash. An unanchored `deploy/` matches every depth and would drop `src/deploy/` from the function bundle. Read the comment at the top of `.vercelignore` for why this rule exists.
 - `herald-watch.service` is `Type=oneshot`, sets `WorkingDirectory` to the repo, sets an explicit `PATH` covering `pnpm`, `node` and `claude` (find them with `command -v`), sources the production env, and declares `OnFailure=`.
+- The service sets **`Environment=HERALD_OUTPUT_DIR=%h/.herald/output`** so the scheduler keeps its own artifact tree and cannot trade watermarks with a hand-run local command.
+- The service sets **`TimeoutStartSec=`** as the outer bound on a wedged run. `ClaudeCodeAgent` already times out internally at 10 minutes per agent call, and a tick makes at most two; pick a value comfortably above two of those plus the pipeline stages, and say in a comment why that number. Without it, a hung tick leaves the unit active forever and systemd skips every later fire — a silently dead scheduler, which is the failure this whole feature exists to prevent.
 - `herald-watch.timer` uses `OnCalendar=*-*-* 0/2:17:00` and `Persistent=true`. Verify with `systemd-analyze calendar '*-*-* 0/2:17:00'` before committing.
 - `herald-notify-failure.sh` sends **one** line to Telegram naming the unit and the `journalctl` command to read it. It must exit 0 even when Telegram is unreachable — a failing failure-handler is a loop.
 - `.env.example` gains `TELEGRAM_CHAT_ID_OPS` in the Telegram section with a comment saying it receives scheduler failures only.
