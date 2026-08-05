@@ -156,6 +156,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error banner while the row settles to 발송됨. See `TelegramBotSender.send`
   (`src/adapters/send/TelegramBotSender.ts`), `SendChannelsInput.pin`/`SendChannelsResult.warnings`
   (`src/app/SendChannels.ts`), and `OutletCard`'s `pinOffered` (`web/src/components/OutletCard.tsx`).
+- **`pnpm watch` — an unattended scheduler, one tick at a time.** Chains `collect` → (only if
+  `collect` found anything new) `translate:prepare --limit 3` → an unattended `claude -p` fill of the
+  translation worksheet → `translate:align --limit 3` → (only if there is a precedent to align
+  against) a second `claude -p` fill, then exits. A tick that finds nothing new spends one
+  twitterapi.io call and never touches the agent. Stops dead at `status: "translated"` —
+  `translate:save` is never called with `--approve` on this path, and nothing downstream
+  (`convert:*`, `send:*`, `drive:publish`) is ever invoked, so a scheduled run can only ever hand the
+  board something to review, never publish it. Both `claude -p` calls run with `--output-format json`
+  and a narrow `--allowedTools` list, never `--dangerously-skip-permissions` — the one process here
+  that is unattended and reaches the production database is the one place that flag is least
+  defensible. See `src/cli/watch.ts`, `src/app/WatchTick.ts` (the sequencing decisions — collect 0 →
+  the agent is never invoked; align "nothing to align" → the second agent call is skipped; any
+  unrecognised stage output is treated as a failure, never as success),
+  `src/adapters/agent/ClaudeCodeAgent.ts`, and
+  `docs/superpowers/specs/2026-08-05-watch-scheduler-design.md`.
+- **`deploy/` — the systemd user units that run `pnpm watch` on a schedule, plus its Telegram failure
+  hook. Not installed by anything committed** — see [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md)
+  §6 for the copy-and-enable steps, which stay manual on purpose: the paths are machine-specific
+  absolute paths found on the one machine this runs on, and the timer only ever reads
+  `~/.herald/prod.env`, which a human creates by hand (a production DSN does not pass through an
+  agent session). `herald-watch.timer` fires every two hours, off the hour
+  (`OnCalendar=*-*-* 0/2:17:00`, verified with `systemd-analyze calendar`), deliberately conservative
+  while this is new. `herald-watch.service` runs one tick as `Type=oneshot` — systemd's own mutual
+  exclusion is the concurrency guard here, not a lock file or an advisory lock — with an explicit
+  `PATH` (a systemd user unit has none of `pnpm`/`node`/`claude` on it by default), a
+  `TimeoutStartSec=1800` outer bound so a wedged run cannot leave the unit "active" through the next
+  scheduled fire, and `OnFailure=herald-notify-failure.service`. **Four unit files, not three:**
+  `OnFailure=` can only name a unit, never a bare script (`man systemd.unit`), so
+  `herald-notify-failure.service` is a thin wrapper around `herald-notify-failure.sh`, which sends one
+  Telegram line naming the failed unit and the `journalctl` command to read why, then exits `0`
+  unconditionally — a failure handler that can itself fail is a loop, not a safety net. Skipping the
+  wrapper unit leaves `OnFailure=` pointing at a unit that doesn't exist, and the failure notice
+  silently never fires — exactly the failure class this whole feature exists to prevent.
+  `.vercelignore` gained an anchored `/deploy/` entry: unanchored, `deploy/` would also match, and
+  drop, `src/deploy/` from the Vercel Function bundle — the same mistake `translation/`'s own entry
+  already exists to guard against.
+- **The scheduler's artifacts live under their own root, `~/.herald/output` (`HERALD_OUTPUT_DIR`),
+  never the repo's own `output/`.** `collect`'s watermark (`output/x/state.json`) stayed file-backed
+  when everything else moved to Postgres (`src/cli/stores.ts`), so it is shared by every run
+  **regardless of which database that run targets**. During this feature's own implementation, a
+  dev-database `pnpm collect` run advanced that one file 39 threads past what a production run had
+  actually seen; a later production run would have skipped all 39 permanently. `HERALD_OUTPUT_DIR`,
+  set by the systemd unit's own `Environment=`, is resolved to an absolute path (`src/paths.ts`) so a
+  relative override cannot silently land under whatever directory the process happened to start in,
+  the way a relative `OUTPUT_DIR` once did. `pnpm doctor`'s new "Output root" check always names
+  whichever root is actually in effect — `(default)` or `(HERALD_OUTPUT_DIR override)` with the
+  resolved path — so a non-default root is never a silent one. A second new doctor check, "Telegram
+  ops chat (watch failures)", warns when `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID_OPS` aren't both set,
+  since the failure hook otherwise runs and exits `0` without telling anyone. See
+  `src/doctor/checks.ts`'s `outputRootResult`/`telegramOpsChatResult`.
 
 ### Changed
 

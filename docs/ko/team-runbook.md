@@ -523,7 +523,94 @@ psql "$DATABASE_URL" -c "delete from auth_attempts where id = 'singleton';"
     아닙니다** — 발송이 끝난 뒤에 돌리세요. 드라이런(`--yes` 없이)은 아무것도 지우지 않으므로
     언제 돌려도 안전합니다.
 
-## 6. 다음으로
+## 6. watch 스케줄러 (자동화)
+
+`pnpm watch`는 systemd 사용자 타이머가 두 시간마다 한 번씩 대신 실행해 주는 명령입니다. 한 번
+실행될 때마다 `pnpm collect` → (새 글이 있을 때만) `pnpm translate:prepare` → 에이전트가 번역
+워크시트를 채움 → `pnpm translate:align` → (정렬할 선례가 있을 때만) 에이전트가 정렬 워크시트를
+채움, 순서로 §2 1~5단계를 그대로 밟습니다. 대부분의 실행은 `collect`에서 새 글을 찾지 못하고
+그대로 끝나며, 그럴 때는 에이전트를 아예 부르지 않습니다.
+
+**이 스케줄러는 아무것도 승인하지 않습니다.** 도달하는 지점은 언제나 `status: "translated"`이고,
+저장할 때 `--approve`가 붙는 일은 없습니다 — `pnpm convert:*`도 `pnpm send:*`도 `pnpm
+drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케줄러가 채워 둔 항목은 §2 6단계의 1차
+검수를 그대로 기다리며, 검수자가 대시보드에서 읽고 승인하기 전까지는 아무 데도 나가지 않습니다.
+
+### 설치
+
+한 번만 하면 되는 절차이고, 팀 자격 증명이 아니라 **프로덕션 DB 접속 정보**가 필요하므로 아무것도
+자동으로 만들지 않습니다 — 아래는 전부 사람이 손으로 하는 절차입니다.
+
+1. **`~/.herald/prod.env`를 두 줄로 직접 만듭니다(Kyle이 직접 — 프로덕션 DSN은 에이전트 세션을
+   거치지 않습니다)**:
+   ```
+   DATABASE_URL=<프로덕션 Neon 접속 문자열>
+   HERALD_DB_ENV=production
+   ```
+   그리고 반드시 `chmod 600 ~/.herald/prod.env`. 저장소의 `.env`는 그대로 로컬 Docker를 가리키고
+   있어도 됩니다 — `TWITTERAPI_IO_KEY` 같은 나머지 값은 여전히 `.env`에서 오고, 이 두 줄만
+   `DATABASE_URL`/`HERALD_DB_ENV`를 덮어씁니다.
+
+2. **네 파일을 전부 `~/.config/systemd/user/`로 복사합니다**(하나도 빠짐없이):
+   ```bash
+   cp deploy/herald-watch.service deploy/herald-watch.timer \
+      deploy/herald-notify-failure.service deploy/herald-notify-failure.sh \
+      ~/.config/systemd/user/
+   ```
+   **셋이 아니라 넷입니다.** `OnFailure=`는 유닛만 가리킬 수 있고 스크립트를 직접 가리킬 수
+   없어서, `herald-notify-failure.sh`를 실행하는 얇은 래퍼 유닛(`herald-notify-failure.service`)이
+   따로 있습니다. 이걸 빠뜨리면 `herald-watch.service`의 `OnFailure=`가 존재하지 않는 유닛을
+   가리키게 되어, 실패해도 알림이 조용히 나가지 않습니다 — 이 기능이 막으려는 바로 그 실패
+   상황입니다.
+
+3. **켭니다**:
+   ```bash
+   systemctl --user daemon-reload
+   systemctl --user enable --now herald-watch.timer
+   ```
+
+### 확인
+
+- **다음/마지막 실행 시각** — `systemctl --user list-timers`
+- **타이머·서비스 상태** — `systemctl --user status`
+- **로그** — `journalctl --user -u herald-watch`
+- **지금 당장 한 번 돌려보고 싶을 때** — `systemctl --user start herald-watch.service`. 인터벌은
+  타이머가 *언제* 도는지만 정할 뿐이고, 이 명령은 그것과 무관하게 즉시 한 번 tick을 실행합니다.
+
+**타이머가 켜져 있는 동안 `pnpm watch`를 터미널에서 직접 실행하지 마세요.** `herald-watch.service`는
+`Type=oneshot`이라 이전 tick이 끝나기 전에는 systemd가 다음 tick을 시작하지 않지만, 이 상호
+배제는 systemd가 시작한 실행끼리만 성립합니다 — 손으로 `pnpm watch`를 치면 systemd가 알지 못하는
+별도 프로세스가 되어 예약된 실행과 겹쳐 돌 수 있습니다. 지금 한 번 돌려보고 싶으면 위의
+`systemctl --user start herald-watch.service`를 쓰세요 — systemd가 순서를 제대로 맞춰 줍니다.
+
+### 멈추기
+
+- **일시 정지**(유닛은 그대로 두고 다음 예약 실행만 막음) — `systemctl --user stop herald-watch.timer`
+- **완전히 끄기** — `systemctl --user disable --now herald-watch.timer`
+
+### 스케줄러 전용 output/ 트리
+
+스케줄러는 저장소 안의 `output/`를 쓰지 않습니다. `herald-watch.service`의
+`Environment=HERALD_OUTPUT_DIR=%h/.herald/output`가 스케줄러의 모든 산출물(수집 워터마크,
+번역·정렬 워크시트, `pending.json` 등)을 통째로 `~/.herald/output` 아래로 옮깁니다. 그래서
+스케줄러가 준비한 워크시트는 저장소 안 `output/translations/worksheets/`가 아니라 그쪽에
+있습니다 — 손으로 `pnpm translate:prepare`를 돌렸을 때와는 다른 위치입니다.
+
+일부러 이렇게 분리했습니다. `pnpm collect`가 어디까지 수집했는지 기억하는 워터마크
+(`output/x/state.json`)는 지금도 파일로만 저장되고 있어서(Postgres로 옮기지 않은 유일한 부분 —
+`src/cli/stores.ts` 주석 참고), **어느 DB를 향해 실행했는지와 무관하게 실행마다 이 파일 하나를
+공유**합니다. 실제로 이 기능을 만드는 동안, 개발 DB를 향한 로컬 `pnpm collect` 실행이 이 파일을
+39개 스레드만큼 앞으로 밀어버린 적이 있습니다 — 그 상태에서 프로덕션을 향해 돌았다면 그 39개를
+영원히 건너뛸 뻔했습니다. 출력 루트를 분리하면 로컬 실습과 스케줄된 실행이 이 파일을 두고 서로
+밟을 일이 아예 없어집니다.
+
+지금 어느 output 루트가 적용되고 있는지는 `pnpm doctor`의 `Output root` 줄이 항상 알려줍니다 —
+기본값이면 `(default)`, `HERALD_OUTPUT_DIR`가 걸려 있으면 `(HERALD_OUTPUT_DIR override)`라고
+실제 경로와 함께 뜹니다. 실패 알림용 텔레그램 방(`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID_OPS`)이
+아직 설정되지 않았으면 같은 명령의 `Telegram ops chat (watch failures)` 줄이 경고로 알려줍니다 —
+설정 전까지는 실패해도 알림이 조용히 나가지 않습니다.
+
+## 7. 다음으로
 
 - 명령이 정확히 무엇을 읽고 쓰는지 궁금하면 → [`artifacts.md`](artifacts.md)
 - 이 프로젝트가 무엇을 하고 무엇을 하지 않는지 궁금하면 → [`capabilities.md`](capabilities.md)
