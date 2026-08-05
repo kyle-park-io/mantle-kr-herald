@@ -71,4 +71,42 @@ describe("spawnCapture", () => {
     await new Promise((resolve) => setTimeout(resolve, 650));
     expect(existsSync(marker)).toBe(false);
   });
+
+  it(
+    "does not leave the child's stdin open — a child waiting for EOF must not hang",
+    async () => {
+      // Default `child_process.spawn` stdio leaves `child.stdin`'s pipe write end open in THIS
+      // process, since nothing here ever writes to or closes it. A child that reads its own stdin
+      // to EOF before doing anything else (plausible for `claude -p` off a TTY) would then hang
+      // forever waiting for a close that never arrives — exactly the failure class `stdio:
+      // ["ignore", ...]` exists to remove. A short, explicit timeout (well under the correct,
+      // near-instant real duration) turns a regression here into a fast, clear failure instead of
+      // waiting out vitest's full default test timeout.
+      const start = Date.now();
+      const result = await spawnCapture("node", [
+        "-e",
+        "process.stdin.on('end', () => { console.log('eof'); process.exit(0); }); process.stdin.resume();",
+      ]);
+      expect(result.stdout.trim()).toBe("eof");
+      expect(Date.now() - start).toBeLessThan(2000);
+    },
+    3000,
+  );
+
+  it("does not corrupt a multi-byte UTF-8 character split across a chunk boundary", async () => {
+    // `—` and `→` are exactly the multi-byte characters WatchTick's own stdout parsers key off
+    // (see src/app/WatchTick.ts), so this isn't a hypothetical. Force two separate writes with a
+    // real delay between them (reliably two separate `data` events on the reading side) split
+    // strictly inside the first multi-byte character's byte sequence.
+    const text = "번역 — 완료 → 검수";
+    const splitAt = 1; // one byte into "번" (a 3-byte UTF-8 character) — inside, not on, a boundary
+    const script = [
+      `const fullBuf = Buffer.from(${JSON.stringify(text)}, "utf8");`,
+      `process.stdout.write(fullBuf.subarray(0, ${splitAt}));`,
+      `setTimeout(() => process.stdout.write(fullBuf.subarray(${splitAt})), 50);`,
+    ].join("\n");
+
+    const result = await spawnCapture("node", ["-e", script]);
+    expect(result.stdout).toBe(text);
+  });
 });

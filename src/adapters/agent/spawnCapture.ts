@@ -25,6 +25,22 @@ export type SpawnCaptureResult = { code: number; stdout: string; stderr: string 
  * `cwd` is always the repo root, never inherited from the caller: `pnpm translate:save` (the one
  * Bash command `claude` is allowed to run) needs it to resolve the script, and a systemd unit's own
  * `WorkingDirectory=` should not be the only thing standing between this and a wrong cwd.
+ *
+ * `stdio` fixes the child's stdin to `"ignore"` rather than the default `"pipe"`. With the
+ * default, this function never writes to or closes `child.stdin`, so the pipe's write end stays
+ * open in this process indefinitely — a child that reads stdin to EOF before doing anything else
+ * (plausible for `claude -p` when it isn't attached to a TTY) would hang forever waiting for a
+ * close that never comes, until the outer `ClaudeCodeAgent` timeout eventually fires. `"ignore"`
+ * gives the child immediate EOF instead, removing that failure class rather than relying on the
+ * timeout to paper over it on every single call.
+ *
+ * stdout/stderr are decoded with `setEncoding("utf8")` rather than concatenating raw `Buffer`
+ * chunks: a chunk boundary can land inside a multi-byte UTF-8 character (this repo's own stage
+ * output is full of them — `—`, `→`, `·` — so this isn't a hypothetical), and decoding each chunk
+ * independently corrupts the character at that boundary. `setEncoding` uses Node's `StringDecoder`
+ * internally, which buffers a split sequence across chunks instead. `src/cli/deploy-check.ts` hits
+ * the same class of problem with `spawnSync`'s `encoding: "utf8"` option; this is the streaming
+ * equivalent.
  */
 export function spawnCapture(
   cmd: string,
@@ -32,14 +48,16 @@ export function spawnCapture(
   opts: { signal?: AbortSignal } = {},
 ): Promise<SpawnCaptureResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd: REPO_ROOT, signal: opts.signal });
+    const child = spawn(cmd, args, { cwd: REPO_ROOT, signal: opts.signal, stdio: ["ignore", "pipe", "pipe"] });
 
     let stdout = "";
     let stderr = "";
-    child.stdout?.on("data", (chunk: Buffer) => {
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
       stdout += chunk;
     });
-    child.stderr?.on("data", (chunk: Buffer) => {
+    child.stderr?.on("data", (chunk: string) => {
       stderr += chunk;
     });
 

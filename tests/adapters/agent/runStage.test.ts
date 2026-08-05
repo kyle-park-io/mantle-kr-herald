@@ -46,4 +46,14 @@ describe("runStage", () => {
       process.chdir(originalCwd);
     }
   });
+
+  it("carries the failing script's stderr into the detail", async () => {
+    // `pnpm exec <cmd> <args...>` runs an arbitrary command through pnpm without needing a real
+    // package script, the database, or the network — `pnpm this-script-does-not-exist` above can't
+    // stand in for this: pnpm prints its own "script not found" message to STDOUT, not stderr, so
+    // that test can only pin `ok`/`stage`, never detail content.
+    const result = await runStage("exec", ["node", "-e", "console.error('boom-marker'); process.exit(2)"]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.detail).toContain("boom-marker");
+  });
 });
