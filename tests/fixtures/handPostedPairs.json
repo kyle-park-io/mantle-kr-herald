@@ -1,0 +1,105 @@
+{
+  "note": "Measured against production and live @0xMantleKR on 2026-08-07. Each row is one translation and its TOP-1 live thread. `samePost` was labelled by reading both texts, not by a threshold.",
+  "handle": "0xMantleKR",
+  "pairs": [
+    {
+      "itemId": "x:2080608995371597892",
+      "status": "approved",
+      "koreanText": "한 분기 만에 맨틀에서 실물 금융의 모든 층위가 한꺼번에 움직였습니다.\n\n토큰화 주식이 실시간 시세로 24시간 거래되는 완전한 시장, 유입되는 기관 자본, 그리고 그 모든 것을 뒷받침하는 깊은 디파이 유동성까지.\n\n@nansen_ai의 Q2 리포트가 전체 그림을 보여줍니다. 글로벌 자본시장이 맨틀에서 모두에게 어떻게 열리고 있는지.\n\n전체 분석은 아래에서 ↓\nhttps://x.com/nansen_ai/status/2080594345774961004",
+      "topRootId": "2081657420854763782",
+      "topLiveText": "맨틀에게 완벽했던 한 분기. 전통 금융의 모든 레이어가 동시에 움직였습니다.\n\n실시간 시세로 24시간 거래되는 토큰화 주식 시장, 유입되는 기관 자금, 그 뒤를 받치는 탄탄한 디파이 유동성까지.\n\n@nansen_ai의 Q2 리포트가 그 전체 그림을 보여줍니다.\n맨틀 위에서 글로벌 자본시장이 어떻게 열리고 있는지 확인해보세요.\n\n전체 브리핑 ↓\nhttps://x.com/nansen_ai/status/2080594345774961004",
+      "topPostedAt": "2026-07-27T08:26:19.000Z",
+      "measuredScore": 0.3791,
+      "runnerUpScore": 0.041,
+      "samePost": true
+    },
+    {
+      "itemId": "x:2080661810034917770",
+      "status": "approved",
+      "koreanText": "주말이 코앞이고, 월스트리트도 곧 문을 닫습니다.\n\n하지만 세계 최대 규모의 주식에 대한 당신의 접근은 멈추지 않습니다.\n\n맨틀의 토큰화 주식은 토요일과 일요일에도 @Fluxion_network를 통해 실제 시장 가격으로 바로 거래됩니다.\n\n주말마다, 평소처럼.\n\n[영상]\n\n---\n\n토요일이 와도 월요일을 기다릴 필요가 없습니다.\n\n좋아하는 토큰화 자산을 여기서 거래하세요: http://fluxion.network/trade",
+      "topRootId": "2085173023385223575",
+      "topLiveText": "스페이스X가 첫 실적 발표를 진행하였습니다.\n\n@xStocksFi가 상장 당일부터 토큰화한 $SPCXx는 @Fluxion_network를 통해 맨틀에서 거래되며, 정규장이 마감된 뒤에도 거래가 이어집니다.\n\n모든 주문은 Atomic RFQ의 확정 호가로 체결됩니다.\nhttps://x.com/xStocksFi/status/2084356318819692897\n\n실적이 발표되고 물량이 몰리는 순간에도, 확정한 호가는 주문 규모에 관계없이 최적의 시장 가격으로 유지됩니다.\nAtomic RFQ는 바로 이런 상황을 위해 만들어졌습니다.\nhttps://x.com/0xMantleKR/status/2084895428819177816",
+      "topPostedAt": "2026-08-06T01:16:04.000Z",
+      "measuredScore": 0.0847,
+      "runnerUpScore": 0.0804,
+      "samePost": false
+    },
+    {
+      "itemId": "x:2081711456320655644",
+      "status": "approved",
+      "koreanText": "토큰화 주식의 온체인 거래량이 지난 1년간 170배 늘었습니다. 5,300만 달러에서 92.2억 달러로 (@a16zcrypto 기준).\n\n자본이 온체인으로 더 많이 이동할수록, 유동성 규모만으로는 충분하지 않습니다. 가격 영향을 최소화하며 주문을 체결하려면 세 가지가 함께 맞물려야 합니다:\n\n→ 깊은 유동성\n→ 견고하고 신뢰할 수 있는 가격\n→ 믿을 수 있는 체결\n\n맨틀은 @Fluxion_network의 네이티브 AMM 유동성과 @xStocksFi의 xChange Atomic RFQ로 이 세 가지를 모두 제공합니다.\n\n원하는 규모를, 클릭한 그 가격에.\n\n![](https://pbs.twimg.com/media/HOO5ibObIAArZVJ.png)",
+      "topRootId": "2080549358140105194",
+      "topLiveText": "이제 주식의 모든 생애주기가 맨틀 온체인에서 펼쳐집니다.\n\n→ IPO 이전: @OpenstockInc를 통한 투자 기회 제공\n→ IPO 시점: @xStocksFi를 통해 온체인 주식으로 발행\n→ IPO 이후: @Fluxion_network와 @MerchantMoe_xyz를 통한 24시간 거래 및 유동성 공급\n\n상장 첫날부터 전 세계 누구나 접근할 수 있는 완전한 주식 생애주기를 제공합니다.",
+      "topPostedAt": "2026-07-24T07:03:16.000Z",
+      "measuredScore": 0.0917,
+      "runnerUpScore": 0.0856,
+      "samePost": false
+    },
+    {
+      "itemId": "x:2082108368806941060",
+      "status": "translated",
+      "koreanText": "토큰화 주식은 발행부터 거래까지, 모든 과정이 맨틀 안에서 이루어집니다.\n\n→ 자산을 운용하는 기관이 직접 제공하는 기관급 자산\n→ 제시된 가격에 원하는 규모를 체결할 수 있는 풍부한 유동성\n→ 시간과 장소에 관계없이 그 유동성으로 이어지는 접근성\n\n안에서부터 쌓아 올린 구조입니다.\n\n![](https://pbs.twimg.com/media/HOUihv6bgAA52e_.jpg)",
+      "topRootId": "2083065040081719763",
+      "topLiveText": "토큰화 주식의 발행부터 거래까지, 전 과정이 맨틀 안에서 이루어집니다.\n\n→ 자산을 운용하는 기관이 직접 제공하는 기관급 자산\n→ 주문 규모에 관계없이 제시된 호가 그대로 체결할 수 있는 풍부한 유동성\n→ 언제 어디서나 그 유동성에 접근할 수 있는 환경\n\n맨틀은 이 구조를 내부에서부터 직접 구축했습니다.",
+      "topPostedAt": "2026-07-31T05:39:41.000Z",
+      "measuredScore": 0.3647,
+      "runnerUpScore": 0.0513,
+      "samePost": true
+    },
+    {
+      "itemId": "x:2082149990282207365",
+      "status": "translated",
+      "koreanText": "가장 최근에 구매하신 토큰화 자산은 무엇입니까?",
+      "topRootId": "2083065235720765791",
+      "topLiveText": "가장 최근에 구매한 토큰화 자산은 무엇인가요?",
+      "topPostedAt": "2026-07-31T05:40:28.000Z",
+      "measuredScore": 0.4231,
+      "runnerUpScore": 0.0173,
+      "samePost": true
+    },
+    {
+      "itemId": "x:2082058492366758108",
+      "status": "translated",
+      "koreanText": "@elfa_ai 🥳🥳",
+      "topRootId": "2084845730595033297",
+      "topLiveText": "손뼉도 마주쳐야 소리가 납니다. 자본시장도 다르지 않습니다.\n\n@RWAlpha_AI의 상품이 @Fluxion_network에 연동됐습니다. 이제 한곳에서 AI·메모리 슈퍼사이클을 아우르는 인덱스 펀드를 이용하고, 수익 위에 다시 수익을 쌓으며, 토큰화 자산을 거래하거나 유동성을 공급할 수 있습니다.\n\n이 모든 것이 맨틀에서 하나로 모였고, 첫날부터 전 세계에서 이용할 수 있습니다.\nhttps://x.com/RWAlpha_AI/status/2084459324705828926",
+      "topPostedAt": "2026-08-05T03:35:31.000Z",
+      "measuredScore": 0.0124,
+      "runnerUpScore": 0.0068,
+      "samePost": false
+    },
+    {
+      "itemId": "x:2082435849036423597",
+      "status": "translated",
+      "koreanText": "월드컵의 여운이 아직 남아 있으신가요? 저희도 그렇습니다.\n\n터진 골, 아깝게 빗나간 장면, 그리고 아무도 예상하지 못한 결과까지. 승부를 예상하는 것은 그 자체로 하나의 일이었고, 그렇게 예상한 이유를 설득력 있게 설명하는 것이 @InsightXHQ와 함께한 Mantle World Cup Challenge의 참가 조건이었습니다.\n\n제출한 근거가 어떤 평가를 받았는지, 최종 선정 여부와 함께 아래에서 확인할 수 있습니다 ↓\nhttps://x.com/Mantle_Official/status/2075184061941957065\n\n![](https://pbs.twimg.com/media/HOZMXqPbIAALIE8.jpg)\n\n---\n\n선수들처럼 진심을 걸고 참여해 주신 모든 분들께, 이번 캠페인을 뜨겁게 만들어 주셔서 감사합니다.\n\n수상자에게는 이번 주 중 DM이 발송됩니다. 리워드 지급을 위해 EVM 주소를 요청드릴 예정입니다.\n\n월드컵 경기는 모두 끝났지만, InsightX에는 여전히 예측할 수 있는 시장이 남아 있습니다: https://app.insightx.finance\n\n국내에서는 실제 참여가 제한될 수 있는 점 참고 부탁드립니다.",
+      "topRootId": "2083067103222128830",
+      "topLiveText": "월드컵의 여운이 아직 남아 있으신가요? 맨틀도 마찬가지입니다.\n\n수많은 골과 아쉬운 순간, 그리고 아무도 예상하지 못한 결과가 있었습니다. 결과를 맞히는 것과 그 근거를 설명하는 것은 다른 일이며, @InsightXHQ와 함께 진행된 Mantle World Cup Challenge는 그 근거를 기준으로 진행됐습니다.\n\n여러분이 제출한 근거의 평가 결과와 선정 여부는 아래에서 확인할 수 있습니다 ↓\nhttps://x.com/0xMantleKR/status/2075449620478705862\n\n선수들처럼 결과에 자신의 판단을 걸고 참여해 주신 모든 분들께 감사드립니다.\n\n선정된 분들께는 이번 주 DM으로 안내가 전달되며, 리워드 지급을 위해 EVM 주소를 요청드릴 예정입니다.\n\n월드컵 경기는 모두 끝났지만, InsightX에서는 다양한 주제의 예측이 계속 진행되고 있습니다: https://app.insightx.finance",
+      "topPostedAt": "2026-07-31T05:47:53.000Z",
+      "measuredScore": 0.3077,
+      "runnerUpScore": 0.0294,
+      "samePost": true
+    },
+    {
+      "itemId": "x:2082508440635875381",
+      "status": "translated",
+      "koreanText": "가장 어려운 과제는 자본시장 자산이 온체인에 올라오는 날부터 시작됩니다.\n\n자본은 오프체인에서는 얻을 수 없던 수익, 그리고 여러 곳에서 동시에 활용되는 담보를 향해 움직입니다.\n\n그에 미치지 못한다면 제자리걸음에 그칩니다. 맨틀에서는 자산이 수익을 창출하도록 만드는 것이 기본입니다.\n\n![](https://pbs.twimg.com/media/HOaNIQ8bAAAgiAW.jpg)",
+      "topRootId": "2083067950962209105",
+      "topLiveText": "자본시장 자산이 온체인에 올라온 순간부터 진짜 과제가 시작됩니다.\n\n자본은 오프체인에서는 얻을 수 없던 수익과, 여러 곳에서 동시에 활용되는 담보를 찾아 움직입니다.\n\n그보다 못하면 제자리걸음에 불과합니다. 맨틀에서는 자산이 수익을 창출하도록 만드는 것이 기본 전제입니다.",
+      "topPostedAt": "2026-07-31T05:51:15.000Z",
+      "measuredScore": 0.4837,
+      "runnerUpScore": 0.0821,
+      "samePost": true
+    },
+    {
+      "itemId": "x:2082610791002579012",
+      "status": "translated",
+      "koreanText": "@StanfordSBA 🤝",
+      "topRootId": "2083242101031223662",
+      "topLiveText": "7월 31일 @StanfordSBA가 주최한 Science of Blockchain Conference에서, 맨틀은 실물 금융이 맨틀 위에서 국경을 넘어 누구에게나 닿는 방식을 주제로 미래의 창업자들과 만났습니다.\n\n참석자들은 발행, 유동성, 유통, 인프라까지 시작 단계에서 필요한 전체 스택을 확인하고 돌아갔습니다.\n\n다음 행선지는 어디가 될까요?",
+      "topPostedAt": "2026-07-31T17:23:16.000Z",
+      "measuredScore": 0.0667,
+      "runnerUpScore": 0.0064,
+      "samePost": false
+    }
+  ]
+}
