@@ -1,0 +1,181 @@
+import "./registerErrorHandler";
+import { skipIfLocal } from "./skipIfLocal";
+import { argValue } from "./args";
+import { loadConfig, loadDbConfig, loadGoogleAuthConfig, loadGoogleSheetConfig } from "../config";
+import { createDb } from "../adapters/db/createDb";
+import { createStores } from "./stores";
+import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
+import { GoogleSheetClient } from "../adapters/sheets/GoogleSheetClient";
+import { TwitterClient } from "../adapters/twitterapi/TwitterClient";
+import { TwitterApiSourceGateway } from "../adapters/twitterapi/TwitterApiSourceGateway";
+import { assembleThreads } from "../domain/threadAssembler";
+import { parseSince } from "../shared/time/parseSince";
+import { postUrl } from "../domain/publish/xReconcile";
+import { reconcileXPublished, type CandidateReason } from "../app/ReconcileXPublished";
+import { RecordObservedDelivery } from "../app/RecordObservedDelivery";
+import { RecordPublish } from "../app/RecordPublish";
+import type { SourceTweet } from "../domain/models";
+import type { ChannelRendering } from "../domain/formatting/models";
+import type { SheetClient } from "../ports/SheetClient";
+
+skipIfLocal("x:reconcile");
+
+// Same expression `metrics-record.ts:16` uses for the env fallback; `--handle` (not present there)
+// takes priority over it so an operator can point one run at a different account without an env edit.
+const handle =
+  argValue("--handle")?.trim().replace(/^@/, "") ||
+  process.env.REFERENCE_X_HANDLE?.trim().replace(/^@/, "") ||
+  "0xMantleKR";
+const since = parseSince(argValue("--since") ?? "30d", new Date());
+const writeConfirmed = process.argv.includes("--yes");
+
+const HISTORY_IDS_RANGE = "history!A2:A"; // column A only — RecordPublish owns the rest of the row.
+
+/**
+ * The set of itemIds already in the `history` tab (column A, `HISTORY_IDS_RANGE`). A workbook that
+ * has never had a `kr:`-keyed row written to it — or one where `history:record`/`send:channels`
+ * never ran at all — has no `history` tab, and the raw Sheets error for that is `HTTP 400`. That
+ * must read as "nothing recorded yet", not a crash: same handling `LoadKolMap.readTab` gives the
+ * `kol-map` tab's own first-run-before-anyone-created-it case.
+ */
+async function loadHistoryIds(sheet: SheetClient): Promise<Set<string>> {
+  try {
+    const rows = await sheet.getValues(HISTORY_IDS_RANGE);
+    return new Set(rows.map((r) => r[0]).filter((v): v is string => Boolean(v)));
+  } catch (err) {
+    const message = (err as Error)?.message ?? "";
+    if (/HTTP 400/.test(message)) return new Set();
+    throw err;
+  }
+}
+
+/** Eligible (approved, channel "x", non-empty) renderings' `type`s sharing `itemId` — the same
+ *  filter `xMatchCandidates` applies, read back here because a candidate carries no `type` of its
+ *  own (see `ReconcilePlan`'s doc comment): a report that names "ambiguous" has to show what it is
+ *  ambiguous *between*, or the word is just decoration. */
+function xTypesFor(itemId: string, renderings: ChannelRendering[]): string[] {
+  return renderings
+    .filter((r) => r.itemId === itemId && r.channel === "x" && r.status === "approved" && r.text !== "")
+    .map((r) => r.type);
+}
+
+/**
+ * One line per candidate reason, written for the human deciding what to do next rather than for
+ * whoever already read `ReconcileXPublished.ts`'s `CandidateReason` doc comment — this is what
+ * shows up in `journalctl` when nobody has the source open. Each reason means a different next
+ * action, and a candidate that only echoed its slug would force that reconstruction every time.
+ */
+function candidateReasonText(reason: CandidateReason, itemId: string, renderings: ChannelRendering[]): string {
+  switch (reason) {
+    case "possible-match":
+      return "reads like our copy but wasn't an exact paste (maybe edited after posting) — confirm it by hand if it is the same post";
+    case "duplicate-live-thread":
+      return `another live thread already claimed ${itemId} in this run and took the confirmation — decide which post is the real one`;
+    case "ambiguous-rendering-type": {
+      const types = xTypesFor(itemId, renderings);
+      return `${itemId} has ${types.length || "several"} eligible x renderings (types: ${types.join(", ") || "?"}) — confirming risked the wrong deliveryKey, so this was refused rather than guessed`;
+    }
+  }
+}
+
+const auth = await createGoogleAuth(loadGoogleAuthConfig());
+const sheet = new GoogleSheetClient(auth, loadGoogleSheetConfig().spreadsheetId);
+const gateway = new TwitterApiSourceGateway(new TwitterClient(loadConfig().apiKey));
+
+const db = createDb(loadDbConfig());
+try {
+  console.log(`x:reconcile — @${handle}, since ${since}${writeConfirmed ? "" : " (preview — no --yes)"}`);
+
+  // Read what's live. Never through CollectAuthoredContent/a CollectionRepository: this reads the
+  // account back for comparison only, and must never advance the collect watermark or touch
+  // `x_threads` — collecting reference content is `collect:reference`'s job, not this one's.
+  const tweets: SourceTweet[] = [];
+  for await (const t of gateway.fetchAuthoredTweets(handle, since)) tweets.push(t);
+  const threads = assembleThreads(tweets);
+
+  const stores = createStores(db);
+  const [renderings, deliveredKeys, historyIds] = await Promise.all([
+    stores.formattingStore.loadAll(),
+    stores.deliveryLedger.loadKeys(),
+    loadHistoryIds(sheet),
+  ]);
+
+  const plan = reconcileXPublished({ threads, renderings, deliveredKeys, historyIds, handle });
+
+  console.log(`${threads.length} live thread(s) found.\n`);
+
+  console.log(`confirmed (${plan.confirmed.length}) — pasted copy; recordable as a "sent" observation:`);
+  for (const { entry, score } of plan.confirmed) {
+    console.log(`  ${entry.itemId} (${entry.type}) → post ${entry.postId} — score ${score.toFixed(3)} — ${entry.url}`);
+  }
+
+  console.log(`\ncandidates (${plan.candidates.length}) — a human's call; nothing written for these:`);
+  for (const c of plan.candidates) {
+    console.log(
+      `  ${c.rootId} → ${c.itemId} — score ${c.score.toFixed(3)} — ${postUrl(handle, c.rootId)}\n` +
+        `      [${c.reason}] ${candidateReasonText(c.reason, c.itemId, renderings)}`,
+    );
+  }
+
+  // `score === 0` is two indistinguishable situations — no approved copy existed to compare
+  // against, or the thread was too short for `similarity` to score at all (fewer than 3 normalized
+  // characters, see `attribution.ts`'s `similarity`) — and pretending otherwise would invent a
+  // distinction the data cannot support. Naming the ambiguity here is the cheap, honest fix.
+  const zeroScored = plan.external.filter((e) => e.score === 0).length;
+  console.log(
+    `\nexternal (${plan.external.length}) — live, but not our approved copy` +
+      (zeroScored > 0
+        ? `; ${zeroScored} scored 0 (no approved copy existed to compare against, or the text was too short to score at all)`
+        : "") +
+      ".",
+  );
+
+  console.log(`skipped (${plan.skipped.length}) — already recorded, on a previous run or by hand.`);
+
+  if (!writeConfirmed) {
+    console.log(
+      `\npreview only — nothing was written. Re-run with --yes to record ${plan.confirmed.length} confirmed and ${plan.external.length} external row(s).`,
+    );
+  } else {
+    const recorder = new RecordObservedDelivery(stores.deliveryLedger);
+    const publisher = new RecordPublish(sheet);
+    let written = 0;
+    let alreadyRecorded = 0;
+    let failed = 0;
+
+    console.log("\nwriting…");
+    for (const { entry } of plan.confirmed) {
+      try {
+        const result = await recorder.record(entry);
+        if (result === "written") {
+          written++;
+          console.log(`  ✓ ${entry.itemId} recorded as sent (post ${entry.postId})`);
+        } else {
+          alreadyRecorded++;
+          console.log(`  · ${entry.itemId} already recorded — skipped`);
+        }
+      } catch (err) {
+        failed++;
+        console.error(`  ✗ ${entry.itemId}: ${(err as Error).message}`);
+      }
+    }
+
+    for (const { record } of plan.external) {
+      try {
+        await publisher.record(record);
+        written++;
+        console.log(`  ✓ ${record.itemId} recorded in history (post ${record.postId})`);
+      } catch (err) {
+        failed++;
+        console.error(`  ✗ ${record.itemId}: ${(err as Error).message}`);
+      }
+    }
+
+    console.log(`\nwrote ${written}, already recorded ${alreadyRecorded}, failed ${failed}.`);
+    // Only an actual write throwing counts as a failure — a plan full of candidates that a human
+    // still needs to look at is the normal, expected outcome of a run, not an error.
+    if (failed > 0) process.exitCode = 1;
+  }
+} finally {
+  await db.close();
+}
