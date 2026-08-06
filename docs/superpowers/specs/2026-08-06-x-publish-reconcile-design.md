@@ -94,9 +94,20 @@ A post read back off X is an **observation** — it has a post id and a url. So 
 No existing use case writes such a row, though: `SendChannels` writes `sent` as a side effect of
 actually sending, and there is no path that records a send someone else performed. So this feature owns
 a small new recorder — it takes an item, the `x-post` outlet, a post id, a url and the observed
-timestamp, refuses to overwrite an existing row for that key, and writes nothing else. Keeping it
-separate from `SendChannels` matters: that class sends, and a recorder that cannot send is the whole
-point.
+timestamp, and writes nothing else. Keeping it separate from `SendChannels` matters: that class sends,
+and a recorder that cannot send is the whole point.
+
+**Corrected 2026-08-06 (review):** this paragraph said the recorder "refuses to overwrite an existing
+row for that key", which was too strong for one case and it was not deliberate. An existing `sent` or
+`delivered` row is indeed never rewritten — `already-recorded`. But a **`dropped`** row for the same key
+*is* overwritten, and should be: `dropped` means a scheduled Typefully draft was deleted before it
+published, so `deliveredToRoom` already excludes it from every ledger's `loadKeys()` and
+`send:channels` treats the room as sendable again. A ≥0.95 match against a live post is newer and
+stronger evidence than that row — the copy is on the account now — and leaving the `dropped` row would
+keep the board saying "never went out" about a post anyone can open, while leaving `send:channels` free
+to post it a second time. What was wrong was that the overwrite happened *silently*, as a side effect of
+the guard reading `loadKeys()` (which drops such a row) against an `add()` that is an upsert, and was
+then reported as `✓ recorded`. It is now its own returned outcome, `replaced-dropped`, printed as one.
 
 This also explains why `MarkDelivery`'s refusal (`src/app/MarkDelivery.ts`) stays exactly as it is.
 That guard rejects `delivered: true` on an `auto` outlet like `x-post` because a human's unverifiable
@@ -184,6 +195,14 @@ itemId (`kr:<rootId>`) **or** a postId.
 - **Importing external posts as pipeline *items*.** An external post gets publish history, not a
   translation row. Making the board list content the pipeline never produced is a much larger change to
   what the board means.
+- **`send:x-article`'s own ledger.** X Articles are gated by a *separate* ledger
+  (`x_article_deliveries`, keyed on `itemId` alone — `SendXArticle` reads `loadKeys()` off it), not by
+  the delivery ledger a confirmed row is written to. So a confirmed hand-post does **not** stop the same
+  item from later going out as an X Article. That is left alone deliberately: `send:x-article` is
+  human-driven, one item at a time, against a 15/month publishing quota nobody spends by accident — and
+  an X Article and a plain post are arguably two different artifacts anyway. A reader should not assume
+  the coverage extends there, which is why it is written down.
+
 - **The 1차 검수 backlog.** Five translations wait on a human, and no automation may approve them —
   the agent translates and renders, a person approves. This feature makes the gap visible; it does not
   close it, and it must not be mistaken for closing it: reconciling what was hand-posted records

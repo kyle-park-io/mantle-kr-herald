@@ -1,4 +1,4 @@
-import { deliveryKey, type DeliveryEntry } from "../domain/delivery/models";
+import { deliveredToRoom, deliveryKey, type DeliveryEntry } from "../domain/delivery/models";
 import type { DeliveryLedger } from "../ports/DeliveryLedger";
 
 /**
@@ -20,17 +20,32 @@ import type { DeliveryLedger } from "../ports/DeliveryLedger";
  * Both checks throw, naming the reason, so a caller that builds a bad entry fails loudly rather
  * than silently recording a claim as fact.
  *
- * Idempotent the other way: when `deliveryKey(entry)` is already in `loadKeys()`, `record` returns
- * `"already-recorded"` instead of throwing or writing again. `sent` is never reversed, so the
- * existing row is already the record of what happened — re-writing it could only replace a real
- * send's post id with one a match merely guessed. Returning a value (not throwing) lets the caller
- * (`x-reconcile.ts`, walking a whole plan of confirmed rows) keep going past an already-done row
- * instead of aborting the rest of the plan on it.
+ * Idempotent the other way: when the ledger already holds a row for `deliveryKey(entry)` that still
+ * means "this room has this copy", `record` returns `"already-recorded"` instead of throwing or
+ * writing again. `sent` is never reversed, so the existing row is already the record of what
+ * happened — re-writing it could only replace a real send's post id with one a match merely guessed.
+ * Returning a value (not throwing) lets the caller (`x-reconcile.ts`, walking a whole plan of
+ * confirmed rows) keep going past an already-done row instead of aborting the rest of the plan on it.
+ *
+ * **A `dropped` row is the one existing row this DOES overwrite, and it says so.** `dropped` means a
+ * scheduled Typefully draft was deleted before it published, so nothing ever reached the account —
+ * `deliveredToRoom` excludes it from every ledger's `loadKeys()` for exactly that reason, and
+ * `send:channels` treats the room as sendable again. A ≥0.95 match against a *live* post is newer and
+ * stronger evidence than that row: the copy is on the account now, whoever put it there. Leaving the
+ * `dropped` row in place would keep the board saying "never went out" about a post anyone can open,
+ * and would leave `send:channels` free to post it a second time. So the overwrite is the right record
+ * — but it is returned as its own outcome, `"replaced-dropped"`, and printed as one, rather than
+ * being an accident of which predicate `loadKeys()` happens to apply. That accident is what this
+ * used to be: the guard read `loadKeys()`, which drops `dropped` rows, and `ledger.add` is an upsert,
+ * so the row was silently rewritten to `sent` and reported as `✓ recorded`.
+ *
+ * The existence check therefore reads `loadAll()` and applies `deliveredToRoom` here, rather than
+ * delegating the distinction to `loadKeys()` — the two answers differ, and this class needs both.
  */
 export class RecordObservedDelivery {
   constructor(private readonly ledger: DeliveryLedger) {}
 
-  async record(entry: DeliveryEntry): Promise<"written" | "already-recorded"> {
+  async record(entry: DeliveryEntry): Promise<"written" | "already-recorded" | "replaced-dropped"> {
     if (entry.status !== "sent") {
       throw new Error(
         `RecordObservedDelivery only records an observation (status "sent"), got "${entry.status}" for ` +
@@ -46,10 +61,10 @@ export class RecordObservedDelivery {
     }
 
     const key = deliveryKey(entry);
-    const keys = await this.ledger.loadKeys();
-    if (keys.has(key)) return "already-recorded";
+    const existing = (await this.ledger.loadAll()).find((row) => deliveryKey(row) === key);
+    if (existing !== undefined && deliveredToRoom(existing)) return "already-recorded";
 
     await this.ledger.add(entry);
-    return "written";
+    return existing === undefined ? "written" : "replaced-dropped";
   }
 }

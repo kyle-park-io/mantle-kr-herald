@@ -66,13 +66,16 @@ describe("classify", () => {
   });
 
   it("carries the real score on a near-miss, not a hard-coded zero", () => {
-    // Both other "external" tests above are far enough below MATCH_THRESHOLD that bestMatch
-    // returns undefined, and classify short-circuits to `score: 0` before ever reaching the
-    // branch that reports a real sub-CANDIDATE_AT score. This fixture — a 40-character prefix of
-    // APPROVED — scores 0.46774193548387094 against it: above MATCH_THRESHOLD (0.3) so bestMatch
-    // returns a real match, but below CANDIDATE_AT (0.5) so the verdict is still external. This
-    // is the only test that reaches that branch, and that branch is what lets a CLI report
-    // near-misses instead of a flat 0 for every non-match.
+    // The other "external" cases above reach `score: 0` two different ways — no candidates at all
+    // (classify's own short-circuit) and a real comparison that shares no 3-gram. Neither exercises
+    // the branch that bands a real, non-zero score below CANDIDATE_AT. This fixture — a 40-character
+    // prefix of APPROVED — scores 0.46774193548387094 against it: below CANDIDATE_AT (0.5) so the
+    // verdict is still external, but comfortably non-zero, and that is what lets the CLI report a
+    // near-miss instead of a flat 0 for every non-match.
+    //
+    // `classify` does NOT call `bestMatch`, and this test is one of the two reasons why: bestMatch
+    // discards anything under MATCH_THRESHOLD (0.3) and returns undefined, which would collapse the
+    // sub-0.3 case in the next test back onto "nothing to compare against".
     const nearMiss = APPROVED.slice(0, 40);
     const v = classify(thread("7", [nearMiss]), [{ itemId: "x:1", text: APPROVED }]);
     expect(v.kind).toBe("external");

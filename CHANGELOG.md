@@ -37,7 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`deploy/herald-x-reconcile.service` + `.timer` — a second systemd --user unit, running
   `pnpm x:reconcile --yes` every six hours at :41.** Slower than `herald-watch.timer`'s two-hour
   cadence on purpose (reconciling a post is not racing to translate one) and off its own :17 by
-  design, so the two never start `pnpm` against the same database in the same minute. This is the
+  design, so their *scheduled* fires never share a minute. That is all the minute buys: both units
+  carry `Persistent=true`, so a boot that missed both windows runs both catch-up fires at once, and
+  nothing prevents that — the two write disjoint rows and the worst case is contention over `pnpm`,
+  twitterapi.io quota, and CPU. This is the
   second scheduled unit `herald-notify-failure.sh`'s own header had been waiting for, so its
   `OnFailure=` hook is now templated (`herald-notify-failure@.service`, taking the failing unit's
   name via `%i`/`%n`) instead of the single hardcoded `herald-watch.service` it used to name
