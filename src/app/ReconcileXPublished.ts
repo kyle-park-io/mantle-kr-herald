@@ -34,6 +34,11 @@ export function xMatchCandidates(renderings: ChannelRendering[]): MatchCandidate
  * thread, why a live post that would otherwise have been written was left alone — almost always
  * because a previous run (or a hand-run pipeline) already recorded it.
  *
+ * `candidates` deliberately carries no `type` — only `rootId`/`itemId`/`score`. Unlike `confirmed`,
+ * nothing is written for a candidate, so there is no `DeliveryEntry` to put a type on; a caller that
+ * needs the matched rendering's type can look it up by `itemId` from the same `renderings` it
+ * already has.
+ *
  * `external` carries its `score` alongside the `record`, mirroring `confirmed` — not because the
  * write needs it (`externalHistoryRecord` never reads it back), but because `classify` already did
  * the work of computing a real sub-`CANDIDATE_AT` score for a near-miss (see the "carries the real
@@ -86,8 +91,21 @@ export function reconcileXPublished(input: {
   // Looked up by the itemIds `xMatchCandidates` actually kept (not the full `renderings` list), so
   // a confirmed verdict's `type` comes from the rendering it matched against — a rendering carries
   // the type it was formatted for, never a literal.
+  //
+  // First-wins on a duplicate itemId, matching `bestMatch`'s own tie-break convention (first
+  // candidate in input order — see attribution.ts) rather than `Map`'s default last-write-wins.
+  // `ChannelRendering`'s identity is (itemId, type, channel), so two approved `channel: "x"`
+  // renderings sharing an itemId but differing in `type` is reachable in principle; today it isn't
+  // reachable in practice, since `DEFAULT_CHANNELS_BY_TYPE` only ever routes `type: "x"` to
+  // `channel: "x"`. Built by hand (not `new Map(pairs)`) because a plain `Map` construction keeps
+  // the last pair for a repeated key, the opposite of what this needs.
   const candidateItemIds = new Set(candidates.map((c) => c.itemId));
-  const renderingByItemId = new Map(renderings.filter((r) => candidateItemIds.has(r.itemId)).map((r) => [r.itemId, r]));
+  const renderingByItemId = new Map<string, ChannelRendering>();
+  for (const r of renderings) {
+    if (candidateItemIds.has(r.itemId) && !renderingByItemId.has(r.itemId)) {
+      renderingByItemId.set(r.itemId, r);
+    }
+  }
 
   const plan: ReconcilePlan = { confirmed: [], candidates: [], external: [], skipped: [] };
   const claimedItemIds = new Set<string>();

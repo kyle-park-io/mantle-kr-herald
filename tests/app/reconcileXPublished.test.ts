@@ -71,6 +71,20 @@ describe("reconcileXPublished", () => {
     expect(plan.external[0].score).toBeLessThan(CANDIDATE_AT);
   });
 
+  it("carries the matched rendering's own type, not a literal", () => {
+    // Every other fixture in this file uses the `rendering()` helper's default `type: "x"`, which
+    // would let a regression hard-coding "x" at the confirm site pass unnoticed. Use a rendering
+    // typed "kol" instead — a real ConversionType, just not the one every other test happens to use.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [rendering("x:1", COPY, { type: "kol" })],
+    });
+
+    expect(plan.confirmed).toHaveLength(1);
+    expect(plan.confirmed[0].entry.type).toBe("kol");
+  });
+
   it("skips a thread whose item already has an x-post delivery row", () => {
     // Idempotency: a second run must be a no-op. This is also what protects the two pre-existing
     // rows recording real sends to @bcd_kyle — they are history, not something to correct.
