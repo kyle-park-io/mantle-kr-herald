@@ -64,7 +64,36 @@ describe("parseWatchBatch", () => {
   });
 });
 
+describe("HERALD_WATCH_BATCH on the systemd unit", () => {
+  const unit = readFileSync(resolve(__dirname, "../../deploy/herald-watch.service"), "utf8");
+
+  it("ships a value the parser accepts, or a commented placeholder that says where it goes", () => {
+    // The equivalent of `tests/deploy/watchCutoff.test.ts`'s "uses a cutoff the CLI will actually
+    // accept at startup", for the unit's other tunable. `pnpm watch` refuses to run on an
+    // unparseable value, so a unit file shipping one turns every scheduled tick into a failure —
+    // caught here rather than at 00:17 on install night.
+    //
+    // The absent branch is not a free pass: the dial only exists to be tuned without a deploy, and
+    // an operator finds it by reading the unit beside the two Environment= lines that *are* set. A
+    // commented placeholder is what makes it findable, so its removal fails this test too.
+    const set = /^Environment=HERALD_WATCH_BATCH=(.*)$/m.exec(unit);
+    if (set === null) {
+      expect(unit).toMatch(/^#\s*Environment=HERALD_WATCH_BATCH=/m);
+      return;
+    }
+    expect(() => parseWatchBatch(set[1].trim())).not.toThrow();
+  });
+});
+
 describe("HERALD_WATCH_BATCH documentation", () => {
+  it("is named in the Korean operator runbook, not only in .env.example", () => {
+    // .env.example, the CHANGELOG and the design docs are all developer-facing English. The person
+    // who tunes throughput reads docs/ko/team-runbook.md §6, which documents the unit's other two
+    // Environment= lines for exactly that reason — a dial nobody is told about is not configuration.
+    const runbook = readFileSync(resolve(__dirname, "../../docs/ko/team-runbook.md"), "utf8");
+    expect(runbook).toContain("HERALD_WATCH_BATCH");
+  });
+
   it("is listed in .env.example, where every read variable is listed", () => {
     // Same guard `tests/deploy/watchCutoff.test.ts` makes for HERALD_TRANSLATE_SINCE: a variable
     // documented nowhere is a variable the next operator does not know exists, and a doc table

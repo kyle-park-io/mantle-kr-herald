@@ -806,6 +806,33 @@ systemd가 순서를 맞춰 주니 신경 쓸 일이 없어집니다.
 - **재시작을 넘겨서까지 확실히 멈춰 있어야 하면** — `systemctl --user disable --now
   herald-watch.timer`. `enable` 자체를 해제하므로 재시작해도 돌아오지 않습니다.
 
+### 한 tick이 몇 건씩 처리할지 (HERALD_WATCH_BATCH)
+
+한 tick이 `translate:prepare --limit`과 `translate:align --limit`에 넘기는 항목 수입니다.
+**기본값은 3**이고, 스케줄러도 이 값으로 켰습니다. 두 시간 주기이므로 처리량은
+`batch × 24 ÷ 2`건/일 — 기본값이면 하루 36건입니다. 번역이 수집을 따라가고 있는지는 보드의
+미번역 잔량이 늘어나는지 줄어드는지로 판단하고, 안 따라가면 이 값을 올립니다. **코드를 고치거나
+다시 배포할 필요는 없습니다** — 이 값이 변수로 빠져 있는 이유가 그것입니다.
+
+`herald-watch.service`의 `Environment=` 줄로 설정합니다. 위의 `HERALD_OUTPUT_DIR`/
+`HERALD_TRANSLATE_SINCE` 옆에 **주석 처리된 자리가 이미 있으니** 주석만 풀고 값을 바꾸세요:
+
+```
+Environment=HERALD_WATCH_BATCH=5
+```
+
+바꾼 뒤 `systemctl --user daemon-reload`를 하면 다음 tick부터 적용됩니다(바로 확인하려면
+`systemctl --user start herald-watch.service`). 그 tick이 실제로 어떤 값으로 돌았는지는
+`journalctl --user -u herald-watch` 첫 줄의 `batch N`이 알려 줍니다. 양의 정수가 아닌 값을 넣으면
+tick이 **시작 자체를 거부하고** 실패 알림이 나갑니다 — `--limit 0` 같은 값이 조용히 흘러들어가
+아무것도 번역하지 않으면서 정상처럼 보이는 상태가 더 나쁘기 때문입니다.
+
+**값을 올려도 `TimeoutStartSec=1800`은 손대지 않아도 됩니다** — `claude -p`는 항목마다가 아니라
+워크시트마다 한 번 호출되므로, 배치가 커져도 한 tick의 에이전트 호출은 여전히 최대 두 번(번역,
+정렬)입니다. 다만 **그 한 번의 호출 자체에 10분 상한**이 걸려 있고(`ClaudeCodeAgent`), 30건짜리
+워크시트는 3건짜리보다 그 한 번의 호출 안에서 당연히 더 오래 걸립니다. 실질적인 상한은 이쪽이니
+한 번에 크게 올리지 말고 몇 단계로 나눠 올리면서 tick 소요 시간을 로그로 확인하세요.
+
 ### 스케줄러 전용 output/ 트리
 
 스케줄러는 저장소 안의 `output/`를 쓰지 않습니다. `herald-watch.service`의

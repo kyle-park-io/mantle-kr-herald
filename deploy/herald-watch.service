@@ -53,6 +53,17 @@ Environment=HERALD_OUTPUT_DIR=%h/.herald/output
 # decision, not a deployment one.
 Environment=HERALD_TRANSLATE_SINCE=2026-07-27T14:35:24.000Z
 
+# The tick's throughput dial: how many items each of translate:prepare/translate:align gets via
+# --limit. Deliberately shipped commented out rather than set, because the code's default is the
+# same 3 this scheduler was armed with (DEFAULT_WATCH_BATCH, src/cli/watchBatch.ts) and a duplicated
+# value is one more thing to drift. Uncomment it to tune throughput without a deploy: at this
+# timer's two-hour cadence the pipeline moves batch * 24 / 2 items per day, and whether that keeps
+# pace with collection is read off the backlog, not off the code. A value that is not a positive
+# integer refuses the tick at startup (see src/cli/watch.ts) instead of reaching `--limit` as
+# garbage, and every tick's first journal line prints the value it actually ran with. Read the
+# TimeoutStartSec= note below before raising it — the bound that matters is per `claude -p` call.
+#Environment=HERALD_WATCH_BATCH=3
+
 # Exactly two lines — DATABASE_URL and HERALD_DB_ENV=production — chmod 600, created by Kyle by
 # hand (a production connection string does not pass through an agent session). Everything else
 # (TWITTERAPI_IO_KEY, TELEGRAM_*, ...) still comes from the repo's own .env via `pnpm watch`'s own
