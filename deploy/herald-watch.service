@@ -49,15 +49,23 @@ Environment=HERALD_OUTPUT_DIR=%h/.herald/output
 # so 3 items every two hours would have spent roughly six days on history before reaching the 23
 # threads that same first tick had just collected.
 #
-# The value is not arbitrary. 2026-07-27T14:35:24Z is the creation time of x:2081748977918337053,
-# the newest source post the Korean account had translated before this scheduler existed — the
-# team's standing rule is that the backlog cutoff is the last translated post — and it is the same
-# timestamp %h/.herald/output/x/state.json was seeded with, so the collect floor and the translate
-# floor are one decision rather than two that can drift apart.
+# The value is not arbitrary. It sat at 2026-07-27T14:35:24Z — the creation time of
+# x:2081748977918337053, the newest source post the Korean account had translated before this
+# scheduler existed, since the team's standing rule is that the backlog cutoff is the last
+# translated post. It is one second later now, and that second is the whole point: `applySelector`
+# compares `item.createdAt >= since` (src/app/PrepareTranslations.ts), so a floor set *at* a post's
+# own timestamp still selects that post. On 2026-08-06 Kyle dropped that item's translation as
+# stale — the Korean account had already covered the ground by hand — and with the floor on the
+# boundary the next tick would have spent an agent turn re-translating it straight back into the
+# review queue. Moving to :25 excludes exactly that one post and nothing else.
 #
-# Raising it later skips content permanently; lowering it re-opens backlog. Either is a content
+# It is still the same instant %h/.herald/output/x/state.json was seeded with, to the second, so the
+# collect floor and the translate floor remain one decision rather than two that can drift apart —
+# tests/deploy/watchCutoff.test.ts holds them equal.
+#
+# Raising it further skips content permanently; lowering it re-opens backlog. Either is a content
 # decision, not a deployment one.
-Environment=HERALD_TRANSLATE_SINCE=2026-07-27T14:35:24.000Z
+Environment=HERALD_TRANSLATE_SINCE=2026-07-27T14:35:25.000Z
 
 # The tick's throughput dial: how many items each of translate:prepare/translate:align gets via
 # --limit. Deliberately shipped commented out rather than set, because the code's default is the
