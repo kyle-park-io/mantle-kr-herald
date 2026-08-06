@@ -676,7 +676,7 @@ drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케�
    cat > ~/.herald/output/x/state.json <<'EOF'
    {
      "watermarks": {
-       "Mantle_Official": "2026-07-27T14:35:24.000Z"
+       "Mantle_Official": "2026-07-27T14:35:25.000Z"
      }
    }
    EOF
