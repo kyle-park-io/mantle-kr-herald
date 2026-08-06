@@ -45,6 +45,18 @@ describe("parseWatchBatch", () => {
     }
   });
 
+  it("refuses a digit string too long to survive Number()", () => {
+    // The digit pattern alone accepts this: 26 digits, no sign, no fraction. `Number()` then rounds
+    // it to 1e26, and `String(batch)` — what `WatchTick` hands `--limit` — emits "1e+26", the exact
+    // exponent notation this very function refuses on input. So without a safe-integer check the
+    // rule contradicts itself, and a paste accident reaches translate:prepare as garbage anyway.
+    expect(() => parseWatchBatch("1".repeat(26))).toThrow(/HERALD_WATCH_BATCH/);
+    expect(() => parseWatchBatch(String(Number.MAX_SAFE_INTEGER + 2))).toThrow(/HERALD_WATCH_BATCH/);
+    // The boundary itself is still a positive integer, absurd though it is — the check is
+    // representability, not a policy about size.
+    expect(parseWatchBatch(String(Number.MAX_SAFE_INTEGER))).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
   it("names the offending value, so the journal line is actionable on its own", () => {
     // This message reaches Telegram through herald-notify-failure.sh's journal excerpt. "invalid
     // batch size" without the value sends someone to ssh into the box to find out what it was.

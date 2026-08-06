@@ -26,7 +26,14 @@ export function parsePositiveIntEnv(raw: string | undefined, envVar: string, fal
   // typo silently become a value nobody chose. `/^\d+$/` also refuses fractions and signs
   // (`2.5`, `-3`, `+3`) in the same rule, leaving "0" as the only digit-only string still left
   // for the positivity check to catch.
-  if (!/^\d+$/.test(value) || Number(value) <= 0) {
+  //
+  // `Number.isSafeInteger` closes what the digit pattern alone cannot: a 26-digit string is all
+  // digits and positive, but `Number()` rounds it to a float — so the rule would accept a value it
+  // refuses on input (`String(1e26)` is `"1e+26"`, exactly the exponent notation the pattern above
+  // rejects), and hand `maxPages` a cap of 1e26, disabling the "can never loop forever" backstop
+  // `DEFAULT_MAX_PAGES` exists to be. Anything above 2^53-1 is a typo or a paste accident, never an
+  // intended batch size or page cap.
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) {
     throw new Error(
       `${envVar} must be a positive integer: ${JSON.stringify(raw)}. ` +
         `Use a whole number greater than zero, such as ${fallback}.`,

@@ -44,6 +44,17 @@ describe("parseCollectMaxPages", () => {
     }
   });
 
+  it("refuses a digit string too long to survive Number(), which would disable the backstop", () => {
+    // 26 digits pass the digit pattern and are positive, but `Number()` rounds them to 1e26. A
+    // `maxPages` of 1e26 is not a raised cap, it is the absence of one — and `DEFAULT_MAX_PAGES`
+    // exists precisely so a non-terminating cursor can never loop forever. A backfill is typed once,
+    // under incident pressure, which is exactly when an extra keystroke happens.
+    expect(() => parseCollectMaxPages("1".repeat(26))).toThrow(new RegExp(COLLECT_MAX_PAGES_ENV));
+    expect(() => parseCollectMaxPages(String(Number.MAX_SAFE_INTEGER + 2))).toThrow(
+      new RegExp(COLLECT_MAX_PAGES_ENV),
+    );
+  });
+
   it("names the offending value", () => {
     expect(() => parseCollectMaxPages("lots")).toThrow(/"lots"/);
   });

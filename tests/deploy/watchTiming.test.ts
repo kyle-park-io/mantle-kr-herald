@@ -21,6 +21,11 @@ function onCalendar(): string | undefined {
   return /^OnCalendar=(.+)$/m.exec(timer)?.[1]?.trim();
 }
 
+/** Every `OnCalendar=` line, not just the first — see the "one schedule" test for why. */
+function onCalendarLines(): string[] {
+  return timer.match(/^OnCalendar=.+$/gm) ?? [];
+}
+
 /**
  * `TimeoutStartSec=` as a plain count of seconds, or `undefined` if it is not written that way.
  * systemd also accepts "30min" and "1h"; supporting those here would mean a unit-suffix parser
@@ -53,6 +58,19 @@ describe("watch scheduler timing", () => {
     // undefined here means TimeoutStartSec= is missing or uses a unit suffix. Either way the bound
     // below cannot be checked, and an unbounded tick holds the unit active across the next fire.
     expect(timeoutStartSec()).toBeDefined();
+  });
+
+  it("states its schedule exactly once, and only as an OnCalendar=", () => {
+    // `onCalendar()` reads the *first* OnCalendar= line. systemd does not: it accumulates them, so
+    // the real fire period is the shortest gap any of them produces, and `OnUnitActiveSec=` sets a
+    // period a third way again. Either could shorten the real period below the bound checked
+    // further down while that check kept passing against a line that is no longer the whole
+    // schedule. This file already refuses OnCalendar shapes it cannot read rather than skipping the
+    // bound; the same discipline says to refuse a *set* of directives it does not model.
+    expect(onCalendarLines()).toHaveLength(1);
+    expect(timer).not.toMatch(/^OnUnitActiveSec=/m);
+    // Nor may the service carry its own schedule while looking like a plain oneshot.
+    expect(service).not.toMatch(/^(OnCalendar|OnUnitActiveSec)=/m);
   });
 
   it("uses an OnCalendar shape this file can read", () => {

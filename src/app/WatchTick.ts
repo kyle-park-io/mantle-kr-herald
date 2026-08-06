@@ -32,8 +32,12 @@ const STATUS_STAGE = "status";
 // anchored at `^`), one such leading line makes every single tick fail at collect.
 const COLLECT_LINE = /^collected (\d+) threads \(\d+ tweets\) for @\S+ — (.+)$/m;
 
-// The exact marker `src/cli/collect.ts:41` writes ahead of a real gap's boundary timestamps.
-const GAP_MARKER = ", GAP ";
+// The exact marker `src/cli/collect.ts:41` writes ahead of a real gap's boundary timestamps, and
+// the leading separator that joins it to the coverage window before it. The alert quotes the marker
+// from `GAP ` onward — the separator is how the marker is *found*, not part of what it says — so the
+// slice below skips exactly the separator's length rather than a literal 2.
+const GAP_SEPARATOR = ", ";
+const GAP_MARKER = `${GAP_SEPARATOR}GAP `;
 
 // `src/cli/translate-prepare.ts:56` prints this as the first of two lines — a second line (the
 // `pnpm translate:save ... [--approve]` hint) always follows, so match a single line with the
@@ -167,7 +171,7 @@ export class WatchTick {
       // present here — no fallback needed. Sliced from the tail `COLLECT_LINE` already matched,
       // not re-scanned from the whole stdout buffer, so pnpm's own surrounding noise can never be
       // mistaken for collect's own GAP text (see the header comment above `parseCollect`).
-      const gapText = parsed.tail.slice(parsed.tail.indexOf(GAP_MARKER) + 2);
+      const gapText = parsed.tail.slice(parsed.tail.indexOf(GAP_MARKER) + GAP_SEPARATOR.length);
       // Why this points at a document instead of inlining a command: recovering the hole takes two
       // corrections at once, and either one alone silently recovers nothing.
       //   1. The cap. `gap.from` is the exact floor the failing run already used
