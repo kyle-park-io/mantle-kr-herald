@@ -72,7 +72,10 @@ EnvironmentFile=%h/.herald/prod.env
 # upper bound matters just as much as the lower one: 1800s must stay well under herald-watch.timer's
 # 7200s (two-hour) period, or a single wedged tick would still be "active" when the next OnCalendar=
 # fire comes due, and that fire is the one systemd skips — so the margin here (1800s used out of a
-# 7200s budget, a 4x cushion) is deliberate, not incidental.
+# 7200s budget, a 4x cushion) is deliberate, not incidental. Raising HERALD_WATCH_BATCH does not
+# require raising this bound either: ClaudeCodeAgent is invoked once per worksheet, and one tick
+# makes at most two such calls (translation, then alignment) regardless of how many items each
+# worksheet holds, so the 2 x 600s + 600s arithmetic above is unchanged by a bigger batch.
 TimeoutStartSec=1800
 
 ExecStart=/home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm watch

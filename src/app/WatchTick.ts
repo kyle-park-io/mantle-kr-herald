@@ -1,4 +1,5 @@
 import { agentStage, type StageResult, type StageRunner, type WorksheetAgent } from "../ports/WorksheetAgent";
+import { DEFAULT_WATCH_BATCH } from "../cli/watchBatch";
 
 export type TickReport = {
   ok: boolean;
@@ -97,17 +98,28 @@ export type WatchTickOptions = {
    * does no I/O and reads no environment, so the CLI is where that happens.
    */
   translateSince?: string;
+
+  /**
+   * Items handed to each translate stage's `--limit`. Omitted means `DEFAULT_WATCH_BATCH` — the
+   * value a hand-run `pnpm watch` with nothing in the environment gets, and the one the scheduler
+   * was armed with. Validated and normalised to a positive integer by `parseWatchBatch` in
+   * `src/cli/watchBatch.ts` before it reaches here — this class does no I/O and reads no
+   * environment, so the CLI is where that happens.
+   */
+  batch?: number;
 };
 
 export class WatchTick {
   private readonly runStage: StageRunner;
   private readonly agent: WorksheetAgent;
   private readonly translateSince?: string;
+  private readonly batch: number;
 
   constructor(run: StageRunner, agent: WorksheetAgent, options: WatchTickOptions = {}) {
     this.runStage = run;
     this.agent = agent;
     this.translateSince = options.translateSince;
+    this.batch = options.batch ?? DEFAULT_WATCH_BATCH;
   }
 
   async run(): Promise<TickReport> {
@@ -137,7 +149,7 @@ export class WatchTick {
     // `--since` only on prepare, never on align: `translate:align` selects by precedent among
     // items that are *already* translated — everything it can see is past the cutoff by
     // construction — and it has no `--since` flag to receive one anyway.
-    const prepareArgs = ["--limit", "3"];
+    const prepareArgs = ["--limit", String(this.batch)];
     if (this.translateSince) prepareArgs.push("--since", this.translateSince);
 
     const prepare = await this.runStage(PREPARE_STAGE, prepareArgs);
@@ -207,7 +219,7 @@ export class WatchTick {
       }
     }
 
-    const align = await this.runStage(ALIGN_STAGE, ["--limit", "3"]);
+    const align = await this.runStage(ALIGN_STAGE, ["--limit", String(this.batch)]);
     stagesRun.push(ALIGN_STAGE);
 
     if (!align.ok) {

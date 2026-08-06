@@ -424,4 +424,45 @@ describe("WatchTick", () => {
     expect(ran).toEqual(["collect"]);
     expect(calls).toEqual([]);
   });
+
+  // --- the batch size dial -----------------------------------------------------------------
+
+  it("hands the configured batch size to both translate stages", async () => {
+    const { run, agent, ran } = pipeline({
+      prepare: "prepared 5 item(s) → output/translations/worksheets/batch-X.md",
+      savesPerPass: 5,
+      align: NOTHING_TO_ALIGN,
+    });
+
+    const report = await new WatchTick(run, agent, { batch: 5 }).run();
+
+    expect(report.ok).toBe(true);
+    expect(ran).toContain("translate:prepare --limit 5");
+    expect(ran).toContain("translate:align --limit 5");
+  });
+
+  it("defaults both translate stages to 3 when no batch size is configured", async () => {
+    // A hand-run `pnpm watch` with nothing in the environment must keep the behaviour the
+    // scheduler was armed with, not acquire a different one.
+    const { run, agent, ran } = pipeline({ align: NOTHING_TO_ALIGN });
+
+    await new WatchTick(run, agent, {}).run();
+
+    expect(ran).toContain("translate:prepare --limit 3");
+    expect(ran).toContain("translate:align --limit 3");
+  });
+
+  it("keeps the batch size and the cutoff independent on translate:prepare", async () => {
+    // Both options land on the same argument list, so a wiring mistake that dropped one while
+    // keeping the other would still pass the two tests above.
+    const { run, agent, ran } = pipeline({
+      prepare: "prepared 5 item(s) → output/translations/worksheets/batch-X.md",
+      savesPerPass: 5,
+      align: NOTHING_TO_ALIGN,
+    });
+
+    await new WatchTick(run, agent, { batch: 5, translateSince: "2026-07-27T14:35:24.000Z" }).run();
+
+    expect(ran).toContain("translate:prepare --limit 5 --since 2026-07-27T14:35:24.000Z");
+  });
 });
