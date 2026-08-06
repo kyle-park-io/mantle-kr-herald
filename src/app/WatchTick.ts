@@ -15,15 +15,25 @@ const STATUS_STAGE = "status";
 // `src/cli/collect.ts:42` prints exactly one line of this shape:
 //   collected 3 threads (7 tweets) for @Mantle_Official — covered 2026-08-05T… ~ 2026-08-05T…
 //   collected 0 threads (0 tweets) for @Mantle_Official — nothing new in window
-// Only the leading count is load-bearing here; the rest of the line (coverage window,
-// gap notice) is free text we don't need to parse.
+//   collected 2 threads (5 tweets) for @Mantle_Official — covered … ~ …, GAP … ~ … (limit reached)
+// The leading count is load-bearing, and — as of this fix — so is the tail after "— ": that is
+// where `computeCoverage` (src/domain/coverage.ts) reports a GAP, and a GAP there is *permanent*
+// tweet loss, not free text. `fetchAuthoredTweets` pages newest-first and stops at MAX_PAGES=50
+// (src/adapters/twitterapi/TwitterApiSourceGateway.ts:36,8,57); `CollectAuthoredContent` still
+// advances the watermark to the newest fetched tweet regardless (:74-79) — holding it back would
+// just re-fetch the same 50 pages forever and never progress. Newest-first plus a page cap means
+// whatever was left behind is the *older* material, and the next tick's floor is already past it,
+// so a GAP here has to fail the tick loudly, not scroll past in a journal nobody reads.
 //
 // `m`, like every pattern below, and for a reason that is not about `collect` itself: every stage
 // here is spawned as `pnpm <script>` (src/adapters/agent/runStage.ts), and pnpm writes its own
 // lines — `Already up to date`, `Done in 463ms using pnpm v11.20.0` — to *stdout*, ahead of and
 // after the script's own output, whenever it does install work. Without `m` (and with the buffer
 // anchored at `^`), one such leading line makes every single tick fail at collect.
-const COLLECT_LINE = /^collected (\d+) threads \(\d+ tweets\) for @\S+ — /m;
+const COLLECT_LINE = /^collected (\d+) threads \(\d+ tweets\) for @\S+ — (.+)$/m;
+
+// The exact marker `src/cli/collect.ts:41` writes ahead of a real gap's boundary timestamps.
+const GAP_MARKER = ", GAP ";
 
 // `src/cli/translate-prepare.ts:56` prints this as the first of two lines — a second line (the
 // `pnpm translate:save ... [--approve]` hint) always follows, so match a single line with the
@@ -51,20 +61,20 @@ const NOTHING_TO_ALIGN_LINE = /^nothing to align · skipped (\d+) \(no precedent
 const TRANSLATED_LINE = /^\s*Translated\s+(\d+)/m;
 
 /**
- * Returns the thread count `collect` reported, or `undefined` if the stdout doesn't match the
- * known shape at all. Unrecognised stdout must be treated as a failure by the caller — never as
- * "nothing new" — or a broken collector reads as a scheduler that succeeds forever while doing
- * nothing.
+ * Returns the thread count `collect` reported and whether its line carries a coverage GAP, or
+ * `undefined` if the stdout doesn't match the known shape at all. Unrecognised stdout must be
+ * treated as a failure by the caller — never as "nothing new" — or a broken collector reads as a
+ * scheduler that succeeds forever while doing nothing.
  */
-function parseCollectedThreadCount(stdout: string): number | undefined {
+function parseCollect(stdout: string): { threadCount: number; gap: boolean } | undefined {
   const match = COLLECT_LINE.exec(stdout.trim());
   if (!match) return undefined;
-  return Number(match[1]);
+  return { threadCount: Number(match[1]), gap: match[2].includes(GAP_MARKER) };
 }
 
 type Prepared = { count: number; worksheetPath: string };
 
-/** Same "unrecognised → undefined, caller must fail" contract as parseCollectedThreadCount. */
+/** Same "unrecognised → undefined, caller must fail" contract as parseCollect. */
 function parsePrepared(stdout: string): Prepared | undefined {
   const match = PREPARED_LINE.exec(stdout);
   if (!match) return undefined;
@@ -132,8 +142,8 @@ export class WatchTick {
       return this.fail(stagesRun, collect);
     }
 
-    const threadCount = parseCollectedThreadCount(collect.stdout);
-    if (threadCount === undefined) {
+    const parsed = parseCollect(collect.stdout);
+    if (parsed === undefined) {
       return this.fail(stagesRun, {
         ok: false,
         stage: COLLECT_STAGE,
@@ -141,8 +151,30 @@ export class WatchTick {
       });
     }
 
+    // A coverage GAP is permanent tweet loss (see the header comment above `COLLECT_LINE`), so it
+    // fails the tick before anything downstream runs. Checked ahead of the zero-threads early
+    // return just below on purpose: `computeCoverage` only ever sets a gap alongside a non-zero
+    // kept count today, so the ordering is unobservable right now — but if that invariant ever
+    // changes, this must still fail loudly rather than fall through to "nothing new".
+    if (parsed.gap) {
+      const gapText = /GAP .+$/m.exec(collect.stdout)?.[0] ?? "GAP (limit reached)";
+      // Kept under watchSummary.ts's MAX_DETAIL_CHARS (300, minus the "collect: " stage prefix)
+      // on a purpose-built budget, not by accident: this line is what
+      // `deploy/herald-notify-failure.sh` forwards to Telegram, and the gap text plus the
+      // backfill command must survive that cut even when the real boundary timestamps (longer
+      // than this fixture's "(open)") push the line close to the limit.
+      return this.fail(stagesRun, {
+        ok: false,
+        stage: COLLECT_STAGE,
+        detail:
+          `permanent tweet loss: ${gapText} (MAX_PAGES=50 cap; this tick never passes --limit). ` +
+          `Backfill: pnpm collect --since <the GAP's earlier boundary> (adhoc, watermark ` +
+          `unmoved). Fires once — next tick is green regardless, not proof of a fix.`,
+      });
+    }
+
     // Zero new threads: nothing downstream has work to do, and the agent is never touched.
-    if (threadCount === 0) {
+    if (parsed.threadCount === 0) {
       return { ok: true, stagesRun };
     }
 

@@ -42,6 +42,9 @@ function statusStdout(translated: number): string {
 }
 
 const COLLECTED_2 = "collected 2 threads (5 tweets) for @x — covered a ~ b";
+const COLLECTED_2_WITH_GAP =
+  "collected 2 threads (5 tweets) for @x — covered 2026-08-06T00:00:00.000Z ~ 2026-08-06T02:00:00.000Z" +
+  ", GAP (open) ~ 2026-08-06T00:00:00.000Z (limit reached)";
 const PREPARED_2 = "prepared 2 item(s) → output/translations/worksheets/batch-X.md";
 const ALIGNED_2 = "aligned 2 · skipped 0 (no precedent) → output/translations/worksheets/align-X.md";
 const NOTHING_TO_ALIGN = "nothing to align · skipped 0 (no precedent)";
@@ -464,5 +467,79 @@ describe("WatchTick", () => {
     await new WatchTick(run, agent, { batch: 5, translateSince: "2026-07-27T14:35:24.000Z" }).run();
 
     expect(ran).toContain("translate:prepare --limit 5 --since 2026-07-27T14:35:24.000Z");
+  });
+
+  // --- a coverage GAP is permanent tweet loss, not a warning ----------------------------------
+  //
+  // `fetchAuthoredTweets` pages newest-first and stops at MAX_PAGES=50
+  // (src/adapters/twitterapi/TwitterApiSourceGateway.ts:36,8,57), and
+  // `CollectAuthoredContent` advances the watermark to the newest fetched tweet whether or not it
+  // truncated (:74-79). Newest-first plus a page cap means the tweets left behind are the *older*
+  // ones, and the next tick's floor is already past them. `computeCoverage` records the hole and
+  // `collect.ts:41` prints it — and until now WatchTick's own header said the gap notice was
+  // "free text we don't need to parse".
+
+  it("fails the tick when collect reports a GAP, before any translation runs", async () => {
+    const { run, agent, ran, calls } = pipeline({ collect: COLLECTED_2_WITH_GAP });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("collect");
+    expect(report.stagesRun).toEqual(["collect"]);
+    expect(ran).toEqual(["collect"]);
+    expect(calls).toEqual([]);
+  });
+
+  it("says what was lost and how to backfill it, because this message becomes a Telegram alert", async () => {
+    // herald-notify-failure.sh forwards a journal excerpt. An alert saying only "collect failed"
+    // costs someone an ssh session to discover that the remedy is an adhoc collect — and adhoc is
+    // exactly the mode that backfills without disturbing the watermark.
+    const { run, agent } = pipeline({ collect: COLLECTED_2_WITH_GAP });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.failure?.detail).toContain("GAP");
+    expect(report.failure?.detail).toContain("2026-08-06T00:00:00.000Z");
+    expect(report.failure?.detail).toContain("collect --since");
+  });
+
+  it("runs the tick normally when collect's line carries no GAP", async () => {
+    // The discriminating half: a gap check that fired unconditionally would satisfy both tests
+    // above while breaking every tick.
+    const { run, agent, calls } = pipeline({ align: NOTHING_TO_ALIGN });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(calls).toEqual(["translation"]);
+  });
+
+  it("still reads a GAP when pnpm printed its own lines around collect's", async () => {
+    // Same trap the `m`-flag comment on COLLECT_LINE was added for: `pnpm <script>` writes
+    // "Already up to date" / "Done in 463ms" to stdout around the script's own output.
+    const { run, agent } = pipeline({
+      collect: ["Already up to date", "", COLLECTED_2_WITH_GAP, "Done in 463ms using pnpm v11.20.0"].join("\n"),
+    });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("collect");
+  });
+
+  it("calls collect with no arguments, ever", async () => {
+    // Two distinct losses if this changes. `--since` puts CollectAuthoredContent into adhoc mode
+    // (src/app/CollectAuthoredContent.ts:32, and the `if (!adhoc)` at :74), which skips the
+    // watermark advance: the watermark freezes, the same window is re-collected every tick, and
+    // the zero-threads gate that keeps the agent from being called for nothing never fires again.
+    // `--limit` makes `applyThreadLimit` drop threads while the watermark still advances past
+    // them — permanent, silent loss. Both are what a future "make collect configurable too"
+    // change reaches for first.
+    const { run, agent, ran } = pipeline({ align: NOTHING_TO_ALIGN });
+
+    await new WatchTick(run, agent, { batch: 5, translateSince: "2026-07-27T14:35:24.000Z" }).run();
+
+    expect(ran.filter((r) => r.startsWith("collect"))).toEqual(["collect"]);
   });
 });
