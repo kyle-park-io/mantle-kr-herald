@@ -18,7 +18,7 @@ const STATUS_STAGE = "status";
 //   collected 2 threads (5 tweets) for @Mantle_Official — covered … ~ …, GAP … ~ … (limit reached)
 // The leading count is load-bearing, and — as of this fix — so is the tail after "— ": that is
 // where `computeCoverage` (src/domain/coverage.ts) reports a GAP, and a GAP there is *permanent*
-// tweet loss, not free text. `fetchAuthoredTweets` pages newest-first and stops at MAX_PAGES=50
+// tweet loss, not free text. `fetchAuthoredTweets` pages newest-first and stops at DEFAULT_MAX_PAGES=50
 // (src/adapters/twitterapi/TwitterApiSourceGateway.ts:36,8,57); `CollectAuthoredContent` still
 // advances the watermark to the newest fetched tweet regardless (:74-79) — holding it back would
 // just re-fetch the same 50 pages forever and never progress. Newest-first plus a page cap means

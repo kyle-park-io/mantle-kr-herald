@@ -3,7 +3,7 @@ import type { ArticleBlock, SourceTweet, UserProfile } from "../domain/models";
 export interface SourceGateway {
   /**
    * Authored tweets newer than sinceTime (ISO), streamed via pagination.
-   * Returns true if it stopped because it hit the MAX_PAGES cap with more pages
+   * Returns true if it stopped because it hit its own page cap with more pages
    * still available (coverage may be incomplete below sinceTime); false if it
    * reached a natural stop (watermark, last page, or a stalled cursor).
    */

@@ -203,8 +203,8 @@ X 수집은 `pnpm collect` 하나가 단일 창구입니다. (다만 twitterapi�
   정확히 워터마크를 갱신하지 않기 때문에, 정기 자동화가 아니라 **손으로 돌리는 백필**에 씁니다.
 
 두 방식 모두 `runs.json`에 커버리지를 남깁니다. 요청한 floor까지 못 내려간 실행은
-`truncated: true`와 `gap`으로 표시됩니다 — `--limit`로 잘렸거나 `MAX_PAGES`(50페이지) 상한을
-소진한 경우입니다. 워터마크 증분 모드에서 `MAX_PAGES` 상한에 걸리면 워터마크가 이미 그 실행이
+`truncated: true`와 `gap`으로 표시됩니다 — `--limit`로 잘렸거나 `DEFAULT_MAX_PAGES`(50페이지)
+상한을 소진한 경우입니다. 워터마크 증분 모드에서 `DEFAULT_MAX_PAGES` 상한에 걸리면 워터마크가 이미 그 실행이
 가져온 최신 트윗까지 전진해 있어 영구적인 유실이 됩니다 — 증상/원인/조치는
 [`team-runbook.md`](team-runbook.md) §4 "수집에 구멍이 생겼을 때 (GAP 알림)"을 참고하세요.
 

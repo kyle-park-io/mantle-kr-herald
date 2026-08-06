@@ -17,7 +17,7 @@ const officialHandle = process.env.REFERENCE_X_HANDLE?.trim().replace(/^@/, "") 
 
 if (month !== currentMonth(new Date())) {
   console.warn(
-    `[metrics] ${month} is a past month — high-volume accounts may undercount (the fetch pages newest-first and caps at MAX_PAGES). Current-month runs are exact.`,
+    `[metrics] ${month} is a past month — high-volume accounts may undercount (the fetch pages newest-first and caps at DEFAULT_MAX_PAGES). Current-month runs are exact.`,
   );
 }
 
