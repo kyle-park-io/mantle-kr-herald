@@ -168,13 +168,26 @@ export type ReconcilePlan = {
  * 되돌리기 would get silently undone); if its `itemId` is one `claimedItemIds` already holds from the
  * thread loop above (that item has a real delivery row this run, which is the stronger record — it
  * carries a `type` and passed 2차 검수); or if `koreanText` is empty (`similarity` can never score
- * it above 0). A thread is excluded from this pass's candidates for two reasons: it has no root
+ * it above 0). A thread is excluded from this pass's candidates for three reasons: it has no root
  * (`findRootTweet` undefined — same guard as the thread loop, for the same reason: there is no
- * `createdAt` to stamp `postedAt` from), or it was already turned into a `plan.confirmed` row above
- * — one live post must never become both a delivery row and a translation retire. Each successful
- * match also removes its thread from the pool for the rest of this pass, so two translations can
- * never both claim the same live thread; first in input order wins, the same convention
- * `claimedItemIds` already uses above.
+ * `createdAt` to stamp `postedAt` from); it was already turned into a `plan.confirmed` row above —
+ * one live post must never become both a delivery row and a translation retire; or it is already a
+ * `plan.candidate` — a human has not yet said which item that thread is, and retiring some other
+ * translation against it here would mean that same thread could be confirmed for item A by a human
+ * answering the candidate AND silently recorded as item B's retire, with nothing to say the two
+ * disagree. Each successful match also removes its thread from the pool for the rest of this pass,
+ * so two translations can never both claim the same live thread; first in input order wins, the same
+ * convention `claimedItemIds` already uses above.
+ *
+ * A thread this pass retires is also pruned from `plan.external` after the loop, for the same
+ * one-post-one-row reason: a hand-posted translation was never an approved rendering, so the first
+ * pass's `classify` never had a candidate for it and correctly filed it as `external` — but it IS
+ * this translation's post, and Task 4 writes a history row per `plan.posted` entry the same as it
+ * does per `plan.external` entry. Leaving both would write two history rows for one postId, and
+ * `impressions:record` (which filters `channel === "x" && postId`) would then measure the same post
+ * into both — exactly what the `historyPostIds` guard above exists to prevent across runs, just
+ * reached from within this one run instead. Pruning after both passes complete, rather than
+ * reordering them, because this pass depends on `plan.confirmed` already being built.
  */
 export function reconcileXPublished(input: {
   threads: AssembledThread[];
@@ -331,9 +344,15 @@ export function reconcileXPublished(input: {
   // separate loop rather than folded into the one above.
   //
   // Rootless threads are never a candidate here (no root, no createdAt to stamp `postedAt` from —
-  // same reason the thread loop skips them), and neither is a thread this run already turned into a
-  // `plan.confirmed` delivery row: one live post must never become both a delivery row and a retire.
-  const consumedRootIds = new Set(plan.confirmed.map((c) => c.entry.postId));
+  // same reason the thread loop skips them). Neither is a thread this run already turned into a
+  // `plan.confirmed` delivery row (one live post must never become both a delivery row and a
+  // retire), nor one already sitting in `plan.candidates` (a human has not yet said which item that
+  // thread is — see the doc comment above for what confirming it later while it is also silently
+  // retired here would do).
+  const consumedRootIds = new Set([
+    ...plan.confirmed.map((c) => c.entry.postId),
+    ...plan.candidates.map((c) => c.rootId),
+  ]);
   const availableThreads = threads.filter((t) => findRootTweet(t) !== undefined && !consumedRootIds.has(t.rootId));
 
   // Threads this pass has already handed to an earlier (in input order) translation. Removed from
@@ -363,6 +382,15 @@ export function reconcileXPublished(input: {
       postedAt: root.createdAt,
     });
   }
+
+  // A thread this pass just retired was, by construction, never an approved rendering (`classify`
+  // had no candidate for it), so the first pass correctly filed it under `plan.external` as
+  // `kr:<rootId>` before this pass ever ran. Now that it has an owner, that `external` row must not
+  // survive — see the doc comment above for why leaving both would double-record the same postId in
+  // history. Pruned here, once, after both passes are done, rather than checked inline in either
+  // loop, so there is exactly one place this rule is spelled out.
+  const retiredRootIds = new Set(plan.posted.map((p) => p.rootId));
+  plan.external = plan.external.filter((e) => e.record.postId === undefined || !retiredRootIds.has(e.record.postId));
 
   return plan;
 }

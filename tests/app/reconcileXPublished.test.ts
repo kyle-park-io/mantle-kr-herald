@@ -44,6 +44,15 @@ function translation(itemId: string, koreanText: string, over: Partial<Translati
 const COPY_REWRITTEN =
   "맨틀에서 토큰화 주식이 실시간 시세로 24시간 거래되는 시장이 열렸습니다. 자본시장 자산이 온체인에 올라온 순간부터 진짜 과제가 시작됩니다.";
 
+// An unrelated post/translation pair, topically nothing like COPY (scores ~0.01 against it — well
+// under CANDIDATE_AT, so a live thread carrying OTHER_REWRITTEN is `external` against COPY-based
+// renderings, never a `candidate`), but OTHER_REWRITTEN scores ~0.83 against OTHER — well above
+// TRANSLATION_MATCH_AT. Needed wherever a test must isolate the second pass's own guards from the
+// first pass's candidate/confirmed banding, which COPY_REWRITTEN cannot do: it scores ~0.89 against
+// COPY, which is itself inside the CANDIDATE_AT..CONFIRMED_AT band.
+const OTHER = "이번주 커뮤니티 리워드 이벤트에 참여해주신 모든 분들께 진심으로 감사드립니다. 다음 라운드도 기대해주세요.";
+const OTHER_REWRITTEN = "이번주 커뮤니티 리워드 이벤트에 참여해주신 모든 분들께 감사드립니다. 다음 라운드도 기대해주세요.";
+
 const base = {
   deliveredKeys: new Set<string>(),
   historyIds: new Set<string>(),
@@ -392,6 +401,28 @@ describe("translations that already went out by hand", () => {
     expect(plan.posted).toEqual([]);
   });
 
+  it("still skips that translation when a second, unrelated live thread would otherwise match it", () => {
+    // Pins the `claimedItemIds` guard itself, not just the consumed-thread exclusion. The
+    // single-thread version of this test above still passes if the guard is deleted, because the
+    // consumed-thread exclusion alone (thread 100 is already `plan.confirmed`) is enough to leave
+    // `plan.posted` empty. Thread 200 carries OTHER_REWRITTEN rather than COPY_REWRITTEN
+    // deliberately: it must stay OUT of `plan.candidates` too (it scores ~0.01 against the x:1
+    // rendering's COPY text, nowhere near CANDIDATE_AT), so that Finding 3's candidate-exclusion fix
+    // cannot be the thing keeping this thread out of the second pass's pool — only the
+    // `claimedItemIds` guard can. Without that guard, x:1 ends up both confirmed (rootId 100, the
+    // stronger record) AND posted (rootId 200, via OTHER_REWRITTEN's ~0.83 score against
+    // translation("x:1", OTHER)) — one item, two different posts backing it.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY]), thread("200", [OTHER_REWRITTEN])],
+      renderings: [rendering("x:1", COPY)],
+      translations: [translation("x:1", OTHER)],
+    });
+    expect(plan.confirmed).toHaveLength(1);
+    expect(plan.confirmed[0].entry.postId).toBe("100");
+    expect(plan.posted).toEqual([]);
+  });
+
   it("never reuses a thread already consumed by a confirmed rendering match", () => {
     // One live post must never become both a delivery row (for x:1) and a retire (for x:2).
     const plan = reconcileXPublished({
@@ -401,6 +432,26 @@ describe("translations that already went out by hand", () => {
       translations: [translation("x:2", COPY)],
     });
     expect(plan.confirmed).toHaveLength(1);
+    expect(plan.posted).toEqual([]);
+  });
+
+  it("never retires a thread that is already a candidate for a different item", () => {
+    // Verified failure mode without this exclusion: `candidates: [{rootId: "400", itemId: "x:1", ...}]`
+    // alongside `posted: x:2@400`. A human who later answers the candidate "yes, 400 is x:1" would
+    // then find 400 already recorded as x:2's post, and x:2 — which never actually went out —
+    // silently retired against it. The candidate's own score comfortably clears TRANSLATION_MATCH_AT
+    // (it's within the CANDIDATE_AT..CONFIRMED_AT band, well above 0.25), so this thread genuinely
+    // would have matched x:2's translation had it not already been claimed by the candidate verdict.
+    const edited = COPY.replace("진짜 과제가 시작됩니다", "이제부터가 본론입니다") + " 자세한 내용은 아래에서 확인하세요.";
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("400", [edited])],
+      renderings: [rendering("x:1", COPY)],
+      translations: [translation("x:2", COPY)],
+    });
+    expect(plan.candidates).toHaveLength(1);
+    expect(plan.candidates[0].rootId).toBe("400");
+    expect(plan.candidates[0].itemId).toBe("x:1");
     expect(plan.posted).toEqual([]);
   });
 
@@ -419,5 +470,23 @@ describe("translations that already went out by hand", () => {
     const rootless: AssembledThread = { rootId: "999", tweets: thread("100", [COPY]).tweets };
     const plan = reconcileXPublished({ ...base, threads: [rootless], renderings: [], translations: [translation("x:1", COPY)] });
     expect(plan.posted).toEqual([]);
+  });
+
+  it("removes a retired thread from plan.external instead of recording it twice", () => {
+    // A hand-posted translation was never an approved rendering, so the first pass's `classify` had
+    // no candidate to compare this thread against and correctly filed it as external (`kr:100`)
+    // before this pass ever ran. Task 4 writes one history row per `plan.posted` entry the same way
+    // it does per `plan.external` entry, so leaving both here would write two history rows for one
+    // postId — exactly what the `historyPostIds` guard above exists to prevent across runs, just
+    // reached from within this one run instead.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY_REWRITTEN])],
+      renderings: [],
+      translations: [translation("x:1", COPY)],
+    });
+    expect(plan.posted).toHaveLength(1);
+    expect(plan.posted[0].rootId).toBe("100");
+    expect(plan.external).toEqual([]);
   });
 });
