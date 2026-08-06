@@ -246,6 +246,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ops chat (watch failures)", warns when `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID_OPS` aren't both set,
   since the failure hook otherwise runs and exits `0` without telling anyone. See
   `src/doctor/checks.ts`'s `outputRootResult`/`telegramOpsChatResult`.
+- **`HERALD_WATCH_BATCH` — one dial for both translate stages' `--limit`, replacing the two
+  hardcoded `3`s a tick used to run with.** Sets the item count `pnpm watch` hands to both
+  `translate:prepare --limit` and `translate:align --limit` in the same tick; unset keeps the
+  batch size of 3 every command already used (`DEFAULT_WATCH_BATCH`, `src/cli/watchBatch.ts`).
+  Throughput is `batch * 24 / 2` items/day at the two-hour cadence the scheduler ships with — the
+  number that decides whether translation keeps pace with collection or quietly falls behind it —
+  and that ratio is tuned by watching the backlog, not by reading the code, on a different clock
+  than a deploy runs on; only `pnpm watch`'s own systemd unit is meant to set it, never a
+  developer's local `.env`. `parseWatchBatch` validates it in `src/cli/watch.ts` before the
+  startup line prints and before any stage runs, so a typo'd value refuses the tick at the entry
+  point — naming the variable and the exact value rejected — instead of reaching
+  `translate:prepare --limit`/`translate:align --limit` as garbage (`--limit 0` from a blank
+  value, a fraction, a sign, or a `Number()`-coercible string like `"0x10"`). Raising it does
+  **not** require raising `herald-watch.service`'s `TimeoutStartSec=`: `ClaudeCodeAgent` spawns
+  `claude -p` once per worksheet regardless of how many items that worksheet holds, so one tick
+  still makes at most two agent calls (translation, then alignment) at any batch size, and the
+  30-minute timeout's arithmetic is unchanged.
+- **`HERALD_COLLECT_MAX_PAGES` — a one-run override for the collector's page cap, default
+  unchanged at 50 (`DEFAULT_MAX_PAGES`, `src/adapters/twitterapi/TwitterApiSourceGateway.ts`).**
+  Exists for exactly one situation: recovering from a coverage GAP (see `Fixed` below) by hand,
+  with the cap raised for that one backfill run — the scheduler's own unit never sets this, so
+  every scheduled tick still runs at 50. It is read once, in the gateway's constructor, so a value
+  exported into a shell affects every command that builds a `TwitterApiSourceGateway` for the rest
+  of that shell session, not only `pnpm collect`; it is meant to be set for one hand-run backfill
+  and unset again immediately afterward, never left exported. Validated by the same
+  `parsePositiveIntEnv` rule `HERALD_WATCH_BATCH` uses (blank → default, otherwise a bare positive
+  integer or a named, actionable throw), pulled out to `src/shared/env/positiveInt.ts` once a
+  second `HERALD_*` variable needed the identical rule rather than a second reimplementation of it.
+- **`tests/deploy/watchTiming.test.ts` checks `herald-watch.timer`'s fire period against
+  `herald-watch.service`'s `TimeoutStartSec=` instead of leaving that constraint as a comment.**
+  systemd skips an `OnCalendar=` fire that comes due while the unit is still active, so a timeout
+  longer than half the fire period can turn one wedged tick into a scheduler that looks armed and
+  has silently stopped — the exact failure this whole feature exists to prevent. The test derives
+  the period from `OnCalendar=`'s two shapes this timer plausibly uses (`*-*-* 0/N:17:00` and
+  `*-*-* *:17:00`) and refuses to guess a period for any other shape rather than silently skipping
+  the bound. `herald-watch.timer`'s own header calls out "hourly is a one-line change" — exactly
+  the edit someone would make without re-deriving the timeout arithmetic first, and now the one
+  that trips this check if the two files drift apart.
+- **The watch scheduler's startup line now names a tick's inputs, not only its output root and
+  database.** `watchStartupLine` (`src/cli/watchStartup.ts`) appends the batch size
+  (`HERALD_WATCH_BATCH`) and the translation floor (`HERALD_TRANSLATE_SINCE`) — the two values an
+  operator can change without a deploy — so `journalctl --user -u herald-watch` answers "what was
+  this tick configured to do", not only "what did it do". An unset translation floor prints as
+  `(none)` rather than being dropped from the line: "no cutoff" and "cutoff configured" are the two
+  most consequential ticks there are, and a line that silently omits the floor when unset would be
+  indistinguishable from one that simply forgot to print it.
 
 ### Changed
 
@@ -327,6 +373,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mirroring the policy `HttpClient` already used. It previously threw on the first non-2xx, so a
   transient rate-limit or 503 failed the whole command. Shared by `metrics:record`,
   `impressions:record`, `history:record`, `targets:list`, `sheet:init` and the new command.
+- **A coverage GAP is now a tick failure instead of free text in a journal nobody reads.**
+  `collect` pages newest-first and stops at a 50-page cap (`MAX_PAGES`); when a run actually hit
+  that cap, the watermark still advanced to the newest tweet it *had* fetched, and the older tail
+  it never reached was skipped — permanently, since the next tick's floor is already past it. The
+  tick reported success regardless, because `collect`'s GAP notice (boundary timestamps and all)
+  was appended to its one line of stdout as free text `WatchTick` never parsed. A hole opened, no
+  alert fired, and the only trace was a line in a journal nobody reads on a healthy day. `WatchTick`
+  now parses that tail, and a GAP fails the tick before any downstream stage runs — `translate:*`
+  never sees the hole — so the `OnFailure=` hook's Telegram alert fires, carrying the GAP's own
+  boundary timestamps and a remedy that actually reaches the hole. That remedy is
+  `HERALD_COLLECT_MAX_PAGES=<n> pnpm collect --since <earlier boundary>`, not a bare `--since`
+  re-run: `gap.from` is the exact floor the failing run already used, and the collector always
+  pages down from the newest tweet, so a bare re-run just re-fetches the same newest tweets and
+  hits the same 50-page cap at the same place, repeating the same GAP while the tick alerts only
+  once. Pairing the override with `--since` is the only combination that actually raises the cap
+  for that one run. The failure detail says explicitly to confirm recovery via `truncated`/`gap` in
+  `output/x/runs.json` rather than assuming success, and that **the following tick goes green
+  regardless of whether the hole was filled**, because the watermark had already moved before the
+  alert ever fired — a green tick after a GAP alert is not evidence the loss was recovered. The
+  full backfill procedure is in [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md)'s new GAP
+  section. The failure detail's wording was measured against `watchOutcome`'s real 300-character
+  Telegram budget (`condense`, which truncates from the tail) rather than guessed, specifically so
+  the "a green tick is not proof" clause is never the part a truncation cuts.
+- **`docs/ko/team-runbook.md` and `docs/ko/artifacts.md` no longer recommend scheduling `pnpm
+  collect --since 2h` hourly** (`artifacts.md` had marked it "권장"). Both predate the watch
+  scheduler and would have actively broken it if followed: `--since` puts a collect run into adhoc
+  mode, which never advances the watermark, so wiring it into the scheduled automation would freeze
+  the watermark permanently — and since every tick would then be re-collecting the same rolling
+  window rather than only what is genuinely new since the last run, `collect`'s reported thread
+  count would essentially never be zero, permanently disabling `WatchTick`'s gate that skips calling
+  the agent when there is nothing to do. Both docs now name `pnpm watch` as the actual scheduler,
+  describe the sliding-window `--since` pattern as a hand-run backfill tool rather than an
+  automation substitute, and `team-runbook.md` documents the GAP alert and its remedy in the same
+  section.
 
 ## [0.3.0] - 2026-07-30
 
