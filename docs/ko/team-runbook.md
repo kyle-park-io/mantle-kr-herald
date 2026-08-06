@@ -741,9 +741,17 @@ drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케�
   타이머가 켜져 있든 멈춰 있든 설치조차 안 됐든 화면이 똑같습니다 — 여기서는 반드시 유닛 이름을
   붙이세요)
 - **로그** — `journalctl --user -u herald-watch`
-- **알림 자체가 안 갔는지 확인** — `journalctl --user -u herald-notify-failure.service`.
+- **알림 자체가 안 갔는지 확인** —
+  `journalctl --user -u herald-notify-failure@herald-watch.service.service`.
   `herald-watch.service`의 로그와는 별도 유닛이라, "실패는 났는데 텔레그램에 아무것도 안 왔다"를
   진단하려면 이쪽을 봐야 합니다.
+  **유닛 이름이 이렇게 긴 이유**: 알림 훅은 템플릿 유닛(`herald-notify-failure@.service`)이고,
+  `%i`로 실패한 유닛의 이름을 그대로 받습니다. `herald-watch.service`가 실패하면 실제로 도는
+  인스턴스는 `herald-notify-failure@herald-watch.service.service`입니다(끝의 `.service`가 두 번
+  들어가는 게 맞습니다 — 앞쪽은 인스턴스 이름의 일부입니다). 예전 이름인
+  `herald-notify-failure.service`를 그대로 조회하면 **없는 유닛을 조회하는 것**이고,
+  `journalctl`은 그때 에러가 아니라 `-- No entries --`를 찍고 **exit 0**을 반환합니다 — 즉
+  "조용하다"와 "그런 유닛이 없다"가 화면에서 구분되지 않습니다.
 - **지금 당장 한 번 돌려보고 싶을 때** — `systemctl --user start herald-watch.service`. 인터벌은
   타이머가 *언제* 도는지만 정할 뿐이고, 이 명령은 그것과 무관하게 즉시 한 번 tick을 실행합니다.
 
@@ -772,12 +780,18 @@ systemd는 유닛 파일에 적힌 순서와 무관하게 `EnvironmentFile=`을 
 
 ```bash
 journalctl --user -u herald-watch.service -n 20 --no-pager   # ECONNREFUSED + "Triggering OnFailure="
-journalctl --user -u herald-notify-failure.service -n 10 --no-pager
+journalctl --user -u herald-notify-failure@herald-watch.service.service -n 10 --no-pager
 ```
 
 1. `herald-watch` 저널에 `Triggering OnFailure= dependencies.`가 있을 것
-2. `herald-notify-failure` 저널이 **조용할 것** — `curl -fsS`는 텔레그램이 거부하면(토큰 만료 401,
-   chat id 오류 400) 그 에러를 stderr로 뱉고 그게 여기 찍힙니다. 아무것도 없으면 2xx입니다.
+2. `herald-notify-failure@herald-watch.service.service` 저널이 **조용할 것** — `curl -fsS`는
+   텔레그램이 거부하면(토큰 만료 401, chat id 오류 400) 그 에러를 stderr로 뱉고 그게 여기 찍힙니다.
+   아무것도 없으면 2xx입니다.
+   **유닛 이름을 그대로 쓰세요.** 예전 이름 `herald-notify-failure.service`(`@` 없는 쪽)는 템플릿
+   설치 후에는 아예 존재하지 않는 유닛이고, `journalctl`은 없는 유닛에 대해 `-- No entries --` +
+   exit 0을 냅니다 — 401/400을 잡으려고 있는 이 검사가 **항상 통과하는 검사로 바뀝니다.**
+   `herald-x-reconcile.service`로 이 훈련을 돌릴 때는 인스턴스 이름도 그쪽으로 바꿉니다:
+   `journalctl --user -u herald-notify-failure@herald-x-reconcile.service.service`.
 3. **휴대폰에 실제로 메시지가 왔을 것.** 1·2가 통과해도 `TELEGRAM_CHAT_ID_OPS`가 비어 있으면
    스크립트는 아무것도 보내지 않고 조용히 exit 0 합니다(실패 핸들러가 스스로 실패하면 안전망이
    아니라 루프라서 그렇게 설계돼 있습니다) — 그 경우 1·2만 보고는 구분이 안 됩니다.
@@ -937,6 +951,36 @@ cp deploy/herald-watch.service deploy/herald-x-reconcile.service deploy/herald-x
    ~/.config/systemd/user/
 rm -f ~/.config/systemd/user/herald-notify-failure.service   # 템플릿과 같이 두면 안 됩니다
 systemctl --user daemon-reload
+```
+
+**여기서 아직 `enable --now`를 하지 마세요.** watch 스케줄러의 설치 5번("타이머를 켜기 전에 손으로
+한 번 돌려봅니다")에 해당하는 단계가 이 유닛에는 **그대로 복사되지 않습니다** —
+`herald-x-reconcile.service`의 `ExecStart=`에는 `--yes`가 붙어 있어서,
+`systemctl --user start herald-x-reconcile.service`는 "확인용 실행"이 아니라 **첫 프로덕션 쓰기
+그 자체**입니다. `enable --now`도 마찬가지입니다: 타이머의 `Persistent=true` 때문에 놓친 실행이
+있으면 켜는 순간 바로 한 번 돕니다(위 "멈추기" 절에 같은 성질이 적혀 있습니다).
+
+그래서 **켜기 전에, 프로덕션 환경변수를 셸에 직접 불러서 `--yes` 없이 한 번 미리 봅니다.** 유닛이
+읽는 것과 같은 파일을 같은 방식으로 읽되, 쓰기만 하지 않는 실행입니다:
+
+```bash
+set -a; . ~/.herald/prod.env; set +a
+pnpm x:reconcile --since 7d          # --yes 없음. 아무것도 쓰지 않습니다
+```
+
+첫 줄이 `x:reconcile — @0xMantleKR, since … · database production · …neon.tech/neondb (preview — no
+--yes)`인지 확인하세요. **`database development`가 보이면 여기서 멈춥니다** — `~/.herald/prod.env`가
+안 읽힌 것이고, 그대로 타이머를 켜면 여섯 시간마다 잘못된 데이터베이스에 딜리버리 행을 씁니다.
+(`.env`만 읽는 평범한 `pnpm x:reconcile`은 로컬 Docker DB를 향하므로, 그 실행의 목록은 프로덕션에서
+실제로 쓸 목록이 **아닙니다.** 이 단계가 따로 있는 이유가 그것입니다.)
+
+그리고 출력된 세 목록 — 특히 `external` — 을 눈으로 훑으세요. `external`은 팀 공용 워크북의
+`history` 탭에 실제로 행을 추가하는, 가장 긴 쓰기 목록입니다. 첫 `--yes` 전에 사람이 확인해야 하는
+건 이쪽입니다.
+
+목록이 납득되면 켭니다:
+
+```bash
 systemctl --user enable --now herald-x-reconcile.timer
 ```
 
@@ -955,6 +999,14 @@ systemctl --user enable --now herald-x-reconcile.timer
 한 번 더 확인하면 됩니다. 확인·일시 정지 명령도 위 watch 스케줄러와 같고, 유닛 이름만
 `herald-x-reconcile`로 바꾸면 됩니다(`systemctl --user list-timers`,
 `journalctl --user -u herald-x-reconcile`).
+
+**단, 그 훈련 절차에서 확인 ②의 명령 한 줄은 이번에 바뀌었습니다.** 알림 저널을 보는 유닛 이름이
+`herald-notify-failure.service`에서 템플릿 인스턴스
+`herald-notify-failure@herald-watch.service.service`로 바뀌었습니다 — 위 `rm`으로 옛 유닛을
+지웠으니 예전 이름은 이제 **존재하지 않는 유닛**이고, `journalctl`은 없는 유닛에 대해
+`-- No entries --`와 exit 0을 냅니다. 즉 텔레그램 401/400을 잡으려고 있는 그 검사가 고친 이름을
+쓰지 않으면 **무조건 통과합니다.** 훈련을 돌리기 전에 그 절의 명령을 그대로 복사해 쓰세요(이미
+인스턴스 이름으로 고쳐져 있습니다).
 
 ## 7. 다음으로
 

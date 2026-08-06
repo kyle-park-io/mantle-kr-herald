@@ -11,11 +11,11 @@ import { TwitterApiSourceGateway } from "../adapters/twitterapi/TwitterApiSource
 import { assembleThreads } from "../domain/threadAssembler";
 import { parseSince } from "../shared/time/parseSince";
 import { postUrl } from "../domain/publish/xReconcile";
-import { isXCandidateRendering, reconcileXPublished, type CandidateReason } from "../app/ReconcileXPublished";
+import { reconcileXPublished } from "../app/ReconcileXPublished";
+import { candidateReasonText, externalSummaryLine, xReconcileStartupLine } from "./xReconcileReport";
 import { RecordObservedDelivery } from "../app/RecordObservedDelivery";
 import { RecordPublish } from "../app/RecordPublish";
 import type { SourceTweet } from "../domain/models";
-import type { ChannelRendering } from "../domain/formatting/models";
 import type { SheetClient } from "../ports/SheetClient";
 
 skipIfLocal("x:reconcile");
@@ -49,41 +49,18 @@ async function loadHistoryIds(sheet: SheetClient): Promise<Set<string>> {
   }
 }
 
-/** Eligible renderings' `type`s sharing `itemId`, through the same `isXCandidateRendering`
- *  predicate `reconcileXPublished` itself used — never a re-spelling of it (see that function's own
- *  doc comment for what a second spelling cost). Read back here because a candidate carries no
- *  `type` of its own (see `ReconcilePlan`'s doc comment): a report that names "ambiguous" has to
- *  show what it is ambiguous *between*, or the word is just decoration. */
-function xTypesFor(itemId: string, renderings: ChannelRendering[]): string[] {
-  return renderings.filter((r) => r.itemId === itemId && isXCandidateRendering(r)).map((r) => r.type);
-}
-
-/**
- * One line per candidate reason, written for the human deciding what to do next rather than for
- * whoever already read `ReconcileXPublished.ts`'s `CandidateReason` doc comment — this is what
- * shows up in `journalctl` when nobody has the source open. Each reason means a different next
- * action, and a candidate that only echoed its slug would force that reconstruction every time.
- */
-function candidateReasonText(reason: CandidateReason, itemId: string, renderings: ChannelRendering[]): string {
-  switch (reason) {
-    case "possible-match":
-      return "reads like our copy but wasn't an exact paste (maybe edited after posting) — confirm it by hand if it is the same post";
-    case "duplicate-live-thread":
-      return `another live thread already claimed ${itemId} in this run and took the confirmation — decide which post is the real one`;
-    case "ambiguous-rendering-type": {
-      const types = xTypesFor(itemId, renderings);
-      return `${itemId} has ${types.length || "several"} eligible x renderings (types: ${types.join(", ") || "?"}) — confirming risked the wrong deliveryKey, so this was refused rather than guessed`;
-    }
-  }
-}
-
 const auth = await createGoogleAuth(loadGoogleAuthConfig());
 const sheet = new GoogleSheetClient(auth, loadGoogleSheetConfig().spreadsheetId);
 const gateway = new TwitterApiSourceGateway(new TwitterClient(loadConfig().apiKey));
 
-const db = createDb(loadDbConfig());
+const dbConfig = loadDbConfig();
+const db = createDb(dbConfig);
 try {
-  console.log(`x:reconcile — @${handle}, since ${since}${writeConfirmed ? "" : " (preview — no --yes)"}`);
+  // Names the database on the FIRST line, like `pnpm watch` and `pnpm status` do, because this
+  // command's own unit runs it with `--yes`: there is no "start it by hand and read the first line
+  // before you enable" step to copy, so the runbook's install has the operator preview with the
+  // production environment sourced and stop if this line says `development`.
+  console.log(xReconcileStartupLine({ handle, since, write: writeConfirmed, db: dbConfig }));
 
   // Read what's live. Never through CollectAuthoredContent/a CollectionRepository: this reads the
   // account back for comparison only, and must never advance the collect watermark or touch
@@ -116,18 +93,9 @@ try {
     );
   }
 
-  // `score === 0` is two indistinguishable situations — no approved copy existed to compare
-  // against, or the thread was too short for `similarity` to score at all (fewer than 3 normalized
-  // characters, see `attribution.ts`'s `similarity`) — and pretending otherwise would invent a
-  // distinction the data cannot support. Naming the ambiguity here is the cheap, honest fix.
-  const zeroScored = plan.external.filter((e) => e.score === 0).length;
-  console.log(
-    `\nexternal (${plan.external.length}) — live, but not our approved copy` +
-      (zeroScored > 0
-        ? `; ${zeroScored} scored 0 (no approved copy existed to compare against, or the text was too short to score at all)`
-        : "") +
-      ".",
-  );
+  // What a `score === 0` row does and does not mean is decided in `externalSummaryLine`, which is
+  // tested; this is the only place it is printed.
+  console.log(`\n${externalSummaryLine(plan.external)}`);
   // A non-zero score below CANDIDATE_AT is not a match, but it is not nothing either — either our
   // copy went out modified enough that `classify` didn't call it a candidate, or the matcher is
   // mis-scoring, and both are worth a person's eyes. `classify`/`reconcileXPublished` carry this
