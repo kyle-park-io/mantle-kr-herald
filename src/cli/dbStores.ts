@@ -1,5 +1,5 @@
 import type { Db } from "../adapters/db/Db";
-import { TABLE_NAMES } from "../adapters/db/schema";
+import { TABLE_NAMES, ALTERED_COLUMNS } from "../adapters/db/schema";
 
 /**
  * The eleven stores `db:import`/`db:export` move between `output/` (plus the `translation/` and
@@ -113,15 +113,33 @@ export async function previewCount(fn: () => Promise<number>): Promise<number> {
  * the new table fails at runtime with no earlier warning. (`auth_attempts`, added after the tables
  * this probe used to check, is exactly that case.)
  *
+ * Also checks every `(table, column)` pair `applySchema` adds via `alter table ... add column if not
+ * exists` (`ALTERED_COLUMNS`, from `schema.ts`) against `information_schema.columns` — the same
+ * argument one level down, for a table that already exists but is missing a column added to it
+ * later. A table-only probe cannot see that gap at all: the table read above already reports "every
+ * table present" while a `select` against the missing column fails at runtime. Task 4.5 hit exactly
+ * this against the real production database (`translations.posted_url`/`posted_at`) — see
+ * `ALTERED_COLUMNS`'s own doc comment for the full story. The table check runs first and short-
+ * circuits before the column query when it already fails, since a table that does not exist has no
+ * columns worth asking `information_schema.columns` about.
+ *
  * `previewCount` above reports 0 for a missing table the same way it would for a genuinely empty,
  * migrated one, so the two cannot be told apart from a preview's counts alone. `db-import.ts`'s and
  * `db-export.ts`'s entry scripts call this once, before printing the preview, to print an explicit
- * "schema not applied yet" line when that is why every count reads 0.
+ * "schema not applied yet" line when that is why every count reads 0. `doctor`'s `databaseProbe`
+ * (`src/doctor/checks.ts`) calls this too, layered on top of its own real-table select, so `doctor`
+ * cannot report "ok" against a database this function would call unapplied.
  */
 export async function isSchemaApplied(db: Db): Promise<boolean> {
-  const rows = await db.query<{ table_name: string }>(
+  const tableRows = await db.query<{ table_name: string }>(
     "select table_name from information_schema.tables where table_schema = 'public'",
   );
-  const existing = new Set(rows.map((r) => r.table_name));
-  return TABLE_NAMES.every((name) => existing.has(name));
+  const existingTables = new Set(tableRows.map((r) => r.table_name));
+  if (!TABLE_NAMES.every((name) => existingTables.has(name))) return false;
+
+  const columnRows = await db.query<{ table_name: string; column_name: string }>(
+    "select table_name, column_name from information_schema.columns where table_schema = 'public'",
+  );
+  const existingColumns = new Set(columnRows.map((r) => `${r.table_name}.${r.column_name}`));
+  return ALTERED_COLUMNS.every(({ table, column }) => existingColumns.has(`${table}.${column}`));
 }

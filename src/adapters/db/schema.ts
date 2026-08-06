@@ -242,3 +242,27 @@ export async function applySchema(db: Db): Promise<void> {
 export const TABLE_NAMES: readonly string[] = STATEMENTS
   .map((statement) => /create table if not exists (\w+)/i.exec(statement)?.[1])
   .filter((name): name is string => name !== undefined);
+
+/**
+ * Every `(table, column)` pair `applySchema` adds via `alter table ... add column if not exists`,
+ * parsed out of `STATEMENTS` above the same way `TABLE_NAMES` is — not a second, hand-maintained
+ * list. This exists for the same reason `TABLE_NAMES` does, one level down: `isSchemaApplied`
+ * (`src/cli/dbStores.ts`) checks every pair here actually exists in `information_schema.columns`, so
+ * a database with every table `applySchema` creates but missing one of *these* columns still reports
+ * unapplied — instead of "applied" forever, the way a table-only probe would.
+ *
+ * This is not a hypothetical gap: Task 4.5 found it against the real production database. Every
+ * schema change before that task added a whole new *table*, so a database nobody had migrated always
+ * failed loudly with `relation ... does not exist` — including for `auth_attempts`, which is itself a
+ * table added after this file's earliest tables, and so was already covered by `TABLE_NAMES`. This
+ * branch's `translations.posted_url`/`posted_at` was the first change to add a *column* to a table
+ * that already existed on every prior install, and `pnpm x:reconcile` failed against production with
+ * `column "posted_url" does not exist` instead — with `isSchemaApplied` still reporting "applied",
+ * because it had never looked at columns. Adding an `alter table ... add column if not exists`
+ * statement to `STATEMENTS` above extends this list automatically; nothing here needs editing when
+ * that happens.
+ */
+export const ALTERED_COLUMNS: readonly { table: string; column: string }[] = STATEMENTS
+  .map((statement) => /alter table (\w+) add column if not exists (\w+)/i.exec(statement))
+  .filter((match): match is RegExpExecArray => match !== null)
+  .map((match) => ({ table: match[1] as string, column: match[2] as string }));

@@ -1,6 +1,7 @@
 import type { CheckResult } from "./report";
 import { describeDbTarget, type DbConfig } from "../config";
 import type { Db } from "../adapters/db/Db";
+import { isSchemaApplied } from "../cli/dbStores";
 
 /** Run a config loader: ok if it doesn't throw, fail with its own message otherwise. */
 export function configCheck(name: string, run: () => void, okDetail = "configured"): CheckResult {
@@ -132,6 +133,16 @@ export function describeSchemaProbeError(err: unknown): Error {
  * the check only cares that the query fails with "relation ... does not exist" when the schema was
  * never applied) rather than `select 1`, which cannot tell a migrated database from a table-less
  * one. Zero rows is not a failure — only the query itself throwing is.
+ *
+ * That select alone is table-only, though: `deliveries` has no `alter table ... add column`
+ * columns of its own, so it stays silent about a database that has every table but is missing a
+ * column added to one of them later (Task 4.5 — see `ALTERED_COLUMNS`'s doc comment in `schema.ts`
+ * for how `translations.posted_url`/`posted_at` broke `pnpm x:reconcile` against production this
+ * exact way). Once the raw select has ruled out "no connection" / "not even the tables exist" —
+ * and been given the chance to report *that* failure with its own, more specific message via
+ * `describeSchemaProbeError` — this also runs `isSchemaApplied` (`src/cli/dbStores.ts`), the same
+ * column-aware check `db-import.ts`/`db-export.ts` already use, so `doctor` cannot report "ok" on a
+ * database those commands would call unmigrated.
  */
 export function databaseProbe(db: Db): () => Promise<boolean> {
   return async () => {
@@ -139,6 +150,9 @@ export function databaseProbe(db: Db): () => Promise<boolean> {
       await db.query("select 1 from deliveries limit 1");
     } catch (err) {
       throw describeSchemaProbeError(err);
+    }
+    if (!(await isSchemaApplied(db))) {
+      throw new Error(`Schema not fully applied — a column applySchema adds is missing. ${SCHEMA_REMEDY}`);
     }
     return true;
   };

@@ -236,6 +236,18 @@ describe("databaseProbe", () => {
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("pnpm db:import");
   });
+
+  // Task 4.5: `pnpm x:reconcile` failed against a real production database with `column
+  // "posted_url" does not exist` even though `select 1 from deliveries limit 1` — the query this
+  // probe used to rely on exclusively — succeeds fine on such a database: `deliveries` has no
+  // altered columns of its own, so a table-only probe cannot see a missing one on `translations`.
+  // This is the same gap `isSchemaApplied` (`src/cli/dbStores.ts`) closed for `db:import`/`db:export`
+  // — `doctor` must not report "ok" on the exact database that broke `x:reconcile`.
+  it("fails when every table exists but an alter-table column is missing, even though the raw select succeeds", async () => {
+    db = await createTestDb();
+    await db.query("alter table translations drop column posted_url");
+    await expect(databaseProbe(db)()).rejects.toThrow(/pnpm db:import/);
+  });
 });
 
 describe("quotaResult", () => {
