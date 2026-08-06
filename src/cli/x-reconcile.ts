@@ -11,7 +11,7 @@ import { TwitterApiSourceGateway } from "../adapters/twitterapi/TwitterApiSource
 import { assembleThreads } from "../domain/threadAssembler";
 import { parseSince } from "../shared/time/parseSince";
 import { postUrl } from "../domain/publish/xReconcile";
-import { reconcileXPublished, type CandidateReason } from "../app/ReconcileXPublished";
+import { isXCandidateRendering, reconcileXPublished, type CandidateReason } from "../app/ReconcileXPublished";
 import { RecordObservedDelivery } from "../app/RecordObservedDelivery";
 import { RecordPublish } from "../app/RecordPublish";
 import type { SourceTweet } from "../domain/models";
@@ -49,14 +49,13 @@ async function loadHistoryIds(sheet: SheetClient): Promise<Set<string>> {
   }
 }
 
-/** Eligible (approved, channel "x", non-empty) renderings' `type`s sharing `itemId` — the same
- *  filter `xMatchCandidates` applies, read back here because a candidate carries no `type` of its
- *  own (see `ReconcilePlan`'s doc comment): a report that names "ambiguous" has to show what it is
- *  ambiguous *between*, or the word is just decoration. */
+/** Eligible renderings' `type`s sharing `itemId`, through the same `isXCandidateRendering`
+ *  predicate `reconcileXPublished` itself used — never a re-spelling of it (see that function's own
+ *  doc comment for what a second spelling cost). Read back here because a candidate carries no
+ *  `type` of its own (see `ReconcilePlan`'s doc comment): a report that names "ambiguous" has to
+ *  show what it is ambiguous *between*, or the word is just decoration. */
 function xTypesFor(itemId: string, renderings: ChannelRendering[]): string[] {
-  return renderings
-    .filter((r) => r.itemId === itemId && r.channel === "x" && r.status === "approved" && r.text !== "")
-    .map((r) => r.type);
+  return renderings.filter((r) => r.itemId === itemId && isXCandidateRendering(r)).map((r) => r.type);
 }
 
 /**

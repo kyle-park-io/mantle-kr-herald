@@ -7,19 +7,38 @@ import { deliveryKey } from "../domain/delivery/models";
 import type { PublishRecord } from "../domain/sheet/models";
 
 /**
+ * Whether a rendering is one this reconcile may compare a live thread against, and therefore one it
+ * may take a `type` from. Only `status: "approved"` and `channel: "x"` renderings qualify — anything
+ * else is either not yet human-approved or was formatted for a different channel entirely, and
+ * matching against either would attribute a live post to copy nobody signed off, or to the wrong
+ * channel's words. A rendering with empty text is dropped too, since `similarity()` can never score
+ * it above 0.
+ *
+ * **This is the one spelling of that predicate, and every reader of it must use this function.** It
+ * used to exist in three: `xMatchCandidates` below, `xTypesFor` in `src/cli/x-reconcile.ts`, and a
+ * looser variant inside `reconcileXPublished`'s own `renderingByItemId` loop that checked only the
+ * `itemId`. That third one is why a confirmed row could be written under a `type` taken from a
+ * *telegram* rendering (or an unapproved one) that merely shared the itemId and happened to come
+ * first in `PgFormattingStore.loadAll()`'s `order by ordinal` — a `deliveryKey` `SendChannels.run`
+ * does not recognise, so the next `send:channels --target x` read the item as unsent and posted the
+ * copy a human had already published by hand. One item routinely becomes several typed renderings
+ * (`DEFAULT_CHANNELS_BY_TYPE` sends `announcement`/`explainer`/`casual`/`kol` to Telegram), so that
+ * shape is ordinary, not exotic. A second spelling of this filter is a second chance to disagree
+ * with it, and disagreement here is a duplicate live post.
+ */
+export function isXCandidateRendering(r: ChannelRendering): boolean {
+  return r.status === "approved" && r.channel === "x" && r.text !== "";
+}
+
+/**
  * Narrow approved renderings down to the X-channel copy `classify` can compare a live thread
- * against. Only `status: "approved"` and `channel: "x"` renderings qualify — anything else is
- * either not yet human-approved or was formatted for a different channel entirely, and matching
- * against either would attribute a live post to copy nobody signed off, or to the wrong channel's
- * words. A rendering with empty text is dropped too, since `similarity()` can never score it above 0.
+ * against, via `isXCandidateRendering`.
  *
  * Same shape as `telegramMatchCandidates` for the other channel; lives here (not inline in the
  * caller) so it is unit-testable independent of sheet/gateway wiring.
  */
 export function xMatchCandidates(renderings: ChannelRendering[]): MatchCandidate[] {
-  return renderings
-    .filter((r) => r.status === "approved" && r.channel === "x" && r.text !== "")
-    .map((r) => ({ itemId: r.itemId, text: r.text }));
+  return renderings.filter(isXCandidateRendering).map((r) => ({ itemId: r.itemId, text: r.text }));
 }
 
 /**
@@ -110,11 +129,14 @@ export function reconcileXPublished(input: {
 }): ReconcilePlan {
   const { threads, renderings, deliveredKeys, historyIds, handle } = input;
 
-  const candidates = xMatchCandidates(renderings);
-  // Looked up by the itemIds `xMatchCandidates` actually kept (not the full `renderings` list), so
-  // a confirmed verdict's `type` comes from the rendering it matched against — a rendering carries
-  // the type it was formatted for, never a literal.
-  //
+  // ONE list, filtered ONCE by `isXCandidateRendering`, feeding all three things derived from it:
+  // the match candidates, the itemId → rendering lookup a confirmed verdict takes its `type` from,
+  // and the per-itemId occurrence count the ambiguity guard reads. Deriving any of them from the
+  // full `renderings` list instead is the defect this shape exists to make unrepresentable — see
+  // `isXCandidateRendering`'s own doc comment for what it cost.
+  const eligible = renderings.filter(isXCandidateRendering);
+  const candidates = xMatchCandidates(eligible); // filters again, a no-op by construction: one map, one predicate.
+
   // First-wins on a duplicate itemId, matching `bestMatch`'s own tie-break convention (first
   // candidate in input order — see attribution.ts) rather than `Map`'s default last-write-wins.
   // `ChannelRendering`'s identity is (itemId, type, channel), and two approved `channel: "x"`
@@ -124,21 +146,20 @@ export function reconcileXPublished(input: {
   // non-"x"-typed variant with a `channels: ["x"]` override produces exactly this. Which rendering
   // this Map hands back is then a convention, not evidence — see the ambiguity guard below, which is
   // why picking the wrong one here is never allowed to reach a write.
-  const candidateItemIds = new Set(candidates.map((c) => c.itemId));
   const renderingByItemId = new Map<string, ChannelRendering>();
-  for (const r of renderings) {
-    if (candidateItemIds.has(r.itemId) && !renderingByItemId.has(r.itemId)) {
-      renderingByItemId.set(r.itemId, r);
-    }
+  for (const r of eligible) {
+    if (!renderingByItemId.has(r.itemId)) renderingByItemId.set(r.itemId, r);
   }
 
   // How many eligible (approved, channel "x", non-empty) renderings share an itemId. Almost always
   // 1. When it is more than 1, `renderingByItemId`'s first-wins pick is a convention, not evidence
-  // — `bestMatch` only proves the itemId, never which of the sharing renderings' `type`s is right —
-  // so a confirmed verdict for that itemId must not reach a write; see the guard below.
+  // — `classify` only proves the itemId, never which of the sharing renderings' `type`s is right —
+  // so a confirmed verdict for that itemId must not reach a write; see the guard below. Counted off
+  // `eligible`, the same list `renderingByItemId` was built from, so the guard can never read 1 for
+  // a map that had a choice to make.
   const itemIdOccurrences = new Map<string, number>();
-  for (const c of candidates) {
-    itemIdOccurrences.set(c.itemId, (itemIdOccurrences.get(c.itemId) ?? 0) + 1);
+  for (const r of eligible) {
+    itemIdOccurrences.set(r.itemId, (itemIdOccurrences.get(r.itemId) ?? 0) + 1);
   }
 
   const plan: ReconcilePlan = { confirmed: [], candidates: [], external: [], skipped: [] };

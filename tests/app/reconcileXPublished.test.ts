@@ -1,7 +1,8 @@
 // tests/app/reconcileXPublished.test.ts
 import { describe, it, expect } from "vitest";
-import { reconcileXPublished, xMatchCandidates } from "../../src/app/ReconcileXPublished";
+import { isXCandidateRendering, reconcileXPublished, xMatchCandidates } from "../../src/app/ReconcileXPublished";
 import { CANDIDATE_AT } from "../../src/domain/publish/xReconcile";
+import { deliveryKey } from "../../src/domain/delivery/models";
 import type { AssembledThread, SourceTweet } from "../../src/domain/models";
 import type { ChannelRendering } from "../../src/domain/formatting/models";
 
@@ -38,6 +39,19 @@ describe("xMatchCandidates", () => {
       rendering("x:empty", ""),
     ]);
     expect(candidates.map((c) => c.itemId)).toEqual(["x:ok"]);
+  });
+
+  it("is exactly isXCandidateRendering, so no caller can spell the filter a second time", () => {
+    // The predicate had three spellings and the loosest of them wrote a delivery row under a key
+    // `send:channels` does not recognise. This asserts the composition, so a future edit to one and
+    // not the other is a failing test rather than a duplicate live post.
+    const all = [
+      rendering("x:ok", COPY),
+      rendering("x:draft", COPY, { status: "rendered" }),
+      rendering("x:tg", COPY, { channel: "telegram" }),
+      rendering("x:empty", ""),
+    ];
+    expect(xMatchCandidates(all).map((c) => c.itemId)).toEqual(all.filter(isXCandidateRendering).map((r) => r.itemId));
   });
 });
 
@@ -83,6 +97,65 @@ describe("reconcileXPublished", () => {
 
     expect(plan.confirmed).toHaveLength(1);
     expect(plan.confirmed[0].entry.type).toBe("kol");
+  });
+
+  it("takes the confirmed type from the x rendering even when a telegram one for the same item comes first", () => {
+    // The defect this pins: `renderingByItemId` used to be built from the *full* renderings list and
+    // take the first row matching the itemId — ignoring channel, status and text — so a same-item
+    // telegram rendering ordered ahead of the x one handed its own `type` to the confirmed entry.
+    // The written deliveryKey (x:1:announcement:x-post) is then not the one `SendChannels.run` gates
+    // on (x:1:x:x-post), so the next `send:channels --target x` reads the item as unsent and posts
+    // copy a human already published by hand — the single outcome this feature exists to prevent.
+    // Order is not hypothetical: `PgFormattingStore.loadAll()` returns `order by ordinal`, i.e.
+    // insertion order, and one translation routinely becomes several typed renderings with
+    // DEFAULT_CHANNELS_BY_TYPE routing announcement/explainer/casual/kol to Telegram.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [
+        rendering("x:1", COPY, { type: "announcement", channel: "telegram" }),
+        rendering("x:1", COPY, { type: "x", channel: "x" }),
+      ],
+    });
+
+    expect(plan.candidates).toEqual([]);
+    expect(plan.confirmed).toHaveLength(1);
+    expect(plan.confirmed[0].entry.type).toBe("x");
+    expect(deliveryKey(plan.confirmed[0].entry)).toBe("x:1:x:x-post");
+  });
+
+  it("ignores an unapproved same-item x rendering when taking the confirmed type", () => {
+    // The other half of the same defect: a `status: "rendered"` x rendering is not something a human
+    // signed off, so it is not eligible to be matched against — and it must not be eligible to hand
+    // over a `type` either. The looser lookup took it whenever it came first.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [rendering("x:1", COPY, { type: "kol", status: "rendered" }), rendering("x:1", COPY)],
+    });
+
+    expect(plan.candidates).toEqual([]);
+    expect(plan.confirmed).toHaveLength(1);
+    expect(deliveryKey(plan.confirmed[0].entry)).toBe("x:1:x:x-post");
+  });
+
+  it("counts ambiguity off the eligible renderings, not the whole list", () => {
+    // `itemIdOccurrences` and `renderingByItemId` must be built from the SAME filtered list, or the
+    // guard reads 1 for a map that had a choice to make. Two *eligible* x renderings sharing the
+    // itemId is ambiguous (the next test); an eligible one plus an ineligible telegram one is not,
+    // and must still confirm rather than costing a human a pointless confirmation.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [
+        rendering("x:1", COPY, { type: "casual", channel: "telegram" }),
+        rendering("x:1", COPY, { type: "explainer", channel: "telegram" }),
+        rendering("x:1", COPY),
+      ],
+    });
+
+    expect(plan.confirmed).toHaveLength(1);
+    expect(deliveryKey(plan.confirmed[0].entry)).toBe("x:1:x:x-post");
   });
 
   it("refuses to confirm when the itemId's type is ambiguous, and reports a candidate instead", () => {
