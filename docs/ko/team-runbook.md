@@ -425,7 +425,7 @@ ad-hoc으로 간주되어 **워터마크를 갱신하지 않으므로**, 정기 
 
 **증상** — `herald-watch` 실패 알림의 상세 메시지에 `GAP`이 들어 있습니다.
 
-**원인** — 한 번의 `collect` 실행이 50페이지 상한(`MAX_PAGES`)까지 다 써버렸습니다 — 보통
+**원인** — 한 번의 `collect` 실행이 50페이지 상한(`DEFAULT_MAX_PAGES`)까지 다 써버렸습니다 — 보통
 장시간 장애 이후에만 벌어집니다. 워터마크는 그래도 이번에 가져온 가장 최신 트윗까지 전진하므로,
 상한에 걸려 못 가져온 더 오래된 구간은 이후 어떤 정기 수집으로도 다시 채워지지 않습니다.
 
@@ -435,7 +435,7 @@ ad-hoc으로 간주되어 **워터마크를 갱신하지 않으므로**, 정기 
 **(1) 상한** — `--since`만 붙여 그냥 다시 돌리면 **똑같은 지점에서 똑같이 잘리고 아무것도
 복구되지 않습니다.** `gap.from`은 방금 실패한 그 실행이 이미 썼던 floor 그 자체이고,
 `fetchAuthoredTweets`는 항상 최신 트윗부터 아래로 페이지를 넘기므로, 같은 floor로 다시
-요청하면 같은 최신 트윗들을 다시 가져오다 같은 `MAX_PAGES`(50페이지) 상한에 같은 자리에서
+요청하면 같은 최신 트윗들을 다시 가져오다 같은 `DEFAULT_MAX_PAGES`(50페이지) 상한에 같은 자리에서
 또 걸립니다. 실제로 구멍에 닿으려면 그 한 번의 실행만 상한을 올려야 합니다.
 
 **(2) 환경** — **저장소에서 맨손으로 `pnpm collect`를 돌리면 안 됩니다.** `pnpm collect`는
@@ -449,13 +449,23 @@ ad-hoc으로 간주되어 **워터마크를 갱신하지 않으므로**, 정기 
 하나 남깁니다 — **프로덕션에는 구멍이 그대로인데 화면상으로는 복구가 성공한 것처럼
 보입니다.**
 
-그래서 스케줄러와 **같은 환경으로** 돌립니다:
+그래서 스케줄러와 **같은 환경으로** 돌리고, `collect`를 실행하기 전에 `pnpm doctor`로 그
+환경이 실제로 적용됐는지 먼저 확인합니다:
 
 ```bash
 set -a; . ~/.herald/prod.env; set +a
+HERALD_OUTPUT_DIR=$HOME/.herald/output pnpm doctor
 HERALD_OUTPUT_DIR=$HOME/.herald/output \
   HERALD_COLLECT_MAX_PAGES=<n> pnpm collect Mantle_Official --since <복구 시작 시점>
 ```
+
+**`pnpm doctor` 줄을 건너뛰지 마세요.** `collect`의 출력이나 `runs.json`에는 어느 데이터베이스에
+썼는지가 전혀 남지 않으므로 — 두 변수를 하나만 놓쳐도 명령은 똑같이 성공하고 원장에도 깨끗한
+행이 남습니다. `pnpm doctor`의 `Database` 줄이 `production`을, `Output root` 줄이
+`(HERALD_OUTPUT_DIR override)`와 함께 `~/.herald/output` 경로를 보여주는지 이 시점에 먼저
+확인하세요. 둘 중 하나라도 다르게 나오면(특히 `Database`가 `development`) — 바로 위 (2) 환경
+문단이 경고하는 그 상황이니 여기서 멈추고 `set -a; . ~/.herald/prod.env; set +a`부터 다시
+확인한 뒤에만 `collect`를 돌리세요.
 
 `set -a`는 그 뒤의 대입을 자동으로 export 하므로 `prod.env`의 `DATABASE_URL`/
 `HERALD_DB_ENV`가 이 셸의 환경변수가 됩니다 — 셸에서 export한 값은 Node의
@@ -814,8 +824,12 @@ systemd가 순서를 맞춰 주니 신경 쓸 일이 없어집니다.
 미번역 잔량이 늘어나는지 줄어드는지로 판단하고, 안 따라가면 이 값을 올립니다. **코드를 고치거나
 다시 배포할 필요는 없습니다** — 이 값이 변수로 빠져 있는 이유가 그것입니다.
 
-`herald-watch.service`의 `Environment=` 줄로 설정합니다. 위의 `HERALD_OUTPUT_DIR`/
-`HERALD_TRANSLATE_SINCE` 옆에 **주석 처리된 자리가 이미 있으니** 주석만 풀고 값을 바꾸세요:
+`herald-watch.service`의 `Environment=` 줄로 설정합니다. **단, 고쳐야 하는 파일은 설치 때
+`~/.config/systemd/user/`로 복사해 둔 사본입니다** — 저장소의 `deploy/herald-watch.service`는
+그 복사본의 원본일 뿐이라, 저장소 쪽만 고치고 `daemon-reload`를 돌리면 systemd는 여전히 예전
+값을 읽습니다(복사 절차는 위 "설치" 4번 참고). 그 사본의 `Environment=` 줄에서, 위의
+`HERALD_OUTPUT_DIR`/`HERALD_TRANSLATE_SINCE` 옆에 **주석 처리된 자리가 이미 있으니** 주석만
+풀고 값을 바꾸세요:
 
 ```
 Environment=HERALD_WATCH_BATCH=5
