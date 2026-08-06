@@ -157,9 +157,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`src/adapters/send/TelegramBotSender.ts`), `SendChannelsInput.pin`/`SendChannelsResult.warnings`
   (`src/app/SendChannels.ts`), and `OutletCard`'s `pinOffered` (`web/src/components/OutletCard.tsx`).
 - **`pnpm watch` — an unattended scheduler, one tick at a time.** Chains `collect` → (only if
-  `collect` found anything new) `translate:prepare --limit 3` → an unattended `claude -p` fill of the
-  translation worksheet → `translate:align --limit 3` → (only if there is a precedent to align
-  against) a second `claude -p` fill, then exits. A tick that finds nothing new spends one
+  `collect` found anything new) `translate:prepare --limit 3 --since <cutoff>` → an unattended
+  `claude -p` fill of the translation worksheet → `translate:align --limit 3` → (only if there is a
+  precedent to align against) a second `claude -p` fill, then exits. A tick that finds nothing new spends one
   twitterapi.io call and never touches the agent. Stops dead at `status: "translated"` —
   `translate:save` is never called with `--approve` on this path, and nothing downstream
   (`convert:*`, `send:*`, `drive:publish`) is ever invoked, so a scheduled run can only ever hand the
@@ -217,6 +217,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.vercelignore` gained an anchored `/deploy/` entry: unanchored, `deploy/` would also match, and
   drop, `src/deploy/` from the Vercel Function bundle — the same mistake `translation/`'s own entry
   already exists to guard against.
+- **`HERALD_TRANSLATE_SINCE` — the floor that keeps the scheduler current instead of merely busy.**
+  `translate:prepare` takes the first `--limit` items of the *whole* untranslated set, oldest first,
+  so `--limit 3` alone is a cap without a floor: the first production tick collected 23 new threads
+  and then translated three from 2026-07-14, because 211 untranslated items reaching back to
+  2026-06-01 stood in front of them — roughly six days of ticks before the scheduler would have
+  reached what it had just collected. `pnpm watch` now passes this through to
+  `translate:prepare --since`. It is configuration rather than a constant because it is a content
+  decision — which historical posts are being chosen, deliberately, never to translate — and the
+  team's rule sets it at the last already-translated post. Unparseable values are refused at
+  startup instead of reaching `--since` as garbage, where they would quietly translate nothing for
+  as long as nobody read a journal; unset keeps the whole-backlog behaviour a hand-run gets.
+  It must name the same instant as the collect watermark seeded into
+  `~/.herald/output/x/state.json`, or the gap between the two floors becomes content that is
+  fetched and then never translated, with no failing unit and nothing in a journal to read —
+  `tests/deploy/watchCutoff.test.ts` holds the unit file and the runbook to the same value.
 - **The scheduler's artifacts live under their own root, `~/.herald/output` (`HERALD_OUTPUT_DIR`),
   never the repo's own `output/`.** `collect`'s watermark (`output/x/state.json`) stayed file-backed
   when everything else moved to Postgres (`src/cli/stores.ts`), so it is shared by every run
