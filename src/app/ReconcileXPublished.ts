@@ -123,15 +123,25 @@ export type ReconcilePlan = {
  * A third thing lands in `skipped`, for a different reason entirely: a thread with no tweet of its
  * own matching its `rootId` — a reply into someone else's thread. It is per-thread and never fatal,
  * so one such reply can no longer take the whole run down with it. See the guard in the loop.
+ *
+ * `historyIds` and `historyPostIds` are the `history` tab read two ways, and an external thread is
+ * skipped if it matches **either**. `kr:<rootId>` in column A only catches rows this reconcile itself
+ * wrote; the tab's real identity for an X row is the **postId** in column D, which is what
+ * `RecordImpressions` filters on (`channel === "x" && postId`). A live post already recorded under a
+ * *different* itemId — by `pnpm history:record --item x:… --post-id …`, the documented manual path for
+ * exactly these hand-posts, or by a `send:channels` send whose rendering later stopped being an
+ * eligible candidate — would otherwise get a second row for the same post, and `impressions:record`
+ * would write view counts into both.
  */
 export function reconcileXPublished(input: {
   threads: AssembledThread[];
   renderings: ChannelRendering[];
   deliveredKeys: Set<string>;
   historyIds: Set<string>;
+  historyPostIds: Set<string>;
   handle: string;
 }): ReconcilePlan {
-  const { threads, renderings, deliveredKeys, historyIds, handle } = input;
+  const { threads, renderings, deliveredKeys, historyIds, historyPostIds, handle } = input;
 
   // ONE list, filtered ONCE by `isXCandidateRendering`, feeding all three things derived from it:
   // the match candidates, the itemId → rendering lookup a confirmed verdict takes its `type` from,
@@ -247,6 +257,17 @@ export function reconcileXPublished(input: {
     const itemId = `kr:${thread.rootId}`;
     if (historyIds.has(itemId)) {
       plan.skipped.push({ rootId: thread.rootId, reason: `${itemId} already in publish history` });
+      continue;
+    }
+    if (historyPostIds.has(thread.rootId)) {
+      // Same live post, already recorded under some other itemId — the `history` tab's real identity
+      // for an X row is its postId, not its itemId. Writing `kr:<rootId>` anyway would leave two rows
+      // for one post, and `RecordImpressions` (which filters on `channel === "x" && postId`) would
+      // then measure the same post into both of them.
+      plan.skipped.push({
+        rootId: thread.rootId,
+        reason: `post ${thread.rootId} already in publish history under a different itemId`,
+      });
       continue;
     }
     plan.external.push({ record: externalHistoryRecord(thread, handle), score: verdict.score });

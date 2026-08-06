@@ -162,6 +162,16 @@ including the two @bcd_kyle test rows, which the reconcile must therefore leave 
 "correcting" to a @0xMantleKR post id. Those two rows record a real send to a real account; they are
 history, not an error.
 
+**Corrected 2026-08-06 (review):** the paragraph above reasoned only about reconcile-vs-reconcile, where
+it is right, and that was not enough. The `history` tab's real identity for an X row is its **`postId`**
+(column D) — that is what `RecordImpressions` filters and fetches on (`channel === "x" && postId`) — not
+its `itemId`. A live post can already be in the tab under a *different* itemId: `pnpm history:record
+--item x:… --post-id …` is the documented manual path for exactly these hand-posts, and a
+`send:channels` send whose rendering later stopped being an eligible candidate leaves one too. Keyed on
+column A alone, such a post gets a **second** row and `impressions:record` writes view counts into both.
+So the external check reads `history!A2:D` and skips a thread whose `rootId` appears as either an
+itemId (`kr:<rootId>`) **or** a postId.
+
 ## Out of scope, deliberately
 
 - **Telegram and KakaoTalk.** Neither can be read back the way X can — there is no API returning "what

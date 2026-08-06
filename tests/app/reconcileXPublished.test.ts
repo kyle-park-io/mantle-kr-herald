@@ -26,7 +26,12 @@ function rendering(itemId: string, text: string, over: Partial<ChannelRendering>
   return { itemId, type: "x", channel: "x", text, status: "approved", ...over } as ChannelRendering;
 }
 
-const base = { deliveredKeys: new Set<string>(), historyIds: new Set<string>(), handle: "0xMantleKR" };
+const base = {
+  deliveredKeys: new Set<string>(),
+  historyIds: new Set<string>(),
+  historyPostIds: new Set<string>(),
+  handle: "0xMantleKR",
+};
 
 describe("xMatchCandidates", () => {
   it("takes only approved x copy", () => {
@@ -204,6 +209,38 @@ describe("reconcileXPublished", () => {
 
     expect(plan.external).toEqual([]);
     expect(plan.skipped.map((s) => s.rootId)).toEqual(["300"]);
+  });
+
+  it("skips an external post whose postId is already in history under another itemId", () => {
+    // The `history` tab's real identity for an X row is its postId (column D) — that is what
+    // RecordImpressions filters and fetches on — not its itemId. `pnpm history:record --item x:…
+    // --post-id …` is the documented manual path for a hand-posted thread, so the same live post
+    // routinely already sits there under an `x:`-prefixed itemId. Keyed on `kr:<rootId>` alone, this
+    // reconcile wrote a SECOND row for it, and impressions:record then measured the post into both.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("300", ["파이프라인과 무관한 한국팀 자체 공지입니다."])],
+      renderings: [],
+      historyPostIds: new Set(["300"]),
+    });
+
+    expect(plan.external).toEqual([]);
+    expect(plan.skipped.map((s) => s.rootId)).toEqual(["300"]);
+    expect(plan.skipped[0].reason).toMatch(/under a different itemId/);
+  });
+
+  it("still records an external post whose postId is not in history", () => {
+    // The guard must not swallow the ordinary case: an unrelated postId sitting in the tab (a
+    // telegram row's blank D, another post's id) leaves this thread writable.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("300", ["파이프라인과 무관한 한국팀 자체 공지입니다."])],
+      renderings: [],
+      historyPostIds: new Set(["999", ""]),
+    });
+
+    expect(plan.external.map((e) => e.record.itemId)).toEqual(["kr:300"]);
+    expect(plan.skipped).toEqual([]);
   });
 
   it("reports a candidate without putting it in either write list", () => {
