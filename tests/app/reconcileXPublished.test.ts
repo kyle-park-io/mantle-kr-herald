@@ -102,6 +102,7 @@ describe("reconcileXPublished", () => {
     expect(plan.candidates).toHaveLength(1);
     expect(plan.candidates[0].rootId).toBe("100");
     expect(plan.candidates[0].itemId).toBe("x:1");
+    expect(plan.candidates[0].reason).toBe("ambiguous-rendering-type");
   });
 
   it("skips a thread whose item already has an x-post delivery row", () => {
@@ -139,6 +140,7 @@ describe("reconcileXPublished", () => {
     expect(plan.candidates).toHaveLength(1);
     expect(plan.candidates[0].rootId).toBe("400");
     expect(plan.candidates[0].itemId).toBe("x:1");
+    expect(plan.candidates[0].reason).toBe("possible-match");
     expect(plan.confirmed).toEqual([]);
     // A candidate is NOT silently filed as external either — that would record it under a kr: id
     // and then a human confirming the match later would have two rows for one post.
@@ -157,6 +159,7 @@ describe("reconcileXPublished", () => {
     expect(plan.confirmed).toHaveLength(1);
     expect(plan.confirmed[0].entry.postId).toBe("100");
     expect(plan.candidates.map((c) => c.rootId)).toEqual(["101"]);
+    expect(plan.candidates[0].reason).toBe("duplicate-live-thread");
   });
 
   it("returns empty lists for no live threads rather than throwing", () => {

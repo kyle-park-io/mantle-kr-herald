@@ -23,6 +23,23 @@ export function xMatchCandidates(renderings: ChannelRendering[]): MatchCandidate
 }
 
 /**
+ * Why a thread was reported as a candidate rather than written anywhere. One value per push site in
+ * `reconcileXPublished` — named for what happened, not for which `if` produced it, so a person
+ * reading the plan knows what to do without reading this module's source:
+ *
+ * - `"possible-match"` — `classify` itself landed the score in the band between "clearly ours" and
+ *   "clearly not" (`CANDIDATE_AT` to `CONFIRMED_AT`): a paste that was then edited, most likely. The
+ *   human question is "is this the same post?"
+ * - `"duplicate-live-thread"` — two live threads both matched the same itemId within this one run;
+ *   the first (oldest, by input order) took the confirmation and this one is the leftover. The human
+ *   question is "two posts matched one item — which one is it?"
+ * - `"ambiguous-rendering-type"` — more than one eligible rendering shares the matched itemId under
+ *   a different `type`, so confirming would risk writing a delivery row under the wrong
+ *   `deliveryKey`. The human question is "this item has two `x` renderings; which one is this?"
+ */
+export type CandidateReason = "possible-match" | "duplicate-live-thread" | "ambiguous-rendering-type";
+
+/**
  * What to do with what is live on the account, given what is already recorded. Never itself
  * written anywhere — the caller loads the sets this was built from and does the actual writing.
  *
@@ -34,10 +51,16 @@ export function xMatchCandidates(renderings: ChannelRendering[]): MatchCandidate
  * thread, why a live post that would otherwise have been written was left alone — almost always
  * because a previous run (or a hand-run pipeline) already recorded it.
  *
- * `candidates` deliberately carries no `type` — only `rootId`/`itemId`/`score`. Unlike `confirmed`,
- * nothing is written for a candidate, so there is no `DeliveryEntry` to put a type on; a caller that
- * needs the matched rendering's type can look it up by `itemId` from the same `renderings` it
- * already has.
+ * `candidates` deliberately carries no `type` — only `rootId`/`itemId`/`score`/`reason`. Unlike
+ * `confirmed`, nothing is written for a candidate, so there is no `DeliveryEntry` to put a type on;
+ * a caller that needs the matched rendering's type can look it up by `itemId` from the same
+ * `renderings` it already has.
+ *
+ * `reason` (see `CandidateReason`) exists because three unrelated situations all produce a
+ * `candidate`, and a human acts on each one differently. Reporting them identically would force
+ * whoever reads the plan to reverse-engineer which one they're looking at from the score and id
+ * alone, and this feature's entire output is a report a person acts on: a row that doesn't say what
+ * happened doesn't do its job.
  *
  * `external` carries its `score` alongside the `record`, mirroring `confirmed` — not because the
  * write needs it (`externalHistoryRecord` never reads it back), but because `classify` already did
@@ -52,7 +75,7 @@ export function xMatchCandidates(renderings: ChannelRendering[]): MatchCandidate
  */
 export type ReconcilePlan = {
   confirmed: { entry: DeliveryEntry; score: number }[];
-  candidates: { rootId: string; itemId: string; score: number }[];
+  candidates: { rootId: string; itemId: string; score: number; reason: CandidateReason }[];
   external: { record: PublishRecord; score: number }[];
   skipped: { rootId: string; reason: string }[];
 };
@@ -133,7 +156,8 @@ export function reconcileXPublished(input: {
       }
 
       if (verdict.kind === "candidate") {
-        plan.candidates.push({ rootId: thread.rootId, itemId: verdict.itemId, score: verdict.score });
+        // classify itself landed in the middle band — see CandidateReason's "possible-match".
+        plan.candidates.push({ rootId: thread.rootId, itemId: verdict.itemId, score: verdict.score, reason: "possible-match" });
         continue;
       }
 
@@ -144,7 +168,7 @@ export function reconcileXPublished(input: {
         // key: `send:channels` would still see the real (itemId, type, x-post) as unsent and post it
         // again — the exact duplicate this feature exists to prevent — and a `sent` row is never
         // reversed. Refusing and reporting a candidate costs one human confirmation instead.
-        plan.candidates.push({ rootId: thread.rootId, itemId: verdict.itemId, score: verdict.score });
+        plan.candidates.push({ rootId: thread.rootId, itemId: verdict.itemId, score: verdict.score, reason: "ambiguous-rendering-type" });
         continue;
       }
 
@@ -159,8 +183,8 @@ export function reconcileXPublished(input: {
         // Not yet recorded anywhere — a second live thread matched the same itemId within this
         // same run (a re-post or near-duplicate). The first (oldest, by input order) thread already
         // claimed the confirmation; this one is genuinely ambiguous, not done, so it is reported as
-        // a candidate for a human to judge rather than silently dropped.
-        plan.candidates.push({ rootId: thread.rootId, itemId: verdict.itemId, score: verdict.score });
+        // a candidate ("duplicate-live-thread") for a human to judge rather than silently dropped.
+        plan.candidates.push({ rootId: thread.rootId, itemId: verdict.itemId, score: verdict.score, reason: "duplicate-live-thread" });
         continue;
       }
 
