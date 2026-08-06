@@ -379,8 +379,8 @@ describe("translations that already went out by hand", () => {
 
   it("stays out of plan.posted when postedUrl is set AND its history row already exists — never scored, so `threads` is irrelevant", () => {
     // Genuinely done on both halves. `threads: []` deliberately: Phase A reads the rootId back out
-    // of `postedUrl` itself (see rootIdFromPostUrl), never scores against live threads, so this
-    // must hold even when the original thread is nowhere in this run's window at all.
+    // of `postedUrl` itself (see parsePostUrl), never scores against live threads, so this must hold
+    // even when the original thread is nowhere in this run's window at all.
     const plan = reconcileXPublished({
       ...base,
       threads: [],
@@ -568,23 +568,37 @@ describe("translations that already went out by hand", () => {
       expect(plan.posted[0]).toMatchObject({ itemId: "x:2", rootId: "500", url: "https://x.com/Mantle_Official/status/500" });
     });
 
-    it("never claims a thread for the foreign post — the skip really is a skip, not a silent claim", () => {
-      // Pins that the foreign branch takes NO pool thread with it: thread 100 stays available and
-      // x:2 retires against it on its own text. This fixture deliberately forces the rootId
-      // collision reality forbids (x:1's foreign post and this run's thread both "100") because it
-      // is the only way to observe the claim-or-not decision at all — in production a tweet id is
-      // globally unique, so a rootId recorded against another account is never in this run's pool
-      // and there is nothing to contend for. That uniqueness is exactly why skipping is safe HERE
-      // and not for a corrupt url, whose digits carry no such guarantee (see the malformed block).
-      const plan = reconcileXPublished({
-        ...base,
-        handle: "Mantle_Official",
-        threads: [thread("100", [OTHER_REWRITTEN])],
-        renderings: [],
-        translations: [translation("x:1", COPY, SETTLED_ELSEWHERE), translation("x:2", OTHER)],
-      });
-      expect(plan.posted).toHaveLength(1);
-      expect(plan.posted[0]).toMatchObject({ itemId: "x:2", rootId: "100" });
+    it("BUG 1 (round 5): fails rather than release a foreign post that is live in this run's pool — an account RENAME makes that collision real", () => {
+      // This test replaces a round-4 test that asserted the opposite ("never claims a thread for the
+      // foreign post — the skip really is a skip, not a silent claim"), on the same fixture. That
+      // test's premise was that the rootId collision it constructs is one "reality forbids", because
+      // a tweet id is globally unique and so a post recorded against another account can never be in
+      // this run's pool. The premise is false in exactly two reachable ways, and both are ordinary:
+      // the account was RENAMED (the id really is this account's post, under the handle it used to
+      // have), or the handle in `postedUrl` is a typo. In either case the id IS in this run's pool,
+      // and the round-4 behavior produced a plan that contradicted itself — post 100 reported in
+      // plan.skipped as "not this run's account" AND in plan.posted as x:2's retire. Same plan, same
+      // post, two lists, one of them attributing a real post to a translation that never went out.
+      //
+      // The release invariant (settledTranslationDisposition) is what closes it: a release is legal
+      // only when its post is not something this run could hand to somebody else. Here it is, so the
+      // run fails loudly instead of quietly mis-recording x:2's history. The three OTHER foreign-
+      // account tests in this block are untouched and still pass — a foreign post that is genuinely
+      // absent from the pool (the overwhelmingly common case) is still released with a reason.
+      expect(() =>
+        reconcileXPublished({
+          ...base,
+          handle: "0xMantleKR",
+          threads: [thread("100", [OTHER_REWRITTEN])],
+          renderings: [],
+          translations: [
+            // The account's OLD handle: same account, same post, a url this codebase itself wrote
+            // before the rename.
+            translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR_old/status/100", postedAt: "2026-07-31T05:39:41.000Z" }),
+            translation("x:2", OTHER), // would score ~0.83 against thread 100 and be retired against x:1's post
+          ],
+        }),
+      ).toThrow(/still live in this run's pool/);
     });
 
     it("treats a casing-only handle difference as the SAME account, claiming its thread rather than skipping", () => {
@@ -624,6 +638,55 @@ describe("translations that already went out by hand", () => {
       });
       expect(plan.posted).toHaveLength(1);
       expect(plan.posted[0]).toMatchObject({ itemId: "x:1", rootId: "100", url: "https://x.com/0xMantleKR/status/100" });
+    });
+  });
+
+  describe("the release invariant, end to end (round 5)", () => {
+    // The unit-level table for these lives in tests/domain/xReconcile.test.ts
+    // (settledTranslationDisposition). These two prove the rule reaches the plan a caller actually
+    // writes from, through the real scoring pass — a disposition that is right in isolation and
+    // wired up wrong would pass the table and fail here.
+
+    it("BUG 2: fails rather than release a settled post whose item the rendering route confirmed against a DIFFERENT thread", () => {
+      // Pre-existing since round 1, found by probe in round 4's review. x:1 is confirmed against
+      // thread 200 by its approved rendering, so Phase A's claimedItemIds exit fired for x:1 — and
+      // that exit released without ever looking at the post x:1's OWN postedUrl names. Thread 100 is
+      // x:1's real post; nobody claimed it; x:2 (which never went out) scores against it and gets
+      // retired against x:1's post. Note the two lists do NOT share a rootId here (confirmed 200,
+      // posted 100), which is why the plan-level post-condition cannot catch this one — only the
+      // release invariant can, and that is why the invariant lives in the disposition function
+      // rather than in an after-the-fact check over the finished plan.
+      expect(() =>
+        reconcileXPublished({
+          ...base,
+          handle: "0xMantleKR",
+          threads: [thread("200", [COPY]), thread("100", [OTHER_REWRITTEN])],
+          renderings: [rendering("x:1", COPY)], // confirms thread 200 for x:1
+          translations: [
+            translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100", postedAt: "2026-07-31T05:39:41.000Z" }),
+            translation("x:2", OTHER), // would be retired against 100 — x:1's real post
+          ],
+        }),
+      ).toThrow(/still live in this run's pool/);
+    });
+
+    it("still releases — and reports — a settled post that genuinely is not in this run's pool", () => {
+      // The other half of the rule, and the reason it is scoped to the pool rather than being a
+      // blanket "never release": the ordinary case (a post outside --since, on another account, or
+      // already consumed) is still released with its reason, and the rest of the run proceeds. If
+      // the invariant were "releases are illegal", this test is what would go red.
+      const plan = reconcileXPublished({
+        ...base,
+        handle: "Mantle_Official",
+        threads: [thread("500", [OTHER_REWRITTEN])],
+        renderings: [],
+        translations: [
+          translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100", postedAt: "2026-07-31T05:39:41.000Z" }),
+          translation("x:2", OTHER),
+        ],
+      });
+      expect(plan.skipped.filter((s) => s.rootId === "100")).toHaveLength(1);
+      expect(plan.posted.map((p) => p.rootId)).toEqual(["500"]);
     });
   });
 
