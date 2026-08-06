@@ -8,6 +8,7 @@ import { watchStartupLine } from "./watchStartup";
 import { loadDbConfig } from "../config";
 import { parseTranslateSince } from "./translateSince";
 import { parseWatchBatch } from "./watchBatch";
+import { refuseCollectMaxPagesOverride } from "./collectMaxPages";
 import { OUTPUT_DIR } from "../paths";
 
 // Before the startup line, and before any stage runs: a typo'd cutoff must stop the tick here,
@@ -19,6 +20,13 @@ const translateSince = parseTranslateSince(process.env.HERALD_TRANSLATE_SINCE);
 // Same reasoning, same place: a typo'd batch size must stop the tick here, not reach
 // `translate:prepare --limit`/`translate:align --limit` as garbage.
 const batch = parseWatchBatch(process.env.HERALD_WATCH_BATCH);
+
+// And the same place again, for the one variable a tick must never carry at all. Every document
+// that mentions HERALD_COLLECT_MAX_PAGES claims the scheduler's unit does not set it; this is what
+// makes that true rather than hopeful. A stray value left in the repo's .env after a backfill would
+// reach every stage (each is spawned as `pnpm <script>`, which reads .env), truncate every collect,
+// and lose the older tail on every tick — see the function's own comment.
+refuseCollectMaxPagesOverride(process.env.HERALD_COLLECT_MAX_PAGES);
 
 // Printed before any stage runs, so a run against the wrong output root or the wrong database —
 // the exact mistake that once advanced the collect watermark 39 threads past what production had

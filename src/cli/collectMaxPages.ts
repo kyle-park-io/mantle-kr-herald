@@ -24,3 +24,32 @@ export const COLLECT_MAX_PAGES_ENV = "HERALD_COLLECT_MAX_PAGES";
 export function parseCollectMaxPages(raw: string | undefined): number {
   return parsePositiveIntEnv(raw, COLLECT_MAX_PAGES_ENV, DEFAULT_MAX_PAGES);
 }
+
+/**
+ * Throws if `HERALD_COLLECT_MAX_PAGES` is set at all. Called by `src/cli/watch.ts` before the
+ * startup line and before any stage, in the same position and for the same reason as
+ * `parseWatchBatch`/`parseTranslateSince`.
+ *
+ * "The scheduler's own unit never sets this" was asserted in three places — `.env.example`, this
+ * variable's own header, the CHANGELOG — and checked nowhere. The tick spawns each stage as
+ * `pnpm <script>` (`src/adapters/agent/runStage.ts`), so a child inherits both the shell
+ * environment and the repo's `.env`: a stray `HERALD_COLLECT_MAX_PAGES=5` left in `.env` after a
+ * backfill would truncate every scheduled collect, GAP-fail every tick, and lose the older tail
+ * each time — the exact permanent loss the GAP work exists to close, now on a two-hourly schedule.
+ * A tick has no legitimate reason to move the page cap: backfill is a hand-run `collect`.
+ *
+ * A blank value returns quietly rather than refusing. `.env.example` ships the line as
+ * `HERALD_COLLECT_MAX_PAGES=` and installs are made by copying that file, so an empty value is the
+ * normal unset state, not an override — and `parseCollectMaxPages` already reads it as the default.
+ */
+export function refuseCollectMaxPagesOverride(raw: string | undefined): void {
+  if (!raw?.trim()) return;
+  throw new Error(
+    `${COLLECT_MAX_PAGES_ENV} is set (${JSON.stringify(raw)}), and a watch tick must never ` +
+      `override the collector's page cap: a low value truncates every scheduled collect, fails ` +
+      `every tick on the resulting coverage GAP, and loses the older tail each time. Raising the ` +
+      `cap belongs to a one-off hand-run backfill after a GAP alert — see docs/ko/team-runbook.md ` +
+      `§4 "수집에 구멍이 생겼을 때". Unset it and start the tick again; check the repo's .env as ` +
+      `well as the shell, because each stage runs as \`pnpm <script>\` and reads that file too.`,
+  );
+}

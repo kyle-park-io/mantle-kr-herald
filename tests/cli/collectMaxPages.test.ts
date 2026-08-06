@@ -8,7 +8,11 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parseCollectMaxPages, COLLECT_MAX_PAGES_ENV } from "../../src/cli/collectMaxPages";
+import {
+  parseCollectMaxPages,
+  refuseCollectMaxPagesOverride,
+  COLLECT_MAX_PAGES_ENV,
+} from "../../src/cli/collectMaxPages";
 import { DEFAULT_MAX_PAGES } from "../../src/adapters/twitterapi/TwitterApiSourceGateway";
 
 describe("parseCollectMaxPages", () => {
@@ -42,6 +46,46 @@ describe("parseCollectMaxPages", () => {
 
   it("names the offending value", () => {
     expect(() => parseCollectMaxPages("lots")).toThrow(/"lots"/);
+  });
+});
+
+describe("refuseCollectMaxPagesOverride", () => {
+  it("lets a tick run when the variable is unset", () => {
+    expect(() => refuseCollectMaxPagesOverride(undefined)).not.toThrow();
+  });
+
+  it("lets a tick run on a blank value, because .env.example ships the line blank", () => {
+    // This is load-bearing, not tidiness: installs are made by copying `.env.example`, which
+    // carries `HERALD_COLLECT_MAX_PAGES=`. Refusing "" would fail every tick on a by-the-book
+    // install — a guard against silent loss that instead causes a total outage.
+    expect(() => refuseCollectMaxPagesOverride("")).not.toThrow();
+    expect(() => refuseCollectMaxPagesOverride("   ")).not.toThrow();
+  });
+
+  it("refuses any real value, including a valid one", () => {
+    // A *valid* value is the dangerous case, and the reason this is a refusal rather than more
+    // validation: `HERALD_COLLECT_MAX_PAGES=5` parses fine, truncates every scheduled collect,
+    // GAP-fails every tick, and loses the older tail each time. There is no correct value for a
+    // tick to carry, so the check is presence, not range.
+    expect(() => refuseCollectMaxPagesOverride("5")).toThrow(new RegExp(COLLECT_MAX_PAGES_ENV));
+    expect(() => refuseCollectMaxPagesOverride("200")).toThrow(new RegExp(COLLECT_MAX_PAGES_ENV));
+    expect(() => refuseCollectMaxPagesOverride("nonsense")).toThrow(new RegExp(COLLECT_MAX_PAGES_ENV));
+  });
+
+  it("says what to do instead, since this message reaches Telegram as a tick failure", () => {
+    // registerErrorHandler turns this throw into the non-zero exit herald-watch.service's
+    // OnFailure= hook watches for, so the text is an alert, not just a console line.
+    expect(() => refuseCollectMaxPagesOverride("5")).toThrow(/"5"/);
+    expect(() => refuseCollectMaxPagesOverride("5")).toThrow(/must never override/);
+    expect(() => refuseCollectMaxPagesOverride("5")).toThrow(/team-runbook\.md/);
+  });
+
+  it("is what makes the unit files' own claim true", () => {
+    // deploy/herald-watch.service must not set this variable. The refusal above is the enforcement;
+    // this is the guard on the file, so a later well-meaning `Environment=` line fails here rather
+    // than at 00:17 on install night.
+    const unit = readFileSync(resolve(__dirname, "../../deploy/herald-watch.service"), "utf8");
+    expect(unit).not.toMatch(new RegExp(`^Environment=${COLLECT_MAX_PAGES_ENV}=`, "m"));
   });
 });
 
