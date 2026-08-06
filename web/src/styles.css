@@ -21,6 +21,13 @@
 
   --color-amber-ink: #a45b0b;
   --color-amber-soft: #fdf3e3;
+
+  /* A third, deliberately neutral colour for `posted` (게시됨) — neither the amber of 대기 (still
+     needs a decision) nor the mint of 승인 (this reviewer's own approval). It reads as "done, not
+     actionable", the same role muted slate tones already play for the board's other non-actionable
+     states (`전달함`'s mint-soft aside, everything else there is grey-on-grey — see OutletCard.tsx). */
+  --color-slate-ink: #475569;
+  --color-slate-soft: #eef1f5;
 }
 
 @layer base {

@@ -104,6 +104,9 @@ export const api = {
       body: JSON.stringify({ target }),
     }),
   unapprove: (id: string) => json<Translation>(`/api/translations/${encodeURIComponent(id)}/unapprove`, { method: "POST" }),
+  /** 되돌리기 — disputes a reconcile match. `postedUrl`/`postedAt` survive on the server; see
+   *  `TranslationDetail`'s own doc comment on `onUnretire` for why that is load-bearing. */
+  unretire: (id: string) => json<Translation>(`/api/translations/${encodeURIComponent(id)}/unretire`, { method: "POST" }),
   listRenderings: () => json<Rendering[]>("/api/renderings"),
   editRendering: (itemId: string, type: ConversionType, channel: Channel, text: string) =>
     json<Omit<Rendering, "convertedText">>(rPath(itemId, type, channel), {

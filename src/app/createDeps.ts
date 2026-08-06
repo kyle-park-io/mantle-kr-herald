@@ -256,6 +256,33 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   const loadTranslations = async () =>
     attachKind(await translationStore.loadAll(), await contentSource.loadPending(new Set()));
 
+  /**
+   * 되돌리기's write path. Reuses `SaveTranslation.run` (`approve: false`) rather than a narrow store
+   * method, because that class already preserves `postedUrl`/`postedAt` across an ordinary save — it
+   * reads the existing row before it writes, specifically so a save landing on an item reconcile just
+   * retired does not silently drop the evidence (see `SaveTranslation.run`'s own comment). Reusing it
+   * here means the one preservation rule lives in one place rather than being re-implemented for the
+   * dashboard's own write path.
+   *
+   * A no-op — never a throw — when the item has already vanished: the route above already 404s
+   * before ever calling this, so the only way to reach this branch is a race between two requests for
+   * the same id, which is not this function's job to referee (see `RetireTranslation`'s own doc
+   * comment on the residual save/retire race this whole area inherits).
+   */
+  const unretireTranslation = async (itemId: string): Promise<void> => {
+    const existing = (await translationStore.loadAll()).find((t) => t.itemId === itemId);
+    if (!existing) return;
+    await saveTranslation.run({
+      itemId: existing.itemId,
+      source: existing.source,
+      sourceText: existing.sourceText,
+      koreanText: existing.koreanText,
+      approve: false,
+      isReply: existing.isReply,
+      refUrl: existing.refUrl,
+    });
+  };
+
   const loadPublishState = async (): Promise<PublishStateRow[]> => {
     const [entries, translations] = await Promise.all([publishStore.listEntries(), translationStore.loadAll()]);
     const byId = new Map(translations.map((t) => [t.itemId, t] as const));
@@ -460,6 +487,7 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   return {
     translationStore,
     saveTranslation,
+    unretireTranslation,
     publishOne,
     login,
     sessionConfig,

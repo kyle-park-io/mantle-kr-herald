@@ -138,6 +138,16 @@ function makeDeps(
       },
     } as unknown as ApiDeps["markDelivery"],
     reconcilePublished: async () => ({ reconciled: 0, retired: 0, pending: 0 }),
+    // Mirrors what createDeps.ts's real implementation does — status flips to "translated", every
+    // other column (postedUrl/postedAt included) is carried through unchanged, exactly the shape
+    // SaveTranslation.run's own preservation of postedUrl/postedAt already guarantees in production
+    // (see tests/app/saveTranslation.test.ts). Route-level tests below check the wiring, not that
+    // guarantee itself.
+    unretireTranslation: async (itemId: string) => {
+      const ex = state.list.find((t) => t.itemId === itemId);
+      if (!ex) return;
+      await translationStore.upsert({ ...ex, status: "translated" });
+    },
     sendToOutlet: async (itemId: string, type: string, outletId: string, opts?: { resend?: boolean; pin?: boolean }) => {
       spy.sends.push({ itemId, type, outletId, opts });
       return board.send?.() ?? { sent: 1, failed: 0 };
@@ -227,6 +237,27 @@ describe("handleApi", () => {
     const res = await handleApi(d, "POST", "/api/translations/x%3A1/unapprove", undefined);
     expect(res.status).toBe(200);
     expect((res.json as Translation).status).toBe("translated");
+  });
+
+  /**
+   * 되돌리기: the dashboard's dispute button for a reconcile-retired item (Task 5). `postedUrl`
+   * surviving the round trip is not incidental — it is what stops the next `x:reconcile` tick from
+   * re-retiring the same item (`RetireTranslation.run` skips whenever `postedUrl` is already set).
+   */
+  it("POST /api/translations/:id/unretire moves it off posted and keeps postedUrl", async () => {
+    const d = makeDeps([
+      tr({ itemId: "x:1", status: "posted", postedUrl: "https://x.com/0xMantleKR/status/1", postedAt: "p" }),
+    ]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A1/unretire", undefined);
+    expect(res.status).toBe(200);
+    expect((res.json as Translation).status).toBe("translated");
+    expect((res.json as Translation).postedUrl).toBe("https://x.com/0xMantleKR/status/1");
+  });
+
+  it("POST /api/translations/:id/unretire returns 404 for an unknown id", async () => {
+    const d = makeDeps([tr({ itemId: "x:1" })]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A9/unretire", undefined);
+    expect(res.status).toBe(404);
   });
 
   it("GET /api/status includes availableTargets", async () => {

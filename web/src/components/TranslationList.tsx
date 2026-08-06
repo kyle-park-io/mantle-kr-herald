@@ -1,15 +1,30 @@
 import { useState } from "react";
 import { datePrefix, type Translation } from "../types";
 
-type Filter = "all" | "translated" | "approved";
+type Filter = "all" | "translated" | "approved" | "posted";
 
 const FILTERS: [Filter, string][] = [
   ["all", "전체"],
   ["translated", "검수 대기"],
   ["approved", "승인됨"],
+  ["posted", "게시됨"],
 ];
 
+/**
+ * Three colours, one per status: amber (대기, still needs a decision), mint (승인, this reviewer's
+ * own approval), and a deliberately neutral slate for `posted` (게시됨) — a translation reconcile
+ * already matched against a live @0xMantleKR post, so it reads as "done, not actionable" rather than
+ * either of the other two verbs.
+ */
 export function StatusChip({ status }: { status: Translation["status"] }) {
+  if (status === "posted") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-slate-soft px-2 py-0.5 text-[12px] font-medium text-slate-ink">
+        <span className="h-1.5 w-1.5 rounded-full bg-slate-ink" />
+        게시됨
+      </span>
+    );
+  }
   const approved = status === "approved";
   return (
     <span

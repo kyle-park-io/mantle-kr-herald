@@ -7,11 +7,13 @@ import { ALL_OUTLETS } from "../../src/domain/outlet/models";
 import { SEND_BLOCK_REASON, type SendBlock } from "../../src/domain/send/sendBlock";
 import { SENDS_CLOSED_MESSAGE } from "../../src/adapters/web/apiHandlers";
 import { ALL_DELIVERY_STATUSES, deliveredToRoom } from "../../src/domain/delivery/models";
+import { ALL_TRANSLATION_STATUSES } from "../../src/domain/translation/models";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
 import type { FormatWarning } from "../../src/app/FormatVariants";
 import {
   ALL_TYPES as WEB_TYPES,
   ALL_CHANNELS as WEB_CHANNELS,
+  ALL_TRANSLATION_STATUSES as WEB_TRANSLATION_STATUSES,
   TYPE_LABEL as WEB_TYPE_LABEL,
   OUTLET_LABEL as WEB_OUTLET_LABEL,
   OUTLET_DELIVERY as WEB_OUTLET_DELIVERY,
@@ -52,6 +54,16 @@ describe("web type mirror", () => {
 
   it("mirrors ALL_CHANNELS from the domain, in the same order", () => {
     expect([...WEB_CHANNELS]).toEqual(ALL_CHANNELS);
+  });
+
+  /**
+   * `posted` is the reconcile-retired state (Task 2). Missing it here would leave the dashboard's
+   * status filter and `StatusChip` silently stuck on two states while the domain has three — the
+   * same class of drift the `explainer`/`casual` incident (this file's own header comment) already
+   * produced once for `ALL_TYPES`.
+   */
+  it("mirrors ALL_TRANSLATION_STATUSES", () => {
+    expect([...WEB_TRANSLATION_STATUSES]).toEqual([...ALL_TRANSLATION_STATUSES]);
   });
 
   it("labels every type exactly as the domain does", () => {

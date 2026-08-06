@@ -6,16 +6,28 @@ export const itemUrl = (itemId: string): string | null =>
 export const datePrefix = (iso?: string): string =>
   iso && iso.length >= 10 ? `[${iso.slice(2, 10).replace(/-/g, "")}]` : "";
 
+// Mirrors ALL_TRANSLATION_STATUSES in src/domain/translation/models.ts — same reason as ALL_TYPES
+// below (the frontend cannot import the domain), and `tests/web/typeMirror.test.ts` fails if this
+// drifts. `posted` is the reconcile-retired state (Task 2): a translation reconcile matched against
+// a live @0xMantleKR post and marked done outside this dashboard — never `published`, which already
+// means "uploaded to Drive" elsewhere in this repo.
+export const ALL_TRANSLATION_STATUSES = ["translated", "approved", "posted"] as const;
+export type TranslationStatus = (typeof ALL_TRANSLATION_STATUSES)[number];
+
 export interface Translation {
   itemId: string;
   source: "x" | "lark";
   sourceText: string;
   koreanText: string;
-  status: "translated" | "approved";
+  status: TranslationStatus;
   translatedAt: string;
   approvedAt?: string;
   kind?: "post" | "article";
-  postedAt?: string; // source post date (ISO), for the [YYMMDD] prefix
+  postedAt?: string; // source post date (ISO), for the [YYMMDD] prefix — NOT the reconcile match
+  // time; see attachKind.ts, which overwrites the domain's own (differently-meant) postedAt field
+  // with this one before the translation ever reaches the wire.
+  /** The live X post a reconcile match found this translation already published as, by hand. */
+  postedUrl?: string;
 }
 export interface PublishResult {
   uploaded: number;

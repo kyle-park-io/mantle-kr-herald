@@ -86,6 +86,15 @@ export interface ApiResult {
 export interface ApiDeps {
   translationStore: TranslationStore;
   saveTranslation: SaveTranslation;
+  /**
+   * 되돌리기's write path — reverses `RetireTranslation`'s `status: "posted"` back to `translated`
+   * while leaving `postedUrl`/`postedAt` on the row (see `createDeps.ts`'s construction of this
+   * field, which reuses `SaveTranslation.run` and relies on its preservation of those two columns).
+   * That preservation is what stops the next unattended `x:reconcile` tick from re-retiring an item
+   * a human just disputed. A plain database write with no credential, so — unlike `sendToOutlet`
+   * below — `createDeps.ts` wires this for both route sets, not gated by the hosted/local split.
+   */
+  unretireTranslation: (itemId: string) => Promise<void>;
   publishOne: (id: string, target: string) => Promise<PublishResult>;
   storageMode: StorageMode;
   formattingStore: FormattingStore;
@@ -331,6 +340,15 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     if (method === "POST" && segments.length === 4 && segments[3] === "unapprove") {
       if (!existing) return { status: 404, json: { error: "not found" } };
       await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: false, isReply: existing.isReply, refUrl: existing.refUrl });
+      return { status: 200, json: await findById(deps.translationStore, id) };
+    }
+
+    // 되돌리기: dispute a reconcile match. A distinct route from `unapprove` above — this is not "undo
+    // my own approval", it is "undo what an unattended reconcile pass decided" — even though both
+    // currently land on the same `translated` status.
+    if (method === "POST" && segments.length === 4 && segments[3] === "unretire") {
+      if (!existing) return { status: 404, json: { error: "not found" } };
+      await deps.unretireTranslation(existing.itemId);
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
   }
