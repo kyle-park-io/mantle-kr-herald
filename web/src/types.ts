@@ -23,9 +23,22 @@ export interface Translation {
   translatedAt: string;
   approvedAt?: string;
   kind?: "post" | "article";
-  postedAt?: string; // source post date (ISO), for the [YYMMDD] prefix — NOT the reconcile match
-  // time; see attachKind.ts, which overwrites the domain's own (differently-meant) postedAt field
-  // with this one before the translation ever reaches the wire.
+  /**
+   * Source post date (ISO), for the `[YYMMDD]` prefix — deliberately NOT named `postedAt`.
+   * `src/domain/translation/models.ts`'s `Translation.postedAt` means something else entirely (Task
+   * 2's reconcile-match timestamp), and `GET /api/translations` is not the only route that answers
+   * with a translation shape: `/approve`, `/unapprove`, and `/unretire` (`apiHandlers.ts`) return the
+   * raw domain row via `findById`, never routed through `attachKind`. A field literally named
+   * `postedAt` here would type-check against both — a raw domain row cast to this `Translation` type
+   * would silently carry the reconcile-match time under a field this interface documents as "source
+   * post date", with no compiler error, only a wrong `[YYMMDD]` prefix the moment some future caller
+   * reads it (e.g. an optimistic UI update off one of those three routes' response, which today every
+   * `App.tsx` handler discards in favor of a full `refresh()`). Naming it `sourcePostedAt` instead
+   * means those three raw-domain responses simply lack this field (`undefined`, not wrong), and
+   * mirrors `src/adapters/web/attachKind.ts`'s `ApiTranslation.sourcePostedAt`, which this is a
+   * hand-kept copy of.
+   */
+  sourcePostedAt?: string;
   /** The live X post a reconcile match found this translation already published as, by hand. */
   postedUrl?: string;
 }

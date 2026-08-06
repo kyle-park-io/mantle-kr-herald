@@ -96,7 +96,7 @@ export function TranslationList(props: {
                     </span>
                   </div>
                   <p className="line-clamp-2 text-[13px] leading-snug text-ink/90">
-                    {t.postedAt && <span className="mr-1 font-mono text-faint">{datePrefix(t.postedAt)}</span>}
+                    {t.sourcePostedAt && <span className="mr-1 font-mono text-faint">{datePrefix(t.sourcePostedAt)}</span>}
                     {preview(t)}
                   </p>
                 </button>

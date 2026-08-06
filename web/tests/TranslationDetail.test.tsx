@@ -136,6 +136,23 @@ describe("TranslationDetail — 게시됨 (posted)", () => {
     expect(link.href).toBe(POSTED_URL);
   });
 
+  /**
+   * The note's condition is `!posted && postedUrl` — a strict superset of the brief's stated
+   * `status: "translated"` case — because nothing clears `postedUrl` once a retire sets it except
+   * another retire overwriting it with a different url. A translation can be 되돌려진 and then
+   * approved normally (ordinary 1차 flow), landing on `status: "approved"` with `postedUrl` still
+   * set; hiding the evidence there would be the same "lock, don't hide" violation the brief warns
+   * about for the `translated` case.
+   */
+  it("also shows the earlier-match note on an approved item (postedUrl survived past a later approval)", () => {
+    mount(translation({ status: "approved", approvedAt: "2026-07-30T00:00:00.000Z", postedUrl: POSTED_URL }));
+    // Approved and locked exactly as any other approved item — the note is additive, not a lock.
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(textarea.readOnly).toBe(true);
+    const link = screen.getByRole("link", { name: /게시된 글/ }) as HTMLAnchorElement;
+    expect(link.href).toBe(POSTED_URL);
+  });
+
   it("되돌리기 hands the item's id to onUnretire", async () => {
     const calls: string[] = [];
     mount(translation({ status: "posted", postedUrl: POSTED_URL }), {

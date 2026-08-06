@@ -48,6 +48,39 @@ describe("createDeps", () => {
     expect(result.status).toBe(200);
   });
 
+  /**
+   * The whole point of 되돌리기 is that `postedUrl` survives it — that is what stops the next
+   * unattended `x:reconcile` tick from re-retiring an item a human just disputed (see
+   * `RetireTranslation`'s own doc comment). `tests/adapters/web/apiHandlers.test.ts`'s equivalent
+   * test only proves the ROUTE forwards to `deps.unretireTranslation` correctly: its fake
+   * `unretireTranslation` re-implements preservation by hand (`{ ...existing, status: "translated" }`),
+   * so it would stay green even if `createDeps.ts`'s real implementation stopped preserving
+   * `postedUrl` entirely. This test drives the real `createDeps`-built `unretireTranslation` — real
+   * `SaveTranslation`, real `PgTranslationStore` over PGlite — so a regression in that specific
+   * implementation choice (not just in the route wiring) actually fails a test.
+   */
+  it("되돌리기 (unretire) keeps postedUrl — the real write path, not a test double", async () => {
+    db = await createTestDb();
+    const deps = createDeps({ db, routes: "local" });
+    await deps.translationStore.upsert({
+      itemId: "x:1",
+      source: "x",
+      sourceText: "s",
+      koreanText: "k",
+      status: "posted",
+      translatedAt: "t",
+      postedUrl: "https://x.com/0xMantleKR/status/1",
+      postedAt: "2026-08-06T00:00:00.000Z",
+    });
+
+    const res = await handleApi(authenticated(deps), "POST", "/api/translations/x:1/unretire", undefined);
+
+    expect(res.status).toBe(200);
+    const row = (await deps.translationStore.loadAll()).find((t) => t.itemId === "x:1");
+    expect(row?.status).toBe("translated");
+    expect(row?.postedUrl).toBe("https://x.com/0xMantleKR/status/1");
+  });
+
   it("registers convert-prepare locally", async () => {
     db = await createTestDb();
     const deps = createDeps({ db, routes: "local" });

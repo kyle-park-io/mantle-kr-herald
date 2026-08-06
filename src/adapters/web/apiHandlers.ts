@@ -358,8 +358,8 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
       const [renderings, variants, translations] = await Promise.all([
         deps.formattingStore.loadAll(),
         deps.conversionStore.loadAll(),
-        // For `postedAt`/`kind` only. The 2차 list is per *item*, like 1차, so it shows the same
-        // date prefix and 포스트/아티클 badge — which live on the source item, not the rendering.
+        // For `sourcePostedAt`/`kind` only. The 2차 list is per *item*, like 1차, so it shows the
+        // same date prefix and 포스트/아티클 badge — which live on the source item, not the rendering.
         deps.loadTranslations(),
       ]);
       const convertedByKey = new Map(variants.map((v) => [`${v.itemId}:${v.type}`, v.convertedText]));
@@ -367,7 +367,11 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
       const enriched = renderings.map((r) => ({
         ...r,
         convertedText: convertedByKey.get(`${r.itemId}:${r.type}`) ?? "",
-        postedAt: sourceById.get(r.itemId)?.postedAt,
+        // The wire key here stays `postedAt` — `Rendering.postedAt` (web/src/types.ts) has always
+        // meant "source post date" with no domain field of that name to collide with (unlike
+        // `ApiTranslation`, ChannelRendering carries no `postedAt` at all). Only the READ side needed
+        // renaming, to stop pulling from a field name that now means something else on `Translation`.
+        postedAt: sourceById.get(r.itemId)?.sourcePostedAt,
         kind: sourceById.get(r.itemId)?.kind,
       }));
       return { status: 200, json: enriched };
