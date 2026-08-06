@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-06
+
 ### Upgrading — action required for existing installs
 
 - **Set `DATABASE_URL` and `HERALD_DB_ENV` (`development` or `production`) in `.env`, then run
@@ -1257,7 +1259,8 @@ Initial release: the end-to-end Mantle KR content pipeline
   closing (`server.address()` returned `null`).
 - Dashboard server returns 500 safely instead of crashing when a response fails to serialize.
 
-[Unreleased]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kyle-park-io/mantle-kr-herald/releases/tag/v0.1.0
