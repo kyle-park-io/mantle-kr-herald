@@ -33,11 +33,22 @@ export function xMatchCandidates(renderings: ChannelRendering[]): MatchCandidate
  * leave two rows for one post the moment that human's call disagrees. `skipped` explains, per
  * thread, why a live post that would otherwise have been written was left alone — almost always
  * because a previous run (or a hand-run pipeline) already recorded it.
+ *
+ * `external` carries its `score` alongside the `record`, mirroring `confirmed` — not because the
+ * write needs it (`externalHistoryRecord` never reads it back), but because `classify` already did
+ * the work of computing a real sub-`CANDIDATE_AT` score for a near-miss (see the "carries the real
+ * score on a near-miss" test in `tests/domain/xReconcile.test.ts`, and `MATCH_THRESHOLD`'s
+ * `similarity` floor for text under 3 normalized characters), and dropping it here would be the
+ * only place that score dies. Without it, three genuinely different situations — no candidates
+ * existed, the text was too short for `similarity` to score at all, and a real comparison scored
+ * close to zero — collapse into identical rows, and a human reading the plan can no longer tell "a
+ * completely unrelated post" apart from "a post that nearly matched something we approved," which
+ * is exactly the case worth their attention.
  */
 export type ReconcilePlan = {
   confirmed: { entry: DeliveryEntry; score: number }[];
   candidates: { rootId: string; itemId: string; score: number }[];
-  external: PublishRecord[];
+  external: { record: PublishRecord; score: number }[];
   skipped: { rootId: string; reason: string }[];
 };
 
@@ -99,10 +110,16 @@ export function reconcileXPublished(input: {
 
       const key = deliveryKey({ itemId: verdict.itemId, type: rendering.type, outletId: "x-post" });
       if (deliveredKeys.has(key)) {
+        // Already recorded — by this reconcile on an earlier run, or by hand. The itemId is
+        // genuinely done, so this is a no-op, not something a human needs to look at: skipped.
         plan.skipped.push({ rootId: thread.rootId, reason: `${verdict.itemId} already has an x-post delivery row` });
         continue;
       }
       if (claimedItemIds.has(verdict.itemId)) {
+        // Not yet recorded anywhere — a second live thread matched the same itemId within this
+        // same run (a re-post or near-duplicate). The first (oldest, by input order) thread already
+        // claimed the confirmation; this one is genuinely ambiguous, not done, so it is reported as
+        // a candidate for a human to judge rather than silently dropped.
         plan.candidates.push({ rootId: thread.rootId, itemId: verdict.itemId, score: verdict.score });
         continue;
       }
@@ -118,7 +135,7 @@ export function reconcileXPublished(input: {
       plan.skipped.push({ rootId: thread.rootId, reason: `${itemId} already in publish history` });
       continue;
     }
-    plan.external.push(externalHistoryRecord(thread, handle));
+    plan.external.push({ record: externalHistoryRecord(thread, handle), score: verdict.score });
   }
 
   return plan;

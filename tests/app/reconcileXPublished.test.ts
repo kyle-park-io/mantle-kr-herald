@@ -1,6 +1,7 @@
 // tests/app/reconcileXPublished.test.ts
 import { describe, it, expect } from "vitest";
 import { reconcileXPublished, xMatchCandidates } from "../../src/app/ReconcileXPublished";
+import { CANDIDATE_AT } from "../../src/domain/publish/xReconcile";
 import type { AssembledThread, SourceTweet } from "../../src/domain/models";
 import type { ChannelRendering } from "../../src/domain/formatting/models";
 
@@ -51,8 +52,23 @@ describe("reconcileXPublished", () => {
     expect(plan.confirmed).toHaveLength(1);
     expect(plan.confirmed[0].entry.itemId).toBe("x:1");
     expect(plan.confirmed[0].entry.postId).toBe("100");
-    expect(plan.external.map((r) => r.itemId)).toEqual(["kr:200"]);
+    expect(plan.external.map((e) => e.record.itemId)).toEqual(["kr:200"]);
     expect(plan.candidates).toEqual([]);
+  });
+
+  it("carries a near-miss's real score, not a flat zero indistinguishable from no candidates at all", () => {
+    // Task 1's own fixture: a 40-character prefix of COPY scores 0.46774193548387094 against it —
+    // above MATCH_THRESHOLD (0.3, so classify does a real comparison) but below CANDIDATE_AT (0.5,
+    // so the verdict is still external). Without carrying this score through, that near-miss and a
+    // thread with zero candidates would produce identical rows, and a human reading the plan could
+    // not tell "nothing was close" apart from "this nearly matched something we approved."
+    const nearMiss = COPY.slice(0, 40);
+    const plan = reconcileXPublished({ ...base, threads: [thread("500", [nearMiss])], renderings: [rendering("x:1", COPY)] });
+
+    expect(plan.external).toHaveLength(1);
+    expect(plan.external[0].record.itemId).toBe("kr:500");
+    expect(plan.external[0].score).toBeGreaterThan(0);
+    expect(plan.external[0].score).toBeLessThan(CANDIDATE_AT);
   });
 
   it("skips a thread whose item already has an x-post delivery row", () => {
