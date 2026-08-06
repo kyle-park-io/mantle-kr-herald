@@ -143,7 +143,15 @@ try {
     }
   }
 
-  console.log(`skipped (${plan.skipped.length}) — already recorded, on a previous run or by hand.`);
+  // One line per row, not just a count — same argument as `external` above. `skipped` used to hold
+  // only already-recorded rows, but it now also holds every rootless thread (see the guard in
+  // `reconcileXPublished`), which is neither already recorded nor recorded by hand: 85 of 196
+  // threads in the committed reference corpus have that shape. The caption below stays neutral
+  // about *why* a row is here, and each row's own `reason` — built for exactly this — says why.
+  console.log(`\nskipped (${plan.skipped.length}) — left alone; nothing written for these:`);
+  for (const { rootId, reason } of plan.skipped) {
+    console.log(`  ${rootId} — ${reason}`);
+  }
 
   if (!writeConfirmed) {
     console.log(

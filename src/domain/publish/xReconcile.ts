@@ -97,12 +97,15 @@ export function postUrl(handle: string, rootId: string): string {
 /**
  * The tweet whose id is the thread's `rootId`, or `undefined` when this thread has none.
  *
- * That absence is not a bug and not rare. `assembleThreads` keys a thread on
- * `conversationId || id` and `conversationId` is the *root's* id, so any reply the account made into
- * **someone else's** thread produces a thread whose root belongs to an account
- * `fetchAuthoredTweets(handle)` never returns. `CollectAuthoredContent.gapFillMissingRoots` exists
- * for exactly this shape, and 85 of the 196 @Mantle_Official threads in the committed corpus have
- * it — all one-tweet replies.
+ * That absence is not a bug and not rare, and it has two distinct causes. `assembleThreads` keys a
+ * thread on `conversationId || id` and `conversationId` is the *root's* id, so any reply the
+ * account made into **someone else's** thread produces a thread whose root belongs to an account
+ * `fetchAuthoredTweets(handle)` never returns — no amount of gap-filling can produce a tweet nobody
+ * but that other account authored. 85 of the 196 @Mantle_Official threads in the committed corpus
+ * have this shape, all one-tweet replies. The other cause: the root **is** ours but fell outside
+ * the caller's fetch window — the shape `CollectAuthoredContent.gapFillMissingRoots` exists to
+ * repair. This function alone cannot distinguish the two; see `ReconcileXPublished.ts`'s guard for
+ * why that matters for a caller (like `x:reconcile`) that never gap-fills.
  *
  * Exported so `ReconcileXPublished.ts` can ask the question with the *same* spelling the two record
  * builders below answer it with, rather than re-deriving "does this thread have its own root?" and

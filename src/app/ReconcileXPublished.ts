@@ -180,11 +180,20 @@ export function reconcileXPublished(input: {
   const claimedItemIds = new Set<string>();
 
   for (const thread of threads) {
-    // A thread with no tweet of its own matching its `rootId` is a reply the account made into
-    // SOMEONE ELSE'S thread: `assembleThreads` keys on `conversationId || id` and `conversationId`
-    // is the root's id, so the root belongs to an account `fetchAuthoredTweets(handle)` never
-    // returns. This is common, not exceptional — `CollectAuthoredContent.gapFillMissingRoots` exists
-    // for it, and 85 of the 196 @Mantle_Official threads in the committed corpus have it.
+    // A thread with no tweet of its own matching its `rootId` has two distinct causes, and this
+    // guard cannot tell which one it is looking at:
+    //
+    //  1. A reply the account made into SOMEONE ELSE'S thread: `assembleThreads` keys on
+    //     `conversationId || id` and `conversationId` is the root's id, so the root belongs to an
+    //     account `fetchAuthoredTweets(handle)` never returns. No amount of gap-filling can produce
+    //     a tweet nobody but that other account authored. This is the common case — 85 of the 196
+    //     @Mantle_Official threads in the committed corpus have it, all one-tweet replies.
+    //  2. The root IS ours, but simply fell outside this run's `--since` window. This is the shape
+    //     `CollectAuthoredContent.gapFillMissingRoots` exists to repair — and `x:reconcile`
+    //     deliberately never calls it (see `x-reconcile.ts`'s own read of the timeline, which reads
+    //     the account back for comparison only). A genuine multi-tweet post of ours straddling the
+    //     boundary lands here too, and re-running with a wider `--since` is the fix, not a code
+    //     change.
     //
     // Skipped, not thrown: `externalHistoryRecord`/`observedDelivery` both stamp
     // postId/url/publishedAt from the root, so without this guard one reply to a partner account
@@ -199,8 +208,9 @@ export function reconcileXPublished(input: {
       plan.skipped.push({
         rootId: thread.rootId,
         reason:
-          `root tweet ${thread.rootId} is not among @${handle}'s own posts — this is a reply into ` +
-          `someone else's thread, so there is no post of ours to record`,
+          `root tweet ${thread.rootId} is missing from @${handle}'s own timeline — either this is ` +
+          `a reply into someone else's thread, or it is ours and simply fell outside --since; ` +
+          `re-run with a wider --since if you expected this one to be ours`,
       });
       continue;
     }

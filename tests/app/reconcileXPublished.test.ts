@@ -303,7 +303,13 @@ describe("reconcileXPublished", () => {
 
     expect(plan.skipped).toHaveLength(1);
     expect(plan.skipped[0].rootId).toBe("2075199257754169643");
+    // The reason names both causes the guard can't tell apart (see ReconcileXPublished.ts's guard
+    // comment) — this test's own thread is the reply-into-another's-thread cause, but the string
+    // must also point at the other one (root of ours outside --since) and its remedy, since a
+    // human reading either shape gets the identical wording.
     expect(plan.skipped[0].reason).toMatch(/reply into someone else's thread/);
+    expect(plan.skipped[0].reason).toMatch(/fell outside --since/);
+    expect(plan.skipped[0].reason).toMatch(/re-run with a wider --since/);
     // The rest of the plan is still built around it — that is the whole point of skipping per thread.
     expect(plan.confirmed.map((c) => c.entry.postId)).toEqual(["100"]);
     expect(plan.external.map((e) => e.record.itemId)).toEqual(["kr:200"]);
