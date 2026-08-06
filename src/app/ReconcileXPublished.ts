@@ -94,17 +94,28 @@ export function reconcileXPublished(input: {
   //
   // First-wins on a duplicate itemId, matching `bestMatch`'s own tie-break convention (first
   // candidate in input order — see attribution.ts) rather than `Map`'s default last-write-wins.
-  // `ChannelRendering`'s identity is (itemId, type, channel), so two approved `channel: "x"`
-  // renderings sharing an itemId but differing in `type` is reachable in principle; today it isn't
-  // reachable in practice, since `DEFAULT_CHANNELS_BY_TYPE` only ever routes `type: "x"` to
-  // `channel: "x"`. Built by hand (not `new Map(pairs)`) because a plain `Map` construction keeps
-  // the last pair for a repeated key, the opposite of what this needs.
+  // `ChannelRendering`'s identity is (itemId, type, channel), and two approved `channel: "x"`
+  // renderings sharing an itemId but differing in `type` is reachable TODAY, not just in principle:
+  // `FormatVariants`/`PrepareRefinements` both do `selector.channels ?? DEFAULT_CHANNELS_BY_TYPE[v.type]`,
+  // and that `channels` override is exposed on the CLI (`--channels`) and the API, so formatting a
+  // non-"x"-typed variant with a `channels: ["x"]` override produces exactly this. Which rendering
+  // this Map hands back is then a convention, not evidence — see the ambiguity guard below, which is
+  // why picking the wrong one here is never allowed to reach a write.
   const candidateItemIds = new Set(candidates.map((c) => c.itemId));
   const renderingByItemId = new Map<string, ChannelRendering>();
   for (const r of renderings) {
     if (candidateItemIds.has(r.itemId) && !renderingByItemId.has(r.itemId)) {
       renderingByItemId.set(r.itemId, r);
     }
+  }
+
+  // How many eligible (approved, channel "x", non-empty) renderings share an itemId. Almost always
+  // 1. When it is more than 1, `renderingByItemId`'s first-wins pick is a convention, not evidence
+  // — `bestMatch` only proves the itemId, never which of the sharing renderings' `type`s is right —
+  // so a confirmed verdict for that itemId must not reach a write; see the guard below.
+  const itemIdOccurrences = new Map<string, number>();
+  for (const c of candidates) {
+    itemIdOccurrences.set(c.itemId, (itemIdOccurrences.get(c.itemId) ?? 0) + 1);
   }
 
   const plan: ReconcilePlan = { confirmed: [], candidates: [], external: [], skipped: [] };
@@ -122,6 +133,17 @@ export function reconcileXPublished(input: {
       }
 
       if (verdict.kind === "candidate") {
+        plan.candidates.push({ rootId: thread.rootId, itemId: verdict.itemId, score: verdict.score });
+        continue;
+      }
+
+      if ((itemIdOccurrences.get(verdict.itemId) ?? 0) > 1) {
+        // More than one approved x rendering shares this itemId under a different `type` — reachable
+        // today via a --channels/API override, see the comment above `renderingByItemId`. `type` is
+        // part of `deliveryKey`, so confirming on the wrong one writes a delivery row under the wrong
+        // key: `send:channels` would still see the real (itemId, type, x-post) as unsent and post it
+        // again — the exact duplicate this feature exists to prevent — and a `sent` row is never
+        // reversed. Refusing and reporting a candidate costs one human confirmation instead.
         plan.candidates.push({ rootId: thread.rootId, itemId: verdict.itemId, score: verdict.score });
         continue;
       }

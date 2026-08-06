@@ -85,6 +85,25 @@ describe("reconcileXPublished", () => {
     expect(plan.confirmed[0].entry.type).toBe("kol");
   });
 
+  it("refuses to confirm when the itemId's type is ambiguous, and reports a candidate instead", () => {
+    // Two approved channel: "x" renderings sharing one itemId but differing in type — reachable
+    // today via a --channels/API override on FormatVariants/PrepareRefinements, not just "in
+    // principle". bestMatch only proves the itemId; it cannot say which of the two types is right,
+    // and type is part of deliveryKey, so guessing could write a delivery row under the wrong key
+    // and leave send:channels free to post the real (itemId, type, x-post) again. Refusing costs
+    // one human confirmation instead of an unrecoverable duplicate `sent` row.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [rendering("x:1", COPY, { type: "kol" }), rendering("x:1", COPY, { type: "announcement" })],
+    });
+
+    expect(plan.confirmed).toEqual([]);
+    expect(plan.candidates).toHaveLength(1);
+    expect(plan.candidates[0].rootId).toBe("100");
+    expect(plan.candidates[0].itemId).toBe("x:1");
+  });
+
   it("skips a thread whose item already has an x-post delivery row", () => {
     // Idempotency: a second run must be a no-op. This is also what protects the two pre-existing
     // rows recording real sends to @bcd_kyle — they are history, not something to correct.
