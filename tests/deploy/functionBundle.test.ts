@@ -70,6 +70,30 @@ describe("the deployed function bundle", () => {
     expect(shim).toMatch(/export\s*\{[^}]*\bdefault\b[^}]*\}/);
   });
 
+  /**
+   * The flags above are a second copy of `package.json`'s `build:api` script, and Vercel's
+   * `buildCommand` runs *that* one — so this file can only be testing what actually ships while the
+   * two agree. The comment on `BUNDLE_OPTIONS` claims they are "kept in one place"; they are not, and
+   * nothing noticed. Changing the script's `--target` without changing `BUNDLE_OPTIONS` would leave
+   * every assertion here green against a configuration the deploy no longer uses.
+   */
+  it("bundles with the flags the deploy actually uses", async () => {
+    const pkg = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    const script = pkg.scripts["build:api"];
+    expect(script, "package.json has no build:api script").toBeDefined();
+
+    // Derived from BUNDLE_OPTIONS rather than retyped, so the two cannot drift in the other
+    // direction either: a flag added here must appear in the script.
+    expect(script).toContain(`--target=${BUNDLE_OPTIONS.target}`);
+    expect(script).toContain(`--platform=${BUNDLE_OPTIONS.platform}`);
+    expect(script).toContain(`--format=${BUNDLE_OPTIONS.format}`);
+    expect(script).toContain(`--packages=${BUNDLE_OPTIONS.packages}`);
+    expect(script).toContain("--bundle");
+    expect(script).toContain("src/vercel/entry.ts");
+  });
+
   it("keeps the entry point out of api/, where Vercel would compile it unbundled", async () => {
     const shim = await readFile(join(REPO_ROOT, "api/[...path].ts"), "utf8");
     // A handler body back in `api/` is the regression: Vercel compiles that file itself, and no
