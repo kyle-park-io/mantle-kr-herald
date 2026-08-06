@@ -14,10 +14,16 @@
 [Unit]
 Description=Mantle KR Herald watch scheduler — one tick (collect -> translate:prepare -> translate:align)
 # `OnFailure=` can only name a unit, never a bare script, so the actual notification logic lives in
-# deploy/herald-notify-failure.sh, run via the small wrapper unit below. Fires on ANY non-zero exit
-# from ExecStart, including this unit's own TimeoutStartSec= below — a silently dead scheduler is
-# the one failure this whole feature exists to prevent.
-OnFailure=herald-notify-failure.service
+# deploy/herald-notify-failure.sh, run via the templated wrapper unit
+# deploy/herald-notify-failure@.service names. `%n` below expands to this unit's own full name
+# (herald-watch.service) before systemd resolves the OnFailure= target — the exact
+# `OnFailure=bar@%n.service` idiom documented in `man systemd.unit`'s own OnFailure= example — so
+# that name becomes the templated unit's `%i`, and this unit is always the one named and tailed on
+# its own failure, never confused with herald-x-reconcile.service's (see
+# deploy/herald-notify-failure@.service's own header for why the hook had to become templated at
+# all). Fires on ANY non-zero exit from ExecStart, including this unit's own TimeoutStartSec= below
+# — a silently dead scheduler is the one failure this whole feature exists to prevent.
+OnFailure=herald-notify-failure@%n.service
 
 [Service]
 Type=oneshot

@@ -1,0 +1,34 @@
+# deploy/herald-notify-failure@.service
+#
+# Templated `OnFailure=` target, shared by every scheduled unit that wants this hook
+# (herald-watch.service, herald-x-reconcile.service, and any later one). systemd's `OnFailure=` can
+# only activate a unit, never a bare script (see `man systemd.unit`'s own `OnFailure=` example,
+# which wires a notification script through exactly this kind of wrapper unit) — this file and
+# herald-notify-failure.sh together are what the design doc's Files table calls the single "failure
+# hook".
+#
+# Templated (`@.service` + `%i`), not a single fixed unit: this hook now serves two scheduled units,
+# and a hardcoded target inside the script used to mean whichever one did *not* get the hardcoded
+# name reported the wrong unit's name and tailed the wrong unit's journal on failure — see
+# herald-notify-failure.sh's own header for the incident that forced this change. Each source unit
+# sets `OnFailure=herald-notify-failure@%n.service`; `%n` expands to the failing unit's own full
+# name (e.g. `herald-x-reconcile.service`) *before* systemd resolves the `OnFailure=` target, so that
+# name becomes this template's `%i`, and `ExecStart=` below passes it straight through to the script
+# as $1.
+#
+# NOT installed by any committed script — see herald-watch.service's header. Installing this is not
+# additive: it replaces the old non-templated herald-notify-failure.service, which must be removed
+# from ~/.config/systemd/user/ (not merely left alongside this one) as part of the same install
+# step, or `herald-watch.service`'s own `OnFailure=herald-notify-failure@%n.service` (see its updated
+# comment) will point at an instance systemd has never heard of.
+
+[Unit]
+Description=Herald scheduled-unit failure notice for %i
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/kyle/code/mantle-kr-herald
+# A generous but bounded backstop over the script's own internal 10s curl timeout — this must never
+# be the reason a failure notice hangs.
+TimeoutStartSec=30
+ExecStart=/home/kyle/code/mantle-kr-herald/deploy/herald-notify-failure.sh %i

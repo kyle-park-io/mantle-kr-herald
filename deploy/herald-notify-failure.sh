@@ -1,26 +1,50 @@
 #!/usr/bin/env bash
 # deploy/herald-notify-failure.sh
 #
-# The OnFailure= target for herald-watch.service (via the deploy/herald-notify-failure.service
-# wrapper unit — OnFailure= can only name a unit, never a script directly). Sends ONE Telegram
-# message naming the unit that failed, a short tail of its own journal captured right now, and the
-# `journalctl` command to read more, then exits 0 unconditionally: a failure-handler that can
-# itself fail is a loop, not a safety net, and nothing here is worth the timer never firing again
-# over.
+# The OnFailure= target for any scheduled unit that wants this hook (herald-watch.service,
+# herald-x-reconcile.service, and any later one), via the templated
+# deploy/herald-notify-failure@.service wrapper unit — OnFailure= can only name a unit, never a
+# script directly. Each source unit sets its own `OnFailure=herald-notify-failure@%n.service`; `%n`
+# expands to the failing unit's own full name before systemd resolves that target, so it becomes the
+# template's `%i`, which systemd hands to `ExecStart=` and this script reads as $1. Sends ONE
+# Telegram message naming the unit that failed, a short tail of *that* unit's own journal captured
+# right now, and the `journalctl` command to read more, then exits 0 unconditionally once past the
+# argument check below: a failure-handler that can itself fail is a loop, not a safety net, and
+# nothing here is worth the timer never firing again over.
 #
-# Hardcodes the one unit this ever fires for (herald-watch.service). Generalise only once a second
-# scheduled unit needs the same hook: turn this into `herald-notify-failure@.service` (`%i` as the
-# instance), accept the unit name as $1 here, and set the source unit's
-# `OnFailure=herald-notify-failure@%N.service`.
+# Takes the failing unit's name as $1 rather than hardcoding it. This used to hardcode
+# herald-watch.service, the only unit this hook served at the time; once herald-x-reconcile.service
+# needed the same hook, that hardcode meant one of the two would always report the other's unit name
+# and tail the other's journal on failure. See deploy/herald-notify-failure@.service's own header
+# for the systemd side of this.
 #
 # Deliberately NOT `set -e`: every failure below (missing .env, missing credentials, curl
-# unreachable) must fall through to the unconditional `exit 0` at the bottom, not abort partway
-# and report failure to systemd.
+# unreachable) must fall through to the unconditional `exit 0` at the bottom, not abort partway and
+# report failure to systemd. The one exception is the argument check immediately below, which exits
+# non-zero on purpose — see its own comment for why that case is different.
 set -uo pipefail
+
+UNIT="${1:-}"
+if [ -z "$UNIT" ]; then
+  # Refuse rather than guess. Proceeding with an empty $UNIT would silently repeat the exact bug
+  # that made this script take an argument at all, just in a different shape: instead of always
+  # naming and tailing herald-watch.service regardless of which unit actually failed, it would name
+  # and tail nothing — `journalctl -u ""` reads no unit's journal, and the Telegram message would
+  # read "⚠  failed" with no unit at all. That is not a safer fallback, it is the same silent
+  # misreport with the specifics removed.
+  #
+  # This exits non-zero (not the unconditional 0 below) on purpose: a missing $1 means the calling
+  # unit's OnFailure=/ExecStart= is wired wrong (or someone ran this by hand without an argument),
+  # not one of the downstream conditions — Telegram down, credentials unset, journal unreadable —
+  # this script exists to absorb quietly. It should surface as a failed
+  # herald-notify-failure@<instance>.service, visible to `systemctl --user --failed`, rather than
+  # being swallowed identically to "not configured yet".
+  echo "herald-notify-failure.sh: refusing to run — no unit name given as \$1 (systemd's %i)" >&2
+  exit 1
+fi
 
 REPO_DIR="/home/kyle/code/mantle-kr-herald"
 ENV_FILE="$REPO_DIR/.env"
-UNIT="herald-watch.service"
 
 # Captured immediately, before anything else in this script runs, because it may not be readable
 # for long: journald on this machine rotates on every backwards clock step (this box's WSL2 +
@@ -114,7 +138,9 @@ ${LOG_EXCERPT}
   # stdout otherwise, but -S still prints the error to stderr — deliberately NOT redirected to
   # /dev/null (a 2>&1 here would make -S pointless), so a 401 on a stale token, a 400 on a bad chat
   # id, or any other Telegram-side rejection lands in `journalctl --user -u
-  # herald-notify-failure.service` instead of vanishing along with the message that never sent.
+  # herald-notify-failure@${UNIT}.service` instead of vanishing along with the message that never
+  # sent — the templated unit name, now that this script is invoked as an instance of that template
+  # rather than through the single fixed unit it used to be.
   curl -4 -fsS -m 10 \
     -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
     -H "Content-Type: application/json" \

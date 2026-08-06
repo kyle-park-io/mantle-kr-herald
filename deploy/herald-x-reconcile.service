@@ -1,0 +1,87 @@
+# deploy/herald-x-reconcile.service
+#
+# systemd --user unit for one `pnpm x:reconcile --yes` run — reads @0xMantleKR's live timeline,
+# matches each thread against this pipeline's own approved renderings and publish history, and
+# records what it finds: a delivery observation for a thread it can match to a pipeline-approved
+# post, a publish-history row for one it cannot (a hand-posted or partially hand-posted thread).
+# See docs/superpowers/specs/2026-08-06-x-publish-reconcile-design.md for the full design.
+#
+# NOT installed by any committed script. Copying this into ~/.config/systemd/user/ and running
+# `systemctl --user daemon-reload` is a later, human-supervised step (see the team runbook) — same
+# as herald-watch.service.
+#
+# Machine-specific by design, not templated: every absolute path below was found with
+# `command -v pnpm|node` on the one machine this runs on (2026-08-06, kyle@this box) — the same
+# machine, and the same lookup, herald-watch.service used a day earlier. A different machine needs
+# its own copy of this file with its own paths, not a parameterised one.
+
+[Unit]
+Description=Mantle KR Herald X publish reconcile — one run of `pnpm x:reconcile --yes` against @0xMantleKR
+# Same hook herald-watch.service uses, and the same reason: `OnFailure=` can only name a unit, never
+# a bare script, so the actual notification logic lives in deploy/herald-notify-failure.sh, run via
+# the templated wrapper unit deploy/herald-notify-failure@.service names. `%n` below expands to this
+# unit's own full name (herald-x-reconcile.service) before systemd resolves the OnFailure= target —
+# the exact `OnFailure=bar@%n.service` idiom documented in `man systemd.unit`'s own OnFailure=
+# example — so that name becomes the templated unit's `%i`, and this unit is always the one named
+# and tailed on its own failure, never herald-watch.service's. This is what let a second scheduled
+# unit share the hook at all: see deploy/herald-notify-failure@.service's own header for the
+# single-unit hardcode this replaced, and the incident it used to cause.
+OnFailure=herald-notify-failure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/kyle/code/mantle-kr-herald
+
+# pnpm and node — neither is on a systemd user unit's default PATH. node must be reachable even
+# though pnpm is invoked below by its absolute path: pnpm's own file starts with
+# `#!/usr/bin/env node`, and `env` resolves "node" via this PATH, not via ExecStart='s path. Unlike
+# herald-watch.service, this command never spawns `claude -p` — x:reconcile only reads X and writes
+# Postgres/a sheet, no ClaudeCodeAgent call anywhere in it — so, unlike there, nothing here depends
+# on `claude` being reachable through this PATH too.
+Environment=PATH=/home/kyle/.nvm/versions/node/v24.14.0/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# No HERALD_OUTPUT_DIR here. That variable exists to give herald-watch.service's file-backed collect
+# watermark (output/x/state.json) its own artifact tree, separate from a hand-run local `pnpm
+# collect` — see herald-watch.service's own comment on it, and src/paths.ts's OUTPUT_DIR doc comment
+# for the incident that made it necessary. x:reconcile never calls collect and never touches an
+# output tree at all: it reads X directly via twitterapi.io and writes Postgres and a sheet. Setting
+# the variable here would only imply a dependency on output/ that does not exist.
+#
+# No HERALD_TRANSLATE_SINCE, no HERALD_WATCH_BATCH here either. Both exist to bound
+# `translate:prepare`'s (and `translate:align`'s) `--limit`: one on the oldest post either may ever
+# reach, the other on how many they move per tick. x:reconcile calls neither translate:prepare nor
+# translate:align, so neither variable is read by this command — setting them would be dead
+# configuration implying a code path this unit never runs.
+#
+# Exactly two lines — DATABASE_URL and HERALD_DB_ENV=production — chmod 600, created by Kyle by
+# hand (a production connection string does not pass through an agent session). Everything else
+# this command needs (TWITTERAPI_IO_KEY, the Google Sheets credentials, ...) still comes from the
+# repo's own .env via `pnpm x:reconcile`'s own `tsx --env-file-if-exists=.env`: a shell-exported
+# variable wins over Node's --env-file (verified on this machine — see herald-watch.service's own
+# comment on the same point), so these two override .env's local-Docker DATABASE_URL without this
+# unit ever touching .env itself.
+EnvironmentFile=%h/.herald/prod.env
+
+# Outer bound on a wedged run. This command makes no `claude -p` call at all: it matches candidates
+# against in-memory data and does a bounded number of network/DB round trips — one paged X read via
+# twitterapi.io, then Sheets reads/writes and Postgres reads/writes — so it needs nothing like
+# herald-watch's 1800s, which was built around two 600s ClaudeCodeAgent calls plus their own
+# surrounding I/O. 600s is a generous multiple of what any of those round trips takes when the
+# network is merely slow rather than actually hung.
+#
+# The upper bound matters as much as the lower one: 600s must stay well under
+# herald-x-reconcile.timer's own fire period, or a single wedged run would still be "active" when
+# the next OnCalendar= fire comes due — and that fire is the one systemd skips, a scheduler that
+# looks armed but has silently stopped. At the six-hour cadence this ships with (21600s), 600s is
+# 1/36th of the period. tests/deploy/xReconcileTiming.test.ts checks the weaker "at most half"
+# bound (600 <= 10800) rather than this specific ratio, so the check does not need re-deriving if
+# the cadence in the timer ever tightens.
+TimeoutStartSec=600
+
+# The timer (deploy/herald-x-reconcile.timer) is the only caller that passes --yes; a human running
+# `pnpm x:reconcile` by hand previews by default and adds --yes only once the printed plan looks
+# right (see src/cli/x-reconcile.ts). Omitting --yes here would make the scheduled run a no-op
+# forever — every fire prints a preview to a journal nobody is tailing and writes nothing — which is
+# exactly the "looks armed but has silently stopped" failure this whole unit exists to avoid, so the
+# flag is spelled out here rather than assumed.
+ExecStart=/home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm x:reconcile --yes

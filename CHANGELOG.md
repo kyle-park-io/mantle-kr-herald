@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`pnpm x:reconcile` — reads @0xMantleKR's live timeline back and reconciles it against our own
+  approved copy, because the account is the record and the board is not.** Three routes lead to a
+  published post — the full pipeline, a partial run finished by hand, and copy written entirely
+  outside the system — and only the first leaves a database trace. Measured 2026-08-06:
+  @0xMantleKR published 47 times since 2026-07-20 while this pipeline had produced three `x`
+  renderings ever, none of which appears among those 47. The command assembles each live thread and
+  scores it against every `status: "approved"`, `channel: "x"` rendering, landing one of three
+  verdicts: **confirmed** (similarity ≥ 0.95, a copy-paste) writes a `sent` delivery row on the
+  `x-post` outlet, so the board reads 발송됨 whether a bot or a human posted it; **candidate**
+  (0.50–0.95, or ambiguous provenance) is reported only and writes nothing, because a `sent` row is
+  never reversed and a wrong guess there is unrecoverable — a human decides, tagged with why it's a
+  candidate (`possible-match`, `duplicate-live-thread`, or `ambiguous-rendering-type`, each pointing
+  at a different next action); **external** (below 0.50) writes a publish-history row keyed
+  `kr:<rootId>`, which is also what gives `impressions:record` X rows to measure that it couldn't
+  see before. Carries its own thresholds (`CONFIRMED_AT`/`CANDIDATE_AT` in
+  `src/domain/publish/xReconcile.ts`) rather than reusing `MATCH_THRESHOLD` (0.3): the one real
+  measurement available — an unrelated post scoring 0.350 against one of our renderings — is a false
+  positive at that floor, so this feature sits its own bands well above it instead. A confirmed
+  match is written through `RecordObservedDelivery`, not `MarkDelivery`: `status: "sent"` is already
+  defined as an observation, never a human's revocable claim (`src/domain/delivery/models.ts`), so
+  `MarkDelivery`'s refusal to let a human tick 전달함 on an auto outlet is unchanged — this is a
+  different door, not a bypass of that one. Previews by default; `--yes` is required to write
+  anything, and nothing here ever calls Typefully, touches the collect watermark, or writes
+  `x_threads`. See `src/app/ReconcileXPublished.ts`, `src/domain/publish/xReconcile.ts`, and
+  `src/cli/x-reconcile.ts`.
+- **`deploy/herald-x-reconcile.service` + `.timer` — a second systemd --user unit, running
+  `pnpm x:reconcile --yes` every six hours at :41.** Slower than `herald-watch.timer`'s two-hour
+  cadence on purpose (reconciling a post is not racing to translate one) and off its own :17 by
+  design, so their *scheduled* fires never share a minute. That is all the minute buys: both units
+  carry `Persistent=true`, so a boot that missed both windows runs both catch-up fires at once, and
+  nothing prevents that — the two write disjoint rows and the worst case is contention over `pnpm`,
+  twitterapi.io quota, and CPU. This is the
+  second scheduled unit `herald-notify-failure.sh`'s own header had been waiting for, so its
+  `OnFailure=` hook is now templated (`herald-notify-failure@.service`, taking the failing unit's
+  name via `%i`/`%n`) instead of the single hardcoded `herald-watch.service` it used to name
+  unconditionally — both units now point at `OnFailure=herald-notify-failure@%n.service`, so a
+  reconcile failure names and tails its own journal instead of `herald-watch.service`'s. Not
+  installed by anything committed: `~/.config/systemd/user/` still carries the old, non-templated
+  pair until a human runs the install/removal steps by hand
+  ([`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §6).
+
 ## [0.4.0] - 2026-08-06
 
 ### Upgrading — action required for existing installs
