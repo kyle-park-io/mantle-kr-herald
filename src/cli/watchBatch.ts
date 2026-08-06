@@ -17,9 +17,8 @@ export const DEFAULT_WATCH_BATCH = 3;
  * for the same reason `HERALD_TRANSLATE_SINCE` is: `parseTranslateSince` in this directory is the
  * pattern this function follows. The validation rule itself (blank → default, otherwise a bare
  * positive integer or a named throw) lives in `parsePositiveIntEnv` — shared with
- * `HERALD_COLLECT_MAX_PAGES` (`src/adapters/twitterapi/TwitterApiSourceGateway.ts`), which needs
- * the exact same rule.
+ * `HERALD_COLLECT_MAX_PAGES` (`src/cli/collectMaxPages.ts`), which needs the exact same rule.
  */
 export function parseWatchBatch(raw: string | undefined): number {
-  return parsePositiveIntEnv(raw, "HERALD_WATCH_BATCH", DEFAULT_WATCH_BATCH, 3);
+  return parsePositiveIntEnv(raw, "HERALD_WATCH_BATCH", DEFAULT_WATCH_BATCH);
 }

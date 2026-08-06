@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { TwitterApiSourceGateway } from "../../src/adapters/twitterapi/TwitterApiSourceGateway";
+import { describe, it, expect } from "vitest";
+import { DEFAULT_MAX_PAGES, TwitterApiSourceGateway } from "../../src/adapters/twitterapi/TwitterApiSourceGateway";
 import type { IHttpClient } from "../../src/shared/http/IHttpClient";
 
 function raw(id: string, extra: Record<string, unknown> = {}) {
@@ -118,9 +118,9 @@ describe("TwitterApiSourceGateway", () => {
     });
     const gw = new TwitterApiSourceGateway(http);
 
-    const it_ = gw.fetchAuthoredTweets("Mantle_Official");
-    let r = await it_.next();
-    while (!r.done) r = await it_.next();
+    const pages = gw.fetchAuthoredTweets("Mantle_Official");
+    let r = await pages.next();
+    while (!r.done) r = await pages.next();
 
     expect(r.value).toBe(true);
     expect(http.calls.length).toBe(50);
@@ -130,9 +130,9 @@ describe("TwitterApiSourceGateway", () => {
     const http = new FakeHttpClient(() => ({ tweets: [raw("1")], has_next_page: false, next_cursor: "" }));
     const gw = new TwitterApiSourceGateway(http);
 
-    const it_ = gw.fetchAuthoredTweets("Mantle_Official");
-    let r = await it_.next();
-    while (!r.done) r = await it_.next();
+    const pages = gw.fetchAuthoredTweets("Mantle_Official");
+    let r = await pages.next();
+    while (!r.done) r = await pages.next();
 
     expect(r.value).toBe(false);
   });
@@ -161,19 +161,16 @@ describe("TwitterApiSourceGateway", () => {
     expect(blocks).toEqual([{ type: "header-one", text: "Hello" }, { type: "divider" }]);
   });
 
-  // --- HERALD_COLLECT_MAX_PAGES: the page cap is a hand-run backfill dial, not a permanent one --
+  // --- the page cap is injected, not read from the environment here ----------------------------
   //
-  // The default (50, unchanged) is already exercised by "fetchAuthoredTweets returns true when it
-  // hits the MAX_PAGES cap" above, with no env var set at all — these three pin the override
-  // itself. Each restores `process.env` afterwards so a leaked value can never change what other
-  // tests in this file (or this suite) see the default as.
-  describe("HERALD_COLLECT_MAX_PAGES", () => {
-    const ORIGINAL = process.env.HERALD_COLLECT_MAX_PAGES;
-    afterEach(() => {
-      if (ORIGINAL === undefined) delete process.env.HERALD_COLLECT_MAX_PAGES;
-      else process.env.HERALD_COLLECT_MAX_PAGES = ORIGINAL;
-    });
-
+  // The default (DEFAULT_MAX_PAGES, 50) is already exercised by "fetchAuthoredTweets returns true
+  // when it hits the MAX_PAGES cap" above. These pin the injection: a caller can raise the cap for
+  // one run, and nothing in this class touches `process.env` to find out — so the four entry points
+  // that build this gateway for unrelated work cannot inherit a backfill's override. Only the last
+  // test here goes near `process.env` at all, and only to prove the class ignores it. Reading and
+  // validating HERALD_COLLECT_MAX_PAGES lives in `src/cli/collectMaxPages.ts` and is tested in
+  // `tests/cli/collectMaxPages.test.ts`.
+  describe("maxPages", () => {
     /** Every page reports more pages available, forever, so the loop always runs to the cap. */
     function unboundedHttp(): FakeHttpClient {
       return new FakeHttpClient((_path, params) => {
@@ -183,40 +180,34 @@ describe("TwitterApiSourceGateway", () => {
       });
     }
 
-    it("defaults to 50 when unset — the constructor never sees the variable", async () => {
-      delete process.env.HERALD_COLLECT_MAX_PAGES;
+    it("defaults to DEFAULT_MAX_PAGES when no option is passed", async () => {
       const http = unboundedHttp();
       const gw = new TwitterApiSourceGateway(http);
 
-      const it_ = gw.fetchAuthoredTweets("Mantle_Official");
-      let r = await it_.next();
-      while (!r.done) r = await it_.next();
+      const pages = gw.fetchAuthoredTweets("Mantle_Official");
+      let r = await pages.next();
+      while (!r.done) r = await pages.next();
 
       expect(r.value).toBe(true);
-      expect(http.calls.length).toBe(50);
+      expect(DEFAULT_MAX_PAGES).toBe(50);
+      expect(http.calls.length).toBe(DEFAULT_MAX_PAGES);
     });
 
-    it("honours an override — the real reason this exists: recovering a GAP needs more than 50 pages", async () => {
-      process.env.HERALD_COLLECT_MAX_PAGES = "75";
+    it("honours an injected cap — the real reason this exists: recovering a GAP needs more than 50 pages", async () => {
       const http = unboundedHttp();
-      const gw = new TwitterApiSourceGateway(http);
+      const gw = new TwitterApiSourceGateway(http, { maxPages: 75 });
 
-      const it_ = gw.fetchAuthoredTweets("Mantle_Official");
-      let r = await it_.next();
-      while (!r.done) r = await it_.next();
+      const pages = gw.fetchAuthoredTweets("Mantle_Official");
+      let r = await pages.next();
+      while (!r.done) r = await pages.next();
 
       expect(r.value).toBe(true);
       expect(http.calls.length).toBe(75);
     });
 
-    it("also raises fetchThread's cap — the same constant, the same override, the same safety backstop", async () => {
-      process.env.HERALD_COLLECT_MAX_PAGES = "3";
-      const http = new FakeHttpClient((_path, params) => {
-        const cursor = params?.cursor ?? "";
-        const next = `${cursor}x`;
-        return { tweets: [raw(`t${next}`)], has_next_page: true, next_cursor: next };
-      });
-      const gw = new TwitterApiSourceGateway(http);
+    it("also caps fetchThread — the same constant, the same option, the same safety backstop", async () => {
+      const http = unboundedHttp();
+      const gw = new TwitterApiSourceGateway(http, { maxPages: 3 });
 
       const tweets = await gw.fetchThread("root");
 
@@ -224,25 +215,25 @@ describe("TwitterApiSourceGateway", () => {
       expect(http.calls.length).toBe(3);
     });
 
-    it("refuses an invalid value at construction, naming the variable and the value", () => {
-      process.env.HERALD_COLLECT_MAX_PAGES = "0";
-      expect(() => new TwitterApiSourceGateway(unboundedHttp())).toThrow(/HERALD_COLLECT_MAX_PAGES/);
-      expect(() => new TwitterApiSourceGateway(unboundedHttp())).toThrow(/"0"/);
+    it("ignores HERALD_COLLECT_MAX_PAGES in the environment — the CLI reads it, not this class", async () => {
+      // The regression this guards: the constructor used to read `process.env` itself, so setting
+      // the variable for a hand-run backfill silently re-capped `tm:measure`, `metrics:record`,
+      // `impressions:record` and `reconcile` too, for the rest of that shell session.
+      const original = process.env.HERALD_COLLECT_MAX_PAGES;
+      process.env.HERALD_COLLECT_MAX_PAGES = "7";
+      try {
+        const http = unboundedHttp();
+        const gw = new TwitterApiSourceGateway(http);
 
-      process.env.HERALD_COLLECT_MAX_PAGES = "many";
-      expect(() => new TwitterApiSourceGateway(unboundedHttp())).toThrow(/HERALD_COLLECT_MAX_PAGES/);
-    });
+        const pages = gw.fetchAuthoredTweets("Mantle_Official");
+        let r = await pages.next();
+        while (!r.done) r = await pages.next();
 
-    it("treats an empty or whitespace-only value as unset, same as HERALD_WATCH_BATCH does", async () => {
-      process.env.HERALD_COLLECT_MAX_PAGES = "   ";
-      const http = unboundedHttp();
-      const gw = new TwitterApiSourceGateway(http);
-
-      const it_ = gw.fetchAuthoredTweets("Mantle_Official");
-      let r = await it_.next();
-      while (!r.done) r = await it_.next();
-
-      expect(http.calls.length).toBe(50);
+        expect(http.calls.length).toBe(DEFAULT_MAX_PAGES);
+      } finally {
+        if (original === undefined) delete process.env.HERALD_COLLECT_MAX_PAGES;
+        else process.env.HERALD_COLLECT_MAX_PAGES = original;
+      }
     });
   });
 });

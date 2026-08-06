@@ -1,23 +1,39 @@
 import type { ArticleBlock, SourceTweet, UserProfile } from "../../domain/models";
 import type { SourceGateway } from "../../ports/SourceGateway";
 import type { IHttpClient } from "../../shared/http/IHttpClient";
-import { parsePositiveIntEnv } from "../../shared/env/positiveInt";
 import { normalizeTweet, parseArticleContents, parseTweetList, parseUserProfile } from "./schemas";
 
-// Safety backstop so a non-terminating cursor or a full-history/large-thread crawl can never loop
-// forever (20 tweets/page → up to ~1000 tweets at the default). This is also the cap that
-// produces a coverage GAP (src/domain/coverage.ts) when `fetchAuthoredTweets` exhausts it with
-// older tweets still unfetched (src/app/WatchTick.ts's header comment has the full chain).
-// `HERALD_COLLECT_MAX_PAGES` overrides it for exactly one situation: recovering from a GAP by
-// hand with a raised cap, one `pnpm collect --since <from>` run at a time — the scheduler's own
-// unit never sets this, so the default below stays 50 for every tick, always.
-const DEFAULT_MAX_PAGES = 50;
+/**
+ * Safety backstop so a non-terminating cursor or a full-history/large-thread crawl can never loop
+ * forever (20 tweets/page → up to ~1000 tweets at the default). This is also the cap that produces
+ * a coverage GAP (src/domain/coverage.ts) when `fetchAuthoredTweets` exhausts it with older tweets
+ * still unfetched (src/app/WatchTick.ts's header comment has the full chain).
+ *
+ * Exported because `src/cli/tm-measure.ts` reports a volume estimate *against this cap* — it had
+ * its own copy of the number, which is the kind of duplicate that misdescribes reality the first
+ * time one of the two moves.
+ */
+export const DEFAULT_MAX_PAGES = 50;
+
+export type TwitterApiSourceGatewayOptions = {
+  /**
+   * Page cap for `fetchAuthoredTweets`/`fetchThread`. Omitted means `DEFAULT_MAX_PAGES`, which is
+   * what every command except a GAP backfill gets.
+   *
+   * Injected rather than read from `process.env` here, and that is the point: a constructor that
+   * read `HERALD_COLLECT_MAX_PAGES` itself handed the override to all six entry points that build
+   * this gateway, when the variable is documented for one of them. The CLI reads the environment
+   * (`src/cli/collectMaxPages.ts` validates it); this class just uses the number it is given —
+   * the same layering `WatchTick`/`src/cli/watchBatch.ts` already follow for `HERALD_WATCH_BATCH`.
+   */
+  maxPages?: number;
+};
 
 export class TwitterApiSourceGateway implements SourceGateway {
   private readonly maxPages: number;
 
-  constructor(private readonly client: IHttpClient) {
-    this.maxPages = parsePositiveIntEnv(process.env.HERALD_COLLECT_MAX_PAGES, "HERALD_COLLECT_MAX_PAGES", DEFAULT_MAX_PAGES, 200);
+  constructor(private readonly client: IHttpClient, options: TwitterApiSourceGatewayOptions = {}) {
+    this.maxPages = options.maxPages ?? DEFAULT_MAX_PAGES;
   }
 
   /** Normalize a raw tweet, skipping (not aborting) any that fail validation. */
@@ -64,8 +80,8 @@ export class TwitterApiSourceGateway implements SourceGateway {
       if (reachedWatermark || !hasNextPage || !nextCursor || nextCursor === cursor) return false;
       cursor = nextCursor;
     }
-    // Fell out of the loop → hit the page cap (default MAX_PAGES=50, or
-    // HERALD_COLLECT_MAX_PAGES if set) with more pages available.
+    // Fell out of the loop → hit the page cap (DEFAULT_MAX_PAGES, or whatever `maxPages` the
+    // caller injected) with more pages available.
     return true;
   }
 

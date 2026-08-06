@@ -5,10 +5,16 @@
  * was rejected, rather than silently coerced by `Number()` into something nobody chose.
  *
  * First written for `HERALD_WATCH_BATCH` (`src/cli/watchBatch.ts`); shared here once
- * `HERALD_COLLECT_MAX_PAGES` (`src/adapters/twitterapi/TwitterApiSourceGateway.ts`) needed the
- * exact same rule rather than a second, slightly-different reimplementation of it.
+ * `HERALD_COLLECT_MAX_PAGES` (`src/cli/collectMaxPages.ts`) needed the exact same rule rather than
+ * a second, slightly-different reimplementation of it.
+ *
+ * There is deliberately no separate `example` parameter. It used to sit right after `fallback` —
+ * two adjacent numbers with no way for the compiler to tell a swap from the intended order, and a
+ * swap would only ever show up as odd advice inside an error message nobody reads until something
+ * is already broken. The message names `fallback` instead: it is by definition a valid value for
+ * this variable, so it cannot drift out of step with the variable it illustrates.
  */
-export function parsePositiveIntEnv(raw: string | undefined, envVar: string, fallback: number, example: number): number {
+export function parsePositiveIntEnv(raw: string | undefined, envVar: string, fallback: number): number {
   // An `X=` line with nothing after it reaches Node as "", not as undefined. Treated as unset:
   // `Number("")` is 0, which would otherwise pass through as a real (and almost always wrong)
   // value while the unit/shell that set it looks configured.
@@ -23,7 +29,7 @@ export function parsePositiveIntEnv(raw: string | undefined, envVar: string, fal
   if (!/^\d+$/.test(value) || Number(value) <= 0) {
     throw new Error(
       `${envVar} must be a positive integer: ${JSON.stringify(raw)}. ` +
-        `Use a whole number greater than zero, such as ${example}.`,
+        `Use a whole number greater than zero, such as ${fallback}.`,
     );
   }
 
