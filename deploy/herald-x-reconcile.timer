@@ -1,0 +1,33 @@
+# deploy/herald-x-reconcile.timer
+#
+# Fires herald-x-reconcile.service every six hours, at :41. Slower than herald-watch.timer's
+# two-hour cadence on purpose: posts are reconciled, not raced. A hand-posted or partially
+# hand-posted tweet does not need to be recorded within minutes, and a slower cadence keeps the
+# twitterapi.io spend and the sheet round trips this run makes low (see
+# docs/superpowers/specs/2026-08-06-x-publish-reconcile-design.md).
+#
+# :41 is off :00 on purpose, same reasoning as herald-watch.timer's own :17 — every scheduler on the
+# planet fires on the hour and there is no reason to join it — and off herald-watch.timer's own :17
+# specifically: both units run `pnpm` from the same working tree against the same database, so
+# sharing a minute buys nothing and only invites two pnpm processes starting at once on a cold
+# store. tests/deploy/xReconcileTiming.test.ts reads herald-watch.timer's own file and asserts the
+# two minutes differ, so they cannot drift back onto the same minute unnoticed by a later edit to
+# either file.
+#
+# Verified before committing: `systemd-analyze calendar '*-*-* 0/6:41:00'` parses cleanly and
+# reports "every 6 hours at :41" (see task-4-report.md for the captured output).
+#
+# NOT installed by any committed script — see herald-x-reconcile.service's header.
+
+[Unit]
+Description=Timer for herald-x-reconcile.service — Mantle KR Herald X publish reconcile
+
+[Timer]
+OnCalendar=*-*-* 0/6:41:00
+# Runs the reconcile once on the next boot/login if the machine was off (or the user manager wasn't
+# running — WSL2's usual failure mode) through a scheduled fire, instead of silently skipping it.
+# Same reasoning as herald-watch.timer's own Persistent=true.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
