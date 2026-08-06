@@ -16,7 +16,7 @@ import {
   candidateReasonText,
   externalSummaryLine,
   retireNotification,
-  translationNearMisses,
+  sortedPostedNearMisses,
   xReconcileStartupLine,
 } from "./xReconcileReport";
 import { RecordObservedDelivery } from "../app/RecordObservedDelivery";
@@ -165,17 +165,11 @@ try {
     console.log(`  ${p.itemId} → post ${p.rootId} — score ${p.score.toFixed(3)} — ${p.url}`);
   }
   // Same argument as the `external` near-misses just above: a translation that scored close to
-  // TRANSLATION_MATCH_AT without clearing it is real information, not nothing — see
-  // `translationNearMisses`'s own doc comment for why this calls back into the exact same
-  // `bestThreadFor` the second pass itself uses, purely for display, and why it needs the same
-  // confirmed/candidate/posted rootIds the pass itself excluded (Task 4 review's Finding 5).
-  const translationMisses = translationNearMisses(
-    translations,
-    threads,
-    plan.posted,
-    plan.confirmed.map((c) => c.entry.postId).filter((id): id is string => id !== undefined),
-    plan.candidates.map((c) => c.rootId),
-  );
+  // TRANSLATION_MATCH_AT without clearing it is real information, not nothing. Computed by
+  // `reconcileXPublished` itself now, against the exact pool it used at the moment of scoring —
+  // see `ReconcilePlan`'s own doc comment on `postedNearMisses` for why this file no longer
+  // re-derives it (Task 4 review round 2, Concern 2).
+  const translationMisses = sortedPostedNearMisses(plan.postedNearMisses);
   if (translationMisses.length > 0) {
     console.log(`  ${translationMisses.length} near-miss(es) scored above 0 but below TRANSLATION_MATCH_AT (highest first):`);
     for (const { itemId, rootId, score } of translationMisses) {

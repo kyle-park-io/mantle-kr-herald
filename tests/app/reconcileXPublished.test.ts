@@ -345,7 +345,7 @@ describe("reconcileXPublished", () => {
 
   it("returns empty lists for no live threads rather than throwing", () => {
     const plan = reconcileXPublished({ ...base, threads: [], renderings: [rendering("x:1", COPY)] });
-    expect(plan).toEqual({ confirmed: [], candidates: [], external: [], skipped: [], posted: [] });
+    expect(plan).toEqual({ confirmed: [], candidates: [], external: [], skipped: [], posted: [], postedNearMisses: [] });
   });
 });
 
@@ -377,14 +377,13 @@ describe("translations that already went out by hand", () => {
     expect(plan.posted).toEqual([]);
   });
 
-  it("stays out of plan.posted when postedUrl is set AND its history row already exists", () => {
-    // Genuinely done on both halves — Task 4 review's Finding 1 made this check conjunctive
-    // (postedUrl set AND historyPostIds has the matched rootId), replacing an unconditional
-    // "postedUrl set → skip" that made a stuck history write permanently unretryable (see the
-    // next test, and this function's own doc comment).
+  it("stays out of plan.posted when postedUrl is set AND its history row already exists — never scored, so `threads` is irrelevant", () => {
+    // Genuinely done on both halves. `threads: []` deliberately: Phase A reads the rootId back out
+    // of `postedUrl` itself (see rootIdFromPostUrl), never scores against live threads, so this
+    // must hold even when the original thread is nowhere in this run's window at all.
     const plan = reconcileXPublished({
       ...base,
-      threads: [thread("100", [COPY])],
+      threads: [],
       renderings: [],
       historyPostIds: new Set(["100"]),
       translations: [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100" })],
@@ -392,40 +391,49 @@ describe("translations that already went out by hand", () => {
     expect(plan.posted).toEqual([]);
   });
 
-  it("re-enters plan.posted when postedUrl is set but its history row is still missing", () => {
-    // Finding 1's fix, pinned directly: the status half of a retire can succeed while the history
-    // write fails (a sheet hiccup); if a translation could never be scored again once postedUrl was
-    // set, its history row would be stuck forever. `historyPostIds` here is empty (the default from
-    // `base`), matching a history write that has not yet landed for this rootId.
+  it("re-enters plan.posted when postedUrl is set but its history row is still missing, using the STORED postedAt — never re-scored", () => {
+    // Task 4 review round 2, Concern 1: the retry must read the post already recorded, not
+    // re-match against this run's live threads (which could silently pick a DIFFERENT thread if
+    // the original one aged out of --since). `threads: []` proves the retry does not depend on the
+    // original thread being present at all, and the stored `postedAt` (not a freshly scored
+    // thread's `createdAt`) proves the value comes from the translation's own record.
     const plan = reconcileXPublished({
       ...base,
-      threads: [thread("100", [COPY])],
+      threads: [],
       renderings: [],
-      translations: [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100", status: "posted" })],
-    });
-    expect(plan.posted).toHaveLength(1);
-    expect(plan.posted[0]).toMatchObject({ itemId: "x:1", rootId: "100" });
-  });
-
-  it("re-matching a postedUrl-set translation never changes claimedRootIds' equivalence to plan.posted's rootIds", () => {
-    // Pins the invariant translationNearMisses (xReconcileReport.ts) relies on: a translation that
-    // matches but is skipped for being genuinely done (both halves complete) must NOT claim the
-    // thread, so a second, unrelated translation can still see and use it. Both translations here
-    // target the SAME thread; only the first is genuinely done, so the second must still be free to
-    // claim it.
-    const plan = reconcileXPublished({
-      ...base,
-      threads: [thread("100", [COPY])],
-      renderings: [],
-      historyPostIds: new Set(["100"]),
       translations: [
-        translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100" }), // done, skipped
-        translation("x:2", COPY), // free to claim the same thread
+        translation("x:1", COPY, {
+          postedUrl: "https://x.com/0xMantleKR/status/100",
+          postedAt: "2026-07-31T05:39:41.000Z",
+          status: "posted",
+        }),
       ],
     });
     expect(plan.posted).toHaveLength(1);
-    expect(plan.posted[0].itemId).toBe("x:2");
-    expect(plan.posted[0].rootId).toBe("100");
+    expect(plan.posted[0]).toMatchObject({
+      itemId: "x:1",
+      rootId: "100",
+      url: "https://x.com/0xMantleKR/status/100",
+      postedAt: "2026-07-31T05:39:41.000Z",
+    });
+  });
+
+  it("a settled translation claims its thread even when genuinely done, so a DIFFERENT translation cannot be retired against the same post", () => {
+    // Task 4 review round 2, Concern 2 — the dangerous one: without this claim, translation B
+    // (which never actually went out) could be retired against thread T just because A (which
+    // really did go out as T) happened to be genuinely done and skip without claiming. That would
+    // silently remove B from a human's review queue forever while attributing T to two items.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [],
+      historyPostIds: new Set(["100"]), // A's history row already exists — genuinely done
+      translations: [
+        translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100" }), // A, settled
+        translation("x:2", COPY), // B — never posted, but would match thread 100 if it were free
+      ],
+    });
+    expect(plan.posted).toEqual([]);
   });
 
   it("skips a translation whose item the rendering route confirmed in this run", () => {
@@ -527,5 +535,66 @@ describe("translations that already went out by hand", () => {
     expect(plan.posted).toHaveLength(1);
     expect(plan.posted[0].rootId).toBe("100");
     expect(plan.external).toEqual([]);
+  });
+
+  describe("plan.postedNearMisses", () => {
+    // Shares just enough vocabulary with COPY (온체인/자산/시작) to score above 0 without
+    // approaching TRANSLATION_MATCH_AT (0.25) — a real near-miss, not a match. Measured directly
+    // against similarity() before use, not hand-tuned by eye.
+    const NEAR_MISS_LIVE_TEXT = "온체인 자산이 시장에 올라오면 그 다음이 진짜 시작입니다 여러 팀들이 함께 준비하고 있으니 기대해주세요";
+    const UNRELATED_LIVE_TEXT = "이번 주말 커뮤니티 밋업에서 만나요 다들 즐거운 하루 보내시고 편안한 저녁 시간 보내시길 바랍니다 감사합니다 여러분";
+
+    it("reports a translation that scored above 0 but below TRANSLATION_MATCH_AT against its best thread", () => {
+      const plan = reconcileXPublished({
+        ...base,
+        threads: [thread("100", [NEAR_MISS_LIVE_TEXT])],
+        renderings: [],
+        translations: [translation("x:1", COPY)],
+      });
+      expect(plan.posted).toEqual([]);
+      expect(plan.postedNearMisses).toHaveLength(1);
+      expect(plan.postedNearMisses[0].itemId).toBe("x:1");
+      expect(plan.postedNearMisses[0].rootId).toBe("100");
+      expect(plan.postedNearMisses[0].score).toBeGreaterThan(0);
+      expect(plan.postedNearMisses[0].score).toBeLessThan(TRANSLATION_MATCH_AT);
+    });
+
+    it("reports nothing for a thread that shares nothing at all (score 0)", () => {
+      const plan = reconcileXPublished({
+        ...base,
+        threads: [thread("100", [UNRELATED_LIVE_TEXT])],
+        renderings: [],
+        translations: [translation("x:1", COPY)],
+      });
+      expect(plan.postedNearMisses).toEqual([]);
+    });
+
+    it("never scores a settled translation (postedUrl set) — Phase A translations are read, not matched", () => {
+      const plan = reconcileXPublished({
+        ...base,
+        threads: [thread("100", [NEAR_MISS_LIVE_TEXT])],
+        renderings: [],
+        translations: [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/999" })],
+      });
+      expect(plan.postedNearMisses).toEqual([]);
+    });
+
+    it("excludes a thread a settled translation already claimed in Phase A (Concern 2's near-miss counterpart)", () => {
+      // Thread 100 is genuinely done for x:1 (historyPostIds already has it) — Phase A still
+      // claims it. x:2's best-scoring thread is the SAME one; without the claim it would show as a
+      // near-miss against a thread that already belongs to a different, settled item.
+      const plan = reconcileXPublished({
+        ...base,
+        threads: [thread("100", [NEAR_MISS_LIVE_TEXT])],
+        renderings: [],
+        historyPostIds: new Set(["100"]),
+        translations: [
+          translation("x:1", "무관한 다른 번역 본문입니다", { postedUrl: "https://x.com/0xMantleKR/status/100" }),
+          translation("x:2", COPY),
+        ],
+      });
+      expect(plan.posted).toEqual([]);
+      expect(plan.postedNearMisses).toEqual([]);
+    });
   });
 });

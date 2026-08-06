@@ -145,6 +145,31 @@ export function postUrl(handle: string, rootId: string): string {
 }
 
 /**
+ * The inverse of `postUrl`: the rootId embedded in a url this module itself built. Kept beside
+ * `postUrl` on purpose, not as a standalone regex somewhere else, so the two spellings of "how a
+ * post's url is shaped" cannot drift apart.
+ *
+ * Exists for a caller that already has a `postedUrl` (a `Translation`'s own record of a post
+ * already confirmed as its own) and needs the rootId back — `reconcileXPublished`'s second pass is
+ * the first such caller, reading it here instead of re-scoring the translation against this run's
+ * live threads via `bestThreadFor`. Re-scoring an already-settled translation could silently pick a
+ * *different* thread if the original one aged out of `--since`, attributing the wrong live post to
+ * an item and feeding the wrong postId to `impressions:record` (Task 4 review round 2's Concern 1)
+ * — reading the rootId back out of the url this codebase already wrote down sidesteps that
+ * entirely, and means a retry no longer depends on the original thread still being inside the
+ * current fetch window.
+ *
+ * Returns `undefined`, never throws, when `url` doesn't end in `/status/<id>` — deliberately: every
+ * `postedUrl` this codebase ever writes comes from `postUrl` itself, so this should be unreachable
+ * in practice, and the caller (not this function) decides what "doesn't parse" means for its own
+ * situation. See `reconcileXPublished`'s own comment at its call site for why it treats that as "no
+ * known post" — skip — rather than throwing and taking the whole run down over one malformed row.
+ */
+export function rootIdFromPostUrl(url: string): string | undefined {
+  return /\/status\/([^/]+)$/.exec(url)?.[1];
+}
+
+/**
  * The tweet whose id is the thread's `rootId`, or `undefined` when this thread has none.
  *
  * That absence is not a bug and not rare, and it has two distinct causes. `assembleThreads` keys a

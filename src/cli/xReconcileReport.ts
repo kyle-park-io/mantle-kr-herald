@@ -1,10 +1,7 @@
 import { tryDescribeDbTarget, INVALID_DB_URL } from "../doctor/checks";
 import type { DbConfig } from "../config";
 import { isXCandidateRendering, type CandidateReason } from "../app/ReconcileXPublished";
-import { bestThreadFor, findRootTweet, TRANSLATION_MATCH_AT } from "../domain/publish/xReconcile";
 import type { ChannelRendering } from "../domain/formatting/models";
-import type { AssembledThread } from "../domain/models";
-import type { Translation } from "../domain/translation/models";
 
 /**
  * The lines `x-reconcile.ts` decides rather than merely prints, pulled out of the script for the
@@ -96,54 +93,20 @@ export function candidateReasonText(reason: CandidateReason, itemId: string, ren
 }
 
 /**
- * Translations that scored above 0 but below `TRANSLATION_MATCH_AT` against their own best live
- * thread — the `posted` section's counterpart to the `external` block's own near-miss list
- * (`x-reconcile.ts`'s `nearMisses`), so a hand-post whose translation just missed the floor is
- * still visible to a human rather than silently indistinguishable from "nothing close at all".
+ * `plan.postedNearMisses`, highest score first, for the `posted` section's near-miss block — the
+ * counterpart to the `external` block's own `nearMisses` sort in `x-reconcile.ts`.
  *
- * This is a report, not a decision: `reconcileXPublished` never records anything for a sub-floor
- * score, and this function changes nothing about that — it calls the exact same pure
- * `bestThreadFor` the second pass itself calls (never a re-spelling of the rule; see
- * `isXCandidateRendering`'s own doc comment for what a second spelling costs elsewhere in this
- * feature).
- *
- * **Scored against the same pool the pass itself used — Task 4 review's Finding 5, fixed here.**
- * The first version scored every translation against *every* rooted thread, ignoring that
- * `reconcileXPublished` had already spoken for some of them (a `plan.confirmed` delivery row, a
- * `plan.candidate` awaiting a human, or another translation's own `plan.posted` retire). That let a
- * translation whose one truly-best thread was taken elsewhere score `>= TRANSLATION_MATCH_AT`
- * against that SAME thread here and vanish from both sections at once — never posted (the thread
- * was gone before this translation's turn), never a near-miss either (its displayed score, against
- * the wrong pool, looked like a real match). `confirmedRootIds`/`candidateRootIds` mirror
- * `reconcileXPublished`'s own `consumedRootIds`; `posted`'s rootIds cover the rest —
- * `claimedRootIds`'s final state there is exactly `plan.posted`'s rootIds (see that function's own
- * doc comment), so no thread this function excludes is a thread `reconcileXPublished` left
- * available.
- *
- * `posted` — already-retired itemIds this run — and any translation already carrying `postedUrl`
- * are excluded, same as `reconcileXPublished`'s own guards, so a row that already has an owner
- * never also shows up as "almost".
+ * The near-misses themselves are no longer computed here. They used to be
+ * (`translationNearMisses`, removed in Task 4 review round 2): this file's own re-derivation of
+ * "which threads were still available" went stale again the moment a settled-but-genuinely-done
+ * translation started claiming its thread without ever appearing in `plan.posted` (Concern 2) — a
+ * caller reconstructing the excluded set from `plan.posted` alone could no longer see that claim.
+ * `reconcileXPublished` now computes `postedNearMisses` itself, against the exact pool it used at
+ * the moment of scoring (see `ReconcilePlan`'s own doc comment), so there is exactly one place this
+ * list is built. This function is display-only: sorting, not deciding.
  */
-export function translationNearMisses(
-  translations: Translation[],
-  threads: AssembledThread[],
-  posted: { itemId: string; rootId: string }[],
-  confirmedRootIds: string[],
-  candidateRootIds: string[],
-): { itemId: string; rootId: string; score: number }[] {
-  const postedItemIds = new Set(posted.map((p) => p.itemId));
-  const excludedRootIds = new Set([...confirmedRootIds, ...candidateRootIds, ...posted.map((p) => p.rootId)]);
-  const availableThreads = threads.filter((t) => findRootTweet(t) !== undefined && !excludedRootIds.has(t.rootId));
-
-  const misses: { itemId: string; rootId: string; score: number }[] = [];
-  for (const t of translations) {
-    if (t.postedUrl !== undefined || postedItemIds.has(t.itemId) || t.koreanText === "") continue;
-    const match = bestThreadFor(t.koreanText, availableThreads);
-    if (match !== undefined && match.score > 0 && match.score < TRANSLATION_MATCH_AT) {
-      misses.push({ itemId: t.itemId, rootId: match.thread.rootId, score: match.score });
-    }
-  }
-  return misses.sort((a, b) => b.score - a.score);
+export function sortedPostedNearMisses<T extends { score: number }>(nearMisses: T[]): T[] {
+  return [...nearMisses].sort((a, b) => b.score - a.score);
 }
 
 /**

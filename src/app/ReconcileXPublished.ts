@@ -5,6 +5,7 @@ import {
   findRootTweet,
   observedDelivery,
   postUrl,
+  rootIdFromPostUrl,
   TRANSLATION_MATCH_AT,
 } from "../domain/publish/xReconcile";
 import type { MatchCandidate } from "../domain/kol/attribution";
@@ -103,10 +104,22 @@ export type CandidateReason = "possible-match" | "duplicate-live-thread" | "ambi
  *
  * `posted` rows are the second pass's output — a translation that never went through the rendering
  * route at all, matched against a live thread by `bestThreadFor`/`TRANSLATION_MATCH_AT` rather than
- * `classify`/`CONFIRMED_AT`. Not a `DeliveryEntry`: a translation never had a `ChannelRendering`, so
- * there is no `type` to put on one and no `x-post` delivery row to write. The caller instead stamps
+ * `classify`/`CONFIRMED_AT`, OR a translation already settled (`postedUrl` set) whose history row is
+ * still missing, read back via `rootIdFromPostUrl` rather than re-scored — see the second pass's own
+ * doc comment below. Not a `DeliveryEntry`: a translation never had a `ChannelRendering`, so there
+ * is no `type` to put on one and no `x-post` delivery row to write. The caller instead stamps
  * `postedUrl`/`postedAt` onto the `Translation` row itself — see `Translation` in
  * `src/domain/translation/models.ts`.
+ *
+ * `postedNearMisses` is `posted`'s own near-miss list — a translation the second pass scored (never
+ * a settled one; those are never scored at all) above 0 but below `TRANSLATION_MATCH_AT` against its
+ * best available thread. Computed here, against the exact pool the pass used at the moment of
+ * scoring, rather than left for a caller to reconstruct afterward: a caller re-deriving "which
+ * threads were excluded" from `plan.posted` alone cannot see a thread a settled-but-genuinely-done
+ * translation claimed without ever appearing in `plan.posted` (Task 4 review round 2, Concern 2) —
+ * this is exactly the case that made the report layer's own reconstruction (Task 4 review round 1,
+ * Finding 5's fix) wrong again one round later. Same reasoning as `external`'s own carried-through
+ * near-miss score, applied to this pass instead of `classify`'s.
  */
 export type ReconcilePlan = {
   confirmed: { entry: DeliveryEntry; score: number }[];
@@ -114,6 +127,7 @@ export type ReconcilePlan = {
   external: { record: PublishRecord; score: number }[];
   skipped: { rootId: string; reason: string }[];
   posted: { itemId: string; rootId: string; score: number; url: string; postedAt: string }[];
+  postedNearMisses: { itemId: string; rootId: string; score: number }[];
 };
 
 /**
@@ -163,37 +177,55 @@ export type ReconcilePlan = {
  * different scoring functions and two different threshold constants, and a future edit to one
  * arm's guard silently applying to the other.
  *
- * A translation is skipped before ever being scored: if its `itemId` is one `claimedItemIds`
- * already holds from the thread loop above (that item has a real delivery row this run, which is
- * the stronger record — it carries a `type` and passed 2차 검수); or if `koreanText` is empty
- * (`similarity` can never score it above 0). A thread is excluded from this pass's candidates for
+ * **A translation with `postedUrl` already set is never scored — read, not re-matched.** Task 4
+ * review round 1 made the old unconditional "postedUrl set → skip" conjunctive with `historyPostIds`
+ * so a stuck history write could be retried; round 2 found that re-running `bestThreadFor` for that
+ * retry was itself unsafe — the original live thread can age out of `--since` between runs, and
+ * re-scoring against whatever threads ARE in this run's window can silently pick a *different*
+ * thread, attributing the wrong live post to the item and feeding the wrong postId to
+ * `impressions:record` (Concern 1). So a settled translation's rootId is read back out of its own
+ * `postedUrl` via `rootIdFromPostUrl` (see that function's own doc comment) instead — this also
+ * means a retry no longer depends on the original thread still being inside the fetch window at
+ * all: a history row owed from three weeks ago still gets written today.
+ *
+ * This pass therefore runs in two phases over `translations`, not one:
+ *
+ * **Phase A — settled translations** (`postedUrl` already set). For each (skipping one whose
+ * `itemId` is already in `claimedItemIds` — the rendering route's stronger record): parse the
+ * rootId; a url that fails to parse is skipped outright (should be unreachable — every `postedUrl`
+ * this codebase writes comes from `postUrl` itself — but a malformed one must not silently become a
+ * retire against nothing). Otherwise the thread is claimed — `claimedRootIds.add(rootId)` —
+ * **unconditionally**, whether or not this translation is genuinely done. Only then: if
+ * `historyPostIds` already has this rootId, nothing further happens (genuinely done, both halves
+ * complete); otherwise it is pushed to `plan.posted` again so `RetireTranslation` gets another
+ * chance at just the history half (see that class's own doc comment for why re-entering here can
+ * never re-apply the *status* half — it treats an existing `postedUrl` as `"already-retired"` and
+ * never overwrites it, so 되돌리기, a human's correction to `postedUrl`, still sticks).
+ *
+ * Phase A claiming its thread **unconditionally** — even when the translation is genuinely done and
+ * nothing is pushed to `plan.posted` for it — is Concern 2's fix: a settled translation's post is
+ * already a fact, not a contest, and a DIFFERENT translation must never be free to match the same
+ * live thread just because the settled one didn't need a fresh write. Phase A runs to completion
+ * before Phase B (below) ever scores anything, so a settled translation's claim can never lose a
+ * race to an unsettled one that merely happens to sit earlier in `translations` — the ordering
+ * itself is part of the fix, not just the claim.
+ *
+ * **Phase B — everything else** (`postedUrl` unset). Skipped before ever being scored: if its
+ * `itemId` is one `claimedItemIds` already holds from the thread loop above; or if `koreanText` is
+ * empty (`similarity` can never score it above 0). A thread is excluded from Phase B's pool for
  * three reasons: it has no root (`findRootTweet` undefined — same guard as the thread loop, for the
  * same reason: there is no `createdAt` to stamp `postedAt` from); it was already turned into a
  * `plan.confirmed` row above — one live post must never become both a delivery row and a
- * translation retire; or it is already a `plan.candidate` — a human has not yet said which item
- * that thread is, and retiring some other translation against it here would mean that same thread
- * could be confirmed for item A by a human answering the candidate AND silently recorded as item
- * B's retire, with nothing to say the two disagree.
- *
- * `postedUrl` already being set does **not** skip the match — deliberately, since Task 4 review
- * found the original design (skip unconditionally) self-contradictory: it also promised "a failing
- * history write leaves the translation retired and the next run retrying," which was impossible if
- * a retried translation could never re-enter this pass at all. Once a translation is matched, the
- * check is **conjunctive**: skipped only when `postedUrl` is already set **and** the matched
- * thread's `rootId` is already in `historyPostIds` — i.e. genuinely done on both halves. A
- * translation whose `postedUrl` is set but whose matched thread is still missing from
- * `historyPostIds` (its history write threw on some earlier run) is pushed to `plan.posted` again,
- * so `RetireTranslation` gets another chance at just that half; see that class's own doc comment for
- * why re-entering here can never re-apply the *status* half — `RetireTranslation` treats an existing
- * `postedUrl` as `"already-retired"` and never overwrites it, so 되돌리기 (a human's correction to
- * `postedUrl`) still sticks even though the match runs again. A match that is actually pushed to
- * `plan.posted` removes its thread from the pool for the rest of this pass, so two translations can
- * never both claim the same live thread; first in input order wins, the same convention
- * `claimedItemIds` already uses above. A match that is skipped because it is genuinely done on both
- * halves does **not** remove its thread — nothing is claiming it — which is also what keeps
- * `claimedRootIds`'s final state exactly `plan.posted`'s rootIds, the invariant
- * `translationNearMisses` (`src/cli/xReconcileReport.ts`) relies on to reconstruct this pass's
- * excluded-thread set without this function exporting it separately.
+ * translation retire; or it is already a `plan.candidate` — a human has not yet said which item that
+ * thread is, and retiring some other translation against it here would mean that same thread could
+ * be confirmed for item A by a human answering the candidate AND silently recorded as item B's
+ * retire, with nothing to say the two disagree — **or** it was already claimed in Phase A. A match
+ * that clears `TRANSLATION_MATCH_AT` claims its thread (removed from the pool for the rest of this
+ * pass — so two translations can never both claim the same live thread; first in input order wins,
+ * the same convention `claimedItemIds` already uses above) and is pushed to `plan.posted`. A match
+ * that scores above 0 but below the floor is reported in `plan.postedNearMisses` instead (see
+ * `ReconcilePlan`'s own doc comment) — not written anywhere, but real information for a human, the
+ * same argument `plan.external`'s own carried-through near-miss score already makes.
  *
  * A thread this pass retires is also pruned from `plan.external` after the loop, for the same
  * one-post-one-row reason: a hand-posted translation was never an approved rendering, so the first
@@ -249,7 +281,7 @@ export function reconcileXPublished(input: {
     itemIdOccurrences.set(r.itemId, (itemIdOccurrences.get(r.itemId) ?? 0) + 1);
   }
 
-  const plan: ReconcilePlan = { confirmed: [], candidates: [], external: [], skipped: [], posted: [] };
+  const plan: ReconcilePlan = { confirmed: [], candidates: [], external: [], skipped: [], posted: [], postedNearMisses: [] };
   const claimedItemIds = new Set<string>();
 
   for (const thread of threads) {
@@ -357,7 +389,8 @@ export function reconcileXPublished(input: {
   }
 
   // Second pass: walk translations, not threads — see the doc comment above for why this is a
-  // separate loop rather than folded into the one above.
+  // separate loop rather than folded into the one above, and for why it is now two PHASES rather
+  // than one, run in order (Phase A to completion before Phase B starts).
   //
   // Rootless threads are never a candidate here (no root, no createdAt to stamp `postedAt` from —
   // same reason the thread loop skips them). Neither is a thread this run already turned into a
@@ -371,34 +404,62 @@ export function reconcileXPublished(input: {
   ]);
   const availableThreads = threads.filter((t) => findRootTweet(t) !== undefined && !consumedRootIds.has(t.rootId));
 
-  // Threads this pass has already handed to an earlier (in input order) translation. Removed from
-  // the pool as they're claimed, so a later translation's `bestThreadFor` call can only see what's
-  // left — the same "first in input order wins" convention `claimedItemIds` uses above, applied to
-  // threads instead of itemIds.
+  // Threads this pass has claimed — by Phase A reading an already-settled translation's own record,
+  // or by Phase B scoring a fresh match. Removed from the pool as they're claimed, so no later
+  // translation in either phase can see them — the same "first in input order wins" convention
+  // `claimedItemIds` uses above, applied to threads instead of itemIds, with Phase A's claims always
+  // winning regardless of input order (see the doc comment above, Concern 2).
   const claimedRootIds = new Set<string>();
 
+  // Phase A — settled translations (`postedUrl` already set). Read, never scored — see the doc
+  // comment above and `rootIdFromPostUrl`'s own for why re-scoring these is unsafe.
   for (const translation of translations) {
+    if (translation.postedUrl === undefined) continue; // Phase B's translation
+    if (claimedItemIds.has(translation.itemId)) continue; // the rendering route already confirmed this item this run
+
+    const rootId = rootIdFromPostUrl(translation.postedUrl);
+    if (rootId === undefined) continue; // malformed — see rootIdFromPostUrl's own doc comment
+
+    // Claimed unconditionally, before checking whether this translation is genuinely done: the
+    // thread belongs to this translation either way, and Concern 2 is exactly the bug that let a
+    // DIFFERENT translation claim it when this branch used to skip without claiming.
+    claimedRootIds.add(rootId);
+
+    if (historyPostIds.has(rootId)) continue; // genuinely done on both halves — nothing to retry
+
+    plan.posted.push({
+      itemId: translation.itemId,
+      rootId,
+      score: 1, // not a fresh match this run — this translation's own already-established record
+      url: translation.postedUrl,
+      // `postedAt` is always set alongside `postedUrl` by RetireTranslation's own upsert, so this
+      // fallback should be unreachable — kept only so a data inconsistency degrades to an empty
+      // string rather than a type error.
+      postedAt: translation.postedAt ?? "",
+    });
+  }
+
+  // Phase B — everything else (`postedUrl` unset), scored against whatever Phase A left available.
+  for (const translation of translations) {
+    if (translation.postedUrl !== undefined) continue; // handled in Phase A
     if (claimedItemIds.has(translation.itemId)) continue; // the rendering route already confirmed this item this run
     if (translation.koreanText === "") continue; // similarity() can never score this above 0
 
     const pool = availableThreads.filter((t) => !claimedRootIds.has(t.rootId));
     const match = bestThreadFor(translation.koreanText, pool);
-    if (match === undefined || match.score < TRANSLATION_MATCH_AT) continue;
+    if (match === undefined) continue;
+
+    if (match.score < TRANSLATION_MATCH_AT) {
+      if (match.score > 0) {
+        // Real information, not nothing — see `ReconcilePlan`'s own doc comment on
+        // `postedNearMisses` for why this is reported rather than dropped.
+        plan.postedNearMisses.push({ itemId: translation.itemId, rootId: match.thread.rootId, score: match.score });
+      }
+      continue;
+    }
 
     const root = findRootTweet(match.thread);
     if (root === undefined) continue; // unreachable: availableThreads is pre-filtered to threads with a root
-
-    if (translation.postedUrl !== undefined && historyPostIds.has(match.thread.rootId)) {
-      // Genuinely done on both halves: retired in an earlier run, and its history row is already
-      // on the sheet. See the function doc comment above for why `postedUrl` alone does not skip —
-      // this conjunctive check is what makes a stuck history write retryable without ever letting
-      // the match re-decide which post a translation is. Not claimed: this translation isn't
-      // taking the thread anywhere (nothing is pushed to `plan.posted` for it), so leaving the
-      // thread available keeps `claimedRootIds`'s end state exactly `plan.posted`'s rootIds — the
-      // invariant `translationNearMisses` (xReconcileReport.ts) relies on to reconstruct the same
-      // excluded-thread set this pass used, without this function having to export it separately.
-      continue;
-    }
 
     claimedRootIds.add(match.thread.rootId);
     plan.posted.push({

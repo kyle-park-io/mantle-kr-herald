@@ -9,6 +9,7 @@ import {
   externalHistoryRecord,
   observedDelivery,
   postUrl,
+  rootIdFromPostUrl,
 } from "../../src/domain/publish/xReconcile";
 import type { AssembledThread, SourceTweet } from "../../src/domain/models";
 
@@ -175,6 +176,24 @@ describe("record shapes", () => {
 
   it("builds urls from the handle it is given, not a hardcoded account", () => {
     expect(postUrl("someoneElse", "99")).toBe("https://x.com/someoneElse/status/99");
+  });
+
+  describe("rootIdFromPostUrl", () => {
+    it("inverts postUrl exactly, for any handle", () => {
+      expect(rootIdFromPostUrl(postUrl("0xMantleKR", "2084128041543127356"))).toBe("2084128041543127356");
+      expect(rootIdFromPostUrl(postUrl("someoneElse", "99"))).toBe("99");
+    });
+
+    it("returns undefined, not a throw, for a url that does not end in /status/<id>", () => {
+      // Every postedUrl this codebase ever writes comes from postUrl() itself, so this should be
+      // unreachable in practice — but a caller (reconcileXPublished) must not silently treat a
+      // malformed url as a real post. Pinned here because that decision (skip, not throw, not
+      // guess) is made at the call site, not by this function throwing on its behalf.
+      expect(rootIdFromPostUrl("https://x.com/0xMantleKR")).toBeUndefined();
+      expect(rootIdFromPostUrl("not a url at all")).toBeUndefined();
+      expect(rootIdFromPostUrl("")).toBeUndefined();
+      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/")).toBeUndefined();
+    });
   });
 
   it("answers findRootTweet with undefined for a reply into someone else's thread", () => {
