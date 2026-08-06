@@ -586,13 +586,16 @@ Invariants:
 Run: `pnpm test && pnpm typecheck`
 Expected: all PASS, `tsc` clean.
 
-- [ ] **Step 5: Verify the real line by running the tick's entry point**
+- [ ] **Step 5: Verify the real entry point, without running a live tick**
 
-Run: `pnpm watch 2>&1 | head -3`
+`src/cli/watch.ts` has no test coverage — that is the whole reason `watchStartupLine` was extracted into its own file — so the wiring has to be exercised for real. But **do not run a plain `pnpm watch`.** A full tick calls the live twitterapi.io API, spends a `claude -p` subscription turn, and writes to the local database and the repo's own `output/`. None of that is needed to see one line.
 
-This hits the real `src/cli/watch.ts`, which no test covers — the whole reason `watchStartupLine` was extracted into its own file. Confirm the first line names the output root, the database, `batch 3`, and the translation floor. It will run against the local development database and the repo's own `output/`; that is expected for a hand run. Let it proceed or interrupt it after the startup line — either is fine, because the point is the line, not the tick.
+Two runs, both with no side effects. Find the exact invocations yourself by reading `src/cli/watch.ts` and `src/cli/collect.ts`, and confirm from the output that no stage did real work:
 
-Then confirm the refusal path is wired: `HERALD_WATCH_BATCH=zero pnpm watch 2>&1 | head -5` must exit non-zero naming `HERALD_WATCH_BATCH` and `"zero"`, and must print **no** startup line — the parse has to happen before it.
+1. **The refusal path.** An invalid `HERALD_WATCH_BATCH` must exit non-zero naming the variable and the offending value, and must print **no** startup line — the parse happens before it. This touches nothing.
+2. **The line itself.** Make the `collect` stage fail immediately, before it reaches the network or the database, so the real startup line prints and the tick then stops. `src/cli/collect.ts` constructs its `TwitterClient` from `loadConfig()` before it opens a database connection — an absent API key therefore throws in that stage's first statements. Verify from the output that this is what happened, and that no `collected …` line and no agent call appear.
+
+Confirm the startup line names the output root, the database, the batch size, and the translation floor. If either run has a side effect you did not expect, stop and report it rather than continuing.
 
 - [ ] **Step 6: Commit**
 
