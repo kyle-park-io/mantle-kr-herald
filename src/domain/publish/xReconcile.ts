@@ -16,7 +16,7 @@
  * Pure domain: no clock, no environment, no I/O. Every timestamp comes from the thread given to it.
  */
 
-import { bestMatch, type MatchCandidate } from "../kol/attribution";
+import { similarity, type MatchCandidate } from "../kol/attribution";
 import type { AssembledThread } from "../models";
 import type { PublishRecord } from "../sheet/models";
 import type { DeliveryEntry } from "../delivery/models";
@@ -57,15 +57,36 @@ export function threadText(thread: AssembledThread): string {
 /**
  * Decide whether a live thread is the copy we approved, a candidate worth a human's attention, or
  * unrelated to anything we produced. Bands on the best score against `candidates`; a thread with no
- * match at all (including an empty candidate list) is `external` with score 0.
+ * candidates at all is `external` with score 0.
+ *
+ * Deliberately does **not** call `bestMatch`: that helper ends by discarding any score below
+ * `MATCH_THRESHOLD` (0.3), returning `undefined` — the right call for the KOL matcher, which only
+ * ever wants to *suggest* a match and has nothing useful to say below its own floor, but wrong here.
+ * This feature's whole reason for carrying its own constants is that a near-miss score below 0.3 is
+ * still real information (see `Verdict`'s `external` case, and `ReconcileXPublished.ts`'s
+ * `ReconcilePlan.external`, which reports it to a human): a live thread that scored 0.26 against our
+ * copy is a materially different situation from one with nothing to compare against at all, and
+ * `bestMatch` collapses both to the same "no match" signal. So `classify` scores every candidate
+ * directly with `similarity` and bands the real number itself, keeping `bestMatch`'s own tie-break
+ * convention — first candidate in input order wins a tie — since `ReconcileXPublished.ts`'s
+ * `renderingByItemId` depends on that convention holding here too.
  */
 export function classify(thread: AssembledThread, candidates: MatchCandidate[]): Verdict {
-  const match = bestMatch(threadText(thread), candidates);
-  if (match === undefined) return { kind: "external", score: 0 };
+  const text = threadText(thread);
 
-  if (match.score >= CONFIRMED_AT) return { kind: "confirmed", itemId: match.itemId, score: match.score };
-  if (match.score >= CANDIDATE_AT) return { kind: "candidate", itemId: match.itemId, score: match.score };
-  return { kind: "external", score: match.score };
+  let best: { itemId: string; score: number } | undefined;
+  for (const candidate of candidates) {
+    const score = similarity(text, candidate.text);
+    if (best === undefined || score > best.score) {
+      best = { itemId: candidate.itemId, score };
+    }
+  }
+
+  if (best === undefined) return { kind: "external", score: 0 };
+
+  if (best.score >= CONFIRMED_AT) return { kind: "confirmed", itemId: best.itemId, score: best.score };
+  if (best.score >= CANDIDATE_AT) return { kind: "candidate", itemId: best.itemId, score: best.score };
+  return { kind: "external", score: best.score };
 }
 
 /** The public URL of a post on `handle`'s account. */

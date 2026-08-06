@@ -88,6 +88,36 @@ describe("classify", () => {
     expect(v.kind).toBe("confirmed");
     if (v.kind === "confirmed") expect(v.itemId).toBe("x:right");
   });
+
+  it("reports a real score below MATCH_THRESHOLD instead of collapsing it to 0", () => {
+    // classify must NOT delegate to bestMatch: bestMatch throws away any score under
+    // MATCH_THRESHOLD (0.3) and returns undefined, which is right for the KOL matcher's own
+    // "suggestion, never authoritative" use but wrong here — a live thread that scored something
+    // real, just low, is different from a thread with no approved copy to compare against at all,
+    // and a human reading `x:reconcile`'s near-miss list needs that difference. Measured shape: a
+    // real @0xMantleKR thread once scored 0.2598 against a planted approved rendering and was
+    // reported as scored-0 before this fix — indistinguishable from "nothing to compare against".
+    // This fixture — a 25-character prefix of APPROVED — reproduces that shape: 0.2903225806451613,
+    // below MATCH_THRESHOLD but real and non-zero.
+    const shortPrefix = APPROVED.slice(0, 25);
+    const v = classify(thread("8", [shortPrefix]), [{ itemId: "x:1", text: APPROVED }]);
+    expect(v.kind).toBe("external");
+    expect(v.score).toBeGreaterThan(0);
+    expect(v.score).toBeLessThan(0.3);
+  });
+
+  it("resolves an exact score tie to the first candidate in input order", () => {
+    // Mirrors bestMatch's own tie-break convention (attribution.ts: only `score > best.score`
+    // replaces the leader), which ReconcileXPublished.ts's renderingByItemId relies on classify
+    // preserving. Both candidates carry the identical APPROVED text, so both score identically —
+    // the only thing that can decide the winner is input order.
+    const v = classify(thread("9", [APPROVED]), [
+      { itemId: "x:first", text: APPROVED },
+      { itemId: "x:second", text: APPROVED },
+    ]);
+    expect(v.kind).toBe("confirmed");
+    if (v.kind === "confirmed") expect(v.itemId).toBe("x:first");
+  });
 });
 
 describe("threadText", () => {
