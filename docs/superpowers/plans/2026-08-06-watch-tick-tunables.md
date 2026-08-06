@@ -13,7 +13,12 @@
 Copied from `docs/superpowers/specs/2026-08-06-watch-tick-tunables-design.md`:
 
 - **`src/app/CollectAuthoredContent.ts` is not modified.** Every collect caller shares its watermark logic and its current behaviour is correct — holding the watermark back on a truncated run re-fetches the same 50 pages forever. The tick learns to notice the consequence; the use case does not change.
-- **`MAX_PAGES` stays at 50** in `src/adapters/twitterapi/TwitterApiSourceGateway.ts`.
+- **`MAX_PAGES` stays at 50** in `src/adapters/twitterapi/TwitterApiSourceGateway.ts`. **Amended
+  during Task 3** (see its Step 4): the *default* stayed 50, and no scheduled tick ever moves it, but
+  a per-run override (`HERALD_COLLECT_MAX_PAGES`) shipped because the remedy this plan wrote for a
+  coverage GAP does not reach the hole without one. The constant is now `DEFAULT_MAX_PAGES`, exported,
+  and the cap reaches the gateway as a constructor option that only `pnpm collect` and
+  `pnpm collect:reference` set; `pnpm watch` refuses to start while the variable is set at all.
 - **The `(limit reached)` wording in `src/cli/collect.ts:41` and `src/cli/collect-reference.ts:34` stays.** Making it name the real cause means recording that cause in `CollectionRun`, which is the use-case change ruled out above.
 - **No `-x H` lookback is added anywhere.** `--since` puts collect into adhoc mode, which skips the watermark advance.
 - **The interval value itself does not change.** `OnCalendar=*-*-* 0/2:17:00` stays; this work only makes changing it safe.
@@ -346,7 +351,9 @@ Invariants:
 - `COLLECT_LINE` keeps its `^`-anchor and its `m` flag (see its own comment for why both matter) and gains a capture of the rest of the line after `— `. The existing thread-count capture must not move semantically; `parseCollect` returns `{ threadCount, gap }` where `gap` is whether that tail contains the `, GAP ` marker `src/cli/collect.ts:41` writes.
 - Unrecognised stdout keeps the existing contract exactly: `undefined` from the parser, and the caller fails with the `unrecognised collect output` detail. The test at `tests/app/watchTick.test.ts:258` pins this.
 - The gap check runs **immediately after the parse and before the `threadCount === 0` early return**. A gap implies a non-zero count today (`computeCoverage` only fills `gap` when at least one tweet was kept), so the order is unobservable now — put it first anyway, so that if that invariant ever changes the tick fails loudly rather than returning success.
-- The failure uses stage `"collect"` and a detail that contains: the word `GAP`, the gap's own text as collect printed it (so the boundary timestamps are in the alert), the reason (the tick never passes `--limit`, so in a scheduler journal `(limit reached)` can only be the `MAX_PAGES` page cap), and the remedy — a `pnpm collect --since <from>` backfill, which is adhoc and therefore leaves the watermark alone.
+- The failure uses stage `"collect"` and a detail that contains: the word `GAP`, the gap's own text as collect printed it (so the boundary timestamps are in the alert), the reason (the tick never passes `--limit`, so in a scheduler journal `(limit reached)` can only be the `MAX_PAGES` page cap), and the remedy.
+
+  > **Amended during implementation.** This step originally specified the remedy as "a `pnpm collect --since <from>` backfill, which is adhoc and therefore leaves the watermark alone". Adhoc mode does leave the watermark alone, and that is the only part that was right. `gap.from` is the floor the failing run already used and the collector pages down from the newest tweet, so that command truncates identically and recovers nothing — and run from the checkout it also writes to the repo's `.env` database rather than the scheduler's production one. What shipped instead: the detail carries the loss and a pointer to `docs/ko/team-runbook.md` §4's GAP section, which is the only place the whole procedure fits. See Step 4 below and the spec's own correction notes.
 - Also state in that detail, or in a comment beside it, that this fires once: the watermark has already advanced past the hole, so the next tick collects a normal window and goes green. That is correct for a one-time event, and a reader of the alert needs to know a green tick afterwards does *not* mean the hole was filled.
 - Update the `WatchTick.ts:14-24` header comment. It currently states the gap notice is free text nobody parses. That sentence is now false.
 
@@ -360,7 +367,14 @@ It predates the watch scheduler and is now wrong in the way the spec spends a wh
 
 Then add a new subsection after that section, before `### 두 발송을 동시에 돌리면...` at line 421:
 
-`### 수집에 구멍이 생겼을 때 (GAP 알림)` — **증상**: a `herald-watch` failure alert whose detail contains `GAP`. **원인**: one collect reached the 50-page cap (`MAX_PAGES`), which only happens after a long outage; the watermark advanced past the un-fetched older tail anyway, so it will never be collected on its own. **조치**: run `pnpm collect Mantle_Official --since <the GAP's from timestamp>` by hand — adhoc, so it does not disturb the watermark — then confirm the recovered range in `output/x/runs.json`. **참고**: the next scheduled tick goes green regardless, because the watermark already moved; a green tick is not evidence the hole was filled.
+`### 수집에 구멍이 생겼을 때 (GAP 알림)` — **증상**: a `herald-watch` failure alert whose detail contains `GAP`. **원인**: one collect reached the 50-page cap (`MAX_PAGES`), which only happens after a long outage; the watermark advanced past the un-fetched older tail anyway, so it will never be collected on its own. **조치**: as amended below. **참고**: the next scheduled tick goes green regardless, because the watermark already moved; a green tick is not evidence the hole was filled.
+
+> **Amended twice during implementation, and the 조치 as first written was wrong both times.** It read: "run `pnpm collect Mantle_Official --since <the GAP's from timestamp>` by hand — adhoc, so it does not disturb the watermark — then confirm the recovered range in `output/x/runs.json`."
+>
+> 1. **It could not reach the hole.** `gap.from` is the exact floor the failing run already used (`src/domain/coverage.ts:34`) and `fetchAuthoredTweets` always starts at the newest tweet and pages down, so the command re-requests a superset of the window that just truncated and hits the same 50-page cap at the same place. Fixed by adding `HERALD_COLLECT_MAX_PAGES` for that one run.
+> 2. **It wrote to the wrong database and then confirmed itself from the wrong ledger.** `pnpm collect` is `tsx --env-file-if-exists=.env`, so `DATABASE_URL` comes from the repo's `.env` (local Docker) while the hole is in the production Neon the scheduler reaches through `EnvironmentFile=%h/.herald/prod.env`; `paths.xRuns` honours `HERALD_OUTPUT_DIR` the same way, so `output/x/runs.json` was the repo's ledger, which the hand run had just appended a clean `gap: null` row to. Recovered threads landed in dev, production kept the hole, and the operator got a confirming artifact — the same "looks like recovery, recovers nothing" defect class this task exists to close. Adhoc mode did protect the watermark, so this was loss-not-recovered rather than new corruption.
+>
+> The shipped 조치 sources `~/.herald/prod.env`, sets `HERALD_OUTPUT_DIR=$HOME/.herald/output` and the raised cap for that one command, says plainly why a bare `pnpm collect` looks successful while production keeps the hole, verifies from `~/.herald/output/x/runs.json`, and cross-references §6 — which already documented both halves of the divergence and the 39-thread incident it caused.
 
 - [ ] **Step 5: Run the full suite and typecheck**
 

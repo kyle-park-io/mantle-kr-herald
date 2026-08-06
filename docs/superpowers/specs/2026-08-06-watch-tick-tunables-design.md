@@ -96,9 +96,19 @@ lossless exactly as long as one collect finishes inside 50 pages.
 
 **Advancing the watermark is nonetheless correct.** Holding it back on a truncated run deadlocks:
 the next run re-fetches the same newest 50 pages, truncates again, and never progresses. One scalar
-cannot express "complete up to here, plus a hole over there". So the honest design is to advance and
-*say so* — and the backfill tool already exists, because an adhoc `collect --since <hole>` is
-precisely a run that does not touch the watermark.
+cannot express "complete up to here, plus a hole over there". So the honest design is to advance,
+*say so*, and hand the hole to a run that does not touch the watermark — which an adhoc
+`collect --since <hole>` is.
+
+> **Corrected while this was implemented (2026-08-06).** This paragraph originally ended "the
+> backfill tool already exists". It did not, and that was the most consequential error in this
+> document. `gap.from` *is* the floor the failing run was already given (`src/domain/coverage.ts:34`)
+> and `fetchAuthoredTweets` always starts at the newest tweet and pages down, so
+> `collect --since <gap.from>` re-requests a superset of the window that just truncated, exhausts the
+> same 50-page cap at the same place, and records the same GAP again. Adhoc mode protects the
+> watermark; it never reaches the hole. Reaching it needs the cap raised for that one run — see
+> "The page cap becomes reachable, for one run" below. A second error, in the remedy's *environment*
+> rather than its arguments, is recorded at the remedy itself.
 
 **Today nothing says so.** `computeCoverage` records the hole (`src/domain/coverage.ts`: `gap` is set
 whenever `truncated` and at least one tweet was kept — and hitting a 50-page cap guarantees the
@@ -160,14 +170,60 @@ visible. Unrecognised stdout keeps the same contract it has for every other stag
 When `gap` is true the tick fails immediately, before `translate:prepare`. The collected threads are
 already committed to Postgres by then, so nothing is lost by stopping — the next tick's `prepare`
 picks them up — and the alert reaches a human before more translation is layered on an incomplete
-corpus. The failure detail names the cause and the remedy, because it is what lands in the Telegram
-alert: the tick never passes `--limit` to collect, so `(limit reached)` in a scheduler journal can
-only mean the `MAX_PAGES` cap, and the fix is an adhoc `pnpm collect --since <from>` that backfills
-without touching the watermark.
+corpus. The failure detail carries what lands in the Telegram alert: the loss (the word `GAP` and
+both boundary timestamps, straight out of collect's own line), a pointer to the backfill procedure,
+and the fires-once warning below. It is measured against `watchOutcome`'s real 300-character budget
+(`condense`, which truncates from the tail), not estimated.
+
+It deliberately does **not** inline a command, and that is the second correction this document
+needed. A working backfill takes two changes at once and either alone recovers nothing:
+
+1. **The cap** — raised for that one run, per the corrected paragraph above.
+2. **The environment** — `pnpm collect` is `tsx --env-file-if-exists=.env`, so a hand run from the
+   checkout reads `DATABASE_URL` from the repo's `.env` (local Docker) and resolves `paths.xRuns`
+   under the repo's own `output/`. The hole is in the scheduler's production Neon
+   (`EnvironmentFile=%h/.herald/prod.env`) and `%h/.herald/output`. So the obvious hand run recovers
+   into the development database *and* appends a clean `gap: null` row to the ledger the operator
+   would then read to confirm the recovery — a non-recovery with a confirming artifact, which is
+   precisely the failure class this whole section exists to end, one layer further out.
+
+That setup does not fit in 300 characters, and half a remedy is worse than a pointer to all of it, so
+the alert names `docs/ko/team-runbook.md` §4's GAP section — which carries the environment, the
+command, how to size the raised cap, and the instruction to verify from
+`~/.herald/output/x/runs.json` rather than assuming success.
 
 This fires once, not forever. The watermark has already advanced past the hole, so the following
 tick collects a normal window and goes green — which is the right behaviour for an alert about a
-one-time event.
+one-time event, and the reason the alert has to say so: a green tick after a GAP alert is not
+evidence the loss was recovered.
+
+### The page cap becomes reachable, for one run
+
+`HERALD_COLLECT_MAX_PAGES` — **not in the original scope, and added because the remedy above does
+not work without it.** `DEFAULT_MAX_PAGES` stays 50; this overrides it for a single hand-run
+backfill.
+
+Three things about where it is read, because the first attempt got the seam wrong:
+
+- **The CLI reads it, not the gateway.** `parseCollectMaxPages` (`src/cli/collectMaxPages.ts`, the
+  same shape as `watchBatch.ts` and for the same reason) validates it and hands the number to
+  `TwitterApiSourceGateway` as a constructor option. A constructor reading `process.env` itself
+  handed the override to all six entry points that build that gateway, when the variable is for two
+  of them — and made `tm-measure.ts`'s volume estimate silently describe a cap it wasn't using.
+- **Two commands honour it**: `pnpm collect` and `pnpm collect:reference`. Both run
+  `CollectAuthoredContent`, so both can exhaust the cap and advance a watermark past an un-fetched
+  tail; `tm:measure`, `metrics:record`, `impressions:record` and `reconcile` always get the default.
+- **`pnpm watch` refuses to start while it is set.** A tick spawns each stage as `pnpm <script>`, so
+  a child inherits the shell environment *and* the repo's `.env`; a value left behind after a
+  backfill would truncate every scheduled collect and lose the tail every two hours. "The scheduler's
+  unit never sets this" is enforced rather than asserted. A blank value is not an override —
+  `.env.example` ships the line blank and installs copy that file.
+
+Validated by `parsePositiveIntEnv` (`src/shared/env/positiveInt.ts`), shared with
+`HERALD_WATCH_BATCH`: blank means unset, otherwise a bare positive **safe** integer or a named throw.
+Safe, not merely positive, because a 26-digit paste passes a digit pattern and becomes `1e26` — a
+cap of `1e26` is not a raised backstop but the absence of one, which is exactly the unbounded crawl
+the "Out of scope" section below rules out.
 
 ### The tick's collect call is pinned by a test
 
@@ -196,8 +252,16 @@ rename.
 - **`CollectAuthoredContent`'s watermark logic is untouched.** Every collect caller shares it,
   including hand runs, and its current behaviour is right (see the deadlock argument above). The
   tick learns to notice the consequence; the use case does not change.
-- **`MAX_PAGES` stays at 50.** Raising it trades one bounded failure for an unbounded crawl. The
-  cliff is now alarmed, which is what makes it survivable.
+- **`MAX_PAGES`'s default stays at 50** — and this bullet is where the constraint had to be
+  re-stated rather than kept. It originally read "**`MAX_PAGES` stays at 50.** Raising it trades one
+  bounded failure for an unbounded crawl." The default did stay 50 and no scheduled tick ever moves
+  it, so the constraint was honoured; what shipped anyway is a per-run override
+  (`HERALD_COLLECT_MAX_PAGES`, above), because without one the alarm this work adds points at a
+  remedy that cannot reach the hole. The sentence's own reasoning is what governs the override's
+  shape: it is opt-in per command, refused inside a tick, and bounded by `Number.isSafeInteger` —
+  the first version had no upper bound at all, which is the unbounded crawl this line rules out, and
+  it was caught in review rather than by a test. The cliff being alarmed is still what makes it
+  survivable; the override is what makes the alarm actionable.
 - **The `(limit reached)` wording stays.** It names one of the two causes that set `truncated`, and
   `collect.ts` and `collect-reference.ts` both carry the string. Making it precise means recording
   the cause in `CollectionRun`, which is the use-case change ruled out above. The tick's own failure
@@ -206,18 +270,27 @@ rename.
 - **The interval value itself does not change.** Going hourly stays a human edit plus
   `systemctl --user daemon-reload`; this work only makes that edit safe to make.
 
-One thing not in the original scope is in it now: `docs/ko/team-runbook.md`'s stale recommendation to
-schedule `pnpm collect --since 2h` is corrected, and a GAP-alert procedure is added beside it. A
-runbook that recommends the loss path this spec exists to close cannot be left standing.
+Documentation not in the original scope is in it now, all of it for the same reason — a document that
+recommends the loss path this spec exists to close cannot be left standing:
+
+- `docs/ko/team-runbook.md`'s stale recommendation to schedule `pnpm collect --since 2h` is
+  corrected, and the GAP-alert procedure is added beside it.
+- `docs/ko/artifacts.md` carried the same recommendation, marked `(권장)`. Corrected too.
+- `docs/ko/team-runbook.md` §6 gains `HERALD_WATCH_BATCH`. The variable was made configurable so
+  throughput could be tuned without a deploy, and every document that described it was English and
+  developer-facing; the person who tunes it reads §6, where the unit's other two `Environment=` lines
+  already are.
 
 ## Testing
 
 | Test | Asserts |
 | --- | --- |
-| `tests/cli/watchBatch.test.ts` | default 3; `""` → default; rejects `0`, negatives, non-integers, non-numerics; `.env.example` documents the variable |
-| `tests/app/watchTick.test.ts` | batch reaches both `translate:prepare` and `translate:align`; collect is called with `[]`; a `GAP` line fails the tick before `prepare`; a gapless line still runs the tick |
-| `tests/deploy/watchTiming.test.ts` | `TimeoutStartSec ≤ OnCalendar` period / 2; an unparseable `OnCalendar=` shape fails |
+| `tests/cli/watchBatch.test.ts` | default 3; `""` → default; rejects `0`, negatives, non-integers, non-numerics, and digit runs past `Number.MAX_SAFE_INTEGER`; a unit `Environment=` line (or its commented placeholder) is present and parseable; `.env.example` and the Korean runbook both document the variable |
+| `tests/cli/collectMaxPages.test.ts` | defaults to the gateway's own `DEFAULT_MAX_PAGES`; same rejections; `pnpm watch`'s refusal fires on any real value and *not* on a blank one; the unit sets no `Environment=HERALD_COLLECT_MAX_PAGES=` line |
+| `tests/adapters/twitterApiSourceGateway.test.ts` | the cap is the injected option on both `fetchAuthoredTweets` and `fetchThread`, and `HERALD_COLLECT_MAX_PAGES` in the environment changes nothing here |
+| `tests/app/watchTick.test.ts` | batch reaches both `translate:prepare` and `translate:align`; collect is called with `[]`; a `GAP` line fails the tick before `prepare`; a gapless line still runs the tick; the alert carries the loss, the runbook pointer and the fires-once clause inside `watchOutcome`'s 300-character budget |
+| `tests/deploy/watchTiming.test.ts` | `TimeoutStartSec ≤ OnCalendar` period / 2; an unparseable `OnCalendar=` shape fails; exactly one `OnCalendar=` and no `OnUnitActiveSec=` on either unit |
 | `tests/cli/watchStartup.test.ts` | batch size and translation floor appear; unset floor is stated, not omitted |
 
-`tests/deploy/watchCutoff.test.ts` is left alone — its subject is the two cutoffs, and the batch
+`tests/deploy/watchCutoff.test.ts` is left alone — its subject is the two cutoffs, and each
 variable's documentation guard belongs beside the parser it documents.
