@@ -257,23 +257,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   developer's local `.env`. `parseWatchBatch` validates it in `src/cli/watch.ts` before the
   startup line prints and before any stage runs, so a typo'd value refuses the tick at the entry
   point — naming the variable and the exact value rejected — instead of reaching
-  `translate:prepare --limit`/`translate:align --limit` as garbage (`--limit 0` from a blank
-  value, a fraction, a sign, or a `Number()`-coercible string like `"0x10"`). Raising it does
-  **not** require raising `herald-watch.service`'s `TimeoutStartSec=`: `ClaudeCodeAgent` spawns
-  `claude -p` once per worksheet regardless of how many items that worksheet holds, so one tick
-  still makes at most two agent calls (translation, then alignment) at any batch size, and the
-  30-minute timeout's arithmetic is unchanged.
+  `translate:prepare --limit`/`translate:align --limit` as garbage (a fraction, a sign, a
+  `Number()`-coercible string like `"0x10"`, or a digit run too long to survive `Number()`). A
+  *blank* value is not one of the rejections: an `HERALD_WATCH_BATCH=` line with nothing after it
+  reaches Node as `""` and is read as unset, yielding 3 — which is the point, since `Number("")` is
+  0 and `--limit 0` is what a naive read would have handed every tick. The variable is documented
+  for the operator in [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §6, not only in
+  `.env.example`, and `herald-watch.service` carries a commented `Environment=` placeholder beside
+  the two lines it does set. Raising it does **not** require raising `herald-watch.service`'s
+  `TimeoutStartSec=`: `ClaudeCodeAgent` spawns `claude -p` once per worksheet regardless of how many
+  items that worksheet holds, so one tick still makes at most two agent calls (translation, then
+  alignment) at any batch size, and the 30-minute timeout's arithmetic is unchanged. What *does*
+  bound a sane batch is the timeout inside each of those calls — `ClaudeCodeAgent`'s
+  `DEFAULT_TIMEOUT_MS` caps one `claude -p` at 10 minutes, and a 30-item worksheet spends longer in
+  that single call than a 3-item one — so the unit comment, `.env.example` and the runbook all now
+  name that ceiling and say to raise the batch in steps rather than in one jump.
 - **`HERALD_COLLECT_MAX_PAGES` — a one-run override for the collector's page cap, default
   unchanged at 50 (`DEFAULT_MAX_PAGES`, `src/adapters/twitterapi/TwitterApiSourceGateway.ts`).**
   Exists for exactly one situation: recovering from a coverage GAP (see `Fixed` below) by hand,
-  with the cap raised for that one backfill run — the scheduler's own unit never sets this, so
-  every scheduled tick still runs at 50. It is read once, in the gateway's constructor, so a value
-  exported into a shell affects every command that builds a `TwitterApiSourceGateway` for the rest
-  of that shell session, not only `pnpm collect`; it is meant to be set for one hand-run backfill
-  and unset again immediately afterward, never left exported. Validated by the same
-  `parsePositiveIntEnv` rule `HERALD_WATCH_BATCH` uses (blank → default, otherwise a bare positive
-  integer or a named, actionable throw), pulled out to `src/shared/env/positiveInt.ts` once a
-  second `HERALD_*` variable needed the identical rule rather than a second reimplementation of it.
+  with the cap raised for that one backfill run. Read at the CLI, by `parseCollectMaxPages`
+  (`src/cli/collectMaxPages.ts`), and passed to the gateway as a constructor option — so only
+  `pnpm collect` and `pnpm collect:reference` honour it, and the four other commands that build the
+  same gateway (`tm:measure`, `metrics:record`, `impressions:record`, `reconcile`) always get the
+  default even with the variable exported. `collect:reference` is included because it runs the same
+  `CollectAuthoredContent`, so exhausting the cap there also advances a watermark past an un-fetched
+  tail, and because `pnpm tm:measure` exists to say whether that account's history fits inside the
+  cap — an estimate with no dial to act on if the cap were unreachable from there. **`pnpm watch`
+  refuses to start while the variable is set** (`refuseCollectMaxPagesOverride`, called from
+  `src/cli/watch.ts` in the same position as `parseWatchBatch`): a tick spawns each stage as
+  `pnpm <script>`, so a stray value left in the repo's `.env` after a backfill would truncate every
+  scheduled collect, GAP-fail every tick and lose the older tail each time — and "the scheduler's
+  unit never sets this" was previously a claim in three documents and a check in none. A blank
+  value is still fine, because `.env.example` ships the line blank and installs copy that file.
+  Validated by the same `parsePositiveIntEnv` rule `HERALD_WATCH_BATCH` uses (blank → default,
+  otherwise a bare positive *safe* integer or a named, actionable throw), pulled out to
+  `src/shared/env/positiveInt.ts` once a second `HERALD_*` variable needed the identical rule
+  rather than a second reimplementation of it.
 - **`tests/deploy/watchTiming.test.ts` checks `herald-watch.timer`'s fire period against
   `herald-watch.service`'s `TimeoutStartSec=` instead of leaving that constraint as a comment.**
   systemd skips an `OnCalendar=` fire that comes due while the unit is still active, so a timeout
@@ -281,9 +300,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has silently stopped — the exact failure this whole feature exists to prevent. The test derives
   the period from `OnCalendar=`'s two shapes this timer plausibly uses (`*-*-* 0/N:17:00` and
   `*-*-* *:17:00`) and refuses to guess a period for any other shape rather than silently skipping
-  the bound. `herald-watch.timer`'s own header calls out "hourly is a one-line change" — exactly
-  the edit someone would make without re-deriving the timeout arithmetic first, and now the one
-  that trips this check if the two files drift apart.
+  the bound. It also asserts the timer states its schedule exactly once and only as an
+  `OnCalendar=`: systemd accumulates multiple `OnCalendar=` lines and `OnUnitActiveSec=` sets a
+  period a third way, either of which would shorten the real fire period while a check that reads
+  only the first line kept passing. `herald-watch.timer`'s own header calls out "hourly is a
+  one-line change" — exactly the edit someone would make without re-deriving the timeout arithmetic
+  first, and now the one that trips this check if the two files drift apart.
 - **The watch scheduler's startup line now names a tick's inputs, not only its output root and
   database.** `watchStartupLine` (`src/cli/watchStartup.ts`) appends the batch size
   (`HERALD_WATCH_BATCH`) and the translation floor (`HERALD_TRANSLATE_SINCE`) — the two values an
@@ -382,20 +404,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alert fired, and the only trace was a line in a journal nobody reads on a healthy day. `WatchTick`
   now parses that tail, and a GAP fails the tick before any downstream stage runs — `translate:*`
   never sees the hole — so the `OnFailure=` hook's Telegram alert fires, carrying the GAP's own
-  boundary timestamps and a remedy that actually reaches the hole. That remedy is
-  `HERALD_COLLECT_MAX_PAGES=<n> pnpm collect --since <earlier boundary>`, not a bare `--since`
-  re-run: `gap.from` is the exact floor the failing run already used, and the collector always
-  pages down from the newest tweet, so a bare re-run just re-fetches the same newest tweets and
-  hits the same 50-page cap at the same place, repeating the same GAP while the tick alerts only
-  once. Pairing the override with `--since` is the only combination that actually raises the cap
-  for that one run. The failure detail says explicitly to confirm recovery via `truncated`/`gap` in
-  `output/x/runs.json` rather than assuming success, and that **the following tick goes green
-  regardless of whether the hole was filled**, because the watermark had already moved before the
-  alert ever fired — a green tick after a GAP alert is not evidence the loss was recovered. The
-  full backfill procedure is in [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md)'s new GAP
-  section. The failure detail's wording was measured against `watchOutcome`'s real 300-character
-  Telegram budget (`condense`, which truncates from the tail) rather than guessed, specifically so
-  the "a green tick is not proof" clause is never the part a truncation cuts.
+  boundary timestamps, a pointer to the backfill procedure, and the warning that **the following
+  tick goes green regardless of whether the hole was filled**, because the watermark had already
+  moved before the alert ever fired — a green tick after a GAP alert is not evidence the loss was
+  recovered. The alert deliberately does **not** inline a command, because a working backfill takes
+  two corrections at once and either alone recovers nothing: the page cap has to be raised for that
+  one run (`gap.from` is the exact floor the failing run already used, and the collector always
+  pages down from the newest tweet, so a bare `--since` re-run re-fetches the same newest tweets and
+  truncates at the same place), *and* the run has to be pointed at the scheduler's own database and
+  output root. `pnpm collect` is `tsx --env-file-if-exists=.env`, so a hand run from the checkout
+  writes to the repo's local Docker database and appends a clean `gap: null` row to the repo's own
+  `output/x/runs.json` — a recovery that never touched production, with a confirming artifact to
+  match. The full procedure, including sourcing `~/.herald/prod.env` and setting `HERALD_OUTPUT_DIR`
+  for that one command and verifying from `~/.herald/output/x/runs.json`, is in
+  [`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §4's GAP section. The failure detail's wording
+  was measured against `watchOutcome`'s real 300-character Telegram budget (`condense`, which
+  truncates from the tail) rather than guessed — 261 of 300 at the GAP text's longest — specifically
+  so the "a green tick is not proof" clause is never the part a truncation cuts.
 - **`docs/ko/team-runbook.md` and `docs/ko/artifacts.md` no longer recommend scheduling `pnpm
   collect --since 2h` hourly** (`artifacts.md` had marked it "권장"). Both predate the watch
   scheduler and would have actively broken it if followed: `--since` puts a collect run into adhoc
