@@ -196,8 +196,31 @@ Write it yourself; this project's plans state invariants rather than pasting cod
 - `CONFIRMED_AT = 0.95` and `CANDIDATE_AT = 0.5`, both exported, each with a comment giving its justification: the only real measurement is the 0.350 false positive, identical text scores 1.0 by construction, and there is no measured true positive yet because no approved rendering has ever been posted to this account — so being wrong high (a real match demoted to a candidate, costing one confirmation) is the safe direction and being wrong low writes an irreversible row.
 - `threadText` joins each tweet's `text` in the order `tweets` already holds (the type documents them as chronological) with `"\n\n"`. Do not re-sort.
 - `classify` calls `bestMatch(threadText(thread), candidates)`. No match at all → `{ kind: "external", score: 0 }`. Otherwise band on the score: `>= CONFIRMED_AT` confirmed, `>= CANDIDATE_AT` candidate, else external — and an external verdict still carries the score it scored, so the CLI can report near-misses.
+
+  > **Superseded during execution (2026-08-06, commit `839aa2f`).** `classify` does **not** call
+  > `bestMatch`. That helper ends by discarding any score below `MATCH_THRESHOLD` (0.3) and returning
+  > `undefined`, which truncates exactly the near-miss reporting the second half of this bullet asks
+  > for: a thread that scored 0.26 against our copy collapsed to the same `score: 0` as a thread with
+  > nothing to compare against at all. `classify` scores every candidate with `similarity` directly and
+  > bands the real number, keeping `bestMatch`'s tie-break convention (first candidate in input order).
+  > A reader following this bullet alone would reimplement that bug.
 - `postUrl(handle, rootId)` → `https://x.com/${handle}/status/${rootId}`.
 - `externalHistoryRecord` → `PublishRecord` with `itemId: kr:<rootId>`, `type: "x"`, `channel: "x"`, `outletId: "x-post"`, `postId: rootId`, `url: postUrl(...)`, `status: "posted"`, `publishedAt` = the **root** tweet's `createdAt` (the root is `tweets[0]` for an assembled thread; find it by `id === rootId` rather than assuming the index, and throw if it is absent — a thread whose root is missing is a bug worth failing on, not guessing past).
+
+  > **Superseded during execution (2026-08-06, review).** "A thread whose root is missing is a bug worth
+  > failing on" is **wrong about this codebase**, and it was this plan's most expensive sentence: a
+  > missing root is a documented, common shape. `assembleThreads` keys on `conversationId || id` and
+  > `conversationId` is the *root's* id, so every reply the account made into someone else's thread
+  > assembles rootless — `CollectAuthoredContent.gapFillMissingRoots` exists for exactly that, and 85 of
+  > the 196 @Mantle_Official threads in the committed corpus have it. Following this invariant literally
+  > shipped a Critical: one reply to a partner account threw out of plan building, `registerErrorHandler`
+  > exited 1, and the timer reconciled nothing every six hours until the reply aged past `--since`.
+  >
+  > **Right handling:** keep the domain-level throw here (it is correct for a hand-built thread — there
+  > is no honest `publishedAt`/`postId` at this level, and `tweets[0]` would put another account's tweet
+  > id in `postId` behind a url `impressions:record` then measures). Export the *question* —
+  > `findRootTweet` — and have `reconcileXPublished` ask it per thread and route a rootless thread to
+  > `skipped` with a reason naming the cause. Per-thread, never fatal.
 - `observedDelivery` → `DeliveryEntry` with `status: "sent"`, `by: "manual"`, the same `postId`/`url`/`at` as above, `outletId: "x-post"`, and the `itemId`/`type` it is given.
 - No `Date.now()`, no `process.env`, no imports from `src/adapters` or `src/cli`.
 
@@ -479,6 +502,19 @@ Expected: FAIL — module not found.
 - Returns `"already-recorded"` (not a throw) when `deliveryKey(entry)` is already in `loadKeys()`, so the caller can walk a whole plan.
 - Writes through `ledger.add`. Nothing else.
 
+> **Superseded during execution (2026-08-06, review).** `loadKeys()` is the wrong question to gate on.
+> Every ledger filters it through `deliveredToRoom`, so a `dropped` row for the same key is *absent*
+> from it — and `ledger.add` is an upsert — which meant a `dropped` row was silently rewritten to
+> `sent` and reported as `✓ recorded`, against a doc comment claiming nothing is ever overwritten. Read
+> `loadAll()` and apply `deliveredToRoom` here instead, so the class decides the distinction rather
+> than inheriting it: an existing `sent`/`delivered` row → `"already-recorded"`; a `dropped` row →
+> overwrite (a live post is newer, stronger evidence than a deleted draft) but return a **third**
+> outcome, `"replaced-dropped"`, and have the CLI print it as one.
+>
+> Task 2's `reconcileXPublished` input also gained `historyPostIds` for the same class of reason: the
+> `history` tab's real identity for an X row is its `postId` (column D), not the `itemId` in column A,
+> so `historyIds` alone let a post already recorded under a different itemId gain a second row.
+
 - [ ] **Step 4: Write the CLI**
 
 Create `src/cli/x-reconcile.ts`. Read `src/cli/collect-reference.ts` and `src/cli/impressions-record.ts` first — between them they show every piece of wiring this needs. Invariants:
@@ -527,6 +563,18 @@ git commit -m "feat(reconcile): record an observation, and a CLI that previews b
 - [ ] **Step 1: Write the units**
 
 Read `deploy/herald-watch.service` and `deploy/herald-watch.timer` first and follow them closely: same `WorkingDirectory`, the same absolute-path `Environment=PATH=` (those paths were found with `command -v` on this one machine), the same `EnvironmentFile=%h/.herald/prod.env`, the same `OnFailure=herald-notify-failure.service`, `Type=oneshot`.
+
+> **Superseded during execution (2026-08-06, commit `529c045`).** Reusing "the same
+> `OnFailure=herald-notify-failure.service`" does not work: that hook hardcoded `herald-watch.service`
+> inside `herald-notify-failure.sh`, so whichever unit did *not* get the hardcoded name reported the
+> wrong unit's name and tailed the wrong unit's journal on failure — a failure notice that points at a
+> healthy unit. The hook became a template, `herald-notify-failure@.service` taking the failing unit's
+> name via `%i`, and **both** units now set `OnFailure=herald-notify-failure@%n.service` (the idiom
+> `man systemd.unit`'s own `OnFailure=` example uses). Installing it is therefore not additive: the old
+> non-templated `herald-notify-failure.service` must be removed from `~/.config/systemd/user/` and
+> `herald-watch.service` re-copied, and the failure drill re-run starting with `herald-watch` — see the
+> runbook's "X 발행 재확인" section. A reader following this bullet alone would reimplement the
+> wrong-unit-named bug.
 
 Differences, each of which needs a comment saying why:
 - `ExecStart=` runs `pnpm x:reconcile --yes`. The timer is the only caller that passes `--yes`; a human previews.

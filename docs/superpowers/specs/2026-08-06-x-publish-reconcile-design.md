@@ -123,6 +123,20 @@ root's id and `createdAt`. This matches what a person means by "a post", and X's
 concentrate on the root. Per-reply performance is not recorded; if that is ever wanted it is a
 different feature, not a wider row.
 
+**Corrected 2026-08-06 (review): the root may not be ours, and often is not.** The sentence above
+described the happy shape only. `assembleThreads` keys a thread on `conversationId || id`, and
+`conversationId` is the *root's* id — so **any reply the account made into someone else's thread
+assembles into a thread whose root belongs to another account**, one `fetchAuthoredTweets(handle)`
+never returns. This is common, not exceptional: `CollectAuthoredContent.gapFillMissingRoots` exists for
+it, and 85 of the 196 @Mantle_Official threads in the committed corpus have it, all one-tweet replies.
+
+Such a thread has no root of ours to key a row on, so it is **skipped with a reason** — one entry in
+`skipped`, per thread, never fatal. It must not fall back to `tweets[0]`: that would put another
+account's tweet id in `postId` behind a `https://x.com/<handle>/status/<their-id>` url that
+`impressions:record` would then go and measure. Missing this cost the branch a Critical: before the
+guard, one reply to a partner account threw out of plan building and the whole run exited 1,
+reconciling nothing every six hours until the reply aged past `--since`.
+
 ### `kr:` for posts with no item
 
 External posts need an `itemId` because `RecordPublish` upserts on `(itemId, type, channel, outletId)`
@@ -216,6 +230,18 @@ itemId (`kr:<rootId>`) **or** a postId.
 | thread assembly | a root with six replies produces one verdict and one row, keyed on the root |
 | idempotency | a second run over the same live posts writes nothing, including against the two pre-existing @bcd_kyle `x-post` rows |
 | `kr:` ids | never match `x:`-prefixed code paths; two different threads never share an id |
-| preview | without `--yes`, no sheet write and no ledger write happens |
 | the real shapes | the delivery row a confirmed match produces is `status: "sent"` carrying the post id and url |
-| deploy | the new timer's `TimeoutStartSec` is bounded against its `OnCalendar` period, same check as `herald-watch` |
+| a reply into someone else's thread | the rootless thread is `skipped` with a reason, and the rest of the plan is still built around it — never a throw, never `tweets[0]` |
+| the confirmed row's key | the `type` comes from the matched **`x`** rendering, even when a telegram or unapproved rendering for the same itemId is ordered first, so `deliveryKey` is the one `send:channels` gates on |
+| the report's own wording | `xReconcileStartupLine` names the database (and never the password), and the `external` headline does not claim a zero score means no approved copy existed |
+| deploy | the new timer's `TimeoutStartSec` is bounded against its `OnCalendar` period, same check as `herald-watch`; plus the three service lines whose absence is silent (`--yes`, `EnvironmentFile=`, `OnFailure=…@%n`) |
+
+**Not covered, honestly (2026-08-06):** an earlier version of this table listed *"preview — without
+`--yes`, no sheet write and no ledger write happens"*. **No such test exists.** `src/cli/x-reconcile.ts`
+is a top-level script with a top-level `await` and side effects at import, so exercising it needs a real
+subprocess with real Google and twitterapi.io credentials, which no test in this repo has. What holds
+the guarantee up instead is structure — every write lives inside the single `if (writeConfirmed)` branch
+— plus the decisions the script makes, which were pulled into `src/cli/xReconcileReport.ts` and are
+tested. The manual check that was run (`pnpm x:reconcile --since 3d`, 2026-08-06) did not reach the plan
+either: the local database was unreachable and it exited 1 before building one. So this row is an
+**open gap**, deliberately stated as one rather than left as a claim of coverage.
