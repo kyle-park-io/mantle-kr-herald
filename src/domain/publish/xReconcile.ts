@@ -159,14 +159,24 @@ export function postUrl(handle: string, rootId: string): string {
  * entirely, and means a retry no longer depends on the original thread still being inside the
  * current fetch window.
  *
- * Returns `undefined`, never throws, when `url` doesn't end in `/status/<id>` — deliberately: every
- * `postedUrl` this codebase ever writes comes from `postUrl` itself, so this should be unreachable
- * in practice, and the caller (not this function) decides what "doesn't parse" means for its own
- * situation. See `reconcileXPublished`'s own comment at its call site for why it treats that as "no
- * known post" — skip — rather than throwing and taking the whole run down over one malformed row.
+ * Captures **only** a run of digits immediately after `/status/`, terminated by `/`, `?`, `#`, or
+ * the end of the string — never `[^/]+` (Task 4 review round 3): a looser capture would swallow a
+ * tracking query string (`.../status/123?s=20` → `"123?s=20"`, a postId `impressions:record` would
+ * then try to measure verbatim) or hand back a non-numeric id straight through. Returns `undefined`,
+ * never throws, for anything that doesn't fit that shape — a bare `/status/` with nothing after it,
+ * no `/status/` segment at all, or no digits immediately following it.
+ *
+ * **Deliberately does not check `handle`.** `https://x.com/SomeoneElse/status/999` still returns
+ * `"999"` — this function only knows the `/status/<digits>` shape, not which account's copy it is.
+ * A caller that needs to know the url is genuinely for *its own* account (every caller so far does)
+ * must additionally verify the round trip itself: `postUrl(handle, rootId) === url`. That check
+ * lives at the call site, not here, so this function stays a pure, single-purpose inverse of
+ * `postUrl` — see `reconcileXPublished`'s Phase A for the round-trip check and why a url that fails
+ * it must fail the run rather than silently skip (its own doc comment explains why skipping is
+ * actively dangerous, not merely imprecise).
  */
 export function rootIdFromPostUrl(url: string): string | undefined {
-  return /\/status\/([^/]+)$/.exec(url)?.[1];
+  return /\/status\/(\d+)(?:[/?#]|$)/.exec(url)?.[1];
 }
 
 /**

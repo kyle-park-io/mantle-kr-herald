@@ -436,6 +436,76 @@ describe("translations that already went out by hand", () => {
     expect(plan.posted).toEqual([]);
   });
 
+  it("Phase A respects consumedRootIds: a thread already confirmed for a DIFFERENT item's rendering wins over a settled translation's own claim", () => {
+    // Task 4 review round 3 — a gap round 2 introduced: Phase A only ever checked `claimedRootIds`
+    // and `claimedItemIds` (the SAME-item case), never `consumedRootIds`. So a settled translation
+    // (Y) whose stored rootId happened to equal a thread this run confirmed for a DIFFERENT item's
+    // (X's) rendering could still enter plan.posted — one live post then gets both a delivery row
+    // (X) and a history-retry row (Y). The rendering match is the stronger record: it carries a
+    // real `type` and passed 2차 검수.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [rendering("x:1", COPY)], // confirms thread 100 for x:1 (X)
+      translations: [
+        // Y — settled against the SAME thread, missing its history row (historyPostIds is empty).
+        translation("x:2", "이 번역은 무관합니다", {
+          postedUrl: "https://x.com/0xMantleKR/status/100",
+          postedAt: "2026-08-01T00:00:00.000Z",
+        }),
+      ],
+    });
+    expect(plan.confirmed).toHaveLength(1);
+    expect(plan.confirmed[0].entry.itemId).toBe("x:1");
+    expect(plan.posted).toEqual([]);
+  });
+
+  describe("a malformed postedUrl fails the run rather than silently skip", () => {
+    // Task 4 review round 3: a silent `continue` past a malformed postedUrl would leave that
+    // translation's own thread unclaimed, reopening the exact double-retire hole Concern 2 (round
+    // 2) closed. `postedUrl` is written exclusively by `postUrl`/`RetireTranslation`, so every shape
+    // below should be unreachable in correct operation — reaching it must fail loudly.
+    const CASES: { label: string; postedUrl: string }[] = [
+      { label: "a different account's post url", postedUrl: "https://x.com/SomeoneElse/status/100" },
+      { label: "a tracking query string stuck to the id", postedUrl: "https://x.com/0xMantleKR/status/100?s=20" },
+      { label: "a non-numeric id", postedUrl: "https://x.com/0xMantleKR/status/abc" },
+      { label: "a bare trailing slash with no id at all", postedUrl: "https://x.com/0xMantleKR/status/" },
+      // rootIdFromPostUrl alone WOULD extract "100" here (see that function's own test) — this case
+      // exists to prove the round-trip check (postUrl(handle, rootId) === postedUrl), not just the
+      // regex, is what actually guards Phase A: the trailing slash means the round trip does not
+      // reproduce the original url byte-for-byte, so this must still fail rather than silently
+      // accept a url that merely LOOKS parseable.
+      { label: "digits followed by an extra trailing slash (round-trip mismatch)", postedUrl: "https://x.com/0xMantleKR/status/100/" },
+    ];
+
+    for (const { label, postedUrl } of CASES) {
+      it(`throws for ${label}`, () => {
+        expect(() =>
+          reconcileXPublished({
+            ...base,
+            threads: [thread("100", [COPY])],
+            renderings: [],
+            translations: [translation("x:1", COPY, { postedUrl, postedAt: "2026-08-01T00:00:00.000Z" })],
+          }),
+        ).toThrow(/postedUrl/);
+      });
+    }
+  });
+
+  it("refuses to write a blank publishedAt when postedUrl is set but postedAt is missing", () => {
+    // Should be unreachable — RetireTranslation always stamps postedAt alongside postedUrl in the
+    // same upsert — but an unreachable case that becomes reachable must fail visibly rather than
+    // write a blank `publishedAt` into the team's history sheet.
+    expect(() =>
+      reconcileXPublished({
+        ...base,
+        threads: [thread("100", [COPY])],
+        renderings: [],
+        translations: [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100" })], // no postedAt, and historyPostIds is empty so this reaches the push
+      }),
+    ).toThrow(/postedAt/);
+  });
+
   it("skips a translation whose item the rendering route confirmed in this run", () => {
     // The delivery row is the stronger record — it carries a real type and passed 2차 검수.
     const plan = reconcileXPublished({
@@ -574,7 +644,9 @@ describe("translations that already went out by hand", () => {
         ...base,
         threads: [thread("100", [NEAR_MISS_LIVE_TEXT])],
         renderings: [],
-        translations: [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/999" })],
+        translations: [
+          translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/999", postedAt: "2026-08-01T00:00:00.000Z" }),
+        ],
       });
       expect(plan.postedNearMisses).toEqual([]);
     });

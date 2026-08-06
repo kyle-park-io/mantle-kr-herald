@@ -191,24 +191,44 @@ export type ReconcilePlan = {
  * This pass therefore runs in two phases over `translations`, not one:
  *
  * **Phase A — settled translations** (`postedUrl` already set). For each (skipping one whose
- * `itemId` is already in `claimedItemIds` — the rendering route's stronger record): parse the
- * rootId; a url that fails to parse is skipped outright (should be unreachable — every `postedUrl`
- * this codebase writes comes from `postUrl` itself — but a malformed one must not silently become a
- * retire against nothing). Otherwise the thread is claimed — `claimedRootIds.add(rootId)` —
- * **unconditionally**, whether or not this translation is genuinely done. Only then: if
- * `historyPostIds` already has this rootId, nothing further happens (genuinely done, both halves
- * complete); otherwise it is pushed to `plan.posted` again so `RetireTranslation` gets another
- * chance at just the history half (see that class's own doc comment for why re-entering here can
- * never re-apply the *status* half — it treats an existing `postedUrl` as `"already-retired"` and
- * never overwrites it, so 되돌리기, a human's correction to `postedUrl`, still sticks).
+ * `itemId` is already in `claimedItemIds` — the rendering route's stronger record):
  *
- * Phase A claiming its thread **unconditionally** — even when the translation is genuinely done and
- * nothing is pushed to `plan.posted` for it — is Concern 2's fix: a settled translation's post is
- * already a fact, not a contest, and a DIFFERENT translation must never be free to match the same
- * live thread just because the settled one didn't need a fresh write. Phase A runs to completion
- * before Phase B (below) ever scores anything, so a settled translation's claim can never lose a
- * race to an unsettled one that merely happens to sit earlier in `translations` — the ordering
- * itself is part of the fix, not just the claim.
+ * 1. Parse the rootId and verify the round trip — `rootIdFromPostUrl(translation.postedUrl)` must
+ *    produce an id for which `postUrl(handle, id) === translation.postedUrl` holds exactly. This is
+ *    the ONLY check in this whole file that throws on a translation-shaped input rather than
+ *    skipping it, and that is deliberate (Task 4 review round 3): `postedUrl` is written exclusively
+ *    by `postUrl`/`RetireTranslation`, so a value that fails this round trip — a different handle, a
+ *    non-numeric id, a stray query string, a bare trailing slash — should be unreachable in correct
+ *    operation, and a silent `continue` here would skip the thread-claim below along with everything
+ *    else. That is worse than it sounds: the thread this translation actually owns would stay
+ *    unclaimed, and Phase B could then match and retire a completely different, never-posted
+ *    translation against it — precisely the failure Concern 2 (round 2) closed, reopened through the
+ *    one path that never claims. So this fails loudly instead: claim-or-fail, never claim-or-skip.
+ * 2. If the round-tripped rootId is one `consumedRootIds` already holds — a *different* item's
+ *    rendering confirmed this exact thread this run, or it is sitting in `plan.candidates` awaiting
+ *    a human — skip without claiming (Task 4 review round 3): that thread already has the stronger
+ *    record (a rendering match carries a real `type` and passed 2차 검수), and this translation's own
+ *    `postedUrl` cannot override it. `claimedItemIds` alone cannot catch this case: it only rules out
+ *    the *same* item being confirmed twice, and here the confirmed item and the settled translation
+ *    are two different items sharing one live thread.
+ * 3. Otherwise the thread is claimed — `claimedRootIds.add(rootId)` — **unconditionally**, whether
+ *    or not this translation is genuinely done. If `historyPostIds` already has this rootId, nothing
+ *    further happens (genuinely done, both halves complete). Otherwise: `postedAt` must be present
+ *    (thrown otherwise — `RetireTranslation` always stamps it alongside `postedUrl`, so an
+ *    unreachable case that somehow becomes reachable must fail visibly rather than write a blank
+ *    `publishedAt` into the team's sheet), and the translation is pushed to `plan.posted` again so
+ *    `RetireTranslation` gets another chance at just the history half (see that class's own doc
+ *    comment for why re-entering here can never re-apply the *status* half — it treats an existing
+ *    `postedUrl` as `"already-retired"` and never overwrites it, so 되돌리기, a human's correction to
+ *    `postedUrl`, still sticks).
+ *
+ * Phase A claiming its thread **unconditionally** (step 3) — even when the translation is genuinely
+ * done and nothing is pushed to `plan.posted` for it — is Concern 2's fix: a settled translation's
+ * post is already a fact, not a contest, and a DIFFERENT translation must never be free to match the
+ * same live thread just because the settled one didn't need a fresh write. Phase A runs to
+ * completion before Phase B (below) ever scores anything, so a settled translation's claim can never
+ * lose a race to an unsettled one that merely happens to sit earlier in `translations` — the
+ * ordering itself is part of the fix, not just the claim.
  *
  * **Phase B — everything else** (`postedUrl` unset). Skipped before ever being scored: if its
  * `itemId` is one `claimedItemIds` already holds from the thread loop above; or if `koreanText` is
@@ -417,8 +437,35 @@ export function reconcileXPublished(input: {
     if (translation.postedUrl === undefined) continue; // Phase B's translation
     if (claimedItemIds.has(translation.itemId)) continue; // the rendering route already confirmed this item this run
 
+    // Parse-and-verify, not parse-then-trust: `rootIdFromPostUrl` alone would accept another
+    // account's url, a non-numeric id, or a rootId with a query string stuck to it (see that
+    // function's own doc comment). Checking the full round trip against `postUrl` — the only other
+    // place this url shape is spelled — is what actually proves `rootId` is a genuine id for THIS
+    // account's THIS post, not merely something that happened to parse.
     const rootId = rootIdFromPostUrl(translation.postedUrl);
-    if (rootId === undefined) continue; // malformed — see rootIdFromPostUrl's own doc comment
+    if (rootId === undefined || postUrl(handle, rootId) !== translation.postedUrl) {
+      // Claim-or-fail, never claim-or-skip (Task 4 review round 3) — see the doc comment above for
+      // why a silent `continue` here is actively dangerous: it would leave this translation's own
+      // thread unclaimed, and Phase B could then match and retire a different, never-posted
+      // translation against it. `postedUrl` is written exclusively by `postUrl`/`RetireTranslation`,
+      // so reaching here at all means something outside this codebase's own writers produced it —
+      // worth failing the whole run on rather than silently mis-recording one translation's history.
+      throw new Error(
+        `reconcileXPublished: ${translation.itemId}'s postedUrl "${translation.postedUrl}" is not a ` +
+          `well-formed post url for @${handle} — refusing to skip its retire silently, which would leave its ` +
+          `thread unclaimed and open to a different translation`,
+      );
+    }
+
+    if (consumedRootIds.has(rootId)) {
+      // A DIFFERENT item's approved rendering already confirmed this exact thread this run (or it
+      // is sitting in `plan.candidates`, awaiting a human) — the stronger record, per the doc
+      // comment above. `claimedItemIds` cannot catch this: it only rules out the SAME item being
+      // confirmed twice, and here two different items are contending for one thread. Skipped
+      // without claiming — `consumedRootIds` already keeps this thread out of Phase B's pool on its
+      // own, so there is nothing left for this translation to protect by claiming it too.
+      continue;
+    }
 
     // Claimed unconditionally, before checking whether this translation is genuinely done: the
     // thread belongs to this translation either way, and Concern 2 is exactly the bug that let a
@@ -427,15 +474,19 @@ export function reconcileXPublished(input: {
 
     if (historyPostIds.has(rootId)) continue; // genuinely done on both halves — nothing to retry
 
+    if (translation.postedAt === undefined) {
+      // Should be unreachable — RetireTranslation always stamps postedAt alongside postedUrl in the
+      // same upsert — but an unreachable case that somehow becomes reachable must fail visibly
+      // rather than write a blank `publishedAt` into the team's history sheet (Task 4 review round 3).
+      throw new Error(`reconcileXPublished: ${translation.itemId} has postedUrl but no postedAt — refusing to write a blank publishedAt`);
+    }
+
     plan.posted.push({
       itemId: translation.itemId,
       rootId,
       score: 1, // not a fresh match this run — this translation's own already-established record
       url: translation.postedUrl,
-      // `postedAt` is always set alongside `postedUrl` by RetireTranslation's own upsert, so this
-      // fallback should be unreachable — kept only so a data inconsistency degrades to an empty
-      // string rather than a type error.
-      postedAt: translation.postedAt ?? "",
+      postedAt: translation.postedAt,
     });
   }
 

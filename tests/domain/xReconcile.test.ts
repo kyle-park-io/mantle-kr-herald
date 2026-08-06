@@ -184,15 +184,36 @@ describe("record shapes", () => {
       expect(rootIdFromPostUrl(postUrl("someoneElse", "99"))).toBe("99");
     });
 
-    it("returns undefined, not a throw, for a url that does not end in /status/<id>", () => {
-      // Every postedUrl this codebase ever writes comes from postUrl() itself, so this should be
-      // unreachable in practice — but a caller (reconcileXPublished) must not silently treat a
-      // malformed url as a real post. Pinned here because that decision (skip, not throw, not
-      // guess) is made at the call site, not by this function throwing on its behalf.
+    it("returns undefined, not a throw, for a url with no /status/<digits> at all", () => {
+      // This function never throws — deciding what a malformed url means is the call site's job
+      // (reconcileXPublished's Phase A now fails the run on one, rather than skip; see that
+      // function's own doc comment for why a silent skip there is actively dangerous).
       expect(rootIdFromPostUrl("https://x.com/0xMantleKR")).toBeUndefined();
       expect(rootIdFromPostUrl("not a url at all")).toBeUndefined();
       expect(rootIdFromPostUrl("")).toBeUndefined();
-      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/")).toBeUndefined();
+      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/")).toBeUndefined(); // no digits at all
+    });
+
+    it("captures only the digits, dropping a tracking query string stuck to the id (Task 4 review round 3)", () => {
+      // The old `[^/]+` capture returned "123?s=20" whole — a postId impressions:record would then
+      // try to measure verbatim. `(\d+)` stops at the first non-digit.
+      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/123?s=20")).toBe("123");
+      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/123#reply")).toBe("123");
+      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/123/")).toBe("123");
+    });
+
+    it("returns undefined for a non-numeric id, rather than passing it straight through", () => {
+      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/abc")).toBeUndefined();
+      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/123abc")).toBeUndefined();
+    });
+
+    it("does NOT itself check the handle — extracts the id regardless of whose account the url names", () => {
+      // Deliberate: this function is a pure, single-purpose inverse of postUrl's /status/<digits>
+      // shape. A caller that needs to know the url is genuinely for its OWN account (every caller
+      // so far does) must additionally round-trip it: postUrl(handle, rootId) === url. See
+      // reconcileXPublished's Phase A for that check, and this function's own doc comment for why
+      // it lives at the call site rather than here.
+      expect(rootIdFromPostUrl("https://x.com/SomeoneElse/status/999")).toBe("999");
     });
   });
 
