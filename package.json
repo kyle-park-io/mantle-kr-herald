@@ -17,6 +17,7 @@
     "translate:prepare": "tsx --env-file-if-exists=.env src/cli/translate-prepare.ts",
     "translate:save": "tsx --env-file-if-exists=.env src/cli/translate-save.ts",
     "translate:align": "tsx --env-file-if-exists=.env src/cli/translate-align.ts",
+    "watch": "tsx --env-file-if-exists=.env src/cli/watch.ts",
     "convert:prepare": "tsx --env-file-if-exists=.env src/cli/convert-prepare.ts",
     "convert:save": "tsx --env-file-if-exists=.env src/cli/convert-save.ts",
     "format": "tsx --env-file-if-exists=.env src/cli/format.ts",

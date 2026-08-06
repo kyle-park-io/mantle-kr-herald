@@ -57,3 +57,10 @@ node_modules/
 /vitest.probe.config.ts
 *.md
 *.xlsx
+
+# --- the watch scheduler's systemd units + failure hook (pnpm watch, a local machine's own
+#     process, never the Vercel Function). Anchored on purpose: unanchored `deploy/` would also
+#     match `src/deploy/`, which the function needs — see this file's header comment for the
+#     `translation/`/`conversion/` incident this exact mistake already caused once.
+/deploy/
+

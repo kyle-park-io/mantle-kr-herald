@@ -133,4 +133,10 @@ describe(".vercelignore", () => {
       ).toBe(true);
     }
   });
+
+  it("excludes the top-level deploy/ without touching src/deploy/", async () => {
+    const patterns = (await load()).map((p) => p.raw);
+    expect(patterns).toContain("/deploy/");
+    expect(patterns).not.toContain("deploy/");
+  });
 });

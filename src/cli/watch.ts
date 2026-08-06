@@ -1,0 +1,35 @@
+import "./registerErrorHandler";
+import { WatchTick } from "../app/WatchTick";
+import { ClaudeCodeAgent } from "../adapters/agent/ClaudeCodeAgent";
+import { runStage } from "../adapters/agent/runStage";
+import { realClaudeSpawn } from "./claudeSpawn";
+import { watchOutcome } from "./watchSummary";
+import { watchStartupLine } from "./watchStartup";
+import { loadDbConfig } from "../config";
+import { parseTranslateSince } from "./translateSince";
+import { OUTPUT_DIR } from "../paths";
+
+// Before the startup line, and before any stage runs: a typo'd cutoff must stop the tick here,
+// not reach `translate:prepare --since` as garbage and quietly translate nothing for as long as
+// nobody reads a journal. registerErrorHandler turns the throw into a non-zero exit, which is
+// what herald-watch.service's OnFailure= hook is watching for.
+const translateSince = parseTranslateSince(process.env.HERALD_TRANSLATE_SINCE);
+
+// Printed before any stage runs, so a run against the wrong output root or the wrong database —
+// the exact mistake that once advanced the collect watermark 39 threads past what production had
+// seen (src/paths.ts's OUTPUT_DIR doc comment) — is visible in every tick's
+// `journalctl --user -u herald-watch`, not only when someone happens to run `pnpm doctor` first.
+console.log(watchStartupLine(OUTPUT_DIR, process.env.HERALD_OUTPUT_DIR, loadDbConfig()));
+
+// No database connection here, deliberately: each stage `runStage` spawns (`collect`,
+// `translate:prepare`, `translate:align`) opens and closes its own. Holding one open here would
+// keep it open for the whole tick, including the minutes `claude` is thinking. `loadDbConfig()`
+// above only reads and validates DATABASE_URL/HERALD_DB_ENV from the environment for the startup
+// line — it never opens a connection.
+const agent = new ClaudeCodeAgent(realClaudeSpawn);
+
+const report = await new WatchTick(runStage, agent, { translateSince }).run();
+const { line, exitCode } = watchOutcome(report);
+
+console.log(line);
+process.exitCode = exitCode;

@@ -11,6 +11,8 @@ import {
   runDbCheck,
   describeSchemaProbeError,
   databaseProbe,
+  outputRootResult,
+  telegramOpsChatResult,
 } from "../../src/doctor/checks";
 import { createTestDb, createUnmigratedTestDb } from "../support/testDb";
 import type { Db } from "../../src/adapters/db/Db";
@@ -262,5 +264,49 @@ describe("quotaResult", () => {
 
   it("omits the reset clause when the API did not give one", () => {
     expect(quotaResult("t", { used: 0, remaining: 15, resetsAt: "" }).detail).not.toContain("resets");
+  });
+});
+
+describe("outputRootResult", () => {
+  it("reports the default root, unmarked, when there is no override", () => {
+    const r = outputRootResult("/repo/output", undefined);
+    expect(r).toEqual({ name: "Output root", status: "ok", detail: "/repo/output (default)" });
+  });
+
+  // The whole point of this check: a HERALD_OUTPUT_DIR override must never be silent (src/paths.ts's
+  // OUTPUT_DIR doc comment). A version that reported "(default)" regardless of the override — or
+  // that omitted the actual path — would defeat that, so both are pinned here.
+  it("names the override explicitly, and the actual path, when HERALD_OUTPUT_DIR is set", () => {
+    const r = outputRootResult("/home/kyle/.herald/output", "some/relative/root");
+    expect(r.status).toBe("ok");
+    expect(r.detail).toBe("/home/kyle/.herald/output (HERALD_OUTPUT_DIR override)");
+  });
+
+  it("distinguishes the two cases — the detail actually differs, not just the input", () => {
+    const withOverride = outputRootResult("/x/output", "/x/output");
+    const withoutOverride = outputRootResult("/x/output", undefined);
+    expect(withOverride.detail).not.toBe(withoutOverride.detail);
+  });
+});
+
+describe("telegramOpsChatResult", () => {
+  it("ok only when both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID_OPS are set", () => {
+    const r = telegramOpsChatResult("token", "chat-id");
+    expect(r.status).toBe("ok");
+    expect(r.detail).toContain("will post here");
+  });
+
+  // Checking only one variable would let this claim "will post here" while the hook still silently
+  // sends nothing for lack of the other — this is the exact over-claim the check exists to avoid.
+  it("warns — never claims configured — when only one of the two is set", () => {
+    expect(telegramOpsChatResult(undefined, "chat-id").status).toBe("warn");
+    expect(telegramOpsChatResult("token", undefined).status).toBe("warn");
+  });
+
+  it("warns when neither is set, and names both variables so the fix is obvious", () => {
+    const r = telegramOpsChatResult(undefined, undefined);
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("TELEGRAM_BOT_TOKEN");
+    expect(r.detail).toContain("TELEGRAM_CHAT_ID_OPS");
   });
 });

@@ -1,0 +1,427 @@
+// tests/app/watchTick.test.ts
+import { describe, it, expect } from "vitest";
+import { WatchTick } from "../../src/app/WatchTick";
+import type { StageResult, WorksheetAgent } from "../../src/ports/WorksheetAgent";
+import { formatStatus, pipelineStages } from "../../src/status/pipeline";
+
+function recordingAgent(onFill?: (kind: string) => void) {
+  const calls: string[] = [];
+  const paths: string[] = [];
+  const agent: WorksheetAgent = {
+    async fill(path, kind) {
+      calls.push(kind);
+      paths.push(path);
+      onFill?.(kind);
+      return { ok: true, stdout: "saved" };
+    },
+  };
+  return { agent, calls, paths };
+}
+
+/**
+ * Real `pnpm status` output for a given Translated total, built through `formatStatus`/
+ * `pipelineStages` themselves rather than hand-written. `WatchTick` reads that total to prove the
+ * agent actually saved what it was given, so the fixture has to stay tied to the real formatter:
+ * hand-writing the line would let the two drift, and the parser would then be tested against a
+ * shape `pnpm status` no longer prints. `database:` first, because `status.ts` prints that line
+ * before the funnel.
+ */
+function statusStdout(translated: number): string {
+  return [
+    "database: development · localhost:5432/herald",
+    formatStatus(
+      pipelineStages({
+        collected: 128,
+        translations: Array.from({ length: translated }, () => ({ status: "translated" })),
+        variants: [],
+        renderings: [],
+        published: 0,
+      }),
+    ),
+  ].join("\n");
+}
+
+const COLLECTED_2 = "collected 2 threads (5 tweets) for @x — covered a ~ b";
+const PREPARED_2 = "prepared 2 item(s) → output/translations/worksheets/batch-X.md";
+const ALIGNED_2 = "aligned 2 · skipped 0 (no precedent) → output/translations/worksheets/align-X.md";
+const NOTHING_TO_ALIGN = "nothing to align · skipped 0 (no precedent)";
+
+/**
+ * A stage runner over a small model of the real pipeline, plus the agent that drives it. The
+ * `status` stage is not a fixed string: it reports a Translated total that grows by `savesPerPass`
+ * every time the stub agent is asked to fill a *translation* worksheet — which is exactly what a
+ * real `translate:save` per item would do, and is the only thing that distinguishes an agent that
+ * did its job from one that exited cleanly having done nothing.
+ */
+function pipeline(
+  opts: {
+    collect?: string;
+    prepare?: string;
+    align?: string;
+    /** How many items the agent actually saves per translation pass. Defaults to the two the
+     *  default `prepare` line hands it — i.e. a fully successful pass. */
+    savesPerPass?: number;
+    translated?: number;
+    /** Make this one stage exit non-zero, the way a real stage does when the database is down. */
+    failStage?: string;
+  } = {},
+) {
+  const ran: string[] = [];
+  let translated = opts.translated ?? 40;
+  const { agent, calls, paths } = recordingAgent((kind) => {
+    if (kind === "translation") translated += opts.savesPerPass ?? 2;
+  });
+
+  const run = async (script: string, args: string[]): Promise<StageResult> => {
+    ran.push([script, ...args].join(" "));
+    if (script === opts.failStage) return { ok: false, stage: script, detail: "ECONNREFUSED" };
+    if (script === "collect") return { ok: true, stdout: opts.collect ?? COLLECTED_2 };
+    if (script === "translate:prepare") return { ok: true, stdout: opts.prepare ?? PREPARED_2 };
+    if (script === "status") return { ok: true, stdout: statusStdout(translated) };
+    return { ok: true, stdout: opts.align ?? ALIGNED_2 };
+  };
+
+  return { run, agent, ran, calls, paths };
+}
+
+describe("WatchTick", () => {
+  it("stops after collect when nothing is new, without calling the agent", async () => {
+    const { agent, calls } = recordingAgent();
+    const ran: string[] = [];
+    const run = async (script: string): Promise<StageResult> => {
+      ran.push(script);
+      return { ok: true, stdout: "collected 0 threads (0 tweets) for @x — nothing new in window" };
+    };
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(ran).toEqual(["collect"]);
+    expect(calls).toEqual([]);
+  });
+
+  it("reports the failing stage and runs nothing after it", async () => {
+    const { agent, calls } = recordingAgent();
+    const ran: string[] = [];
+    const run = async (script: string): Promise<StageResult> => {
+      ran.push(script);
+      return { ok: false, stage: script, detail: "ECONNREFUSED" };
+    };
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure).toEqual({ stage: "collect", detail: "ECONNREFUSED" });
+    expect(ran).toEqual(["collect"]);
+    expect(calls).toEqual([]);
+  });
+
+  it("runs both agent passes in order when there is work", async () => {
+    const { run, agent, ran, calls } = pipeline();
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(report.stagesRun).toEqual(["collect", "translate:prepare", "status", "status", "translate:align"]);
+    expect(calls).toEqual(["translation", "alignment"]);
+    // The two `status` runs bracket the translation pass — they are the before/after of the
+    // saved-something check, not pipeline steps.
+    expect(ran).toEqual(["collect", "translate:prepare --limit 3", "status", "status", "translate:align --limit 3"]);
+  });
+
+  it("passes the configured cutoff to translate:prepare, so a tick translates recent items first", async () => {
+    // Without this, `PrepareTranslations` slices the first `--limit` of the *whole* untranslated
+    // backlog, oldest first. Measured against production on 2026-08-06: 211 untranslated items
+    // reaching back to 2026-06-01, so the 23 threads the same tick had just collected would not
+    // have been translated for ~6 days — the one thing this scheduler exists to do.
+    const { run, agent, ran } = pipeline();
+
+    const report = await new WatchTick(run, agent, { translateSince: "2026-07-27T14:35:24.000Z" }).run();
+
+    expect(report.ok).toBe(true);
+    expect(ran).toContain("translate:prepare --limit 3 --since 2026-07-27T14:35:24.000Z");
+  });
+
+  it("leaves the cutoff off translate:align, which selects by precedent and not by date", async () => {
+    // `translate:align` operates on items that are already translated — i.e. already past the
+    // cutoff by construction. Passing it a `--since` it has no flag for would make every tick
+    // fail at the align stage.
+    const { run, agent, ran } = pipeline();
+
+    await new WatchTick(run, agent, { translateSince: "2026-07-27T14:35:24.000Z" }).run();
+
+    expect(ran).toContain("translate:align --limit 3");
+    expect(ran.some((r) => r.startsWith("translate:align") && r.includes("--since"))).toBe(false);
+  });
+
+  it("omits --since entirely when no cutoff is configured", async () => {
+    // The whole-backlog behaviour has to stay reachable: a hand-run `pnpm watch` with no
+    // HERALD_TRANSLATE_SINCE in the environment must not silently acquire a cutoff.
+    const { run, agent, ran } = pipeline();
+
+    await new WatchTick(run, agent, {}).run();
+
+    expect(ran).toContain("translate:prepare --limit 3");
+    expect(ran.some((r) => r.includes("--since"))).toBe(false);
+  });
+
+  it("translates but skips alignment when there is no precedent", async () => {
+    const { run, agent, calls } = pipeline({ collect: "collected 1 threads (2 tweets) for @x — covered a ~ b", align: "nothing to align · skipped 1 (no precedent)" });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(report.stagesRun).toEqual(["collect", "translate:prepare", "status", "status", "translate:align"]);
+    // Not `[]` — the translation pass must still have run. Asserting only the
+    // absence of "alignment" would also pass if the tick did nothing at all.
+    expect(calls).toEqual(["translation"]);
+  });
+
+  it("skips the translation pass when the batch prepared nothing", async () => {
+    const { run, agent, ran, calls } = pipeline({
+      prepare: "prepared 0 item(s) → output/translations/worksheets/batch-X.md",
+      align: NOTHING_TO_ALIGN,
+    });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(report.stagesRun).toEqual(["collect", "translate:prepare", "translate:align"]);
+    expect(calls).toEqual([]);
+    // No agent pass means nothing to verify: the saved-something check must not spend two extra
+    // database reads per tick on a batch nobody was ever asked to translate.
+    expect(ran).not.toContain("status");
+  });
+
+  it("never passes --approve to any stage", async () => {
+    // Real `translate-prepare.ts` prints this exact second line, containing "--approve" in
+    // running text. The mock must include it — a stdout with no "--approve" substring anywhere
+    // can only catch a hardcoded literal in the implementation, not the realistic bug: a parse
+    // that forwards a stdout *line* into an argument list.
+    const prepareStdout = [
+      "prepared 2 item(s) → output/translations/worksheets/batch-X.md",
+      "Translate each item's 원문 into the 번역 section, then run: pnpm translate:save --id <id> --file <korean.txt> [--approve]",
+    ].join("\n");
+    const { run, agent, ran, paths } = pipeline({ prepare: prepareStdout, align: NOTHING_TO_ALIGN });
+
+    await new WatchTick(run, agent).run();
+
+    expect(ran.length).toBeGreaterThan(1); // guard: a no-op tick would pass vacuously
+    // Cheap guard against a hardcoded literal — `ran` is built entirely from hardcoded argument
+    // arrays ([] and ["--limit","3"]), so it can never contain "--approve" no matter how badly
+    // the stdout parse breaks. It is not the assertion that matters.
+    expect(ran.join(" ")).not.toContain("--approve");
+    // The value that *is* derived from stdout is the worksheet path handed to the agent. A regex
+    // that swallowed the hint line (e.g. matching the whole buffer instead of one line) would put
+    // "--approve" into this path even though `ran` stays clean — this is the assertion that
+    // actually exercises the trap.
+    expect(paths).toEqual(["output/translations/worksheets/batch-X.md"]);
+  });
+
+  it("still skips alignment when 'nothing to align' carries the tm:promote hint suffix", async () => {
+    // Real `translate-align.ts:36` appends this suffix whenever `skipped > 0`. This is the
+    // branch `NOTHING_TO_ALIGN_LINE` is deliberately not end-anchored for.
+    const { run, agent, calls } = pipeline({
+      align: "nothing to align · skipped 1 (no precedent) — run `pnpm tm:promote` to add precedent pairs",
+    });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(report.stagesRun).toEqual(["collect", "translate:prepare", "status", "status", "translate:align"]);
+    expect(calls).toEqual(["translation"]);
+  });
+
+  // Task 1's "reports the failing stage" test only ever exercised `collect`, so it couldn't
+  // distinguish a genuine pass-through of `failure.stage` from a hardcoded "collect". This test
+  // fails a later stage instead, to make that assertion discriminating.
+  it("reports a later stage's failure, not just collect's", async () => {
+    const { run, agent, ran, calls } = pipeline({ failStage: "translate:align" });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure).toEqual({ stage: "translate:align", detail: "ECONNREFUSED" });
+    expect(report.stagesRun).toEqual(["collect", "translate:prepare", "status", "status", "translate:align"]);
+    expect(ran).toEqual(["collect", "translate:prepare --limit 3", "status", "status", "translate:align --limit 3"]);
+    expect(calls).toEqual(["translation"]);
+  });
+
+  // --- "unrecognised stage output is a failure, never success" -------------------------------
+  //
+  // Three separate guards, one per parsed stage, and all three were deletable with the whole
+  // suite staying green. The rule they enforce is the one at the top of WatchTick.ts: a broken
+  // collector (or an unparseable prepare/align) must not read as a scheduler that succeeds
+  // forever while doing nothing. The ledger recorded this as scoped to prepare/align "(collect
+  // has it)" — collect did not have it either.
+
+  it("fails the tick when collect prints something it does not recognise", async () => {
+    const { agent, calls } = recordingAgent();
+    const ran: string[] = [];
+    const run = async (script: string): Promise<StageResult> => {
+      ran.push(script);
+      // A `collect` that exits 0 having printed a warning instead of its own summary line: the
+      // count is unknown, and "unknown" must never be read as the "0 new threads" early exit.
+      return { ok: true, stdout: "twitterapi.io returned 200 with an empty body; nothing parsed" };
+    };
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("collect");
+    expect(report.failure?.detail).toContain("unrecognised collect output");
+    expect(ran).toEqual(["collect"]);
+    expect(calls).toEqual([]);
+  });
+
+  it("fails the tick when translate:prepare prints something it does not recognise", async () => {
+    const { agent, calls } = recordingAgent();
+    const run = async (script: string): Promise<StageResult> => {
+      if (script === "collect") return { ok: true, stdout: COLLECTED_2 };
+      if (script === "translate:prepare") return { ok: true, stdout: "  archived the previous unsaved batch → output/archive/x" };
+      return { ok: true, stdout: NOTHING_TO_ALIGN };
+    };
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("translate:prepare");
+    expect(report.failure?.detail).toContain("unrecognised translate:prepare output");
+    // Nothing downstream may run on an unknown worksheet path.
+    expect(calls).toEqual([]);
+    expect(report.stagesRun).toEqual(["collect", "translate:prepare"]);
+  });
+
+  it("fails the tick when translate:align prints something it does not recognise", async () => {
+    const { run, agent, calls } = pipeline({ align: "TypeError: Cannot read properties of undefined" });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("translate:align");
+    expect(report.failure?.detail).toContain("unrecognised translate:align output");
+    // The translation pass still ran and still counts — only the alignment pass is refused.
+    expect(calls).toEqual(["translation"]);
+  });
+
+  it("fails the tick when status prints something it does not recognise", async () => {
+    // Same rule as the three above, applied to the stage the saved-something check depends on: a
+    // `pnpm status` whose Translated line stopped matching must fail loudly, not quietly disable
+    // the check that reads it.
+    const run = async (script: string, args: string[]): Promise<StageResult> => {
+      if (script === "collect") return { ok: true, stdout: COLLECTED_2 };
+      if (script === "translate:prepare") return { ok: true, stdout: PREPARED_2 };
+      if (script === "status") return { ok: true, stdout: "Pipeline status\n\n  Collected (X + Lark)  128" };
+      return { ok: true, stdout: NOTHING_TO_ALIGN };
+    };
+    const { agent, calls } = recordingAgent();
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("status");
+    expect(report.failure?.detail).toContain("unrecognised status output");
+    expect(calls).toEqual([]);
+  });
+
+  // --- a clean-but-idle agent is not a success ------------------------------------------------
+
+  it("fails the tick when the agent exits cleanly without saving anything", async () => {
+    // The exact shape of the defect: exit 0, `is_error: false`, empty `permission_denials` — a
+    // `StageResult` of `{ ok: true }`, indistinguishable from a real pass — but no
+    // `translate:save` ever ran, so the Translated total does not move. Nothing downstream ever
+    // notices on its own: `collect` gates the next tick on *new* threads, so these items are not
+    // retried until unrelated content arrives, and the next `translate:prepare` archives the
+    // unsaved batch on its way past.
+    const { run, agent, calls } = pipeline({ savesPerPass: 0, align: NOTHING_TO_ALIGN });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("claude-agent:translation");
+    expect(report.failure?.detail).toContain("saved 0 of the 2 item(s)");
+    // The agent was genuinely invoked — this is not the "never got there" case.
+    expect(calls).toEqual(["translation"]);
+    // A failed tick stops: alignment must not run on top of an unsaved batch.
+    expect(report.stagesRun).toEqual(["collect", "translate:prepare", "status", "status"]);
+  });
+
+  it("fails the tick when the agent saves only part of the batch", async () => {
+    // Halfway is still a failure: the items it skipped are exactly as invisible as a batch it
+    // skipped entirely, and the tick reporting success is what makes them invisible.
+    const { run, agent } = pipeline({ savesPerPass: 1, align: NOTHING_TO_ALIGN });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.detail).toContain("saved 1 of the 2 item(s)");
+  });
+
+  it("passes when the Translated total grows by the whole prepared batch", async () => {
+    // The discriminating half: with the same wiring and a full save, the tick must succeed — a
+    // check that failed unconditionally would satisfy the two tests above on its own.
+    const { run, agent, calls } = pipeline({ savesPerPass: 2, align: NOTHING_TO_ALIGN });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(calls).toEqual(["translation"]);
+  });
+
+  it("does not fail a full save just because a backlog keeps translate:prepare's own count up", async () => {
+    // Why the check reads `pnpm status` rather than re-running `translate:prepare --limit 3` and
+    // asking whether its count dropped: `PrepareTranslations` selects the first `--limit` of
+    // *every* untranslated item, so a backlog larger than the limit (the design's own "a burst of
+    // ten posts drains over several ticks") leaves that count at 3 both before and after a
+    // perfect pass. The Translated total has no such ambiguity — it moves by exactly one per
+    // saved item regardless of how much backlog is left behind it.
+    const { run, agent } = pipeline({
+      prepare: "prepared 3 item(s) → output/translations/worksheets/batch-X.md",
+      savesPerPass: 3,
+      align: NOTHING_TO_ALIGN,
+    });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+  });
+
+  // --- pnpm's own stdout comes first ----------------------------------------------------------
+
+  it("still reads collect's line when pnpm printed its own output above it", async () => {
+    // Every stage is spawned as `pnpm <script>` (runStage.ts), and pnpm writes lines like these to
+    // *stdout*, ahead of the script's own, whenever it does install work — verified on this
+    // machine. `collect` was the only parser anchored at the start of the whole buffer, so a
+    // single leading line made every tick fail at collect, before anything else ever ran.
+    const { run, agent, calls } = pipeline({
+      collect: ["Already up to date", "", COLLECTED_2, "Done in 463ms using pnpm v11.20.0"].join("\n"),
+      align: NOTHING_TO_ALIGN,
+    });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(report.stagesRun).toEqual(["collect", "translate:prepare", "status", "status", "translate:align"]);
+    expect(calls).toEqual(["translation"]);
+  });
+
+  it("still reads collect's zero-threads line when pnpm printed its own output above it", async () => {
+    // The same leading noise on the early-exit path: it must still stop after collect, not be
+    // mistaken for unrecognised output and fail the tick.
+    const { agent, calls } = recordingAgent();
+    const ran: string[] = [];
+    const run = async (script: string): Promise<StageResult> => {
+      ran.push(script);
+      return {
+        ok: true,
+        stdout: ["Already up to date", "collected 0 threads (0 tweets) for @x — nothing new in window"].join("\n"),
+      };
+    };
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(ran).toEqual(["collect"]);
+    expect(calls).toEqual([]);
+  });
+});

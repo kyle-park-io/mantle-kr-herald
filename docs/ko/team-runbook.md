@@ -49,6 +49,10 @@ Mantle KR 팀이 `mantle-kr-herald`를 실제로 운영할 때 보는 문서입�
    읽고, 필요하면 고쳐서 승인(approve)합니다. 승인해도 업로드는 일어나지 않습니다 — approve는
    상태만 바꿀 뿐입니다([`capabilities.md`](capabilities.md) §4).
 
+   이 화면은 **손으로 돌린 1~5단계의 결과**를 검수합니다. `pnpm watch` 스케줄러가 자동으로 채워
+   둔 항목은 여기가 아니라 **배포된 보드**에 쌓입니다 — §6 "스케줄러가 채워 둔 항목은 배포된
+   보드에서 봅니다"를 보세요.
+
    화면을 열면 먼저 로그인 화면이 뜹니다 — 팀이 함께 쓰는 계정(아이디/비밀번호)으로 로그인하세요.
    로그인에 성공하면 세션이 2시간 동안 유지되므로, 그 안에는 다시 로그인할 필요가 없습니다.
    검수 중 갑자기 로그인 화면으로 돌아갔다면 §4 "대시보드에서 로그아웃됐을 때"를 보세요.
@@ -523,7 +527,248 @@ psql "$DATABASE_URL" -c "delete from auth_attempts where id = 'singleton';"
     아닙니다** — 발송이 끝난 뒤에 돌리세요. 드라이런(`--yes` 없이)은 아무것도 지우지 않으므로
     언제 돌려도 안전합니다.
 
-## 6. 다음으로
+## 6. watch 스케줄러 (자동화)
+
+`pnpm watch`는 systemd 사용자 타이머가 두 시간마다, 정각을 피해 매 짝수 시 17분에
+(`OnCalendar=*-*-* 0/2:17:00`) 대신 실행해 주는 명령입니다. 한 번 실행될 때마다 `pnpm
+collect`(X만) → (새 글이 있을 때만) `pnpm translate:prepare` → 에이전트가 번역 워크시트를 채움 →
+`pnpm translate:align` → (정렬할 선례가 있을 때만) 에이전트가 정렬 워크시트를 채움, 순서로 §2
+1~5단계 중 **X 수집분만** 그대로 밟습니다. **`pnpm collect-lark`(Lark 그룹 채팅 수집)는 이
+타이머가 대신해 주지 않으므로 계속 손으로 돌려야 합니다** — 그러지 않으면 Lark 쪽 수집만 조용히
+멈추는데, 보드는 겉으로는 계속 정상으로 보입니다. 대부분의 실행은 `collect`에서 새 글을 찾지
+못하고 그대로 끝나며, 그럴 때는 에이전트를 아예 부르지 않습니다.
+
+**이 스케줄러는 아무것도 승인하지 않습니다.** 도달하는 지점은 언제나 `status: "translated"`이고,
+저장할 때 `--approve`가 붙는 일은 없습니다 — `pnpm convert:*`도 `pnpm send:*`도 `pnpm
+drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케줄러가 채워 둔 항목은 1차 검수를 그대로
+기다리며, 검수자가 대시보드에서 읽고 승인하기 전까지는 아무 데도 나가지 않습니다.
+
+### 스케줄러가 채워 둔 항목은 배포된 보드에서 봅니다
+
+**주소는 https://mantle-kr-herald.vercel.app 입니다.** 검수 절차 자체는 §2 6단계와 똑같지만,
+**화면은 다릅니다** — 이것만은 헷갈리면 안 됩니다:
+
+- 스케줄러는 `herald-watch.service`의 `EnvironmentFile=%h/.herald/prod.env`를 통해 **프로덕션
+  Neon**에 씁니다. 그 내용을 읽는 화면은 **배포된 Vercel 보드 하나뿐입니다.**
+- **`pnpm serve`로는 스케줄러가 만든 항목이 보이지 않습니다.** `pnpm serve`는 저장소의
+  `.env`에 있는 `DATABASE_URL`(로컬 Docker)을 읽고, [`deploy.md`](deploy.md)의 "지켜야 할 것"
+  3번은 그 `.env`를 건드리지 말라고 못박고 있습니다. 그러니 두 화면이 보는 데이터베이스가 아예
+  다르며, 로컬 화면은 스케줄러가 밤새 채워 둔 항목을 하나도 알지 못합니다. 비어 보이는 것은
+  **정상**입니다 — 스케줄러가 멈춘 증거가 아닙니다.
+- 즉 §2 6단계의 `pnpm serve`는 **손으로 돌린 `pnpm collect`/`translate:*`의 결과**를 검수하는
+  화면이고, 이 스케줄러의 결과는 **배포된 보드**에서 검수합니다. 로그인 계정과 화면 사용법은
+  양쪽이 같습니다([`review.md`](review.md)).
+- 보드에 새 항목이 안 보여서 "스케줄러가 도는 중인가?"가 궁금할 때는 아래 "확인"의
+  `journalctl --user -u herald-watch`를 보세요. 매 tick의 첫 줄이 그 실행이 향한 output 루트와
+  데이터베이스를, 마지막 줄이 실제로 밟은 단계를 적어 둡니다.
+
+### 설치
+
+한 번만 하면 되는 절차이고, 팀 자격 증명이 아니라 **프로덕션 DB 접속 정보**가 필요하므로 아무것도
+자동으로 만들지 않습니다 — 아래는 전부 사람이 손으로 하는 절차입니다.
+
+1. **`~/.herald/prod.env`를 만듭니다.** 이 디렉터리는 기본적으로 존재하지 않고,
+   `herald-watch.service`의 `EnvironmentFile=%h/.herald/prod.env`는 접두사(`-`) 없이 걸려 있어서
+   이 파일이 없으면 유닛이 첫 실행부터 그대로 실패합니다.
+
+   DSN을 대시보드에서 복사해 올 필요는 없습니다 — 이미 Vercel의 Production 환경에 `DATABASE_URL`과
+   `HERALD_DB_ENV` 둘 다 들어 있으므로 CLI로 그대로 가져옵니다. 값이 터미널에 찍히지 않도록
+   **파일에서 파일로만** 옮깁니다:
+   ```bash
+   mkdir -p ~/.herald && chmod 700 ~/.herald
+   npx vercel env pull /tmp/herald-pull.env --environment=production --yes
+   grep -E '^DATABASE_URL=' /tmp/herald-pull.env > ~/.herald/prod.env
+   printf 'HERALD_DB_ENV=production\n' >> ~/.herald/prod.env
+   chmod 600 ~/.herald/prod.env
+   rm -f /tmp/herald-pull.env
+   ```
+   (`npx vercel env`만 치면 명령이 아니라 사용법이 나옵니다 — `pull`/`ls` 같은 서브커맨드가
+   필요합니다. `vercel env ls production`은 키 이름만 보여주고 값은 `Hidden`으로 가립니다.)
+
+   결과는 정확히 두 줄이어야 합니다. 값은 찍지 말고 구조만 확인하세요:
+   ```bash
+   cut -d= -f1 ~/.herald/prod.env      # DATABASE_URL, HERALD_DB_ENV
+   ```
+   저장소의 `.env`는 그대로 로컬 Docker를 가리키고 있어도 됩니다 — `TWITTERAPI_IO_KEY` 같은
+   나머지 값은 여전히 `.env`에서 오고, 이 두 줄만 `DATABASE_URL`/`HERALD_DB_ENV`를 덮어씁니다.
+
+2. **수집 워터마크를 심습니다.** 스케줄러는 자기만의 output 루트(`~/.herald/output`)를 쓰는데,
+   갓 만든 루트에는 워터마크 파일이 없습니다. `CollectAuthoredContent`는 워터마크가 없으면
+   **하한선 없이** 수집하므로, 이 단계를 건너뛰면 첫 tick이 계정 전체 역사를 끌어옵니다.
+
+   심을 값은 **프로덕션이 이미 수집해 둔 가장 최신 글의 작성 시각**입니다. 그래야 빈틈도 중복도
+   없이 이어집니다(워터마크는 배타적입니다 — `t.createdAt <= sinceTime`이면 건너뜁니다):
+   ```bash
+   mkdir -p ~/.herald/output/x
+   cat > ~/.herald/output/x/state.json <<'EOF'
+   {
+     "watermarks": {
+       "Mantle_Official": "2026-07-27T14:35:24.000Z"
+     }
+   }
+   EOF
+   ```
+   위 값은 2026-08-06 설치 시점의 것입니다. 다시 설치하는 경우라면 그때의 프로덕션 최신값으로
+   바꾸세요. 이 타임스탬프는 `herald-watch.service`의 `Environment=HERALD_TRANSLATE_SINCE=`와
+   **같은 값이어야 합니다** — 하나는 어디까지 수집할지, 다른 하나는 어디부터 번역할지를 정하는데,
+   둘이 어긋나면 수집은 했지만 영원히 번역되지 않는 구간이 생깁니다. 유닛 파일 안의 주석이 그
+   값이 어디서 왔는지 설명하고 있습니다.
+
+3. **`.env`에 `TELEGRAM_CHAT_ID_OPS`를 넣습니다.** 실패 알림이 갈 방입니다. 이 키가 없으면
+   `herald-notify-failure.sh`는 **조용히 아무것도 보내지 않고 정상 종료합니다**(실패 핸들러가
+   스스로 실패하면 그건 안전망이 아니라 루프라서 그렇게 설계돼 있습니다). 즉 빠뜨리면 "스케줄러가
+   죽었는데 아무도 모른다"가 됩니다 — 이 기능이 막으려던 바로 그 상황입니다. 개발용 방을 그대로
+   써도 되고, 그 경우 `.env`의 `TELEGRAM_CHAT_ID_DEV` 값을 복사해 한 줄 추가하면 됩니다.
+
+4. **세 유닛 파일을 `~/.config/systemd/user/`로 복사합니다** (`.sh`는 복사하지 않습니다 — 바로
+   아래 참고):
+   ```bash
+   cp deploy/herald-watch.service deploy/herald-watch.timer \
+      deploy/herald-notify-failure.service \
+      ~/.config/systemd/user/
+   ```
+   **셋 다 필요합니다.** `OnFailure=`는 유닛만 가리킬 수 있고 스크립트를 직접 가리킬 수 없어서,
+   `herald-notify-failure.sh`를 실행하는 얇은 래퍼 유닛(`herald-notify-failure.service`)이 따로
+   있습니다. 이걸 빠뜨리면 `herald-watch.service`의 `OnFailure=`가 존재하지 않는 유닛을 가리키게
+   되어, 실패해도 알림이 조용히 나가지 않습니다 — 이 기능이 막으려는 바로 그 실패 상황입니다.
+   반면 **`herald-notify-failure.sh` 자체는 복사하지 않습니다** — 방금 복사한 래퍼 유닛의
+   `ExecStart=`가 저장소 안 경로(`/home/kyle/code/mantle-kr-herald/deploy/herald-notify-failure.sh`)를
+   직접 가리키고 있어서 복사본은 애초에 실행되지 않고, systemd도 유닛 디렉터리 안에 놓인 `.sh`
+   파일 자체는 그냥 무시합니다. 복사해 두면 오히려 둘 중 하나만 고쳤을 때 조용히 서로 어긋나는
+   사본이 생깁니다. 저장소의 실행 권한만 그대로 유지하면 됩니다.
+
+5. **타이머를 켜기 전에 손으로 한 번 돌려봅니다.** `daemon-reload`만 하고, `enable`은 아직입니다:
+   ```bash
+   systemctl --user daemon-reload
+   systemctl --user start herald-watch.service     # Type=oneshot이라 끝날 때까지 붙잡습니다
+   systemctl --user show herald-watch.service -p Result -p ExecMainStatus
+   journalctl --user -u herald-watch --no-pager -n 30
+   ```
+   첫 줄이 `output root … (HERALD_OUTPUT_DIR override) · database production …`인지 확인하세요.
+   여기서 `database development`가 보이면 1번이 안 먹은 것이므로 **여기서 멈춥니다** — 그대로
+   타이머를 켜면 두 시간마다 잘못된 데이터베이스에 씁니다.
+
+6. **켭니다**:
+   ```bash
+   systemctl --user enable --now herald-watch.timer
+   ```
+
+### 확인
+
+- **다음/마지막 실행 시각** — `systemctl --user list-timers`
+- **타이머·서비스 상태** — `systemctl --user status herald-watch.timer herald-watch.service`
+  (유닛 이름 없이 `systemctl --user status`만 실행하면 systemd 사용자 매니저 전체 상태만 보이고,
+  타이머가 켜져 있든 멈춰 있든 설치조차 안 됐든 화면이 똑같습니다 — 여기서는 반드시 유닛 이름을
+  붙이세요)
+- **로그** — `journalctl --user -u herald-watch`
+- **알림 자체가 안 갔는지 확인** — `journalctl --user -u herald-notify-failure.service`.
+  `herald-watch.service`의 로그와는 별도 유닛이라, "실패는 났는데 텔레그램에 아무것도 안 왔다"를
+  진단하려면 이쪽을 봐야 합니다.
+- **지금 당장 한 번 돌려보고 싶을 때** — `systemctl --user start herald-watch.service`. 인터벌은
+  타이머가 *언제* 도는지만 정할 뿐이고, 이 명령은 그것과 무관하게 즉시 한 번 tick을 실행합니다.
+
+### 실패 알림이 실제로 가는지 훈련해 보기
+
+"실패했는데 아무도 몰랐다"가 이 스케줄러의 유일한 치명적 실패 방식이라, 알림 경로는 **믿지 말고
+한 번 실제로 터뜨려서** 확인하세요. 설치 직후 한 번, 그리고 `TELEGRAM_*` 값을 바꿀 때마다.
+
+`~/.herald/prod.env`는 건드리지 않습니다. 닿지 않는 DSN을 담은 파일을 drop-in으로 덧씌웁니다:
+
+```bash
+printf 'DATABASE_URL=postgres://x:x@127.0.0.1:59999/x?sslmode=disable\n' > ~/.herald/failtest.env
+mkdir -p ~/.config/systemd/user/herald-watch.service.d
+printf '[Service]\nEnvironmentFile=%%h/.herald/failtest.env\n' \
+  > ~/.config/systemd/user/herald-watch.service.d/99-failtest.conf
+systemctl --user daemon-reload
+systemctl --user start herald-watch.service          # 실패해야 정상입니다
+```
+
+**반드시 `EnvironmentFile=`이어야 합니다 — `Environment=DATABASE_URL=…`로는 안 덮입니다.**
+systemd는 유닛 파일에 적힌 순서와 무관하게 `EnvironmentFile=`을 모든 `Environment=`보다 **나중에**
+적용하기 때문에, drop-in에 `Environment=`를 써도 `prod.env`의 값이 그대로 이깁니다(실제로 이걸로
+한 번 헛돌았습니다 — tick이 그냥 프로덕션에 성공적으로 붙어 버립니다). 파일끼리는 나중 것이 이깁니다.
+
+확인할 것 세 가지:
+
+```bash
+journalctl --user -u herald-watch.service -n 20 --no-pager   # ECONNREFUSED + "Triggering OnFailure="
+journalctl --user -u herald-notify-failure.service -n 10 --no-pager
+```
+
+1. `herald-watch` 저널에 `Triggering OnFailure= dependencies.`가 있을 것
+2. `herald-notify-failure` 저널이 **조용할 것** — `curl -fsS`는 텔레그램이 거부하면(토큰 만료 401,
+   chat id 오류 400) 그 에러를 stderr로 뱉고 그게 여기 찍힙니다. 아무것도 없으면 2xx입니다.
+3. **휴대폰에 실제로 메시지가 왔을 것.** 1·2가 통과해도 `TELEGRAM_CHAT_ID_OPS`가 비어 있으면
+   스크립트는 아무것도 보내지 않고 조용히 exit 0 합니다(실패 핸들러가 스스로 실패하면 안전망이
+   아니라 루프라서 그렇게 설계돼 있습니다) — 그 경우 1·2만 보고는 구분이 안 됩니다.
+
+끝나면 반드시 원복하고, 프로덕션에 다시 붙는지 확인하세요:
+
+```bash
+rm -rf ~/.config/systemd/user/herald-watch.service.d ~/.herald/failtest.env
+systemctl --user daemon-reload
+systemctl --user start herald-watch.service
+journalctl --user -u herald-watch.service -n 3 --no-pager   # 첫 줄이 다시 …neon.tech/neondb 여야 합니다
+```
+
+**알림에 `claude -p exited cleanly but saved N of the M item(s)`가 찍혔다면**, 에이전트 프로세스는
+정상 종료했지만 `translate:save`를 (전부) 부르지 않은 것입니다. tick은 이 경우를 성공으로 읽지
+않고 **실패로 처리합니다** — 그 배치는 저장되지 않았고, 보드에도 올라오지 않습니다. 해당 항목들은
+여전히 미번역 상태로 남아 있어서 **새 글이 들어오는 다음 tick에서 다시 준비됩니다.** 이 줄이 반복해서
+뜨면 에이전트가 워크시트를 채우고도 저장 단계를 건너뛰고 있다는 뜻이니, 프롬프트나 권한 규칙
+(`src/adapters/agent/ClaudeCodeAgent.ts`)을 봐야 합니다.
+
+**⚠ 그래도 타이머가 켜져 있는 동안 `pnpm watch`를 터미널에서 직접 실행하지는 마세요 — 다만
+데이터가 깨질까 봐는 아닙니다.** 손으로 돌린 `pnpm watch`는 그냥 `.env`(로컬 Docker DB)와 저장소
+안 `output/`을 읽습니다. 반면 예약된 tick은 `herald-watch.service`의
+`EnvironmentFile=%h/.herald/prod.env`(프로덕션 Neon)와
+`Environment=HERALD_OUTPUT_DIR=%h/.herald/output`(별도 output 루트)를 함께 받습니다 — 셸에서
+내보낸 값이 Node의 `--env-file-if-exists=.env`보다 항상 이긴다는 점은 이 머신에서 직접
+확인했습니다. 그래서 두 실행은 DB도 다르고 output 루트도 달라서 `pending.json`·워크시트·수집
+워터마크가 전부 갈립니다 — **서로의 데이터를 깨뜨릴 수는 없습니다.** 실제로 겹치면 공유되는 건
+twitterapi.io 쿼터, Claude 구독 하나, CPU뿐이고, 최악의 경우도 둘이 리소스를 다투다 한쪽이 실패해
+알림이 한 번 뜨는 정도입니다 — 다음 tick에서 다시 정상으로 돌아옵니다. 그래도 굳이 겹칠 이유가
+없으니, 지금 한 번 돌려보고 싶으면 위의 `systemctl --user start herald-watch.service`를 쓰세요 —
+systemd가 순서를 맞춰 주니 신경 쓸 일이 없어집니다.
+
+### 멈추기
+
+- **일시 정지**(유닛은 그대로 두고 다음 예약 실행만 막음) — `systemctl --user stop
+  herald-watch.timer`. **단, 이 정지는 재시작을 넘기지 못합니다.** `stop`은 지금 켜져 있는
+  타이머를 멈출 뿐 `enable` 상태(자동 시작 등록)는 그대로 남기므로, WSL을 재시작하면 로그인 시
+  `timers.target`과 함께 다시 살아납니다 — 그런데 `herald-watch.timer`의 `Persistent=true`는
+  "타이머가 꺼져 있던 동안 놓친 실행이 있으면 다시 켜지자마자 한 번 즉시 실행한다"고 정의돼
+  있습니다(`man systemd.timer`). 그래서 "정지해 두고 재시작"은 계속 멈춰 있는 게 아니라
+  **재시작 순간 tick이 한 번 바로 도는** 결과가 됩니다.
+- **재시작을 넘겨서까지 확실히 멈춰 있어야 하면** — `systemctl --user disable --now
+  herald-watch.timer`. `enable` 자체를 해제하므로 재시작해도 돌아오지 않습니다.
+
+### 스케줄러 전용 output/ 트리
+
+스케줄러는 저장소 안의 `output/`를 쓰지 않습니다. `herald-watch.service`의
+`Environment=HERALD_OUTPUT_DIR=%h/.herald/output`가 스케줄러의 모든 산출물(수집 워터마크,
+번역·정렬 워크시트, `pending.json` 등)을 통째로 `~/.herald/output` 아래로 옮깁니다. 그래서
+스케줄러가 준비한 워크시트는 저장소 안 `output/translations/worksheets/`가 아니라 그쪽에
+있습니다 — 손으로 `pnpm translate:prepare`를 돌렸을 때와는 다른 위치입니다.
+
+일부러 이렇게 분리했습니다. `pnpm collect`가 어디까지 수집했는지 기억하는 워터마크
+(`output/x/state.json`)는 지금도 파일로만 저장되고 있어서(Postgres로 옮기지 않은 유일한 부분 —
+`src/cli/stores.ts` 주석 참고), **어느 DB를 향해 실행했는지와 무관하게 실행마다 이 파일 하나를
+공유**합니다. 실제로 이 기능을 만드는 동안, 개발 DB를 향한 로컬 `pnpm collect` 실행이 이 파일을
+39개 스레드만큼 앞으로 밀어버린 적이 있습니다 — 그 상태에서 프로덕션을 향해 돌았다면 그 39개를
+영원히 건너뛸 뻔했습니다. 출력 루트를 분리하면 로컬 실습과 스케줄된 실행이 이 파일을 두고 서로
+밟을 일이 아예 없어집니다.
+
+지금 어느 output 루트가 적용되고 있는지는 `pnpm doctor`의 `Output root` 줄이 항상 알려줍니다 —
+기본값이면 `(default)`, `HERALD_OUTPUT_DIR`가 걸려 있으면 `(HERALD_OUTPUT_DIR override)`라고
+실제 경로와 함께 뜹니다. 실패 알림용 텔레그램 방(`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID_OPS`)이
+아직 설정되지 않았으면 같은 명령의 `Telegram ops chat (watch failures)` 줄이 경고로 알려줍니다 —
+설정 전까지는 실패해도 알림이 조용히 나가지 않습니다. 같은 사실이 매 tick의 로그에도 남습니다 —
+`journalctl --user -u herald-watch`의 첫 줄이 그 실행이 어느 output 루트·어느 데이터베이스를
+향했는지 매번 적어 두므로, `pnpm doctor`를 따로 돌리지 않아도 지난 tick이 어디를 향했는지
+로그만으로 확인할 수 있습니다.
+
+## 7. 다음으로
 
 - 명령이 정확히 무엇을 읽고 쓰는지 궁금하면 → [`artifacts.md`](artifacts.md)
 - 이 프로젝트가 무엇을 하고 무엇을 하지 않는지 궁금하면 → [`capabilities.md`](capabilities.md)

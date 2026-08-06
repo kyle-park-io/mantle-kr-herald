@@ -17,7 +17,7 @@ import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { LarkAuth } from "../adapters/lark/LarkAuth";
 import { TypefullyQuota } from "../adapters/send/TypefullyQuota";
 import { HttpClient } from "../shared/http/HttpClient";
-import { paths } from "../paths";
+import { paths, OUTPUT_DIR } from "../paths";
 import { steeringFiles, missingSteeringFiles, skeletonSteeringFiles } from "../doctor/steering";
 import {
   configCheck,
@@ -30,6 +30,8 @@ import {
   quotaResult,
   runDbCheck,
   databaseProbe,
+  outputRootResult,
+  telegramOpsChatResult,
 } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
@@ -75,6 +77,10 @@ async function runDatabaseCheck(): Promise<CheckResult> {
 }
 
 // --- config checks (offline) ---
+// Always reported, override or not: an invisible HERALD_OUTPUT_DIR would recreate the "silently
+// created a second output/ tree" trap src/paths.ts's REPO_ROOT comment warns about — see the
+// override's own doc comment there for the incident that made this required.
+results.push(outputRootResult(OUTPUT_DIR, process.env.HERALD_OUTPUT_DIR));
 results.push(configCheck("Storage mode", () => loadStorageMode(), `mode: ${process.env.HERALD_STORAGE_MODE?.trim() ?? "(unset)"}`));
 results.push(await runDatabaseCheck());
 // twitterapi.io / Lark app are source credentials — you need one only if you collect from that
@@ -94,6 +100,11 @@ results.push(cloudCheck("Google Drive (D)", () => loadGoogleDriveConfig(), local
 results.push(optionalCheck("Google Sheet (§9a)", () => loadGoogleSheetConfig(), "optional — only for the Sheet data hub (§9a)"));
 // X delivery is opt-in — a Telegram-only install is a valid setup, not a broken one.
 results.push(optionalCheck("Typefully (X)", () => loadTypefullyConfig(), "only needed to send to X"));
+// Read directly rather than through a config loader: these are `deploy/herald-notify-failure.sh`'s
+// variables, not any TypeScript command's, so there is no `load*Config` for them to go through —
+// this line is the only thing in `src/` that ever reads TELEGRAM_CHAT_ID_OPS (TELEGRAM_BOT_TOKEN
+// is also read by src/config.ts, for the unrelated `send:channels` credential).
+results.push(telegramOpsChatResult(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID_OPS));
 
 // Presence is not enough: `config:init` writes empty skeletons, so a file can exist and steer
 // nothing. Reporting ok there would hide exactly the failure that matters — translating with an
