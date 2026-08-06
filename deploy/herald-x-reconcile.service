@@ -19,18 +19,14 @@
 Description=Mantle KR Herald X publish reconcile — one run of `pnpm x:reconcile --yes` against @0xMantleKR
 # Same hook herald-watch.service uses, and the same reason: `OnFailure=` can only name a unit, never
 # a bare script, so the actual notification logic lives in deploy/herald-notify-failure.sh, run via
-# the small wrapper unit herald-notify-failure.service names.
-#
-# KNOWN GAP, not fixed here: herald-notify-failure.sh hardcodes `UNIT="herald-watch.service"` and
-# tails that unit's own journal specifically. Its header already anticipates this — "generalise
-# only once a second scheduled unit needs the same hook" (turn it into
-# `herald-notify-failure@.service`, `%i` as the instance, accept the unit name as `$1`) — and this
-# unit is that second scheduled unit. Wiring `OnFailure=` here without doing that generalisation
-# means a failed x-reconcile run pages with the *wrong* unit name in the text and an excerpt of
-# herald-watch.service's journal (possibly empty, possibly stale), not this unit's own. Left for the
-# generalisation step rather than patched inline here: that script is not one of this task's files,
-# and the fix changes behaviour for herald-watch.service too, not just this one.
-OnFailure=herald-notify-failure.service
+# the templated wrapper unit deploy/herald-notify-failure@.service names. `%n` below expands to this
+# unit's own full name (herald-x-reconcile.service) before systemd resolves the OnFailure= target —
+# the exact `OnFailure=bar@%n.service` idiom documented in `man systemd.unit`'s own OnFailure=
+# example — so that name becomes the templated unit's `%i`, and this unit is always the one named
+# and tailed on its own failure, never herald-watch.service's. This is what let a second scheduled
+# unit share the hook at all: see deploy/herald-notify-failure@.service's own header for the
+# single-unit hardcode this replaced, and the incident it used to cause.
+OnFailure=herald-notify-failure@%n.service
 
 [Service]
 Type=oneshot
