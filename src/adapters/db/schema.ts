@@ -216,6 +216,13 @@ const STATEMENTS: readonly string[] = [
   `insert into auth_attempts (id, failures, locked_at, last_attempt_at)
    values ('singleton', 0, null, null)
    on conflict (id) do nothing`,
+
+  // `posted_url`/`posted_at` did not exist when `translations` was first created — `add column if
+  // not exists` rather than folding them into the `create table` above so a database that already
+  // has the table (every install predating this) still gets the columns applied, the same
+  // idempotent-migration shape every other `if not exists` statement in this file already relies on.
+  `alter table translations add column if not exists posted_url text`,
+  `alter table translations add column if not exists posted_at text`,
 ];
 
 export async function applySchema(db: Db): Promise<void> {

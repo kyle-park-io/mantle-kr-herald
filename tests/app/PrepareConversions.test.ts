@@ -78,4 +78,15 @@ describe("PrepareConversions", () => {
     const { pending } = await uc.run({ types: ["x"], since: "2026-03-01T00:00:00.000Z" });
     expect(pending).toEqual([{ itemId: "x:2", type: "x", sourceKorean: "new" }]);
   });
+
+  it("never offers a posted translation for conversion", async () => {
+    // A `posted` item was already retired by the reconcile flow — offering it back for conversion
+    // would let it re-enter a pipeline whose whole job is to stop it being sent again.
+    const uc = new PrepareConversions(
+      translationStore([tr("x:1", "approved", "승인 카피"), tr("x:2", "posted", "이미 게시됨")]),
+      glossaryStore, config, conversionConfig, fewShotByType(), convStore(),
+    );
+    const { pending } = await uc.run({ types: ["x"] });
+    expect(pending).toEqual([{ itemId: "x:1", type: "x", sourceKorean: "승인 카피" }]);
+  });
 });

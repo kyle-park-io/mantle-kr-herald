@@ -16,6 +16,23 @@ function stores() {
   return { saved, fewShots, translationStore, fewShotStore };
 }
 
+/** Like `stores()` above, but `upsert` replaces by itemId the way a real store does. */
+function replacingStores(seed: Translation[] = []) {
+  const saved = [...seed];
+  const fewShots: FewShotExample[] = [];
+  const translationStore: TranslationStore = {
+    loadAll: async () => saved,
+    upsert: async (t) => {
+      const i = saved.findIndex((x) => x.itemId === t.itemId);
+      if (i >= 0) saved[i] = t;
+      else saved.push(t);
+    },
+    listTranslatedIds: async () => new Set(saved.map((t) => t.itemId)),
+  };
+  const fewShotStore: FewShotStore = { load: async () => fewShots, add: async (ex) => { fewShots.push(ex); } };
+  return { saved, fewShots, translationStore, fewShotStore };
+}
+
 describe("SaveTranslation", () => {
   it("stores a translation with status 'translated' and does not promote when not approved", async () => {
     const s = stores();
@@ -71,5 +88,31 @@ describe("SaveTranslation", () => {
     });
     expect(s.saved[0].isReply).toBe(true);
     expect(s.saved[0].refUrl).toBe("https://x.com/a/status/1");
+  });
+
+  it("does not clear postedUrl or postedAt when an edit is saved", async () => {
+    // `run` builds a whole new Translation and upserts it, so without care the retire evidence is
+    // silently dropped — and losing postedUrl means the next reconcile re-retires an item a human
+    // deliberately reverted.
+    const retired: Translation = {
+      itemId: "x:1",
+      source: "x",
+      sourceText: "hi",
+      koreanText: "안녕",
+      status: "posted",
+      translatedAt: "2026-05-05T00:00:00.000Z",
+      postedUrl: "https://x.com/0xMantleKR/status/999",
+      postedAt: "2026-07-31T05:39:41.000Z",
+    };
+    const s = replacingStores([retired]);
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-06T00:00:00.000Z");
+
+    await uc.run({ itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕하세요", approve: false });
+
+    expect(s.saved).toHaveLength(1);
+    expect(s.saved[0].koreanText).toBe("안녕하세요");
+    expect(s.saved[0].status).toBe("translated"); // the revert path: off `posted`…
+    expect(s.saved[0].postedUrl).toBe("https://x.com/0xMantleKR/status/999"); // …but the evidence stays
+    expect(s.saved[0].postedAt).toBe("2026-07-31T05:39:41.000Z");
   });
 });
