@@ -129,6 +129,21 @@ try {
         : "") +
       ".",
   );
+  // A non-zero score below CANDIDATE_AT is not a match, but it is not nothing either — either our
+  // copy went out modified enough that `classify` didn't call it a candidate, or the matcher is
+  // mis-scoring, and both are worth a person's eyes. `classify`/`reconcileXPublished` carry this
+  // real score through for exactly this reason (see `xReconcile.ts`'s `Verdict` and
+  // `ReconcilePlan.external`'s doc comment) — dropping it here, after the aggregate/zero-count line
+  // above, would be the one place that work stops paying off. Sorted highest-first so the most
+  // suspicious near-miss is on top; by nature there are usually few, often none.
+  const nearMisses = plan.external.filter((e) => e.score > 0).sort((a, b) => b.score - a.score);
+  if (nearMisses.length > 0) {
+    console.log(`  ${nearMisses.length} near-miss(es) scored above 0 but below CANDIDATE_AT (highest first):`);
+    for (const { record, score } of nearMisses) {
+      const rootId = record.itemId.replace(/^kr:/, "");
+      console.log(`    root ${rootId} → post ${record.postId} — score ${score.toFixed(3)}`);
+    }
+  }
 
   console.log(`skipped (${plan.skipped.length}) — already recorded, on a previous run or by hand.`);
 
