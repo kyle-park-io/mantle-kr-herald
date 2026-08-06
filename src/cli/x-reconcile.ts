@@ -30,6 +30,12 @@ skipIfLocal("x:reconcile");
 
 // Same expression `metrics-record.ts:16` uses for the env fallback; `--handle` (not present there)
 // takes priority over it so an operator can point one run at a different account without an env edit.
+//
+// Note what this does NOT scope: `translations` below is filtered by `source === "x"` only, because a
+// `Translation` carries no handle to filter on. A run pointed at another account therefore still sees
+// every settled @0xMantleKR translation, and `reconcileXPublished`'s Phase A is what decides they are
+// not this run's business — reporting each in `plan.skipped` rather than acting on it or (as it did
+// before Task 4 review round 4) throwing before the plan is printed at all.
 const handle =
   argValue("--handle")?.trim().replace(/^@/, "") ||
   process.env.REFERENCE_X_HANDLE?.trim().replace(/^@/, "") ||

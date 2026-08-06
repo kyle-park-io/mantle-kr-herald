@@ -145,12 +145,12 @@ export function postUrl(handle: string, rootId: string): string {
 }
 
 /**
- * The inverse of `postUrl`: the rootId embedded in a url this module itself built. Kept beside
- * `postUrl` on purpose, not as a standalone regex somewhere else, so the two spellings of "how a
- * post's url is shaped" cannot drift apart.
+ * The inverse of `postUrl`: the handle **and** the rootId embedded in a url this module itself
+ * built. Kept beside `postUrl` on purpose, not as a standalone regex somewhere else, so the two
+ * spellings of "how a post's url is shaped" cannot drift apart.
  *
  * Exists for a caller that already has a `postedUrl` (a `Translation`'s own record of a post
- * already confirmed as its own) and needs the rootId back — `reconcileXPublished`'s second pass is
+ * already confirmed as its own) and needs to read it back — `reconcileXPublished`'s second pass is
  * the first such caller, reading it here instead of re-scoring the translation against this run's
  * live threads via `bestThreadFor`. Re-scoring an already-settled translation could silently pick a
  * *different* thread if the original one aged out of `--since`, attributing the wrong live post to
@@ -159,24 +159,29 @@ export function postUrl(handle: string, rootId: string): string {
  * entirely, and means a retry no longer depends on the original thread still being inside the
  * current fetch window.
  *
+ * Returns the handle as well as the rootId (Task 4 review round 4) because "is this url corrupt?"
+ * and "is this url for a *different account*?" are two genuinely different questions and a caller
+ * must be able to answer them separately — the first is a defect worth failing a run over, the
+ * second is merely out of scope for a run pointed at another handle. A caller that could only ask
+ * `postUrl(myHandle, rootId) === url` collapses both into one, and so turns `--handle
+ * someone-else` into a crash. See `reconcileXPublished`'s Phase A for both answers.
+ *
  * Captures **only** a run of digits immediately after `/status/`, terminated by `/`, `?`, `#`, or
  * the end of the string — never `[^/]+` (Task 4 review round 3): a looser capture would swallow a
  * tracking query string (`.../status/123?s=20` → `"123?s=20"`, a postId `impressions:record` would
  * then try to measure verbatim) or hand back a non-numeric id straight through. Returns `undefined`,
  * never throws, for anything that doesn't fit that shape — a bare `/status/` with nothing after it,
- * no `/status/` segment at all, or no digits immediately following it.
+ * no `/status/` segment at all, no digits immediately following it, or a host that is not `x.com`.
  *
- * **Deliberately does not check `handle`.** `https://x.com/SomeoneElse/status/999` still returns
- * `"999"` — this function only knows the `/status/<digits>` shape, not which account's copy it is.
- * A caller that needs to know the url is genuinely for *its own* account (every caller so far does)
- * must additionally verify the round trip itself: `postUrl(handle, rootId) === url`. That check
- * lives at the call site, not here, so this function stays a pure, single-purpose inverse of
- * `postUrl` — see `reconcileXPublished`'s Phase A for the round-trip check and why a url that fails
- * it must fail the run rather than silently skip (its own doc comment explains why skipping is
- * actively dangerous, not merely imprecise).
+ * **Parsing is deliberately looser than `postUrl` is exact.** A url that parses here has *not* been
+ * proven to be one `postUrl` would produce: `.../status/123?s=20` and `.../status/123/` both parse.
+ * That is what keeps the round-trip check at the call site (`postUrl(parsed.handle, parsed.rootId)
+ * === url`) load-bearing rather than a tautology — this function narrows a string to a candidate
+ * (handle, rootId); only the round trip proves it is byte-for-byte a url this codebase wrote.
  */
-export function rootIdFromPostUrl(url: string): string | undefined {
-  return /\/status\/(\d+)(?:[/?#]|$)/.exec(url)?.[1];
+export function parsePostUrl(url: string): { handle: string; rootId: string } | undefined {
+  const match = /^https:\/\/x\.com\/([^/?#]+)\/status\/(\d+)(?:[/?#]|$)/.exec(url);
+  return match === null ? undefined : { handle: match[1], rootId: match[2] };
 }
 
 /**

@@ -9,7 +9,7 @@ import {
   externalHistoryRecord,
   observedDelivery,
   postUrl,
-  rootIdFromPostUrl,
+  parsePostUrl,
 } from "../../src/domain/publish/xReconcile";
 import type { AssembledThread, SourceTweet } from "../../src/domain/models";
 
@@ -178,42 +178,53 @@ describe("record shapes", () => {
     expect(postUrl("someoneElse", "99")).toBe("https://x.com/someoneElse/status/99");
   });
 
-  describe("rootIdFromPostUrl", () => {
+  describe("parsePostUrl", () => {
     it("inverts postUrl exactly, for any handle", () => {
-      expect(rootIdFromPostUrl(postUrl("0xMantleKR", "2084128041543127356"))).toBe("2084128041543127356");
-      expect(rootIdFromPostUrl(postUrl("someoneElse", "99"))).toBe("99");
+      expect(parsePostUrl(postUrl("0xMantleKR", "2084128041543127356"))).toEqual({
+        handle: "0xMantleKR",
+        rootId: "2084128041543127356",
+      });
+      expect(parsePostUrl(postUrl("someoneElse", "99"))).toEqual({ handle: "someoneElse", rootId: "99" });
     });
 
     it("returns undefined, not a throw, for a url with no /status/<digits> at all", () => {
       // This function never throws — deciding what a malformed url means is the call site's job
       // (reconcileXPublished's Phase A now fails the run on one, rather than skip; see that
       // function's own doc comment for why a silent skip there is actively dangerous).
-      expect(rootIdFromPostUrl("https://x.com/0xMantleKR")).toBeUndefined();
-      expect(rootIdFromPostUrl("not a url at all")).toBeUndefined();
-      expect(rootIdFromPostUrl("")).toBeUndefined();
-      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/")).toBeUndefined(); // no digits at all
+      expect(parsePostUrl("https://x.com/0xMantleKR")).toBeUndefined();
+      expect(parsePostUrl("not a url at all")).toBeUndefined();
+      expect(parsePostUrl("")).toBeUndefined();
+      expect(parsePostUrl("https://x.com/0xMantleKR/status/")).toBeUndefined(); // no digits at all
     });
 
     it("captures only the digits, dropping a tracking query string stuck to the id (Task 4 review round 3)", () => {
       // The old `[^/]+` capture returned "123?s=20" whole — a postId impressions:record would then
       // try to measure verbatim. `(\d+)` stops at the first non-digit.
-      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/123?s=20")).toBe("123");
-      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/123#reply")).toBe("123");
-      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/123/")).toBe("123");
+      expect(parsePostUrl("https://x.com/0xMantleKR/status/123?s=20")?.rootId).toBe("123");
+      expect(parsePostUrl("https://x.com/0xMantleKR/status/123#reply")?.rootId).toBe("123");
+      expect(parsePostUrl("https://x.com/0xMantleKR/status/123/")?.rootId).toBe("123");
     });
 
     it("returns undefined for a non-numeric id, rather than passing it straight through", () => {
-      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/abc")).toBeUndefined();
-      expect(rootIdFromPostUrl("https://x.com/0xMantleKR/status/123abc")).toBeUndefined();
+      expect(parsePostUrl("https://x.com/0xMantleKR/status/abc")).toBeUndefined();
+      expect(parsePostUrl("https://x.com/0xMantleKR/status/123abc")).toBeUndefined();
     });
 
-    it("does NOT itself check the handle — extracts the id regardless of whose account the url names", () => {
-      // Deliberate: this function is a pure, single-purpose inverse of postUrl's /status/<digits>
-      // shape. A caller that needs to know the url is genuinely for its OWN account (every caller
-      // so far does) must additionally round-trip it: postUrl(handle, rootId) === url. See
-      // reconcileXPublished's Phase A for that check, and this function's own doc comment for why
-      // it lives at the call site rather than here.
-      expect(rootIdFromPostUrl("https://x.com/SomeoneElse/status/999")).toBe("999");
+    it("reports whose account the url names rather than judging it (Task 4 review round 4)", () => {
+      // Deliberate: this function narrows a string to a candidate (handle, rootId) and says nothing
+      // about whether that handle is the caller's own. Handing the handle BACK — rather than
+      // silently folding "not our account" into "unparseable" — is what lets reconcileXPublished
+      // tell a corrupt postedUrl (fail the run) apart from a well-formed one for a different
+      // account (skip it), which before round 4 were one comparison and so one crash.
+      expect(parsePostUrl("https://x.com/SomeoneElse/status/999")).toEqual({ handle: "SomeoneElse", rootId: "999" });
+    });
+
+    it("does not accept a lookalike host, so the round trip at the call site cannot be fooled by one", () => {
+      // postUrl only ever builds https://x.com/... — a twitter.com url is not something this
+      // codebase wrote, so it must not parse into a (handle, rootId) that looks like it was.
+      expect(parsePostUrl("https://twitter.com/0xMantleKR/status/123")).toBeUndefined();
+      expect(parsePostUrl("http://x.com/0xMantleKR/status/123")).toBeUndefined();
+      expect(parsePostUrl("https://evil.example/x.com/0xMantleKR/status/123")).toBeUndefined();
     });
   });
 

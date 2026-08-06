@@ -4,8 +4,8 @@ import {
   externalHistoryRecord,
   findRootTweet,
   observedDelivery,
+  parsePostUrl,
   postUrl,
-  rootIdFromPostUrl,
   TRANSLATION_MATCH_AT,
 } from "../domain/publish/xReconcile";
 import type { MatchCandidate } from "../domain/kol/attribution";
@@ -77,8 +77,16 @@ export type CandidateReason = "possible-match" | "duplicate-live-thread" | "ambi
  * `candidates` are reported only: a score in the band between "clearly ours" and "clearly not"
  * is a human's call, and writing it under either a `kr:` id or an `x-post` delivery row would
  * leave two rows for one post the moment that human's call disagrees. `skipped` explains, per
- * thread, why a live post that would otherwise have been written was left alone — almost always
+ * post, why something that would otherwise have been written was left alone — almost always
  * because a previous run (or a hand-run pipeline) already recorded it.
+ *
+ * `skipped` is keyed by rootId but is **not** exclusively about this run's live threads. The second
+ * pass pushes to it too (Task 4 review round 4), for a settled translation whose own `postedUrl`
+ * this run declined to act on: one naming a different account (whose rootId is therefore a post that
+ * is not in `threads` at all) and one whose post a different item's rendering already claimed. Both
+ * are the same kind of fact this list already carries — "a real post, deliberately left alone, and
+ * here is why" — and each row's own `reason` says which. The alternative was a silent `continue`,
+ * which is how a two-items-one-post conflict that never self-heals stays invisible forever.
  *
  * `candidates` deliberately carries no `type` — only `rootId`/`itemId`/`score`/`reason`. Unlike
  * `confirmed`, nothing is written for a candidate, so there is no `DeliveryEntry` to put a type on;
@@ -105,7 +113,7 @@ export type CandidateReason = "possible-match" | "duplicate-live-thread" | "ambi
  * `posted` rows are the second pass's output — a translation that never went through the rendering
  * route at all, matched against a live thread by `bestThreadFor`/`TRANSLATION_MATCH_AT` rather than
  * `classify`/`CONFIRMED_AT`, OR a translation already settled (`postedUrl` set) whose history row is
- * still missing, read back via `rootIdFromPostUrl` rather than re-scored — see the second pass's own
+ * still missing, read back via `parsePostUrl` rather than re-scored — see the second pass's own
  * doc comment below. Not a `DeliveryEntry`: a translation never had a `ChannelRendering`, so there
  * is no `type` to put on one and no `x-post` delivery row to write. The caller instead stamps
  * `postedUrl`/`postedAt` onto the `Translation` row itself — see `Translation` in
@@ -184,7 +192,7 @@ export type ReconcilePlan = {
  * re-scoring against whatever threads ARE in this run's window can silently pick a *different*
  * thread, attributing the wrong live post to the item and feeding the wrong postId to
  * `impressions:record` (Concern 1). So a settled translation's rootId is read back out of its own
- * `postedUrl` via `rootIdFromPostUrl` (see that function's own doc comment) instead — this also
+ * `postedUrl` via `parsePostUrl` (see that function's own doc comment) instead — this also
  * means a retry no longer depends on the original thread still being inside the fetch window at
  * all: a history row owed from three weeks ago still gets written today.
  *
@@ -193,25 +201,39 @@ export type ReconcilePlan = {
  * **Phase A — settled translations** (`postedUrl` already set). For each (skipping one whose
  * `itemId` is already in `claimedItemIds` — the rendering route's stronger record):
  *
- * 1. Parse the rootId and verify the round trip — `rootIdFromPostUrl(translation.postedUrl)` must
- *    produce an id for which `postUrl(handle, id) === translation.postedUrl` holds exactly. This is
- *    the ONLY check in this whole file that throws on a translation-shaped input rather than
- *    skipping it, and that is deliberate (Task 4 review round 3): `postedUrl` is written exclusively
- *    by `postUrl`/`RetireTranslation`, so a value that fails this round trip — a different handle, a
- *    non-numeric id, a stray query string, a bare trailing slash — should be unreachable in correct
- *    operation, and a silent `continue` here would skip the thread-claim below along with everything
- *    else. That is worse than it sounds: the thread this translation actually owns would stay
- *    unclaimed, and Phase B could then match and retire a completely different, never-posted
- *    translation against it — precisely the failure Concern 2 (round 2) closed, reopened through the
- *    one path that never claims. So this fails loudly instead: claim-or-fail, never claim-or-skip.
- * 2. If the round-tripped rootId is one `consumedRootIds` already holds — a *different* item's
- *    rendering confirmed this exact thread this run, or it is sitting in `plan.candidates` awaiting
- *    a human — skip without claiming (Task 4 review round 3): that thread already has the stronger
- *    record (a rendering match carries a real `type` and passed 2차 검수), and this translation's own
- *    `postedUrl` cannot override it. `claimedItemIds` alone cannot catch this case: it only rules out
- *    the *same* item being confirmed twice, and here the confirmed item and the settled translation
- *    are two different items sharing one live thread.
- * 3. Otherwise the thread is claimed — `claimedRootIds.add(rootId)` — **unconditionally**, whether
+ * 1. Parse the url and verify the round trip — `parsePostUrl(translation.postedUrl)` must produce a
+ *    (handle, rootId) pair for which `postUrl(handle, rootId) === translation.postedUrl` holds
+ *    exactly, against the url's **own** handle. This is the ONLY check in this whole file that
+ *    throws on a translation-shaped input rather than skipping it, and that is deliberate (Task 4
+ *    review round 3): `postedUrl` is written exclusively by `postUrl`/`RetireTranslation`, so a value
+ *    that fails this round trip — a non-numeric id, a stray query string, a bare trailing slash —
+ *    should be unreachable in correct operation, and a silent `continue` here would skip the
+ *    thread-claim below along with everything else. That is worse than it sounds: the thread this
+ *    translation actually owns would stay unclaimed, and Phase B could then match and retire a
+ *    completely different, never-posted translation against it — precisely the failure Concern 2
+ *    (round 2) closed, reopened through the one path that never claims. So this fails loudly
+ *    instead: claim-or-fail, never claim-or-skip.
+ * 2. If the parsed handle is not this run's `handle` (compared case-insensitively — an X handle is
+ *    case-insensitive, so `--handle 0xmantlekr` names the same account as a stored
+ *    `https://x.com/0xMantleKR/...` and must NOT take this branch), the translation is **skipped
+ *    with a reason, not thrown on** (Task 4 review round 4). Until round 4 this case shared step 1's
+ *    round trip — it was checked against *this run's* handle — so pointing `--handle` at any other
+ *    account, which `x-reconcile.ts` documents as a supported thing to do, crashed the run before it
+ *    printed anything at all, as soon as one settled `0xMantleKR` translation existed. Corrupt and
+ *    foreign are not the same category of error: a foreign url is well-formed, just about someone
+ *    else's account, and this run has nothing to say about it. Skipping without claiming is safe
+ *    here — and only here — because a tweet id is globally unique, so a rootId recorded against
+ *    another account can never name a thread in this run's pool for Phase B to mis-claim. A corrupt
+ *    url has no such guarantee, which is why step 1 stays loud.
+ * 3. If the rootId is one `consumedRootIds` already holds — a *different* item's rendering confirmed
+ *    this exact thread this run, or it is sitting in `plan.candidates` awaiting a human — skip
+ *    without claiming (Task 4 review round 3), recording the conflict in `plan.skipped` (round 4):
+ *    that thread already has the stronger record (a rendering match carries a real `type` and passed
+ *    2차 검수), and this translation's own `postedUrl` cannot override it. `claimedItemIds` alone
+ *    cannot catch this case: it only rules out the *same* item being confirmed twice, and here the
+ *    confirmed item and the settled translation are two different items sharing one live thread —
+ *    a data conflict that never self-heals, so it must reach a human's eyes rather than vanish.
+ * 4. Otherwise the thread is claimed — `claimedRootIds.add(rootId)` — **unconditionally**, whether
  *    or not this translation is genuinely done. If `historyPostIds` already has this rootId, nothing
  *    further happens (genuinely done, both halves complete). Otherwise: `postedAt` must be present
  *    (thrown otherwise — `RetireTranslation` always stamps it alongside `postedUrl`, so an
@@ -222,7 +244,7 @@ export type ReconcilePlan = {
  *    `postedUrl` as `"already-retired"` and never overwrites it, so 되돌리기, a human's correction to
  *    `postedUrl`, still sticks).
  *
- * Phase A claiming its thread **unconditionally** (step 3) — even when the translation is genuinely
+ * Phase A claiming its thread **unconditionally** (step 4) — even when the translation is genuinely
  * done and nothing is pushed to `plan.posted` for it — is Concern 2's fix: a settled translation's
  * post is already a fact, not a contest, and a DIFFERENT translation must never be free to match the
  * same live thread just because the settled one didn't need a fresh write. Phase A runs to
@@ -432,18 +454,21 @@ export function reconcileXPublished(input: {
   const claimedRootIds = new Set<string>();
 
   // Phase A — settled translations (`postedUrl` already set). Read, never scored — see the doc
-  // comment above and `rootIdFromPostUrl`'s own for why re-scoring these is unsafe.
+  // comment above and `parsePostUrl`'s own for why re-scoring these is unsafe.
   for (const translation of translations) {
     if (translation.postedUrl === undefined) continue; // Phase B's translation
     if (claimedItemIds.has(translation.itemId)) continue; // the rendering route already confirmed this item this run
 
-    // Parse-and-verify, not parse-then-trust: `rootIdFromPostUrl` alone would accept another
-    // account's url, a non-numeric id, or a rootId with a query string stuck to it (see that
-    // function's own doc comment). Checking the full round trip against `postUrl` — the only other
-    // place this url shape is spelled — is what actually proves `rootId` is a genuine id for THIS
-    // account's THIS post, not merely something that happened to parse.
-    const rootId = rootIdFromPostUrl(translation.postedUrl);
-    if (rootId === undefined || postUrl(handle, rootId) !== translation.postedUrl) {
+    // Parse-and-verify, not parse-then-trust: `parsePostUrl` alone would accept a non-numeric id, a
+    // rootId with a query string stuck to it, or a stray trailing slash (see that function's own doc
+    // comment — it narrows a string to a *candidate* (handle, rootId), it does not prove the string
+    // is one `postUrl` produced). Checking the full round trip against `postUrl` — the only other
+    // place this url shape is spelled — is what actually proves this is a genuine post url, not
+    // merely something that happened to parse. Round-tripped against the url's OWN handle, not this
+    // run's: whose account it names is the *next* question, and answering both with one comparison
+    // is what made `--handle` a crash (see below).
+    const parsed = parsePostUrl(translation.postedUrl);
+    if (parsed === undefined || postUrl(parsed.handle, parsed.rootId) !== translation.postedUrl) {
       // Claim-or-fail, never claim-or-skip (Task 4 review round 3) — see the doc comment above for
       // why a silent `continue` here is actively dangerous: it would leave this translation's own
       // thread unclaimed, and Phase B could then match and retire a different, never-posted
@@ -452,10 +477,39 @@ export function reconcileXPublished(input: {
       // worth failing the whole run on rather than silently mis-recording one translation's history.
       throw new Error(
         `reconcileXPublished: ${translation.itemId}'s postedUrl "${translation.postedUrl}" is not a ` +
-          `well-formed post url for @${handle} — refusing to skip its retire silently, which would leave its ` +
+          `well-formed post url — refusing to skip its retire silently, which would leave its ` +
           `thread unclaimed and open to a different translation`,
       );
     }
+
+    if (parsed.handle.toLowerCase() !== handle.toLowerCase()) {
+      // Well-formed, just not ours (Task 4 review round 4). Not the same category of error as a
+      // corrupt url, and not fatal: this run is pointed at one account, and a post on someone
+      // else's is simply not its business. Compared case-insensitively because an X handle is
+      // case-insensitive — `--handle 0xmantlekr` names the SAME account as a stored
+      // `https://x.com/0xMantleKR/...`, so it must fall through to the claim below, not skip.
+      //
+      // Skipping without claiming is safe here in a way it is NOT for a corrupt url, and the reason
+      // is specific rather than general: a tweet id is globally unique, so a rootId recorded against
+      // another account can never name a thread in THIS run's pool — there is nothing for Phase B to
+      // mis-claim. A corrupt url carries no such guarantee (its digits could be anything, including
+      // one of this run's own rootIds), which is why that case above still fails loudly.
+      //
+      // Reported rather than dropped, for the same reason the `consumedRootIds` skip below is (see
+      // there): a settled translation this run does nothing with is invisible otherwise, and if the
+      // handles differ by accident rather than on purpose — a stale `REFERENCE_X_HANDLE`, a typo in
+      // `--handle` — a silent skip is exactly how a whole account's worth of owed history rows goes
+      // unwritten with a clean-looking run every two hours.
+      plan.skipped.push({
+        rootId: parsed.rootId,
+        reason:
+          `${translation.itemId} was posted on @${parsed.handle}, not @${handle} — not this run's ` +
+          `account, so its retire belongs to a run pointed at @${parsed.handle}`,
+      });
+      continue;
+    }
+
+    const rootId = parsed.rootId;
 
     if (consumedRootIds.has(rootId)) {
       // A DIFFERENT item's approved rendering already confirmed this exact thread this run (or it
@@ -464,6 +518,22 @@ export function reconcileXPublished(input: {
       // confirmed twice, and here two different items are contending for one thread. Skipped
       // without claiming — `consumedRootIds` already keeps this thread out of Phase B's pool on its
       // own, so there is nothing left for this translation to protect by claiming it too.
+      //
+      // Reported in `plan.skipped`, never silently (Task 4 review round 4). This branch fires on a
+      // genuine two-items-one-post data conflict: one live post that a rendering says is item A and
+      // a translation's own `postedUrl` says is item B. Nothing about it self-heals — the same
+      // conflict is re-derived, and re-skipped, on every tick — so the only way it ever gets fixed
+      // is a human seeing it. `plan.posted` would be a lie (nothing is written), and
+      // `postedNearMisses` would be wrong too (this translation was never scored); `skipped` is the
+      // list that already means "a real thing this run deliberately left alone, with the reason
+      // attached", and `x-reconcile.ts` prints every row of it.
+      plan.skipped.push({
+        rootId,
+        reason:
+          `${translation.itemId} records post ${rootId} as its own, but this run already matched ` +
+          `that post to a different item's approved rendering (see the confirmed/candidate rows ` +
+          `above) — two items claim one post; check ${translation.itemId}'s postedUrl`,
+      });
       continue;
     }
 

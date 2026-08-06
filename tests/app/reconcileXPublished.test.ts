@@ -460,22 +460,59 @@ describe("translations that already went out by hand", () => {
     expect(plan.posted).toEqual([]);
   });
 
+  it("reports that two-items-one-post conflict in plan.skipped instead of dropping it silently", () => {
+    // Task 4 review round 4, Finding 2. The skip above is correct, but it emitted nothing at all —
+    // not plan.posted, not postedNearMisses (a Phase A translation is never scored), not
+    // plan.skipped. It fires on a genuine data conflict: one live post that an approved rendering
+    // says is x:1 and a translation's own postedUrl says is x:2. Nothing about that self-heals — the
+    // same conflict is re-derived and re-skipped every tick — so if the run says nothing, no one
+    // ever fixes it. plan.skipped is the list that already means "left alone, and here is why", and
+    // x-reconcile.ts prints every row of it with its reason.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [rendering("x:1", COPY)],
+      translations: [
+        translation("x:2", "이 번역은 무관합니다", {
+          postedUrl: "https://x.com/0xMantleKR/status/100",
+          postedAt: "2026-08-01T00:00:00.000Z",
+        }),
+      ],
+    });
+    const conflict = plan.skipped.filter((s) => s.reason.includes("x:2"));
+    expect(conflict).toHaveLength(1);
+    expect(conflict[0].rootId).toBe("100");
+    // Names both halves of the conflict — the item whose record was set aside and the post they are
+    // contending for — because a row that only says "skipped" tells an operator nothing to act on.
+    expect(conflict[0].reason).toMatch(/x:2/);
+    expect(conflict[0].reason).toMatch(/100/);
+  });
+
   describe("a malformed postedUrl fails the run rather than silently skip", () => {
     // Task 4 review round 3: a silent `continue` past a malformed postedUrl would leave that
     // translation's own thread unclaimed, reopening the exact double-retire hole Concern 2 (round
     // 2) closed. `postedUrl` is written exclusively by `postUrl`/`RetireTranslation`, so every shape
     // below should be unreachable in correct operation — reaching it must fail loudly.
+    //
+    // NOT in this list, since Task 4 review round 4: a well-formed url for a DIFFERENT account
+    // ("https://x.com/SomeoneElse/status/100"). That is not corruption, and treating it as such made
+    // every `--handle` run against another account a guaranteed crash — see the
+    // "postedUrl for a different account" block below for what happens to it instead.
     const CASES: { label: string; postedUrl: string }[] = [
-      { label: "a different account's post url", postedUrl: "https://x.com/SomeoneElse/status/100" },
       { label: "a tracking query string stuck to the id", postedUrl: "https://x.com/0xMantleKR/status/100?s=20" },
       { label: "a non-numeric id", postedUrl: "https://x.com/0xMantleKR/status/abc" },
       { label: "a bare trailing slash with no id at all", postedUrl: "https://x.com/0xMantleKR/status/" },
-      // rootIdFromPostUrl alone WOULD extract "100" here (see that function's own test) — this case
-      // exists to prove the round-trip check (postUrl(handle, rootId) === postedUrl), not just the
-      // regex, is what actually guards Phase A: the trailing slash means the round trip does not
-      // reproduce the original url byte-for-byte, so this must still fail rather than silently
-      // accept a url that merely LOOKS parseable.
+      // parsePostUrl alone WOULD extract "100" here (see that function's own test) — this case
+      // exists to prove the round-trip check (postUrl(parsed.handle, parsed.rootId) === postedUrl),
+      // not just the regex, is what actually guards Phase A: the trailing slash means the round trip
+      // does not reproduce the original url byte-for-byte, so this must still fail rather than
+      // silently accept a url that merely LOOKS parseable.
       { label: "digits followed by an extra trailing slash (round-trip mismatch)", postedUrl: "https://x.com/0xMantleKR/status/100/" },
+      // Corruption is corruption whoever the url names: a foreign handle only buys the SKIP path
+      // when the url is otherwise byte-for-byte what postUrl builds. This one is not, so it throws
+      // like any other malformed value — which is what stops round 4's fix from becoming a way to
+      // launder a broken postedUrl past the guard by editing the handle in it.
+      { label: "a different account's url that is ALSO malformed", postedUrl: "https://x.com/SomeoneElse/status/100?s=20" },
     ];
 
     for (const { label, postedUrl } of CASES) {
@@ -490,6 +527,104 @@ describe("translations that already went out by hand", () => {
         ).toThrow(/postedUrl/);
       });
     }
+  });
+
+  describe("a postedUrl for a different account", () => {
+    // Task 4 review round 4, Finding 1. `x-reconcile.ts` documents `--handle` as "point one run at a
+    // different account without an env edit", and translations are filtered only by `source === "x"`
+    // — never by handle, and they carry no handle field to filter by. So the moment one settled
+    // @0xMantleKR translation exists, every run pointed anywhere else hit Phase A's round trip
+    // against THIS run's handle and threw before printing a single line of plan. A well-formed url
+    // for someone else's account is not corruption; it is simply not this run's business.
+    const SETTLED_ELSEWHERE = { postedUrl: "https://x.com/0xMantleKR/status/100", postedAt: "2026-07-31T05:39:41.000Z" };
+
+    it("skips it with a reason instead of throwing, so --handle against another account still runs", () => {
+      const plan = reconcileXPublished({
+        ...base,
+        handle: "Mantle_Official",
+        threads: [],
+        renderings: [],
+        translations: [translation("x:1", COPY, SETTLED_ELSEWHERE)],
+      });
+      expect(plan.posted).toEqual([]);
+      expect(plan.skipped).toHaveLength(1);
+      expect(plan.skipped[0].rootId).toBe("100");
+      expect(plan.skipped[0].reason).toMatch(/0xMantleKR/);
+      expect(plan.skipped[0].reason).toMatch(/Mantle_Official/);
+    });
+
+    it("does not stop the rest of the run: a translation that IS this account's still gets retired", () => {
+      // The crash's real cost was never the one foreign row — it was that nothing else in the run
+      // got a chance. Thread 500 is @Mantle_Official's own live post and x:2 its translation; both
+      // must survive the presence of x:1's foreign record.
+      const plan = reconcileXPublished({
+        ...base,
+        handle: "Mantle_Official",
+        threads: [thread("500", [OTHER_REWRITTEN])],
+        renderings: [],
+        translations: [translation("x:1", COPY, SETTLED_ELSEWHERE), translation("x:2", OTHER)],
+      });
+      expect(plan.posted).toHaveLength(1);
+      expect(plan.posted[0]).toMatchObject({ itemId: "x:2", rootId: "500", url: "https://x.com/Mantle_Official/status/500" });
+    });
+
+    it("never claims a thread for the foreign post — the skip really is a skip, not a silent claim", () => {
+      // Pins that the foreign branch takes NO pool thread with it: thread 100 stays available and
+      // x:2 retires against it on its own text. This fixture deliberately forces the rootId
+      // collision reality forbids (x:1's foreign post and this run's thread both "100") because it
+      // is the only way to observe the claim-or-not decision at all — in production a tweet id is
+      // globally unique, so a rootId recorded against another account is never in this run's pool
+      // and there is nothing to contend for. That uniqueness is exactly why skipping is safe HERE
+      // and not for a corrupt url, whose digits carry no such guarantee (see the malformed block).
+      const plan = reconcileXPublished({
+        ...base,
+        handle: "Mantle_Official",
+        threads: [thread("100", [OTHER_REWRITTEN])],
+        renderings: [],
+        translations: [translation("x:1", COPY, SETTLED_ELSEWHERE), translation("x:2", OTHER)],
+      });
+      expect(plan.posted).toHaveLength(1);
+      expect(plan.posted[0]).toMatchObject({ itemId: "x:2", rootId: "100" });
+    });
+
+    it("treats a casing-only handle difference as the SAME account, claiming its thread rather than skipping", () => {
+      // An X handle is case-insensitive, so `--handle 0xmantlekr` is the very same account the
+      // stored url names — it is a spelling difference, not a different account. Skipping it would
+      // leave thread 100 unclaimed and let x:2 (which never went out) be retired against x:1's post:
+      // Concern 2, reopened through round 4's new skip path. x:1 here is genuinely done
+      // (historyPostIds has 100), so the ONLY thing keeping plan.posted empty is the claim.
+      const plan = reconcileXPublished({
+        ...base,
+        handle: "0xmantlekr",
+        threads: [thread("100", [COPY])],
+        renderings: [],
+        historyPostIds: new Set(["100"]),
+        translations: [
+          translation("x:1", "무관한 다른 번역 본문입니다", { postedUrl: "https://x.com/0xMantleKR/status/100" }),
+          translation("x:2", COPY),
+        ],
+      });
+      expect(plan.posted).toEqual([]);
+      // Thread 100 IS skipped by the first pass (historyPostIds already holds it, so its external
+      // row would double-record the post) — that row is expected. What must NOT appear is a
+      // foreign-account skip for x:1, which would mean Phase A treated 0xmantlekr and 0xMantleKR as
+      // two accounts and left the thread unclaimed.
+      expect(plan.skipped.filter((s) => /not this run's account/.test(s.reason))).toEqual([]);
+    });
+
+    it("still retires a casing-only handle difference whose history row is missing", () => {
+      // The other half of the same rule: same account, so this is a real owed history row, not a
+      // foreign record to leave alone.
+      const plan = reconcileXPublished({
+        ...base,
+        handle: "0XMANTLEKR",
+        threads: [],
+        renderings: [],
+        translations: [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100", postedAt: "2026-07-31T05:39:41.000Z" })],
+      });
+      expect(plan.posted).toHaveLength(1);
+      expect(plan.posted[0]).toMatchObject({ itemId: "x:1", rootId: "100", url: "https://x.com/0xMantleKR/status/100" });
+    });
   });
 
   it("refuses to write a blank publishedAt when postedUrl is set but postedAt is missing", () => {
