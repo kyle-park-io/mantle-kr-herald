@@ -105,10 +105,20 @@ export function candidateReasonText(reason: CandidateReason, itemId: string, ren
  * score, and this function changes nothing about that — it calls the exact same pure
  * `bestThreadFor` the second pass itself calls (never a re-spelling of the rule; see
  * `isXCandidateRendering`'s own doc comment for what a second spelling costs elsewhere in this
- * feature), just without `reconcileXPublished`'s own pool bookkeeping
- * (`claimedRootIds`/`consumedRootIds`), which exists to keep two translations from claiming one
- * thread in a *write*. Nothing here writes, so a near-miss line naming a thread another entry also
- * names is not a bug — it is only ever informational.
+ * feature).
+ *
+ * **Scored against the same pool the pass itself used — Task 4 review's Finding 5, fixed here.**
+ * The first version scored every translation against *every* rooted thread, ignoring that
+ * `reconcileXPublished` had already spoken for some of them (a `plan.confirmed` delivery row, a
+ * `plan.candidate` awaiting a human, or another translation's own `plan.posted` retire). That let a
+ * translation whose one truly-best thread was taken elsewhere score `>= TRANSLATION_MATCH_AT`
+ * against that SAME thread here and vanish from both sections at once — never posted (the thread
+ * was gone before this translation's turn), never a near-miss either (its displayed score, against
+ * the wrong pool, looked like a real match). `confirmedRootIds`/`candidateRootIds` mirror
+ * `reconcileXPublished`'s own `consumedRootIds`; `posted`'s rootIds cover the rest —
+ * `claimedRootIds`'s final state there is exactly `plan.posted`'s rootIds (see that function's own
+ * doc comment), so no thread this function excludes is a thread `reconcileXPublished` left
+ * available.
  *
  * `posted` — already-retired itemIds this run — and any translation already carrying `postedUrl`
  * are excluded, same as `reconcileXPublished`'s own guards, so a row that already has an owner
@@ -117,18 +127,40 @@ export function candidateReasonText(reason: CandidateReason, itemId: string, ren
 export function translationNearMisses(
   translations: Translation[],
   threads: AssembledThread[],
-  posted: { itemId: string }[],
+  posted: { itemId: string; rootId: string }[],
+  confirmedRootIds: string[],
+  candidateRootIds: string[],
 ): { itemId: string; rootId: string; score: number }[] {
   const postedItemIds = new Set(posted.map((p) => p.itemId));
-  const rootedThreads = threads.filter((t) => findRootTweet(t) !== undefined);
+  const excludedRootIds = new Set([...confirmedRootIds, ...candidateRootIds, ...posted.map((p) => p.rootId)]);
+  const availableThreads = threads.filter((t) => findRootTweet(t) !== undefined && !excludedRootIds.has(t.rootId));
 
   const misses: { itemId: string; rootId: string; score: number }[] = [];
   for (const t of translations) {
     if (t.postedUrl !== undefined || postedItemIds.has(t.itemId) || t.koreanText === "") continue;
-    const match = bestThreadFor(t.koreanText, rootedThreads);
+    const match = bestThreadFor(t.koreanText, availableThreads);
     if (match !== undefined && match.score > 0 && match.score < TRANSLATION_MATCH_AT) {
       misses.push({ itemId: t.itemId, rootId: match.thread.rootId, score: match.score });
     }
   }
   return misses.sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Minimum retire count within a single `x:reconcile --yes` run before `notifyOps` fires — below
+ * this, retiring a translation is this feature doing its job silently; at or above it, a human
+ * should know without reading the run's journal.
+ */
+export const NOTIFY_RETIRE_THRESHOLD = 3;
+
+/**
+ * Whether this run should page an operator about its retires, and the message to send if so — the
+ * ">= 3" decision `x-reconcile.ts` used to make inline (Task 4 review's Finding 6: a load-bearing
+ * constant with no test that can fail, in a file whose whole reason for existing is that a
+ * top-level script has no test coverage of its own). Returns `undefined` below the threshold, so
+ * the caller's own `if` reads as "is there something to send" rather than repeating the comparison.
+ */
+export function retireNotification(retiredCount: number, retiredItemIds: string[], handle: string): string | undefined {
+  if (retiredCount < NOTIFY_RETIRE_THRESHOLD) return undefined;
+  return `x:reconcile retired ${retiredCount} translation(s) already posted by hand on @${handle}: ${retiredItemIds.join(", ")}`;
 }

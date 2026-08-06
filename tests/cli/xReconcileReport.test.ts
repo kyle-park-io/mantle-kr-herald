@@ -7,6 +7,8 @@ import { describe, it, expect } from "vitest";
 import {
   candidateReasonText,
   externalSummaryLine,
+  NOTIFY_RETIRE_THRESHOLD,
+  retireNotification,
   translationNearMisses,
   xReconcileStartupLine,
   xTypesFor,
@@ -150,7 +152,7 @@ describe("translationNearMisses", () => {
   const UNRELATED_LIVE_TEXT = "이번 주말 커뮤니티 밋업에서 만나요 다들 즐거운 하루 보내시고 편안한 저녁 시간 보내시길 바랍니다 감사합니다 여러분";
 
   it("reports a translation whose best live thread scored above 0 but below TRANSLATION_MATCH_AT", () => {
-    const misses = translationNearMisses([translation("x:1", COPY)], [thread("100", [NEAR_MISS_LIVE_TEXT])], []);
+    const misses = translationNearMisses([translation("x:1", COPY)], [thread("100", [NEAR_MISS_LIVE_TEXT])], [], [], []);
     expect(misses).toHaveLength(1);
     expect(misses[0].itemId).toBe("x:1");
     expect(misses[0].rootId).toBe("100");
@@ -159,7 +161,7 @@ describe("translationNearMisses", () => {
   });
 
   it("omits a translation whose best thread shares nothing at all (score 0)", () => {
-    const misses = translationNearMisses([translation("x:1", COPY)], [thread("100", [UNRELATED_LIVE_TEXT])], []);
+    const misses = translationNearMisses([translation("x:1", COPY)], [thread("100", [UNRELATED_LIVE_TEXT])], [], [], []);
     expect(misses).toEqual([]);
   });
 
@@ -167,6 +169,8 @@ describe("translationNearMisses", () => {
     const misses = translationNearMisses(
       [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/999" })],
       [thread("100", [NEAR_MISS_LIVE_TEXT])],
+      [],
+      [],
       [],
     );
     expect(misses).toEqual([]);
@@ -176,13 +180,15 @@ describe("translationNearMisses", () => {
     const misses = translationNearMisses(
       [translation("x:1", COPY)],
       [thread("100", [NEAR_MISS_LIVE_TEXT])],
-      [{ itemId: "x:1" }],
+      [{ itemId: "x:1", rootId: "100" }],
+      [],
+      [],
     );
     expect(misses).toEqual([]);
   });
 
   it("omits a translation with empty koreanText — similarity can never score it above 0", () => {
-    const misses = translationNearMisses([translation("x:1", "")], [thread("100", [NEAR_MISS_LIVE_TEXT])], []);
+    const misses = translationNearMisses([translation("x:1", "")], [thread("100", [NEAR_MISS_LIVE_TEXT])], [], [], []);
     expect(misses).toEqual([]);
   });
 
@@ -194,8 +200,76 @@ describe("translationNearMisses", () => {
       [translation("x:1", COPY), translation("x:2", closer)],
       [thread("100", [NEAR_MISS_LIVE_TEXT]), thread("200", [NEAR_MISS_LIVE_TEXT])],
       [],
+      [],
+      [],
     );
     expect(misses.map((m) => m.itemId)).toEqual(["x:2", "x:1"]);
     expect(misses[0].score).toBeGreaterThanOrEqual(misses[1].score);
+  });
+
+  describe("Finding 5 — scores against the same pool reconcileXPublished's own pass excluded", () => {
+    it("excludes a thread another translation already claimed this run (plan.posted's own rootIds)", () => {
+      // Without this exclusion, x:1 would show thread 100 as "almost" even though it already
+      // belongs to a different translation's real retire (x:9) this same run.
+      const misses = translationNearMisses(
+        [translation("x:1", COPY)],
+        [thread("100", [NEAR_MISS_LIVE_TEXT])],
+        [{ itemId: "x:9", rootId: "100" }],
+        [],
+        [],
+      );
+      expect(misses).toEqual([]);
+    });
+
+    it("excludes a thread already turned into a plan.confirmed delivery row", () => {
+      const misses = translationNearMisses(
+        [translation("x:1", COPY)],
+        [thread("100", [NEAR_MISS_LIVE_TEXT])],
+        [],
+        ["100"],
+        [],
+      );
+      expect(misses).toEqual([]);
+    });
+
+    it("excludes a thread already sitting in plan.candidates", () => {
+      const misses = translationNearMisses(
+        [translation("x:1", COPY)],
+        [thread("100", [NEAR_MISS_LIVE_TEXT])],
+        [],
+        [],
+        ["100"],
+      );
+      expect(misses).toEqual([]);
+    });
+  });
+});
+
+describe("retireNotification", () => {
+  // Task 4 review's Finding 6: the ">= 3" threshold used to be an inline literal in x-reconcile.ts
+  // with no test that could fail. The spec's own number, pinned directly: if this ever changes, it
+  // should be a deliberate edit to this assertion, not a silent drift.
+  it("the threshold is 3", () => {
+    expect(NOTIFY_RETIRE_THRESHOLD).toBe(3);
+  });
+
+  // The rest of this block asserts against the exported constant rather than a hardcoded "3", so a
+  // future deliberate change to NOTIFY_RETIRE_THRESHOLD updates these expectations along with it.
+  it("fires at the threshold", () => {
+    const message = retireNotification(NOTIFY_RETIRE_THRESHOLD, ["x:1", "x:2", "x:3"], "0xMantleKR");
+    expect(message).toBeDefined();
+    expect(message).toContain(String(NOTIFY_RETIRE_THRESHOLD));
+    expect(message).toContain("@0xMantleKR");
+    expect(message).toContain("x:1, x:2, x:3");
+  });
+
+  it("does not fire one below the threshold", () => {
+    const message = retireNotification(NOTIFY_RETIRE_THRESHOLD - 1, ["x:1", "x:2"], "0xMantleKR");
+    expect(message).toBeUndefined();
+  });
+
+  it("fires above the threshold too, naming the real count", () => {
+    const message = retireNotification(NOTIFY_RETIRE_THRESHOLD + 2, ["x:1", "x:2", "x:3", "x:4", "x:5"], "0xMantleKR");
+    expect(message).toContain(String(NOTIFY_RETIRE_THRESHOLD + 2));
   });
 });

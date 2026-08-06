@@ -377,16 +377,55 @@ describe("translations that already went out by hand", () => {
     expect(plan.posted).toEqual([]);
   });
 
-  it("never matches a translation that already has postedUrl", () => {
-    // Even on an exact match. This is what makes 되돌리기 stick: a human who reverts a wrong retire
-    // keeps postedUrl, and the next tick must not undo their undo.
+  it("stays out of plan.posted when postedUrl is set AND its history row already exists", () => {
+    // Genuinely done on both halves — Task 4 review's Finding 1 made this check conjunctive
+    // (postedUrl set AND historyPostIds has the matched rootId), replacing an unconditional
+    // "postedUrl set → skip" that made a stuck history write permanently unretryable (see the
+    // next test, and this function's own doc comment).
     const plan = reconcileXPublished({
       ...base,
       threads: [thread("100", [COPY])],
       renderings: [],
+      historyPostIds: new Set(["100"]),
       translations: [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100" })],
     });
     expect(plan.posted).toEqual([]);
+  });
+
+  it("re-enters plan.posted when postedUrl is set but its history row is still missing", () => {
+    // Finding 1's fix, pinned directly: the status half of a retire can succeed while the history
+    // write fails (a sheet hiccup); if a translation could never be scored again once postedUrl was
+    // set, its history row would be stuck forever. `historyPostIds` here is empty (the default from
+    // `base`), matching a history write that has not yet landed for this rootId.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [],
+      translations: [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100", status: "posted" })],
+    });
+    expect(plan.posted).toHaveLength(1);
+    expect(plan.posted[0]).toMatchObject({ itemId: "x:1", rootId: "100" });
+  });
+
+  it("re-matching a postedUrl-set translation never changes claimedRootIds' equivalence to plan.posted's rootIds", () => {
+    // Pins the invariant translationNearMisses (xReconcileReport.ts) relies on: a translation that
+    // matches but is skipped for being genuinely done (both halves complete) must NOT claim the
+    // thread, so a second, unrelated translation can still see and use it. Both translations here
+    // target the SAME thread; only the first is genuinely done, so the second must still be free to
+    // claim it.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [],
+      historyPostIds: new Set(["100"]),
+      translations: [
+        translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100" }), // done, skipped
+        translation("x:2", COPY), // free to claim the same thread
+      ],
+    });
+    expect(plan.posted).toHaveLength(1);
+    expect(plan.posted[0].itemId).toBe("x:2");
+    expect(plan.posted[0].rootId).toBe("100");
   });
 
   it("skips a translation whose item the rendering route confirmed in this run", () => {
