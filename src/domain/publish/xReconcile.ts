@@ -41,6 +41,22 @@ export const CONFIRMED_AT = 0.95;
  */
 export const CANDIDATE_AT = 0.5;
 
+/**
+ * Score at or above which a live thread is treated as the hand-posted twin of a translation that
+ * never went through the rendering route. Calibrated 2026-08-07 against nine production
+ * translations, each scored with `similarity()` against its own best live thread and then labelled
+ * `samePost` by reading both texts (see `docs/superpowers/specs/2026-08-07-hand-posted-
+ * reconciliation-design.md` §"The measurement" and `tests/fixtures/handPostedPairs.json`): the five
+ * true rewrites scored 0.3077-0.4837, the four unrelated pairs scored 0.0124-0.0917. This constant
+ * is deliberately off-centre in that gap — 0.058 below the lowest true positive, not centred at
+ * ~0.20 — because the two errors it can make are not symmetric. Set it too high and a missed match
+ * leaves the translation exactly where it already is, in 검수 대기, at zero cost. Set it too low and
+ * a false match silently retires a translation a human still needed to see, which nothing then
+ * surfaces again. So it sits close to the positives, spending margin against the cheap error to buy
+ * margin against the expensive one.
+ */
+export const TRANSLATION_MATCH_AT = 0.25;
+
 export type Verdict =
   | { kind: "confirmed" | "candidate"; itemId: string; score: number }
   | { kind: "external"; score: number };
@@ -87,6 +103,40 @@ export function classify(thread: AssembledThread, candidates: MatchCandidate[]):
   if (best.score >= CONFIRMED_AT) return { kind: "confirmed", itemId: best.itemId, score: best.score };
   if (best.score >= CANDIDATE_AT) return { kind: "candidate", itemId: best.itemId, score: best.score };
   return { kind: "external", score: best.score };
+}
+
+/**
+ * The single best-scoring live thread for a translation that was never rendered — the second-pass
+ * question "did this one go out?", asked over `threads` rather than over approved copy.
+ *
+ * Deliberately does not go through `classify` or `bestMatch`. `classify` bands its result into
+ * confirmed/candidate/external against `CONFIRMED_AT`/`CANDIDATE_AT`, which are calibrated for a
+ * copy-paste of an approved rendering, not a hand-typed rewrite; those bands do not apply here.
+ * `bestMatch` discards anything below `MATCH_THRESHOLD` and returns `undefined`, throwing away the
+ * raw score this caller needs to compare against `TRANSLATION_MATCH_AT`. So this scores every thread
+ * directly with `similarity`, the same call `classify` makes, keeping its argument order
+ * (`similarity(text, candidate.text)`, i.e. thread text first) for readability parity with that
+ * sibling function — the score is symmetric, so the order has no effect on the result.
+ *
+ * Ties resolve to the first thread in input order, matching `classify`'s and `bestMatch`'s own
+ * tie-break convention.
+ *
+ * Returns `undefined` when `threads` is empty; never throws, never reads a clock or the environment.
+ */
+export function bestThreadFor(
+  koreanText: string,
+  threads: AssembledThread[],
+): { thread: AssembledThread; score: number } | undefined {
+  let best: { thread: AssembledThread; score: number } | undefined;
+
+  for (const thread of threads) {
+    const score = similarity(threadText(thread), koreanText);
+    if (best === undefined || score > best.score) {
+      best = { thread, score };
+    }
+  }
+
+  return best;
 }
 
 /** The public URL of a post on `handle`'s account. */
