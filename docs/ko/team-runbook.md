@@ -667,6 +667,50 @@ drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케�
 - **지금 당장 한 번 돌려보고 싶을 때** — `systemctl --user start herald-watch.service`. 인터벌은
   타이머가 *언제* 도는지만 정할 뿐이고, 이 명령은 그것과 무관하게 즉시 한 번 tick을 실행합니다.
 
+### 실패 알림이 실제로 가는지 훈련해 보기
+
+"실패했는데 아무도 몰랐다"가 이 스케줄러의 유일한 치명적 실패 방식이라, 알림 경로는 **믿지 말고
+한 번 실제로 터뜨려서** 확인하세요. 설치 직후 한 번, 그리고 `TELEGRAM_*` 값을 바꿀 때마다.
+
+`~/.herald/prod.env`는 건드리지 않습니다. 닿지 않는 DSN을 담은 파일을 drop-in으로 덧씌웁니다:
+
+```bash
+printf 'DATABASE_URL=postgres://x:x@127.0.0.1:59999/x?sslmode=disable\n' > ~/.herald/failtest.env
+mkdir -p ~/.config/systemd/user/herald-watch.service.d
+printf '[Service]\nEnvironmentFile=%%h/.herald/failtest.env\n' \
+  > ~/.config/systemd/user/herald-watch.service.d/99-failtest.conf
+systemctl --user daemon-reload
+systemctl --user start herald-watch.service          # 실패해야 정상입니다
+```
+
+**반드시 `EnvironmentFile=`이어야 합니다 — `Environment=DATABASE_URL=…`로는 안 덮입니다.**
+systemd는 유닛 파일에 적힌 순서와 무관하게 `EnvironmentFile=`을 모든 `Environment=`보다 **나중에**
+적용하기 때문에, drop-in에 `Environment=`를 써도 `prod.env`의 값이 그대로 이깁니다(실제로 이걸로
+한 번 헛돌았습니다 — tick이 그냥 프로덕션에 성공적으로 붙어 버립니다). 파일끼리는 나중 것이 이깁니다.
+
+확인할 것 세 가지:
+
+```bash
+journalctl --user -u herald-watch.service -n 20 --no-pager   # ECONNREFUSED + "Triggering OnFailure="
+journalctl --user -u herald-notify-failure.service -n 10 --no-pager
+```
+
+1. `herald-watch` 저널에 `Triggering OnFailure= dependencies.`가 있을 것
+2. `herald-notify-failure` 저널이 **조용할 것** — `curl -fsS`는 텔레그램이 거부하면(토큰 만료 401,
+   chat id 오류 400) 그 에러를 stderr로 뱉고 그게 여기 찍힙니다. 아무것도 없으면 2xx입니다.
+3. **휴대폰에 실제로 메시지가 왔을 것.** 1·2가 통과해도 `TELEGRAM_CHAT_ID_OPS`가 비어 있으면
+   스크립트는 아무것도 보내지 않고 조용히 exit 0 합니다(실패 핸들러가 스스로 실패하면 안전망이
+   아니라 루프라서 그렇게 설계돼 있습니다) — 그 경우 1·2만 보고는 구분이 안 됩니다.
+
+끝나면 반드시 원복하고, 프로덕션에 다시 붙는지 확인하세요:
+
+```bash
+rm -rf ~/.config/systemd/user/herald-watch.service.d ~/.herald/failtest.env
+systemctl --user daemon-reload
+systemctl --user start herald-watch.service
+journalctl --user -u herald-watch.service -n 3 --no-pager   # 첫 줄이 다시 …neon.tech/neondb 여야 합니다
+```
+
 **알림에 `claude -p exited cleanly but saved N of the M item(s)`가 찍혔다면**, 에이전트 프로세스는
 정상 종료했지만 `translate:save`를 (전부) 부르지 않은 것입니다. tick은 이 경우를 성공으로 읽지
 않고 **실패로 처리합니다** — 그 배치는 저장되지 않았고, 보드에도 올라오지 않습니다. 해당 항목들은
