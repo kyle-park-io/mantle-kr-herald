@@ -1,6 +1,3 @@
-import type { Db } from "../adapters/db/Db";
-import { TABLE_NAMES, ALTERED_COLUMNS } from "../adapters/db/schema";
-
 /**
  * The eleven stores `db:import`/`db:export` move between `output/` (plus the `translation/` and
  * `conversion/` config trees) and Postgres — see `docs/superpowers/specs/2026-07-31-hosted-writes-
@@ -104,42 +101,11 @@ export async function previewCount(fn: () => Promise<number>): Promise<number> {
   }
 }
 
-/**
- * Standalone, one-shot check: has this database ever had the FULL schema applied? Checks every
- * table `applySchema` creates (`TABLE_NAMES`, from `schema.ts`) against `information_schema.tables`
- * — not just `deliveries`. A single-table probe answers "yes" the moment the oldest table exists,
- * which is wrong the instant a later table is added to `schema.ts` and an already-migrated database
- * never gets it: that database would report "applied" forever, right up until the first read against
- * the new table fails at runtime with no earlier warning. (`auth_attempts`, added after the tables
- * this probe used to check, is exactly that case.)
- *
- * Also checks every `(table, column)` pair `applySchema` adds via `alter table ... add column if not
- * exists` (`ALTERED_COLUMNS`, from `schema.ts`) against `information_schema.columns` — the same
- * argument one level down, for a table that already exists but is missing a column added to it
- * later. A table-only probe cannot see that gap at all: the table read above already reports "every
- * table present" while a `select` against the missing column fails at runtime. Task 4.5 hit exactly
- * this against the real production database (`translations.posted_url`/`posted_at`) — see
- * `ALTERED_COLUMNS`'s own doc comment for the full story. The table check runs first and short-
- * circuits before the column query when it already fails, since a table that does not exist has no
- * columns worth asking `information_schema.columns` about.
- *
- * `previewCount` above reports 0 for a missing table the same way it would for a genuinely empty,
- * migrated one, so the two cannot be told apart from a preview's counts alone. `db-import.ts`'s and
- * `db-export.ts`'s entry scripts call this once, before printing the preview, to print an explicit
- * "schema not applied yet" line when that is why every count reads 0. `doctor`'s `databaseProbe`
- * (`src/doctor/checks.ts`) calls this too, layered on top of its own real-table select, so `doctor`
- * cannot report "ok" against a database this function would call unapplied.
- */
-export async function isSchemaApplied(db: Db): Promise<boolean> {
-  const tableRows = await db.query<{ table_name: string }>(
-    "select table_name from information_schema.tables where table_schema = 'public'",
-  );
-  const existingTables = new Set(tableRows.map((r) => r.table_name));
-  if (!TABLE_NAMES.every((name) => existingTables.has(name))) return false;
-
-  const columnRows = await db.query<{ table_name: string; column_name: string }>(
-    "select table_name, column_name from information_schema.columns where table_schema = 'public'",
-  );
-  const existingColumns = new Set(columnRows.map((r) => `${r.table_name}.${r.column_name}`));
-  return ALTERED_COLUMNS.every(({ table, column }) => existingColumns.has(`${table}.${column}`));
-}
+// `isSchemaApplied` used to live here. Task 4.5 review moved it into `src/adapters/db/schema.ts`,
+// beside `TABLE_NAMES` and `ALTERED_COLUMNS` — its two inputs — because `src/doctor/checks.ts`
+// needed it too, and every other cross-reference between `src/cli` and `src/doctor` goes from `cli`
+// importing out of `doctor/checks.ts`, never the other way around: a `doctor` file importing out of
+// `cli/dbStores.ts` would have been the one import in this codebase pointed backwards. Its callers
+// (`db-import.ts`, `db-export.ts`, `doctor/checks.ts`) now import it straight from `schema.ts`
+// instead — not re-exported from here — so there is exactly one place it is defined and exactly one
+// place each caller reaches for it, rather than an indirection through this file that adds nothing.

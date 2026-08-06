@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createUnmigratedTestDb } from "../support/testDb";
-import { isSchemaApplied } from "../../src/cli/dbStores";
+import { isSchemaApplied } from "../../src/adapters/db/schema";
 import { migrate } from "../../src/cli/db-migrate";
 
 let db: Awaited<ReturnType<typeof createUnmigratedTestDb>> | undefined;

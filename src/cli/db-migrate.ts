@@ -1,9 +1,8 @@
 import { fileURLToPath } from "node:url";
 import type { Db } from "../adapters/db/Db";
 import { createDb } from "../adapters/db/createDb";
-import { applySchema } from "../adapters/db/schema";
+import { applySchema, isSchemaApplied } from "../adapters/db/schema";
 import { loadDbConfig, describeDbTarget } from "../config";
-import { isSchemaApplied } from "./dbStores";
 
 /**
  * `pnpm db:migrate` — the one command whose entire job is to run `applySchema` against the
@@ -17,8 +16,8 @@ import { isSchemaApplied } from "./dbStores";
  * with `relation ... does not exist` on the very first read. This branch's `translations.posted_url`/
  * `posted_at` — a column added to a table that already existed on every prior install — broke that:
  * `pnpm x:reconcile` failed against the real production database with `column "posted_url" does not
- * exist`, and `isSchemaApplied` (`dbStores.ts`) still reported "applied", because it only ever
- * checked table names (see `ALTERED_COLUMNS`'s own doc comment in `schema.ts` for the full story, and
+ * exist`, and `isSchemaApplied` (`schema.ts`) still reported "applied", because it only ever checked
+ * table names (see `ALTERED_COLUMNS`'s own doc comment in `schema.ts` for the full story, and
  * `isSchemaApplied`'s for how that gap was closed). `db:migrate` is the fix for the other half: a
  * command an operator can run *before* any of those other commands ever touch a database that has
  * drifted this way, rather than relying on one of them to apply the schema as an incidental side
