@@ -971,8 +971,14 @@ systemctl --user daemon-reload
 
 ```bash
 set -a; . ~/.herald/prod.env; set +a
-pnpm x:reconcile --since 7d          # --yes 없음. 아무것도 쓰지 않습니다
+pnpm x:reconcile                     # --yes 없음. 아무것도 쓰지 않습니다
 ```
+
+**`--since`를 붙이지 마세요 — 붙이면 이 게이트가 거짓말을 합니다.** 유닛의 `ExecStart=`는
+`pnpm x:reconcile --yes`로 `--since`가 없어서 CLI 기본값 **30일**을 씁니다. 이 절이 한때
+`--since 7d`를 시키고 있었는데, 2026-08-06에 실제로 재보니 7일은 18건이고 30일은 **39건**이었습니다
+— 게이트가 타이머가 쓸 양의 절반도 안 보여주고 있었던 겁니다. 미리 보기는 **타이머가 실제로 돌리는
+명령과 같아야** 의미가 있습니다. 손으로 잠깐 훑을 때만 `--since 7d`처럼 좁혀 쓰세요.
 
 첫 줄이 `x:reconcile — @0xMantleKR, since … · database production · …neon.tech/neondb (preview — no
 --yes)`인지 확인하세요. **`database development`가 보이면 여기서 멈춥니다** — `~/.herald/prod.env`가
