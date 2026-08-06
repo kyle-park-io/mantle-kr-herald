@@ -289,8 +289,17 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     return entries.map((e) => {
       // A row is synced when it matches the item's CURRENT status and current render; a status change
       // (review doc after approval) or an edit since upload flips it to "needs republish".
+      //
+      // Except for a `posted` item, which is terminal for the Drive path (`PublishTranslations` skips
+      // it, `syncSummary` does not count it, and both the 발행 buttons and the publish route refuse
+      // it). Its doc is the correct record of the copy that went out, so the row is reported as
+      // synced rather than as "재발행 필요" — a status the reviewer could no longer act on even if it
+      // were true, and which before this fix invited them to press 발행 and thereby upload the item
+      // to review/ and delete its approved doc. This is the same rule `syncSummary` applies to the
+      // account-wide counts, applied per row; the two must agree or the banner and the detail pane
+      // disagree about the same item.
       const t = byId.get(e.itemId);
-      const synced = t ? e.status === t.status && !isStale(e, contentHash(renderFor(t))) : undefined;
+      const synced = t ? t.status === "posted" || (e.status === t.status && !isStale(e, contentHash(renderFor(t)))) : undefined;
       return {
         itemId: e.itemId,
         status: e.status,

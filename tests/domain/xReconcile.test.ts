@@ -284,6 +284,7 @@ describe("settledTranslationDisposition", () => {
       consumedRootIds: new Set(),
       claimedItemIds: new Set(),
       historyPostIds: new Set(),
+      settledRootIds: new Set(),
       ...over,
     };
   }
@@ -291,6 +292,11 @@ describe("settledTranslationDisposition", () => {
   type Expected =
     | { kind: "phase-b" }
     | { kind: "claim"; rootId: string; retire: false }
+    // A claim that writes nothing but resolved a conflict the caller must report. Split from the
+    // plain `retire: false` shape above so a test cannot assert "claimed" and silently accept a
+    // missing report — the whole safety argument for claiming instead of failing is that a person
+    // still finds out.
+    | { kind: "claim"; rootId: string; retire: false; reasonMatches: RegExp }
     | { kind: "claim"; rootId: string; retire: true; url: string; postedAt: string }
     | { kind: "release"; rootId: string; because: SettledReleaseReason; reasonMatches: RegExp }
     | { kind: "fail"; messageMatches: RegExp };
@@ -329,14 +335,30 @@ describe("settledTranslationDisposition", () => {
     },
     {
       label:
-        "BUG 2 (reproduced): the same item is confirmed against a DIFFERENT thread while its own post IS in the pool — fails instead of releasing",
+        "BUG 2 (reproduced): the same item is confirmed against a DIFFERENT thread while its own post IS in the pool — claims it, writing nothing, instead of releasing",
       // A rendering confirms x:1 against thread 200 while x:1.postedUrl names thread 100. Releasing
       // leaves 100 unclaimed, and the next translation that scores against it is retired against
       // x:1's real post. Nothing about the finished plan would show it: 200 and 100 are different
       // ids in different lists. Only this rule catches it.
+      //
+      // CHANGED by the final whole-branch review (Important 3), which is why this case reads
+      // `claim` where round 5 asserted `fail`. Round 5's answer was right about the invariant and
+      // wrong about the remedy: `x:reconcile` is an unattended six-hourly timer, so throwing here
+      // reconciles NOTHING — not this item, not the other eight — on every tick until post 100 ages
+      // out of a 30-day window or somebody hand-edits Postgres, and 되돌리기 keeps `postedUrl` so the
+      // dashboard offers no way out either. A claim satisfies the same invariant more strongly (the
+      // post leaves the pool outright, so no other translation can reach it), writes nothing at all,
+      // and still reaches a person through the reported reason. The behaviour this case was written
+      // to forbid — post 100 free for a different translation to be retired against — is exactly as
+      // forbidden as it was.
       translation: { itemId: "x:1", postedUrl: URL, postedAt: POSTED_AT },
       ctx: ctx({ claimedItemIds: new Set(["x:1"]), consumedRootIds: new Set(["200"]), poolRootIds: new Set(["100"]) }),
-      expected: { kind: "fail", messageMatches: /item-confirmed-elsewhere.*post 100 is still live in this run's pool/s },
+      expected: {
+        kind: "claim",
+        rootId: "100",
+        retire: false,
+        reasonMatches: /item-confirmed-elsewhere.*post 100 is still live in this run's pool/s,
+      },
     },
     {
       label: "releases a post on another account, when that post is not in this run's pool",
@@ -345,15 +367,36 @@ describe("settledTranslationDisposition", () => {
       expected: { kind: "release", rootId: "100", because: "foreign-account", reasonMatches: /0xMantleKR_old/ },
     },
     {
-      label: "BUG 1 (reproduced): a non-matching handle whose post IS in the pool — a rename or a typo — fails instead of releasing",
+      label:
+        "BUG 1 (reproduced): a non-matching handle whose post IS in the pool — a rename or a typo — claims it, writing nothing, instead of releasing",
       // The round-4 assumption this kills: "a tweet id is globally unique, so a post recorded under
       // another handle can never be in this run's pool." An account rename (or a typo'd handle in a
       // url this codebase itself wrote) makes it this account's post under a handle that no longer
       // matches — and releasing it produced a plan naming post 100 in plan.skipped as foreign AND in
       // plan.posted as a different translation's retire.
+      //
+      // CHANGED by the final whole-branch review (Important 3) from `fail` to `claim`, for the
+      // reason spelled out on the BUG 2 case above: on an unattended timer a throw is a permanent
+      // total outage, and a claim forbids the same thing more strongly while writing nothing.
       translation: { itemId: "x:1", postedUrl: RENAMED_URL, postedAt: POSTED_AT },
       ctx: ctx({ poolRootIds: new Set(["100"]) }),
-      expected: { kind: "fail", messageMatches: /foreign-account.*post 100 is still live in this run's pool/s },
+      expected: {
+        kind: "claim",
+        rootId: "100",
+        retire: false,
+        reasonMatches: /foreign-account.*post 100 is still live in this run's pool/s,
+      },
+    },
+    {
+      label: "claims, writing nothing, when an earlier settled translation already resolved this same post",
+      // Two translations naming one live post. Before the final review this reached the caller's
+      // post-condition and threw (`post 100 ... is also another plan.posted row`), taking the whole
+      // unattended run down over hand-edited legacy data — the same class as BUG 1/BUG 2 above.
+      // Claiming keeps the "one post, one row" guarantee (the second one writes nothing) and reports
+      // the conflict instead.
+      translation: { itemId: "x:2", postedUrl: URL, postedAt: POSTED_AT },
+      ctx: ctx({ settledRootIds: new Set(["100"]), poolRootIds: new Set(["100"]) }),
+      expected: { kind: "claim", rootId: "100", retire: false, reasonMatches: /an earlier translation in this run/ },
     },
     {
       label: "releases a post a different item's rendering already consumed",
@@ -424,6 +467,16 @@ describe("settledTranslationDisposition", () => {
         expect(got.message).toMatch(expected.messageMatches);
         return;
       }
+      if (expected.kind === "claim" && "reasonMatches" in expected) {
+        if (got.kind !== "claim") throw new Error(`expected a claim, got ${got.kind}`);
+        expect(got.rootId).toBe(expected.rootId);
+        expect(got.retire).toBe(false);
+        // The report is half the fix: a claim that resolved a conflict silently would be the "silent
+        // continue" this whole function exists to make impossible, just spelled differently.
+        if (got.retire !== false) throw new Error("expected a non-retiring claim");
+        expect(got.reason ?? "").toMatch(expected.reasonMatches);
+        return;
+      }
       expect(got).toEqual(expected);
     });
   }
@@ -443,9 +496,14 @@ describe("settledTranslationDisposition", () => {
 
     expect([...new Set(produced.map((d) => d.kind))].sort()).toEqual([...ALL_KINDS].sort());
     expect([...new Set(releases.map((d) => d.because))].sort()).toEqual([...ALL_REASONS].sort());
-    // Both `claim` variants, not just whichever one happens to come first.
+    // Both `claim` variants, not just whichever one happens to come first — and, within the
+    // non-retiring one, both of ITS shapes: the plain no-op claim (nothing owed, nothing wrong) and
+    // the conflict claim that must carry a reason for the caller to report. Those two are the same
+    // TypeScript variant but opposite obligations on the caller, so covering only one would leave
+    // the branch that replaced `fail` (see BUG 1 / BUG 2 above) untested by this guard.
     expect(claims.some((c) => c.retire)).toBe(true);
-    expect(claims.some((c) => !c.retire)).toBe(true);
+    expect(claims.some((c) => !c.retire && c.reason === undefined)).toBe(true);
+    expect(claims.some((c) => !c.retire && c.reason !== undefined)).toBe(true);
   });
 
   it("is pure: the same inputs give the same disposition, and the context is never mutated", () => {
@@ -453,7 +511,15 @@ describe("settledTranslationDisposition", () => {
     const consumed = new Set<string>();
     const claimed = new Set<string>();
     const history = new Set<string>();
-    const context = { handle: "0xMantleKR", poolRootIds: pool, consumedRootIds: consumed, claimedItemIds: claimed, historyPostIds: history };
+    const settled = new Set<string>();
+    const context = {
+      handle: "0xMantleKR",
+      poolRootIds: pool,
+      consumedRootIds: consumed,
+      claimedItemIds: claimed,
+      historyPostIds: history,
+      settledRootIds: settled,
+    };
     const translation = { itemId: "x:1", postedUrl: URL, postedAt: POSTED_AT };
 
     const first = settledTranslationDisposition(translation, context);
@@ -463,5 +529,6 @@ describe("settledTranslationDisposition", () => {
     expect([...consumed]).toEqual([]);
     expect([...claimed]).toEqual([]);
     expect([...history]).toEqual([]);
+    expect([...settled]).toEqual([]);
   });
 });

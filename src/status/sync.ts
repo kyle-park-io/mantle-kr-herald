@@ -6,6 +6,9 @@ import { contentHash, isStale, type SyncEntry } from "../domain/publish/syncLedg
  * - `needsRepublish` — the item was published, but the live files are outdated: a status change
  *                      (published as review, then approved) or an edit since the last upload.
  * - `unpublished`    — no ledger row at all.
+ *
+ * Counted over the items the Drive path still applies to, which is every item except a `posted` one
+ * — see `syncSummary` for why those are excluded rather than bucketed.
  */
 export interface SyncCounts {
   synced: number;
@@ -21,6 +24,21 @@ interface Publishable {
 /**
  * `render` produces exactly the bytes the uploader would send, so the hash comparison detects
  * "approved, then edited, but Drive still holds the old version" as well as a plain status change.
+ *
+ * **A `posted` item is not counted at all.** It is terminal for the Drive path (`PublishTranslations`
+ * skips it, and the dashboard's 발행 buttons and the publish route both refuse it), so neither of the
+ * two things this summary can say about it is true or actionable. `needsRepublish` would be a
+ * standing lie: an approved item that reconcile retires to `posted` has a perfectly good approved doc
+ * in Drive, but its ledger row's status no longer equals the item's status, so the row-vs-status
+ * comparison below flags it forever, the dashboard lights ⚠, and `TranslationDetail` tells the
+ * reviewer to press 발행 again — which, before this fix, would have uploaded it to `review/` and
+ * deleted the approved doc. `unpublished` would be the same standing lie for a `posted` item that
+ * never went to Drive: an alarm about work that is now impossible to do. Excluding it says the only
+ * honest thing, which is nothing.
+ *
+ * Scoped to `posted` alone, and expressed as "skip this status" rather than "skip anything with no
+ * remaining action": a genuinely stale `approved` item must still be reported, because pressing 발행
+ * really is the fix for that one.
  */
 export function syncSummary<T extends Publishable>(input: {
   translations: T[];
@@ -32,6 +50,7 @@ export function syncSummary<T extends Publishable>(input: {
   let unpublished = 0;
 
   for (const t of input.translations) {
+    if (t.status === "posted") continue; // terminal for the Drive path — see the doc comment above
     const mine = input.entries.filter((e) => e.itemId === t.itemId);
     if (mine.length === 0) {
       unpublished += 1;

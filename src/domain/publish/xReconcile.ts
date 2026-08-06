@@ -215,12 +215,28 @@ export type SettledTranslationContext = {
    * that post to whatever translation happens to score against it next.
    */
   poolRootIds: ReadonlySet<string>;
-  /** rootIds this run already turned into a `confirmed` delivery row or a `candidate` awaiting a human. */
+  /**
+   * rootIds this run already turned into a `confirmed` delivery row, a `candidate` awaiting a human,
+   * or a thread-loop skip because the matched item ALREADY has an `x-post` delivery row. All three
+   * mean the same thing to this decision: the post is spoken for by the rendering route.
+   */
   consumedRootIds: ReadonlySet<string>;
-  /** itemIds the rendering route confirmed in this run. */
+  /**
+   * itemIds the rendering route accounted for in this run — confirmed against a live thread now, or
+   * found to already carry an `x-post` delivery row (`deliveredKeys`). Both are a delivery row, which
+   * is a stronger record than a translation match.
+   */
   claimedItemIds: ReadonlySet<string>;
   /** postIds already carrying a publish-history row, under any itemId. */
   historyPostIds: ReadonlySet<string>;
+  /**
+   * rootIds an EARLIER settled translation in this same pass already resolved — claimed or released.
+   * Two translations whose `postedUrl` names one live post is a data conflict (hand-edited legacy
+   * rows are the only known source), and the second one must not produce a second row for that post:
+   * that is how one postId ends up with two history rows, which `impressions:record` then measures
+   * into both. Only the first is acted on; the rest are claimed and reported.
+   */
+  settledRootIds: ReadonlySet<string>;
 };
 
 /**
@@ -229,35 +245,44 @@ export type SettledTranslationContext = {
  *
  * - `"phase-b"` — not settled at all (`postedUrl` unset). Nothing for this decision to say; the
  *   caller's second phase scores it against live threads instead.
- * - `"claim"` — this post belongs to this translation. The caller must take its rootId out of the
- *   pool, `retire: true` additionally meaning "the history row is still owed, write it" (and then
- *   carrying the `url`/`postedAt` to write it from, so the caller never has to re-derive either).
+ * - `"claim"` — this post belongs to this translation, or at minimum must not be handed to anybody
+ *   else. The caller must take its rootId out of the pool. `retire: true` additionally means "the
+ *   history row is still owed, write it" (and carries the `url`/`postedAt` to write it from, so the
+ *   caller never has to re-derive either). `retire: false` writes nothing; a `reason` on it means the
+ *   claim resolved a conflict the caller must also report in `plan.skipped`.
  * - `"release"` — the caller does **not** claim this post, and must report the row (`reason` is
  *   operator-facing prose; `because` is the machine-readable why).
- * - `"fail"` — refuse the whole run. Reserved for inputs that should be unreachable in correct
- *   operation, where continuing would mis-record someone's history.
+ * - `"fail"` — refuse the whole run. Reserved for data that cannot be reasoned about at all, where
+ *   continuing would mis-record someone's history.
  *
  * **The one invariant, enforced here so no caller can get it wrong: a release is legal only when its
  * post is not something this run could hand to somebody else.** Concretely, `rootId` must be absent
- * from `poolRootIds`, or already in `consumedRootIds`. A release that fails that test is converted to
- * `fail` — because releasing a post that is still live in this run's pool leaves it free for a
- * *different*, never-posted translation to be retired against, which silently removes that
- * translation from a human's review queue while attributing one real post to two items. That failure
- * has been found and point-fixed at three separate release sites; it is one rule, so it lives in one
- * place, and every new exit added below inherits it for free.
+ * from `poolRootIds`, or already in `consumedRootIds`. That failure has been found and point-fixed at
+ * three separate release sites; it is one rule, so it lives in one place, and every new exit added
+ * below inherits it for free.
  *
- * Why some exits are `fail` rather than `release` even before the invariant runs: a `postedUrl` that
- * does not round-trip through `postUrl` is not merely unusable, it is *unattributable* — its digits
- * could name any post at all, including one of this run's own, so there is no rootId to test the
- * invariant against and no honest way to skip it. Same for a missing `postedAt` on a retire, which
- * would otherwise write a blank `publishedAt` into the team's history sheet. Both are written
- * exclusively by this codebase, so reaching either means something outside it produced the value.
+ * **A release that fails that test becomes a `claim` with `retire: false`, not a `fail`.** Claiming
+ * satisfies the invariant by the strongest possible means — the post leaves the pool entirely, so no
+ * other translation can be retired against it — while writing nothing at all, and the conflict is
+ * still reported to a human through the claim's `reason`. It used to be a `fail`, and that was wrong
+ * for the way this code actually runs: `x:reconcile` is an unattended timer, so a throw does not
+ * "refuse one item", it reconciles **nothing**, every six hours, until the offending post ages out of
+ * a 30-day window or somebody edits Postgres by hand. 되돌리기 preserves `postedUrl`, so the dashboard
+ * offers no way out either. A reported skip on a timer beats a total refusal that nobody is watching.
+ *
+ * Why the remaining exits are still `fail`: a `postedUrl` that does not round-trip through `postUrl`
+ * is not merely unusable, it is *unattributable* — its digits could name any post at all, including
+ * one of this run's own, so there is no rootId to claim, none to test the invariant against, and no
+ * honest way to skip it. Same for a missing `postedAt` on a retire, which would otherwise write a
+ * blank `publishedAt` into the team's history sheet. Both values are written exclusively by this
+ * codebase and always together, so reaching either means something outside it produced the value —
+ * genuinely corrupt data rather than a conflict between two defensible records.
  *
  * Pure: no clock, no I/O, no environment. Same inputs, same disposition, every time.
  */
 export type SettledTranslationDisposition =
   | { kind: "phase-b" }
-  | { kind: "claim"; rootId: string; retire: false }
+  | { kind: "claim"; rootId: string; retire: false; reason?: string }
   | { kind: "claim"; rootId: string; retire: true; url: string; postedAt: string }
   | { kind: "release"; rootId: string; because: SettledReleaseReason; reason: string }
   | { kind: "fail"; message: string };
@@ -266,8 +291,14 @@ export type SettledTranslationDisposition =
  * The release invariant, in one place. Everything that wants to release goes through here, so
  * "does this exit leave a post unclaimed, and is that safe?" is answered once by code instead of
  * once per branch by a comment.
+ *
+ * An unsafe release becomes a **claim that writes nothing** — see `SettledTranslationDisposition`
+ * for why this is not a `fail`. The claim is reported, because both situations that reach it (a stale
+ * `REFERENCE_X_HANDLE`/typo'd `--handle`, and one live post that a rendering says is item A while a
+ * translation's own `postedUrl` says is item B) never self-heal: they are re-derived every tick and
+ * are only ever fixed by a person seeing them.
  */
-function releaseOrFail(
+function releaseOrClaim(
   itemId: string,
   candidate: { rootId: string; because: SettledReleaseReason; reason: string },
   ctx: SettledTranslationContext,
@@ -275,11 +306,15 @@ function releaseOrFail(
   const { rootId, because } = candidate;
   if (!ctx.poolRootIds.has(rootId) || ctx.consumedRootIds.has(rootId)) return { kind: "release", ...candidate };
   return {
-    kind: "fail",
-    message:
-      `reconcileXPublished: ${itemId} would be released (${because}) but post ${rootId} is still live ` +
-      `in this run's pool — releasing it would leave that post free for a different translation to be ` +
-      `retired against, recording one real post against two items; refusing the run instead`,
+    kind: "claim",
+    rootId,
+    retire: false,
+    reason:
+      `${itemId}: ${because} — but post ${rootId} is still live in this run's pool, so this run claims ` +
+      `it (writes nothing, takes it out of matching) rather than releasing it, which would leave that ` +
+      `post free for a different translation to be retired against and record one real post against ` +
+      `two items. Nothing self-heals here: check ${itemId}'s postedUrl, and this run's --handle. ` +
+      `${candidate.reason}`,
   };
 }
 
@@ -322,8 +357,26 @@ export function settledTranslationDisposition(
   }
   const rootId = parsed.rootId;
 
+  // Checked before every other question, because it is a fact about this pass's OWN output and no
+  // later branch can undo it: whatever else is true of this translation, a post an earlier settled
+  // translation already resolved must not produce a second row. Claiming (not releasing) is what
+  // keeps that true no matter which way the earlier one went — a release here could hand back a post
+  // that is sitting in `plan.posted` for the earlier translation, and the caller's own post-condition
+  // would then refuse the whole plan.
+  if (ctx.settledRootIds.has(rootId)) {
+    return {
+      kind: "claim",
+      rootId,
+      retire: false,
+      reason:
+        `${itemId} records post ${rootId} as its own, but an earlier translation in this run already ` +
+        `resolved that same post — two translations name one live post, so only the first is acted on ` +
+        `and ${itemId} is left exactly as it is; check both items' postedUrl`,
+    };
+  }
+
   if (ctx.claimedItemIds.has(itemId)) {
-    return releaseOrFail(
+    return releaseOrClaim(
       itemId,
       {
         rootId,
@@ -341,7 +394,7 @@ export function settledTranslationDisposition(
     // Well-formed, just not ours. Compared case-insensitively because an X handle is
     // case-insensitive: `--handle 0xmantlekr` names the SAME account as a stored
     // `https://x.com/0xMantleKR/...`, so it must fall through to the claim below, not release.
-    return releaseOrFail(
+    return releaseOrClaim(
       itemId,
       {
         rootId,
@@ -355,7 +408,7 @@ export function settledTranslationDisposition(
   }
 
   if (ctx.consumedRootIds.has(rootId)) {
-    return releaseOrFail(
+    return releaseOrClaim(
       itemId,
       {
         rootId,

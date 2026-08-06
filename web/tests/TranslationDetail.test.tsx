@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TranslationDetail } from "../src/components/TranslationDetail";
-import type { Translation } from "../src/types";
+import type { PublishStateRow, Translation } from "../src/types";
 
 const URL = "https://pbs.twimg.com/media/HOUihv6bgAA52e_.jpg";
 const PHOTO = `![](${URL})`;
@@ -17,11 +17,11 @@ const translation = (o: Partial<Translation> = {}): Translation => ({
   ...o,
 });
 
-function mount(item: Translation, o: { onUnretire?: (id: string) => Promise<void> } = {}) {
+function mount(item: Translation, o: { onUnretire?: (id: string) => Promise<void>; publishRows?: PublishStateRow[] } = {}) {
   return render(
     <TranslationDetail
       item={item}
-      publishRows={[]}
+      publishRows={o.publishRows ?? []}
       availableTargets={["local"]}
       onSave={async () => {}}
       onApprove={async () => {}}
@@ -151,6 +151,42 @@ describe("TranslationDetail — 게시됨 (posted)", () => {
     expect(textarea.readOnly).toBe(true);
     const link = screen.getByRole("link", { name: /게시된 글/ }) as HTMLAnchorElement;
     expect(link.href).toBe(POSTED_URL);
+  });
+
+  /**
+   * Final review, Important 2. A translation that was approved, published to Drive, and then retired
+   * by reconcile ends up with a ledger row whose status ("approved") no longer matches the item's
+   * ("posted"). The server used to report that row as `synced: false`, which lit "재발행 필요" and the
+   * notice below, telling the reviewer to press 발행 — while the 발행 buttons stayed enabled. Pressing
+   * them re-rendered the item as a *review* doc, uploaded it to review/, and deleted the approved doc
+   * holding the copy that actually went out. `x:2080608995371597892`, one of the five items retiring
+   * on the first production run, is exactly this shape.
+   *
+   * The server is the source of truth (`createDeps.loadPublishState` now reports a retired item's
+   * rows as synced), so the stale row fed below is what the client can still be *holding*: App.tsx
+   * fetches `publishState` and `translations` as two requests, and a retire landing between them
+   * leaves a fresh `posted` item beside a stale row.
+   */
+  const STALE_ROW: PublishStateRow = { itemId: "x:2081711456320655644", status: "approved", target: "google", synced: false };
+
+  it("disables 발행 on a posted item", () => {
+    mount(translation({ status: "posted", postedUrl: POSTED_URL }), { publishRows: [STALE_ROW] });
+    for (const label of ["로컬 폴더", "Google Drive", "Lark Drive"]) {
+      expect((screen.getByRole("button", { name: label }) as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
+  it("does not tell a reviewer to press 발행 again on a posted item", () => {
+    const { container } = mount(translation({ status: "posted", postedUrl: POSTED_URL }), { publishRows: [STALE_ROW] });
+    expect(container.textContent).not.toContain("발행을 다시 눌러");
+  });
+
+  it("still shows that notice, with 발행 usable, on a NON-posted item whose files are outdated", () => {
+    // The scope check: the suppression is about `posted`, not about hiding a real staleness warning.
+    // Without this, "delete the notice entirely" would pass the test above.
+    const { container } = mount(translation({ status: "translated" }), { publishRows: [STALE_ROW] });
+    expect(container.textContent).toContain("발행을 다시 눌러");
+    expect((screen.getByRole("button", { name: "로컬 폴더" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("되돌리기 hands the item's id to onUnretire", async () => {

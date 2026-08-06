@@ -55,7 +55,16 @@ export interface Translation {
   refUrl?: string;
   /** The live X post a reconcile match found this translation already published as, by hand. */
   postedUrl?: string;
-  /** When reconcile recorded the match — not when the human actually posted it. */
+  /**
+   * When the live post in `postedUrl` was created — the root tweet's own `createdAt`, read off the
+   * account, so it IS when the human actually posted it. Not a reconcile timestamp: nothing in this
+   * path reads a clock, and `RetireTranslation` writes this value straight into the publish-history
+   * row's `publishedAt`, which is what `impressions:record` measures against.
+   *
+   * (This comment used to claim the opposite — "when reconcile recorded the match, not when the
+   * human actually posted it" — which described neither where the value comes from nor where it
+   * goes. Corrected by the final branch review.)
+   */
   postedAt?: string;
 }
 

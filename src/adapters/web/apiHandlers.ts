@@ -314,24 +314,54 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     const id = decodeURIComponent(segments[2]);
     const existing = await findById(deps.translationStore, id);
 
+    /**
+     * `게시됨` is terminal, and this is where that is enforced rather than asserted.
+     *
+     * Three routes below mutate a translation in ways a retired item must not undergo, and each one
+     * had exactly one guard: `TranslationDetail.tsx` disabling the button. A disabled button is not a
+     * rule — a stale tab, a double submit landing after a concurrent retire, or a plain `curl` with a
+     * valid session cookie all reach the handler.
+     *
+     * - **approve / save.** The design's stated defence against posting the same copy twice is "a
+     *   retired item cannot be approved, so it cannot be converted, formatted, or sent" — not a
+     *   delivery row. That sentence is only true if the server says so.
+     * - **publish.** `PublishTranslations` already skips a `posted` item (see its own comment: the
+     *   Drive layer has two statuses, so publishing a third one demotes an approved doc to `review/`
+     *   and deletes it). Answering 409 here means the button reports why instead of returning a
+     *   silent all-zeros result that looks like a no-op failure.
+     *
+     * `unretire` is deliberately NOT gated: it is the only route that can move an item off `posted`,
+     * so gating it would make the state unescapable. `unapprove` is unreachable for a `posted` item
+     * (it is not `approved`) and left alone rather than given a second, redundant spelling of this
+     * rule.
+     */
+    const retired = existing?.status === "posted";
+    const RETIRED_CONFLICT = {
+      status: 409 as const,
+      json: { error: "이미 X에 게시된 것으로 확인된 항목입니다. 되돌리기 후 다시 시도하세요." },
+    };
+
     if (method === "PUT" && segments.length === 3) {
       const koreanText = (body as { koreanText?: unknown })?.koreanText;
       if (typeof koreanText !== "string" || koreanText.trim() === "") {
         return { status: 400, json: { error: "koreanText required" } };
       }
       if (!existing) return { status: 404, json: { error: "not found" } };
+      if (retired) return RETIRED_CONFLICT;
       await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText, approve: false, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
 
     if (method === "POST" && segments.length === 4 && segments[3] === "approve") {
       if (!existing) return { status: 404, json: { error: "not found" } };
+      if (retired) return RETIRED_CONFLICT;
       await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: true, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
 
     if (method === "POST" && segments.length === 4 && segments[3] === "publish") {
       if (!existing) return { status: 404, json: { error: "not found" } };
+      if (retired) return RETIRED_CONFLICT;
       const target = (body as { target?: unknown })?.target;
       if (typeof target !== "string" || target === "") return { status: 400, json: { error: "target required" } };
       return { status: 200, json: await deps.publishOne(existing.itemId, target) };

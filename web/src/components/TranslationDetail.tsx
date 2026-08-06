@@ -78,7 +78,15 @@ export function TranslationDetail(props: {
   const posted = props.item.status === "posted";
   // A published row is out of date (status changed since upload, or content edited) — the server
   // computes this against the current render. Flag it so "파일 열기" showing the old doc isn't confusing.
-  const stalePublish = props.publishRows.some((r) => r.synced === false);
+  //
+  // Never for a `posted` item. The server is the source of truth here and already reports a retired
+  // item's rows as synced (`createDeps.loadPublishState`), so this is not a second spelling of that
+  // rule — it covers the window where the two halves of this view disagree. `App.tsx` fetches
+  // `publishState` and `translations` as separate requests, so a retire landing between them leaves
+  // a fresh `posted` item beside a stale `synced: false` row, and the notice this drives ("발행을 다시
+  // 눌러 갱신하세요") points at 발행 buttons that are now disabled — an instruction the reviewer
+  // cannot follow, for an item where following it would have deleted the approved Drive doc.
+  const stalePublish = !posted && props.publishRows.some((r) => r.synced === false);
 
   return (
     <div className="mx-auto max-w-3xl p-6 sm:p-8">
@@ -243,9 +251,23 @@ export function TranslationDetail(props: {
             <button
               key={t}
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:border-line disabled:bg-bg disabled:text-faint disabled:opacity-60"
-              disabled={busy || !usable || dirty}
+              // `posted` disables these for the same reason it disables 저장 and 승인 above: the item
+              // is terminal for the Drive path. The server refuses it too (409) — this is the half
+              // that stops a reviewer being invited into it in the first place. Leaving them live was
+              // the sharp edge: a retired-but-previously-approved item used to read "재발행 필요", and
+              // pressing 발행 re-rendered it as a review doc, uploaded it to review/, and deleted the
+              // approved doc that recorded the copy actually published.
+              disabled={busy || !usable || dirty || posted}
               onClick={() => run(() => props.onPublish(props.item.itemId, t))}
-              title={!usable ? "이 모드에서는 사용할 수 없는 타깃" : dirty ? "편집 내용을 먼저 저장하세요" : undefined}
+              title={
+                posted
+                  ? POSTED_LOCK
+                  : !usable
+                    ? "이 모드에서는 사용할 수 없는 타깃"
+                    : dirty
+                      ? "편집 내용을 먼저 저장하세요"
+                      : undefined
+              }
             >
               {TARGET_LABEL[t]}
             </button>

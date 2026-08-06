@@ -568,7 +568,7 @@ describe("translations that already went out by hand", () => {
       expect(plan.posted[0]).toMatchObject({ itemId: "x:2", rootId: "500", url: "https://x.com/Mantle_Official/status/500" });
     });
 
-    it("BUG 1 (round 5): fails rather than release a foreign post that is live in this run's pool — an account RENAME makes that collision real", () => {
+    it("BUG 1 (round 5): claims rather than release a foreign post that is live in this run's pool — an account RENAME makes that collision real", () => {
       // This test replaces a round-4 test that asserted the opposite ("never claims a thread for the
       // foreign post — the skip really is a skip, not a silent claim"), on the same fixture. That
       // test's premise was that the rootId collision it constructs is one "reality forbids", because
@@ -581,24 +581,44 @@ describe("translations that already went out by hand", () => {
       // post, two lists, one of them attributing a real post to a translation that never went out.
       //
       // The release invariant (settledTranslationDisposition) is what closes it: a release is legal
-      // only when its post is not something this run could hand to somebody else. Here it is, so the
-      // run fails loudly instead of quietly mis-recording x:2's history. The three OTHER foreign-
-      // account tests in this block are untouched and still pass — a foreign post that is genuinely
-      // absent from the pool (the overwhelmingly common case) is still released with a reason.
-      expect(() =>
-        reconcileXPublished({
-          ...base,
-          handle: "0xMantleKR",
-          threads: [thread("100", [OTHER_REWRITTEN])],
-          renderings: [],
-          translations: [
-            // The account's OLD handle: same account, same post, a url this codebase itself wrote
-            // before the rename.
-            translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR_old/status/100", postedAt: "2026-07-31T05:39:41.000Z" }),
-            translation("x:2", OTHER), // would score ~0.83 against thread 100 and be retired against x:1's post
-          ],
-        }),
-      ).toThrow(/still live in this run's pool/);
+      // only when its post is not something this run could hand to somebody else. The three OTHER
+      // foreign-account tests in this block are untouched and still pass — a foreign post that is
+      // genuinely absent from the pool (the overwhelmingly common case) is still released with a
+      // reason.
+      //
+      // CHANGED by the final whole-branch review (Important 3): round 5 satisfied the invariant by
+      // throwing, and this test asserted the throw. The invariant is unchanged and this fixture is
+      // byte-for-byte the one round 5 wrote; only the remedy moved, because a throw is the wrong
+      // remedy for THIS process. `x:reconcile` runs unattended every six hours, so a throw does not
+      // refuse one item — it reconciles nothing at all, forever, until post 100 ages out of a 30-day
+      // window (되돌리기 preserves postedUrl, so the dashboard offers no way out either). Claiming
+      // the post removes it from Phase B's pool outright, which forbids the retire this test exists
+      // to forbid *more* strongly than a release plus a throw did, writes nothing, and still puts
+      // the conflict in front of a person via plan.skipped. Both halves are asserted below.
+      const plan = reconcileXPublished({
+        ...base,
+        handle: "0xMantleKR",
+        threads: [thread("100", [OTHER_REWRITTEN])],
+        renderings: [],
+        translations: [
+          // The account's OLD handle: same account, same post, a url this codebase itself wrote
+          // before the rename.
+          translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR_old/status/100", postedAt: "2026-07-31T05:39:41.000Z" }),
+          translation("x:2", OTHER), // would score ~0.83 against thread 100 and be retired against x:1's post
+        ],
+      });
+
+      // The thing the bug produced: x:2 retired against x:1's real post. Still impossible.
+      expect(plan.posted).toEqual([]);
+      // And nothing was written for x:1 either — a claim is not a retire.
+      expect(plan.postedNearMisses).toEqual([]);
+      // Reported, not swallowed: this never self-heals, so a silent claim would be as invisible as
+      // the silent release it replaced.
+      const conflict = plan.skipped.filter((s) => s.rootId === "100");
+      expect(conflict).toHaveLength(1);
+      expect(conflict[0].reason).toMatch(/still live in this run's pool/);
+      expect(conflict[0].reason).toMatch(/foreign-account/);
+      expect(conflict[0].reason).toMatch(/x:1/);
     });
 
     it("treats a casing-only handle difference as the SAME account, claiming its thread rather than skipping", () => {
@@ -647,7 +667,7 @@ describe("translations that already went out by hand", () => {
     // writes from, through the real scoring pass — a disposition that is right in isolation and
     // wired up wrong would pass the table and fail here.
 
-    it("BUG 2: fails rather than release a settled post whose item the rendering route confirmed against a DIFFERENT thread", () => {
+    it("BUG 2: claims rather than release a settled post whose item the rendering route confirmed against a DIFFERENT thread", () => {
       // Pre-existing since round 1, found by probe in round 4's review. x:1 is confirmed against
       // thread 200 by its approved rendering, so Phase A's claimedItemIds exit fired for x:1 — and
       // that exit released without ever looking at the post x:1's OWN postedUrl names. Thread 100 is
@@ -656,18 +676,58 @@ describe("translations that already went out by hand", () => {
       // posted 100), which is why the plan-level post-condition cannot catch this one — only the
       // release invariant can, and that is why the invariant lives in the disposition function
       // rather than in an after-the-fact check over the finished plan.
-      expect(() =>
-        reconcileXPublished({
-          ...base,
-          handle: "0xMantleKR",
-          threads: [thread("200", [COPY]), thread("100", [OTHER_REWRITTEN])],
-          renderings: [rendering("x:1", COPY)], // confirms thread 200 for x:1
-          translations: [
-            translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100", postedAt: "2026-07-31T05:39:41.000Z" }),
-            translation("x:2", OTHER), // would be retired against 100 — x:1's real post
-          ],
-        }),
-      ).toThrow(/still live in this run's pool/);
+      //
+      // CHANGED by the final whole-branch review (Important 3) from a `.toThrow` to the claim below.
+      // Same fixture, same invariant, different remedy — see the BUG 1 test above for the full
+      // reasoning (an unattended timer must not answer a two-defensible-records conflict by
+      // reconciling nothing at all, every six hours, with no way out from the dashboard).
+      const plan = reconcileXPublished({
+        ...base,
+        handle: "0xMantleKR",
+        threads: [thread("200", [COPY]), thread("100", [OTHER_REWRITTEN])],
+        renderings: [rendering("x:1", COPY)], // confirms thread 200 for x:1
+        translations: [
+          translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100", postedAt: "2026-07-31T05:39:41.000Z" }),
+          translation("x:2", OTHER), // would be retired against 100 — x:1's real post
+        ],
+      });
+
+      // The rest of the run still happens — the whole point of not throwing.
+      expect(plan.confirmed.map((c) => c.entry.postId)).toEqual(["200"]);
+      // x:2 is not retired against x:1's post, which is what BUG 2 was.
+      expect(plan.posted).toEqual([]);
+      const conflict = plan.skipped.filter((s) => s.rootId === "100");
+      expect(conflict).toHaveLength(1);
+      expect(conflict[0].reason).toMatch(/still live in this run's pool/);
+      expect(conflict[0].reason).toMatch(/item-confirmed-elsewhere/);
+    });
+
+    it("reports — and does not throw over — two translations whose postedUrl names one live post", () => {
+      // Parked at the end of Task 4 as "throws instead of writing two history rows: better
+      // behaviour, reachable only from hand-edited legacy data", and re-opened by the final review
+      // as the same class as BUG 1/BUG 2: on an unattended timer the throw is a permanent outage of
+      // everything else, and "reachable only from hand-edited data" describes precisely the
+      // situation nobody is watching for. Both translations are settled against post 100 with no
+      // history row, so before this fix x:1 and x:2 each produced a plan.posted row for 100 and
+      // assertOnePostOneRow refused the whole plan.
+      //
+      // First in input order acts; the second is claimed (writing nothing) and reported. The
+      // one-post-one-row guarantee the throw was protecting is intact — it is now produced rather
+      // than merely checked.
+      const plan = reconcileXPublished({
+        ...base,
+        threads: [thread("100", [COPY])],
+        renderings: [],
+        translations: [
+          translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100", postedAt: "2026-07-31T05:39:41.000Z" }),
+          translation("x:2", OTHER, { postedUrl: "https://x.com/0xMantleKR/status/100", postedAt: "2026-07-31T05:39:41.000Z" }),
+        ],
+      });
+
+      expect(plan.posted.map((p) => p.itemId)).toEqual(["x:1"]);
+      const conflict = plan.skipped.filter((s) => s.rootId === "100" && /x:2/.test(s.reason));
+      expect(conflict).toHaveLength(1);
+      expect(conflict[0].reason).toMatch(/an earlier translation in this run/);
     });
 
     it("still releases — and reports — a settled post that genuinely is not in this run's pool", () => {
@@ -736,6 +796,81 @@ describe("translations that already went out by hand", () => {
     expect(plan.confirmed).toHaveLength(1);
     expect(plan.confirmed[0].entry.postId).toBe("100");
     expect(plan.posted).toEqual([]);
+  });
+
+  describe("a post whose item ALREADY has an x-post delivery row", () => {
+    // Final whole-branch review, Critical 1. The thread loop's `deliveredKeys` exit routed such a
+    // thread to plan.skipped and `continue`d, claiming neither its rootId nor its itemId — the one
+    // exit in either pass that took a live post out of the plan without taking it out of play. Both
+    // directions below were reproduced against the pre-fix code, and the second one is not a corner
+    // case: it is what the next tick does after any successful `send:channels --target x`.
+    //
+    // The plan-level post-condition cannot stand in for either of these. `assertOnePostOneRow`
+    // deliberately excludes thread-loop skips, because for the OTHER skip reasons a rootId shared
+    // with a retire is an ordinary outcome rather than a contradiction.
+    const DELIVERED_KEY = deliveryKey({ itemId: "x:1", type: "x", outletId: "x-post" });
+
+    it("does not hand it to an UNRELATED translation as a retire", () => {
+      // Thread 333 is an exact paste of x:1's approved rendering and x:1's delivery row already
+      // exists. x:2 is a different translation whose text rewrites the same copy, so it scores
+      // ~0.89 against thread 333 — well over TRANSLATION_MATCH_AT. Before the fix this produced
+      // `posted: [{ itemId: "x:2", rootId: "333" }]`, i.e. an `x:x:2` publish-history row carrying a
+      // postId that already carries an `x-post` delivery row for x:1 — and `impressions:record`
+      // (which filters `channel === "x" && postId`) then measures the one live post into both.
+      const plan = reconcileXPublished({
+        ...base,
+        threads: [thread("333", [COPY])],
+        renderings: [rendering("x:1", COPY)],
+        deliveredKeys: new Set([DELIVERED_KEY]),
+        translations: [translation("x:2", COPY_REWRITTEN)],
+      });
+
+      expect(plan.posted).toEqual([]);
+      expect(plan.postedNearMisses).toEqual([]);
+      // The skip itself is unchanged — this is still a no-op for the rendering route, not new work.
+      expect(plan.skipped.map((s) => s.rootId)).toEqual(["333"]);
+      expect(plan.confirmed).toEqual([]);
+    });
+
+    it("does not flip its OWN translation to posted — the guaranteed next tick after send:channels", () => {
+      // The steady state, not an edge: send:channels posts x:1's approved rendering, writing the
+      // delivery row. Six hours later the live post IS x:1's own copy, so Phase B scored the item's
+      // translation ~0.89 against it and retired the translation the item was already sent from —
+      // silently moving it out of 1차 검수 to a terminal status, on the most ordinary send there is.
+      const plan = reconcileXPublished({
+        ...base,
+        threads: [thread("333", [COPY])],
+        renderings: [rendering("x:1", COPY)],
+        deliveredKeys: new Set([DELIVERED_KEY]),
+        translations: [translation("x:1", COPY_REWRITTEN)],
+      });
+
+      expect(plan.posted).toEqual([]);
+    });
+
+    it("keeps its item out of Phase B even when a SECOND live thread would match that item's translation", () => {
+      // Pins the `claimedItemIds` half on its own. The two tests above still pass if only the rootId
+      // is consumed, because thread 333 leaving the pool is enough. Here thread 444 is a different
+      // live post that matches x:1's translation text (~0.83) and is nowhere near x:1's rendering
+      // (~0.01 against COPY, so it stays external rather than becoming a candidate — Finding 3's
+      // candidate-exclusion cannot be what saves this). x:1 already has a delivery row for post 333;
+      // retiring its translation against post 444 would put one item behind two different live
+      // posts, with a history row and a delivery row disagreeing about which one it is.
+      //
+      // This mirrors, for the pre-existing-delivery-row case, the test the fresh-confirmation case
+      // already has ("still skips that translation when a second, unrelated live thread would
+      // otherwise match it") — the two exits must consume identically, which is the whole fix.
+      const plan = reconcileXPublished({
+        ...base,
+        threads: [thread("333", [COPY]), thread("444", [OTHER_REWRITTEN])],
+        renderings: [rendering("x:1", COPY)],
+        deliveredKeys: new Set([DELIVERED_KEY]),
+        translations: [translation("x:1", OTHER)],
+      });
+
+      expect(plan.posted).toEqual([]);
+      expect(plan.postedNearMisses).toEqual([]);
+    });
   });
 
   it("never reuses a thread already consumed by a confirmed rendering match", () => {

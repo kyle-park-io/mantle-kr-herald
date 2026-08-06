@@ -39,6 +39,46 @@ describe("syncSummary", () => {
     });
   });
 
+  it("does not count a `posted` item at all — it is terminal for the Drive path", () => {
+    // Final review, Important 2. `x:2080608995371597892` is one of the five items that retire on the
+    // first production run and is exactly this shape: approved, published to approved/, then retired
+    // to `posted` by reconcile. Its ledger row's status ("approved") no longer equals the item's
+    // status ("posted"), so the row-vs-status comparison flagged it as needing republish — every
+    // run, forever, since nothing moves it back. The dashboard lit ⚠ and TranslationDetail told the
+    // reviewer "발행을 다시 눌러 갱신하세요"; following that instruction re-rendered the item as a
+    // review doc, uploaded it to review/, and deleted the approved doc holding the copy that was
+    // actually published. The content hash matches here, so the row's *status* alone is what used to
+    // flip it — which is why counting it as synced-by-hash would not have been enough either.
+    const entries: SyncEntry[] = [
+      { itemId: "x:1", stage: "translation", status: "approved", target: "google", contentHash: contentHash("published copy") },
+    ];
+    expect(syncSummary({ translations: [t("x:1", "posted", "published copy")], entries, render })).toEqual({
+      synced: 0, needsRepublish: 0, unpublished: 0,
+    });
+  });
+
+  it("does not count a `posted` item that was never published to Drive either", () => {
+    // The other half: retired without ever reaching Drive (reconcile can retire a `translated` item).
+    // Counting it as `unpublished` would raise the same standing ⚠ about work that is now impossible
+    // — PublishTranslations skips it, the 발행 buttons are disabled, and the route answers 409.
+    expect(syncSummary({ translations: [t("x:1", "posted", "hi")], entries: [], render })).toEqual({
+      synced: 0, needsRepublish: 0, unpublished: 0,
+    });
+  });
+
+  it("still reports a genuinely stale APPROVED item beside a posted one", () => {
+    // The exclusion is scoped to `posted`, not to "anything with an odd-looking row". Pressing 발행
+    // really is the fix for a stale approved item, so dropping that from the report would trade one
+    // silent wrong answer for another.
+    const entries: SyncEntry[] = [
+      { itemId: "x:1", stage: "translation", status: "approved", target: "google", contentHash: contentHash("old") },
+      { itemId: "x:2", stage: "translation", status: "approved", target: "google", contentHash: contentHash("whatever") },
+    ];
+    expect(
+      syncSummary({ translations: [t("x:1", "approved", "edited since"), t("x:2", "posted", "gone out")], entries, render }),
+    ).toEqual({ synced: 0, needsRepublish: 1, unpublished: 0 });
+  });
+
   it("does not call a migrated row (no hash) stale", () => {
     const entries: SyncEntry[] = [{ itemId: "x:1", stage: "translation", status: "approved", target: "google" }];
     const s = syncSummary({ translations: [t("x:1", "approved", "anything")], entries, render });

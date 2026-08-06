@@ -152,13 +152,32 @@ posted_at   text
 되돌리기 stick:
 
 - **Retire** sets `status = 'posted'`, `posted_url`, `posted_at`.
-- **`x:reconcile` skips any translation whose `posted_url` is set**, whatever its status.
+- **`x:reconcile` never re-*matches* a translation whose `posted_url` is set, whatever its status —
+  it *reads* it.** (Corrected by review: this line originally said "skips any translation whose
+  `posted_url` is set", which contradicted the history-retry rule two paragraphs down — an item whose
+  status write landed and whose history write failed still owes a row, and a blanket skip would leave
+  it owing that row forever.) A settled translation goes through Phase A instead: its rootId is read
+  back out of its own `posted_url` rather than re-scored against this run's live threads, because the
+  original thread can age out of `--since` and re-scoring could silently attribute a *different* post
+  to the item. Phase A then either claims the post and writes the missing history row, claims it and
+  writes nothing, or releases and reports it. Claiming unconditionally is the part that matters: the
+  post leaves the pool either way, so no other translation can be retired against it.
 - **되돌리기** sets `status` back to `translated` and **keeps `posted_url`**, so the next tick does
   not immediately undo the undo. The board shows such an item as 대기 with a note naming the live
   post it was once matched to.
 
 A retired item cannot be approved, so it cannot be converted, formatted, or sent. That — not a
-delivery row — is what stops already-published copy from going out twice.
+delivery row — is what stops already-published copy from going out twice. Enforced in
+`apiHandlers.ts` (409 on approve/save/publish for a `posted` item), not only in React; a disabled
+button is not a rule.
+
+A retired item is also terminal for the **Drive** path, which the first draft did not say and the
+first implementation did not do. The Drive layer knows two statuses — `approved` means
+`renderApproved` + the `approved/` folder, anything else means `renderReview` + `review/` — so a
+third status reads as "review", and an item that was approved, published, and then retired would be
+demoted: re-uploaded to `review/` with its approved doc deleted. `PublishTranslations` therefore
+skips a `posted` item, `syncSummary` does not count it, and its ledger rows report as synced rather
+than 재발행 필요.
 
 ### The publish-history row
 
@@ -167,8 +186,15 @@ On retire, a `PublishRecord` is written keyed `x:<itemId>` — not `kr:<rootId>`
 `postId: <rootId>`, `status: "posted"`, and `publishedAt` from the live post. This is what gives
 `impressions:record` (which filters `channel === "x" && postId`) something to measure.
 
-It carries its own idempotency, independent of the retire: skipped when `x:<itemId>` is already in
-`historyIds`, or the rootId in `historyPostIds` — the checks that exist today.
+It carries its own idempotency, independent of the retire: skipped when the rootId is already in
+`historyPostIds`, and **on that alone**. (Corrected by review: this line originally added "when
+`x:<itemId>` is already in `historyIds`" as well. That guard is redundant — `RecordPublish.record`
+matches on `(itemId, type, channel, outletId)` and updates rather than duplicates — and actively
+harmful, because `SendChannels` writes a *Telegram* delivery under the same bare `x:<itemId>` in
+column A, so an item whose Telegram send succeeded but whose X post was made by hand would have its X
+history row suppressed forever.) `historyPostIds` is column D, the postId, which is the tab's real
+identity for an X row and the thing `impressions:record` filters on — so it is the guard that
+actually prevents two rows for one post.
 
 Ordering matters. The status write happens **first**, the history row second. If the history write
 fails, the item is still retired and the next run retries the row. The reverse order would leave an

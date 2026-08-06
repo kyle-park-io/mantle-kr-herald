@@ -83,10 +83,14 @@ export type CandidateReason = "possible-match" | "duplicate-live-thread" | "ambi
  * `skipped` is keyed by rootId but is **not** exclusively about this run's live threads. The second
  * pass pushes to it too (Task 4 review round 4), for a settled translation whose own `postedUrl`
  * this run declined to act on: one naming a different account (whose rootId is therefore a post that
- * is not in `threads` at all) and one whose post a different item's rendering already claimed. Both
- * are the same kind of fact this list already carries — "a real post, deliberately left alone, and
- * here is why" — and each row's own `reason` says which. The alternative was a silent `continue`,
- * which is how a two-items-one-post conflict that never self-heals stays invisible forever.
+ * is not in `threads` at all), one whose post a different item's rendering already claimed, and — a
+ * fact rather than an absence — one whose post this run took out of matching **without** writing
+ * anything, because releasing it would not have been safe or because an earlier translation had
+ * already spoken for it. All are the same kind of fact this list already carries — "a real post,
+ * deliberately left alone, and here is why" — and each row's own `reason` says which. The
+ * alternative was a silent `continue`, which is how a two-items-one-post conflict that never
+ * self-heals stays invisible forever; the alternative to that was a throw, which on an unattended
+ * six-hourly timer stops the whole run reconciling anything at all.
  *
  * `candidates` deliberately carries no `type` — only `rootId`/`itemId`/`score`/`reason`. Unlike
  * `confirmed`, nothing is written for a candidate, so there is no `DeliveryEntry` to put a type on;
@@ -207,8 +211,14 @@ export type ReconcilePlan = {
  * exit leave a post unclaimed, and is that safe?*, answered in prose per branch. Three separate
  * defects were three wrong answers to it. It is now answered once, by code, inside the disposition
  * function: **a release is legal only when its post is absent from the pool Phase B will score
- * against, or already consumed; otherwise it is a `fail`.** A new exit cannot get it wrong without
- * being written to bypass that function.
+ * against, or already consumed; otherwise the post is claimed instead.** A new exit cannot get it
+ * wrong without being written to bypass that function.
+ *
+ * That "claimed instead" is deliberately not a `fail`. `x:reconcile` runs unattended every six hours,
+ * so throwing does not refuse one item — it reconciles nothing at all, on every tick, until the
+ * offending post ages out of a 30-day window. A claim satisfies the same invariant by the strongest
+ * available means (the post leaves the pool entirely), writes nothing, and reports the conflict. See
+ * `SettledTranslationDisposition` for what is still a `fail` and why.
  *
  * Two things the caller (below, not the disposition function) is responsible for:
  *
@@ -218,11 +228,12 @@ export type ReconcilePlan = {
  *   completion before Phase B scores anything, so a settled claim can never lose a race to an
  *   unsettled translation that merely sits earlier in `translations` — the ordering is part of the
  *   guarantee, not just the claim.
- * - **`release` is always reported** in `plan.skipped`, never dropped. A settled translation this run
- *   does nothing with is invisible otherwise, and two of the three release reasons name situations
- *   that never self-heal (a stale `REFERENCE_X_HANDLE` or a typo'd `--handle`; one live post that a
- *   rendering says is item A and a translation's own `postedUrl` says is item B). Re-derived and
- *   re-released every tick, they are only ever fixed by a person seeing them.
+ * - **`release`, and any `claim` carrying a `reason`, are always reported** in `plan.skipped`, never
+ *   dropped. A settled translation this run does nothing with is invisible otherwise, and every one
+ *   of those situations names something that never self-heals (a stale `REFERENCE_X_HANDLE` or a
+ *   typo'd `--handle`; one live post that a rendering says is item A and a translation's own
+ *   `postedUrl` says is item B; two translations naming one post). Re-derived every tick, they are
+ *   only ever fixed by a person seeing them.
  *
  * A `claim` with `retire: true` re-enters `plan.posted` so `RetireTranslation` gets another chance at
  * just the history half — see that class's own doc comment for why re-entering can never re-apply the
@@ -230,15 +241,18 @@ export type ReconcilePlan = {
  * 되돌리기, a human's correction to `postedUrl`, still sticks.
  *
  * **Phase B — everything else** (`postedUrl` unset). Skipped before ever being scored: if its
- * `itemId` is one `claimedItemIds` already holds from the thread loop above; or if `koreanText` is
- * empty (`similarity` can never score it above 0). A thread is excluded from Phase B's pool for
- * three reasons: it has no root (`findRootTweet` undefined — same guard as the thread loop, for the
- * same reason: there is no `createdAt` to stamp `postedAt` from); it was already turned into a
- * `plan.confirmed` row above — one live post must never become both a delivery row and a
- * translation retire; or it is already a `plan.candidate` — a human has not yet said which item that
- * thread is, and retiring some other translation against it here would mean that same thread could
- * be confirmed for item A by a human answering the candidate AND silently recorded as item B's
- * retire, with nothing to say the two disagree — **or** it was already claimed in Phase A. A match
+ * `itemId` is one `claimedItemIds` already holds from the thread loop above — which covers both an
+ * item confirmed in this run and an item whose `x-post` delivery row already existed, the ordinary
+ * aftermath of `send:channels`; or if `koreanText` is empty (`similarity` can never score it above
+ * 0). A thread is excluded from Phase B's pool for four reasons: it has no root (`findRootTweet`
+ * undefined — same guard as the thread loop, for the same reason: there is no `createdAt` to stamp
+ * `postedAt` from); it was already turned into a `plan.confirmed` row above — one live post must
+ * never become both a delivery row and a translation retire; its item already had an `x-post`
+ * delivery row, so the thread loop skipped it (same rule, an older delivery row instead of a new
+ * one); or it is already a `plan.candidate` — a human has not yet said which item that thread is,
+ * and retiring some other translation against it here would mean that same thread could be confirmed
+ * for item A by a human answering the candidate AND silently recorded as item B's retire, with
+ * nothing to say the two disagree — **or** it was already claimed in Phase A. A match
  * that clears `TRANSLATION_MATCH_AT` claims its thread (removed from the pool for the rest of this
  * pass — so two translations can never both claim the same live thread; first in input order wins,
  * the same convention `claimedItemIds` already uses above) and is pushed to `plan.posted`. A match
@@ -313,6 +327,18 @@ export function reconcileXPublished(input: {
   const plan: ReconcilePlan = { confirmed: [], candidates: [], external: [], skipped: [], posted: [], postedNearMisses: [] };
   const claimedItemIds = new Set<string>();
 
+  // rootIds the thread loop took out of play WITHOUT leaving a row in `plan.confirmed` or
+  // `plan.candidates` — specifically, a thread whose matched item ALREADY carries an `x-post`
+  // delivery row (`deliveredKeys`). `consumedRootIds` below is otherwise derived from the plan, which
+  // is drift-proof for every push site but blind to a skip, and that blindness was a defect: the
+  // delivered thread stayed in Phase B's pool and a completely unrelated translation could be retired
+  // against it, producing an `x:<other>` history row carrying a postId that already has a delivery
+  // row for someone else — and `impressions:record` then measures the post into both. Kept as its own
+  // set rather than folded into `plan.skipped` because `plan.skipped` holds rows from four unrelated
+  // causes (rootless threads, external posts already in history, Phase A releases) and only this one
+  // means "the rendering route owns this post."
+  const recordedRootIds = new Set<string>();
+
   for (const thread of threads) {
     // A thread with no tweet of its own matching its `rootId` has two distinct causes, and this
     // guard cannot tell which one it is looking at:
@@ -378,8 +404,26 @@ export function reconcileXPublished(input: {
 
       const key = deliveryKey({ itemId: verdict.itemId, type: rendering.type, outletId: "x-post" });
       if (deliveredKeys.has(key)) {
-        // Already recorded — by this reconcile on an earlier run, or by hand. The itemId is
-        // genuinely done, so this is a no-op, not something a human needs to look at: skipped.
+        // Already recorded — by this reconcile on an earlier run, by `send:channels`, or by hand. The
+        // itemId is genuinely done, so nothing is written and no human needs to look at it: skipped.
+        //
+        // But it is consumed **exactly as a fresh confirmation is**, and both halves are load-bearing
+        // — this used to `continue` having claimed nothing, which left two holes in the second pass:
+        //
+        //  - The post stayed in Phase B's pool, so an unrelated translation could be retired against
+        //    a post that already carries an `x-post` delivery row for a different item. That writes
+        //    an `x:<other>` publish-history row for this postId on top of the existing delivery row,
+        //    and `impressions:record` (which filters `channel === "x" && postId`) then measures the
+        //    same live post into both. `assertOnePostOneRow` cannot catch it: it deliberately
+        //    excludes thread-loop skips, because a skip sharing a rootId with a retire is an ordinary
+        //    outcome for the OTHER skip reasons.
+        //  - The item stayed out of `claimedItemIds`, so its OWN translation was still scored in
+        //    Phase B. That one is not a corner case, it is the guaranteed steady state: after any
+        //    successful `send:channels --target x`, the live post IS this item's translation, so the
+        //    very next tick scored ~1.0 against it and silently flipped the translation to `posted` —
+        //    removing an item from 1차 검수 with nobody looking, for the most ordinary send there is.
+        claimedItemIds.add(verdict.itemId);
+        recordedRootIds.add(thread.rootId);
         plan.skipped.push({ rootId: thread.rootId, reason: `${verdict.itemId} already has an x-post delivery row` });
         continue;
       }
@@ -427,8 +471,13 @@ export function reconcileXPublished(input: {
   // retire), nor one already sitting in `plan.candidates` (a human has not yet said which item that
   // thread is — see the doc comment above for what confirming it later while it is also silently
   // retired here would do).
+  //
+  // A third exclusion, from `recordedRootIds`: a thread whose item already carries an `x-post`
+  // delivery row. It leaves no row in `plan.confirmed`/`plan.candidates` to derive it from, so it is
+  // carried out of the loop explicitly — see that set's own comment for what leaving it in the pool
+  // cost.
   const consumedRootIds = new Set(
-    [...plan.confirmed.map((c) => c.entry.postId), ...plan.candidates.map((c) => c.rootId)].filter(
+    [...plan.confirmed.map((c) => c.entry.postId), ...plan.candidates.map((c) => c.rootId), ...recordedRootIds].filter(
       // `DeliveryEntry.postId` is optional in the type; `observedDelivery` always sets it, so this
       // drops nothing in practice — it keeps the set a `Set<string>` so the disposition function can
       // take it as one, rather than a `Set<string | undefined>` whose `undefined` member could never
@@ -456,6 +505,12 @@ export function reconcileXPublished(input: {
   // also be a post it retired.
   const releasedRootIds = new Set<string>();
 
+  // Every rootId Phase A has resolved, whichever way it went. `claimedRootIds` and `releasedRootIds`
+  // above each answer a narrower question (what Phase B may still score; what the post-condition must
+  // not see retired); this one answers "has an earlier settled translation already spoken for this
+  // post at all?", which is what stops two translations naming one post from producing two rows.
+  const settledRootIds = new Set<string>();
+
   // Phase A — settled translations (`postedUrl` already set). Read, never scored. Every decision
   // belongs to `settledTranslationDisposition`; this loop only carries them out, exhaustively.
   for (const translation of translations) {
@@ -465,6 +520,7 @@ export function reconcileXPublished(input: {
       consumedRootIds,
       claimedItemIds,
       historyPostIds,
+      settledRootIds,
     });
 
     switch (disposition.kind) {
@@ -473,6 +529,7 @@ export function reconcileXPublished(input: {
 
       case "claim":
         claimedRootIds.add(disposition.rootId);
+        settledRootIds.add(disposition.rootId);
         if (disposition.retire) {
           plan.posted.push({
             itemId: translation.itemId,
@@ -481,6 +538,12 @@ export function reconcileXPublished(input: {
             url: disposition.url,
             postedAt: disposition.postedAt,
           });
+        } else if (disposition.reason !== undefined) {
+          // A claim that writes nothing but resolved a conflict — an unsafe release converted to a
+          // claim, or a second translation naming a post the first already took. Reported for the
+          // same reason a release is: nothing here self-heals, so a run that says nothing means
+          // nobody ever fixes it. See `SettledTranslationDisposition` for why this is not a throw.
+          plan.skipped.push({ rootId: disposition.rootId, reason: disposition.reason });
         }
         break;
 
@@ -490,6 +553,7 @@ export function reconcileXPublished(input: {
         // any release that would not be into a `fail`.
         plan.skipped.push({ rootId: disposition.rootId, reason: disposition.reason });
         releasedRootIds.add(disposition.rootId);
+        settledRootIds.add(disposition.rootId);
         break;
 
       case "fail":
