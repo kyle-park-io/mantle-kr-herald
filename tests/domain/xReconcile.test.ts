@@ -64,6 +64,21 @@ describe("classify", () => {
     expect(v.score).toBeLessThan(CONFIRMED_AT);
   });
 
+  it("carries the real score on a near-miss, not a hard-coded zero", () => {
+    // Both other "external" tests above are far enough below MATCH_THRESHOLD that bestMatch
+    // returns undefined, and classify short-circuits to `score: 0` before ever reaching the
+    // branch that reports a real sub-CANDIDATE_AT score. This fixture — a 40-character prefix of
+    // APPROVED — scores 0.46774193548387094 against it: above MATCH_THRESHOLD (0.3) so bestMatch
+    // returns a real match, but below CANDIDATE_AT (0.5) so the verdict is still external. This
+    // is the only test that reaches that branch, and that branch is what lets a CLI report
+    // near-misses instead of a flat 0 for every non-match.
+    const nearMiss = APPROVED.slice(0, 40);
+    const v = classify(thread("7", [nearMiss]), [{ itemId: "x:1", text: APPROVED }]);
+    expect(v.kind).toBe("external");
+    expect(v.score).toBeGreaterThan(0);
+    expect(v.score).toBeLessThan(CANDIDATE_AT);
+  });
+
   it("picks the best candidate, not merely a passing one", () => {
     const other = "완전히 다른 주제의 승인된 원고입니다. 여기에는 겹치는 문장이 없습니다.";
     const v = classify(thread("5", [APPROVED]), [
@@ -126,5 +141,19 @@ describe("record shapes", () => {
 
   it("builds urls from the handle it is given, not a hardcoded account", () => {
     expect(postUrl("someoneElse", "99")).toBe("https://x.com/someoneElse/status/99");
+  });
+
+  it("throws rather than guess a publishedAt/postId when the root tweet is missing", () => {
+    // externalHistoryRecord and observedDelivery both derive publishedAt/postId from the tweet
+    // whose id equals rootId, not from tweets[0]. If that tweet is absent, falling back to
+    // tweets[0] would silently record the wrong timestamp for a thread assembled out of order or
+    // missing its root — a bug worth failing loudly on, not guessing past. Build a thread whose
+    // rootId names a tweet that plain does not exist in `tweets`.
+    const orphan: AssembledThread = {
+      rootId: "missing-root",
+      tweets: [tweet("not-the-root", "당첨자 발표", "2026-08-03T04:03:40.000Z")],
+    };
+    expect(() => externalHistoryRecord(orphan, "0xMantleKR")).toThrow("missing-root");
+    expect(() => observedDelivery("x:1", "x", orphan, "0xMantleKR")).toThrow("missing-root");
   });
 });
