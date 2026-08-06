@@ -567,23 +567,60 @@ drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케�
 한 번만 하면 되는 절차이고, 팀 자격 증명이 아니라 **프로덕션 DB 접속 정보**가 필요하므로 아무것도
 자동으로 만들지 않습니다 — 아래는 전부 사람이 손으로 하는 절차입니다.
 
-1. **`~/.herald` 디렉터리부터 만듭니다** — 기본적으로 존재하지 않고, `herald-watch.service`의
-   `EnvironmentFile=%h/.herald/prod.env`는 접두사(`-`) 없이 걸려 있어서 이 파일이 없으면 유닛이
-   첫 실행부터 그대로 실패합니다:
-   ```bash
-   mkdir -p ~/.herald
-   ```
-   그 안에 **`prod.env`를 두 줄로 직접 만듭니다(Kyle이 직접 — 프로덕션 DSN은 에이전트 세션을
-   거치지 않습니다)**:
-   ```
-   DATABASE_URL=<프로덕션 Neon 접속 문자열>
-   HERALD_DB_ENV=production
-   ```
-   그리고 반드시 `chmod 600 ~/.herald/prod.env`. 저장소의 `.env`는 그대로 로컬 Docker를 가리키고
-   있어도 됩니다 — `TWITTERAPI_IO_KEY` 같은 나머지 값은 여전히 `.env`에서 오고, 이 두 줄만
-   `DATABASE_URL`/`HERALD_DB_ENV`를 덮어씁니다.
+1. **`~/.herald/prod.env`를 만듭니다.** 이 디렉터리는 기본적으로 존재하지 않고,
+   `herald-watch.service`의 `EnvironmentFile=%h/.herald/prod.env`는 접두사(`-`) 없이 걸려 있어서
+   이 파일이 없으면 유닛이 첫 실행부터 그대로 실패합니다.
 
-2. **세 유닛 파일을 `~/.config/systemd/user/`로 복사합니다** (`.sh`는 복사하지 않습니다 — 바로
+   DSN을 대시보드에서 복사해 올 필요는 없습니다 — 이미 Vercel의 Production 환경에 `DATABASE_URL`과
+   `HERALD_DB_ENV` 둘 다 들어 있으므로 CLI로 그대로 가져옵니다. 값이 터미널에 찍히지 않도록
+   **파일에서 파일로만** 옮깁니다:
+   ```bash
+   mkdir -p ~/.herald && chmod 700 ~/.herald
+   npx vercel env pull /tmp/herald-pull.env --environment=production --yes
+   grep -E '^DATABASE_URL=' /tmp/herald-pull.env > ~/.herald/prod.env
+   printf 'HERALD_DB_ENV=production\n' >> ~/.herald/prod.env
+   chmod 600 ~/.herald/prod.env
+   rm -f /tmp/herald-pull.env
+   ```
+   (`npx vercel env`만 치면 명령이 아니라 사용법이 나옵니다 — `pull`/`ls` 같은 서브커맨드가
+   필요합니다. `vercel env ls production`은 키 이름만 보여주고 값은 `Hidden`으로 가립니다.)
+
+   결과는 정확히 두 줄이어야 합니다. 값은 찍지 말고 구조만 확인하세요:
+   ```bash
+   cut -d= -f1 ~/.herald/prod.env      # DATABASE_URL, HERALD_DB_ENV
+   ```
+   저장소의 `.env`는 그대로 로컬 Docker를 가리키고 있어도 됩니다 — `TWITTERAPI_IO_KEY` 같은
+   나머지 값은 여전히 `.env`에서 오고, 이 두 줄만 `DATABASE_URL`/`HERALD_DB_ENV`를 덮어씁니다.
+
+2. **수집 워터마크를 심습니다.** 스케줄러는 자기만의 output 루트(`~/.herald/output`)를 쓰는데,
+   갓 만든 루트에는 워터마크 파일이 없습니다. `CollectAuthoredContent`는 워터마크가 없으면
+   **하한선 없이** 수집하므로, 이 단계를 건너뛰면 첫 tick이 계정 전체 역사를 끌어옵니다.
+
+   심을 값은 **프로덕션이 이미 수집해 둔 가장 최신 글의 작성 시각**입니다. 그래야 빈틈도 중복도
+   없이 이어집니다(워터마크는 배타적입니다 — `t.createdAt <= sinceTime`이면 건너뜁니다):
+   ```bash
+   mkdir -p ~/.herald/output/x
+   cat > ~/.herald/output/x/state.json <<'EOF'
+   {
+     "watermarks": {
+       "Mantle_Official": "2026-07-27T14:35:24.000Z"
+     }
+   }
+   EOF
+   ```
+   위 값은 2026-08-06 설치 시점의 것입니다. 다시 설치하는 경우라면 그때의 프로덕션 최신값으로
+   바꾸세요. 이 타임스탬프는 `herald-watch.service`의 `Environment=HERALD_TRANSLATE_SINCE=`와
+   **같은 값이어야 합니다** — 하나는 어디까지 수집할지, 다른 하나는 어디부터 번역할지를 정하는데,
+   둘이 어긋나면 수집은 했지만 영원히 번역되지 않는 구간이 생깁니다. 유닛 파일 안의 주석이 그
+   값이 어디서 왔는지 설명하고 있습니다.
+
+3. **`.env`에 `TELEGRAM_CHAT_ID_OPS`를 넣습니다.** 실패 알림이 갈 방입니다. 이 키가 없으면
+   `herald-notify-failure.sh`는 **조용히 아무것도 보내지 않고 정상 종료합니다**(실패 핸들러가
+   스스로 실패하면 그건 안전망이 아니라 루프라서 그렇게 설계돼 있습니다). 즉 빠뜨리면 "스케줄러가
+   죽었는데 아무도 모른다"가 됩니다 — 이 기능이 막으려던 바로 그 상황입니다. 개발용 방을 그대로
+   써도 되고, 그 경우 `.env`의 `TELEGRAM_CHAT_ID_DEV` 값을 복사해 한 줄 추가하면 됩니다.
+
+4. **세 유닛 파일을 `~/.config/systemd/user/`로 복사합니다** (`.sh`는 복사하지 않습니다 — 바로
    아래 참고):
    ```bash
    cp deploy/herald-watch.service deploy/herald-watch.timer \
@@ -600,9 +637,19 @@ drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케�
    파일 자체는 그냥 무시합니다. 복사해 두면 오히려 둘 중 하나만 고쳤을 때 조용히 서로 어긋나는
    사본이 생깁니다. 저장소의 실행 권한만 그대로 유지하면 됩니다.
 
-3. **켭니다**:
+5. **타이머를 켜기 전에 손으로 한 번 돌려봅니다.** `daemon-reload`만 하고, `enable`은 아직입니다:
    ```bash
    systemctl --user daemon-reload
+   systemctl --user start herald-watch.service     # Type=oneshot이라 끝날 때까지 붙잡습니다
+   systemctl --user show herald-watch.service -p Result -p ExecMainStatus
+   journalctl --user -u herald-watch --no-pager -n 30
+   ```
+   첫 줄이 `output root … (HERALD_OUTPUT_DIR override) · database production …`인지 확인하세요.
+   여기서 `database development`가 보이면 1번이 안 먹은 것이므로 **여기서 멈춥니다** — 그대로
+   타이머를 켜면 두 시간마다 잘못된 데이터베이스에 씁니다.
+
+6. **켭니다**:
+   ```bash
    systemctl --user enable --now herald-watch.timer
    ```
 

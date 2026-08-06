@@ -30,7 +30,8 @@ This is the same gate `translate:align`'s own plan states: *"a saved alignment s
 ```
 pnpm watch                      ← one command, run by the systemd unit
   ├ collect                     → 0 new? stop here. No agent call.
-  ├ translate:prepare --limit 3 → prepared 0? skip ①
+  ├ translate:prepare --limit 3 --since <cutoff>
+  │                             → prepared 0? skip ①
   ├ status                      → the Translated total, before
   ├ claude -p  ①                → fill the translation worksheet → translate:save (no --approve)
   ├ status                      → grew by the whole batch? no → fail the tick
@@ -238,6 +239,36 @@ it just stops growing, and nobody notices for days.
   to that gate; it does not raise the floor under them.
 - **`--limit 3` is a cap, not a queue.** A burst of ten posts drains over several ticks. That is
   deliberate — it keeps a single failed tick cheap and keeps the review queue at a human pace.
+- **`--limit 3` alone drains from the wrong end.** `PrepareTranslations.applySelector` takes the
+  first `--limit` of the *whole* untranslated set, oldest first, and the first production tick
+  (2026-08-06) found 211 untranslated items reaching back to 2026-06-01 — so the 23 threads that
+  same tick had just collected would not have been translated for roughly six days. A cap without a
+  floor makes a scheduler that is busy and current at the same time impossible. Hence
+  `HERALD_TRANSLATE_SINCE`, below.
+
+## Two floors, one decision
+
+The scheduler has two independent lower bounds, and they are not derived from each other:
+
+| Floor | Where it lives | Governs |
+|---|---|---|
+| collect watermark | `%h/.herald/output/x/state.json` (seeded by hand at install) | how far back `collect` fetches |
+| `HERALD_TRANSLATE_SINCE` | `Environment=` on `herald-watch.service` | how far back `translate:prepare` selects |
+
+They must name the same instant. Anything collected below the translate floor is fetched, stored,
+and then never translated — with no failing unit and nothing in a journal to read, which is the
+failure mode this design is otherwise built to make impossible. `tests/deploy/watchCutoff.test.ts`
+is what stops the two from drifting; the runbook's prose about it is not load-bearing on its own.
+
+The value is configuration rather than a constant because it is a content decision — which
+historical posts the Korean account is choosing never to translate — and the team's standing rule
+sets it at the last already-translated post. On 2026-08-06 that was `x:2081748977918337053`,
+created `2026-07-27T14:35:24.000Z`, leaving exactly the 23 threads the first tick collected.
+
+`pnpm watch` refuses to start on a value `Date` cannot parse rather than passing it through: a
+typo'd cutoff reaching `--since` as garbage is a scheduler that quietly translates nothing for as
+long as nobody reads a journal. Unset means the whole backlog, which is what a hand-run
+`pnpm watch` gets.
 
 ## Files
 

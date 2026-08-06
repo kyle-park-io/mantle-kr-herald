@@ -129,6 +129,42 @@ describe("WatchTick", () => {
     expect(ran).toEqual(["collect", "translate:prepare --limit 3", "status", "status", "translate:align --limit 3"]);
   });
 
+  it("passes the configured cutoff to translate:prepare, so a tick translates recent items first", async () => {
+    // Without this, `PrepareTranslations` slices the first `--limit` of the *whole* untranslated
+    // backlog, oldest first. Measured against production on 2026-08-06: 211 untranslated items
+    // reaching back to 2026-06-01, so the 23 threads the same tick had just collected would not
+    // have been translated for ~6 days — the one thing this scheduler exists to do.
+    const { run, agent, ran } = pipeline();
+
+    const report = await new WatchTick(run, agent, { translateSince: "2026-07-27T14:35:24.000Z" }).run();
+
+    expect(report.ok).toBe(true);
+    expect(ran).toContain("translate:prepare --limit 3 --since 2026-07-27T14:35:24.000Z");
+  });
+
+  it("leaves the cutoff off translate:align, which selects by precedent and not by date", async () => {
+    // `translate:align` operates on items that are already translated — i.e. already past the
+    // cutoff by construction. Passing it a `--since` it has no flag for would make every tick
+    // fail at the align stage.
+    const { run, agent, ran } = pipeline();
+
+    await new WatchTick(run, agent, { translateSince: "2026-07-27T14:35:24.000Z" }).run();
+
+    expect(ran).toContain("translate:align --limit 3");
+    expect(ran.some((r) => r.startsWith("translate:align") && r.includes("--since"))).toBe(false);
+  });
+
+  it("omits --since entirely when no cutoff is configured", async () => {
+    // The whole-backlog behaviour has to stay reachable: a hand-run `pnpm watch` with no
+    // HERALD_TRANSLATE_SINCE in the environment must not silently acquire a cutoff.
+    const { run, agent, ran } = pipeline();
+
+    await new WatchTick(run, agent, {}).run();
+
+    expect(ran).toContain("translate:prepare --limit 3");
+    expect(ran.some((r) => r.includes("--since"))).toBe(false);
+  });
+
   it("translates but skips alignment when there is no precedent", async () => {
     const { run, agent, calls } = pipeline({ collect: "collected 1 threads (2 tweets) for @x — covered a ~ b", align: "nothing to align · skipped 1 (no precedent)" });
 

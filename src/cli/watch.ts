@@ -6,7 +6,14 @@ import { realClaudeSpawn } from "./claudeSpawn";
 import { watchOutcome } from "./watchSummary";
 import { watchStartupLine } from "./watchStartup";
 import { loadDbConfig } from "../config";
+import { parseTranslateSince } from "./translateSince";
 import { OUTPUT_DIR } from "../paths";
+
+// Before the startup line, and before any stage runs: a typo'd cutoff must stop the tick here,
+// not reach `translate:prepare --since` as garbage and quietly translate nothing for as long as
+// nobody reads a journal. registerErrorHandler turns the throw into a non-zero exit, which is
+// what herald-watch.service's OnFailure= hook is watching for.
+const translateSince = parseTranslateSince(process.env.HERALD_TRANSLATE_SINCE);
 
 // Printed before any stage runs, so a run against the wrong output root or the wrong database —
 // the exact mistake that once advanced the collect watermark 39 threads past what production had
@@ -21,7 +28,7 @@ console.log(watchStartupLine(OUTPUT_DIR, process.env.HERALD_OUTPUT_DIR, loadDbCo
 // line — it never opens a connection.
 const agent = new ClaudeCodeAgent(realClaudeSpawn);
 
-const report = await new WatchTick(runStage, agent).run();
+const report = await new WatchTick(runStage, agent, { translateSince }).run();
 const { line, exitCode } = watchOutcome(report);
 
 console.log(line);

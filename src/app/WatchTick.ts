@@ -89,13 +89,25 @@ function parseTranslatedCount(stdout: string): number | undefined {
   return Number(match[1]);
 }
 
+export type WatchTickOptions = {
+  /**
+   * Floor handed to `translate:prepare --since`. Omitted means "the whole untranslated backlog",
+   * which is what a hand-run `pnpm watch` with no configuration gets. Validated and normalised to
+   * a full UTC ISO timestamp by `src/cli/translateSince.ts` before it reaches here — this class
+   * does no I/O and reads no environment, so the CLI is where that happens.
+   */
+  translateSince?: string;
+};
+
 export class WatchTick {
   private readonly runStage: StageRunner;
   private readonly agent: WorksheetAgent;
+  private readonly translateSince?: string;
 
-  constructor(run: StageRunner, agent: WorksheetAgent) {
+  constructor(run: StageRunner, agent: WorksheetAgent, options: WatchTickOptions = {}) {
     this.runStage = run;
     this.agent = agent;
+    this.translateSince = options.translateSince;
   }
 
   async run(): Promise<TickReport> {
@@ -122,7 +134,13 @@ export class WatchTick {
       return { ok: true, stagesRun };
     }
 
-    const prepare = await this.runStage(PREPARE_STAGE, ["--limit", "3"]);
+    // `--since` only on prepare, never on align: `translate:align` selects by precedent among
+    // items that are *already* translated — everything it can see is past the cutoff by
+    // construction — and it has no `--since` flag to receive one anyway.
+    const prepareArgs = ["--limit", "3"];
+    if (this.translateSince) prepareArgs.push("--since", this.translateSince);
+
+    const prepare = await this.runStage(PREPARE_STAGE, prepareArgs);
     stagesRun.push(PREPARE_STAGE);
 
     if (!prepare.ok) {

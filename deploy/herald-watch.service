@@ -37,6 +37,22 @@ Environment=PATH=/home/kyle/.nvm/versions/node/v24.14.0/bin:/home/kyle/.local/bi
 # OUTPUT_DIR doc comment for the full incident and why the override is resolved to an absolute path.
 Environment=HERALD_OUTPUT_DIR=%h/.herald/output
 
+# The oldest post this scheduler will ever translate, handed to `translate:prepare --since`.
+# Without it, `PrepareTranslations` takes the first `--limit` of the *whole* untranslated set,
+# oldest first: measured against production on 2026-08-06, 211 items reaching back to 2026-06-01,
+# so 3 items every two hours would have spent roughly six days on history before reaching the 23
+# threads that same first tick had just collected.
+#
+# The value is not arbitrary. 2026-07-27T14:35:24Z is the creation time of x:2081748977918337053,
+# the newest source post the Korean account had translated before this scheduler existed — the
+# team's standing rule is that the backlog cutoff is the last translated post — and it is the same
+# timestamp %h/.herald/output/x/state.json was seeded with, so the collect floor and the translate
+# floor are one decision rather than two that can drift apart.
+#
+# Raising it later skips content permanently; lowering it re-opens backlog. Either is a content
+# decision, not a deployment one.
+Environment=HERALD_TRANSLATE_SINCE=2026-07-27T14:35:24.000Z
+
 # Exactly two lines — DATABASE_URL and HERALD_DB_ENV=production — chmod 600, created by Kyle by
 # hand (a production connection string does not pass through an agent session). Everything else
 # (TWITTERAPI_IO_KEY, TELEGRAM_*, ...) still comes from the repo's own .env via `pnpm watch`'s own
