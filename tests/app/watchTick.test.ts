@@ -498,17 +498,23 @@ describe("WatchTick", () => {
     expect(calls).toEqual([]);
   });
 
-  it("says what was lost and how to backfill it, because this message becomes a Telegram alert", async () => {
+  it("says what was lost and where the backfill procedure is, because this message becomes a Telegram alert", async () => {
     // herald-notify-failure.sh forwards a journal excerpt. An alert saying only "collect failed"
-    // costs someone an ssh session to discover that the remedy is an adhoc collect — and adhoc is
-    // exactly the mode that backfills without disturbing the watermark.
+    // costs someone an ssh session to discover what to do. It deliberately does NOT inline a
+    // command: the working backfill needs a raised page cap *and* the scheduler's own environment
+    // (prod.env + HERALD_OUTPUT_DIR), and a command carrying only the first half writes the
+    // recovered threads to the local Docker database while production keeps the hole — which is
+    // exactly the confident-looking non-recovery this whole failure path exists to prevent. So the
+    // alert carries the loss and a pointer to the one place that has all of it.
     const { run, agent } = pipeline({ collect: COLLECTED_2_WITH_GAP });
 
     const report = await new WatchTick(run, agent).run();
 
     expect(report.failure?.detail).toContain("GAP");
     expect(report.failure?.detail).toContain("2026-08-06T00:00:00.000Z");
-    expect(report.failure?.detail).toContain("collect --since");
+    expect(report.failure?.detail).toContain("docs/ko/team-runbook.md");
+    // Not a bare filename: the runbook is long, and §4's GAP subsection is where the procedure is.
+    expect(report.failure?.detail).toContain("수집에 구멍이 생겼을 때");
   });
 
   it("keeps the alert intact through watchOutcome's 300-char budget, even at the GAP text's longest", async () => {
@@ -520,8 +526,9 @@ describe("WatchTick", () => {
     // suffix. `.not.toContain("…")` pins this against `condense`'s actual truncation marker
     // wherever it falls; an `endsWith` check here would be vacuously true regardless of whether
     // anything was cut. The clause most worth losing to a silent truncation — that a later green
-    // tick is *not* proof the hole was filled, the single most misleading fact about this failure
-    // mode — is also asserted by name, not just "nothing was cut".
+    // tick is *not* proof of a fix, the single most misleading fact about this failure mode — is
+    // also asserted by name, not just "nothing was cut". Measured at 261 of 300 characters for
+    // this fixture (see the budget comment in `WatchTick`'s gap branch).
     const { run, agent } = pipeline({ collect: COLLECTED_2_WITH_REALISTIC_GAP });
 
     const report = await new WatchTick(run, agent).run();
@@ -529,8 +536,8 @@ describe("WatchTick", () => {
 
     expect(line).not.toContain("…");
     expect(line).toContain("GAP 2026-08-04T12:00:00.000Z ~ 2026-08-06T00:00:00.000Z");
-    expect(line).toContain("collect --since");
-    expect(line).toContain("not proof the hole was filled");
+    expect(line).toContain("docs/ko/team-runbook.md");
+    expect(line).toContain("not proof of a fix");
   });
 
   it("runs the tick normally when collect's line carries no GAP", async () => {

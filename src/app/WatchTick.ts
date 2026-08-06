@@ -168,28 +168,36 @@ export class WatchTick {
       // not re-scanned from the whole stdout buffer, so pnpm's own surrounding noise can never be
       // mistaken for collect's own GAP text (see the header comment above `parseCollect`).
       const gapText = parsed.tail.slice(parsed.tail.indexOf(GAP_MARKER) + 2);
-      // A plain `pnpm collect --since <gap.from>` does NOT recover this: `gap.from` is the exact
-      // floor the failing run already used (src/domain/coverage.ts:34), and `fetchAuthoredTweets`
-      // always starts from the newest tweet and pages *down* (TwitterApiSourceGateway.ts:33-38),
-      // so re-requesting the same floor just re-fetches the same newest ~1000 tweets and hits the
-      // same MAX_PAGES=50 cap at the same place. The only remedy that actually reaches the hole is
-      // raising the cap for that one run via HERALD_COLLECT_MAX_PAGES.
+      // Why this points at a document instead of inlining a command: recovering the hole takes two
+      // corrections at once, and either one alone silently recovers nothing.
+      //   1. The cap. `gap.from` is the exact floor the failing run already used
+      //      (src/domain/coverage.ts:34), and `fetchAuthoredTweets` always starts from the newest
+      //      tweet and pages *down* (TwitterApiSourceGateway.ts), so re-requesting the same floor
+      //      re-fetches the same newest ~1000 tweets and hits the same 50-page cap at the same
+      //      place. Only HERALD_COLLECT_MAX_PAGES on that one run reaches past it.
+      //   2. The environment. `pnpm collect` is `tsx --env-file-if-exists=.env`, so a hand run from
+      //      the checkout writes to the repo's .env database (local Docker) and appends to the
+      //      repo's own output/x/runs.json — while the hole is in the scheduler's production Neon
+      //      and %h/.herald/output. That run looks like a success and leaves a clean ledger row to
+      //      "confirm" it, for a recovery that never touched production.
+      // The environment setup alone is three lines, which does not fit the budget below, and half
+      // the remedy is worse than a pointer to all of it.
       //
       // watchSummary.ts's `watchOutcome` composes `${stage}: ${detail}` (the "collect: " prefix
       // is 9 chars) and runs it through `condense(…, MAX_DETAIL_CHARS = 300)` before it reaches
       // `deploy/herald-notify-failure.sh` and Telegram. `condense` truncates from the *tail*, so
       // this wording is measured, not guessed: with both GAP boundaries as real ISO timestamps
       // (the longest this ever gets — `gap.to` is always a timestamp, `gap.from` is only shorter
-      // when it's the "(open)" case), the composed line lands at 288 of 300 chars. That leaves
+      // when it's the "(open)" case), the composed line lands at 261 of 300 chars. That leaves
       // headroom for the one clause that must never be the part that gets cut — the warning that
-      // a later green tick is not proof the hole was filled — to always survive intact.
+      // a later green tick is not proof of a fix — to always survive intact.
       return this.fail(stagesRun, {
         ok: false,
         stage: COLLECT_STAGE,
         detail:
-          `permanent tweet loss — ${gapText}. A bare --since re-run repeats this. Fix: ` +
-          `HERALD_COLLECT_MAX_PAGES=<n> pnpm collect --since <earlier boundary> (adhoc). Fires ` +
-          `once: a later green tick is not proof the hole was filled.`,
+          `permanent tweet loss — ${gapText}. Backfill is neither a bare re-run nor a bare pnpm ` +
+          `collect: docs/ko/team-runbook.md §4 "수집에 구멍이 생겼을 때". Fires once: a later green ` +
+          `tick is not proof of a fix.`,
       });
     }
 
