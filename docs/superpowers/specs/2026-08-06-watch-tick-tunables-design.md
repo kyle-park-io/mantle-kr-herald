@@ -58,6 +58,14 @@ does not protect against the incident that actually happened: a dev run advanced
 watermark 39 threads *past* what production had seen (`src/paths.ts`'s `OUTPUT_DIR` doc comment). A
 floor is the wrong shape for that bug.
 
+**Someone already wrote the wrong version down.** `docs/ko/team-runbook.md:417-419` closes its
+watermark section with *"자동화를 붙일 때는 매시간 `pnpm collect <target> --since 2h`(`--limit` 없이)를
+권장합니다"* — schedule an hourly collect over a two-hour window, so the windows overlap and upsert
+dedupes. It predates the watch scheduler and it is exactly the trap above: a scheduled `--since` is
+an adhoc run, so the watermark freezes and the zero-threads gate never fires again. That paragraph is
+corrected as part of this work; it is also the best evidence that the decision needs to be recorded
+rather than assumed.
+
 **Collection is lossless, translation is policy.** A tweet not collected cannot be un-missed, so
 collect should always reach as far back as the watermark says. Which historical posts the Korean
 account chooses never to translate is a human decision on a human clock, which is what the absolute
@@ -198,12 +206,18 @@ rename.
 - **The interval value itself does not change.** Going hourly stays a human edit plus
   `systemctl --user daemon-reload`; this work only makes that edit safe to make.
 
+One thing not in the original scope is in it now: `docs/ko/team-runbook.md`'s stale recommendation to
+schedule `pnpm collect --since 2h` is corrected, and a GAP-alert procedure is added beside it. A
+runbook that recommends the loss path this spec exists to close cannot be left standing.
+
 ## Testing
 
 | Test | Asserts |
 | --- | --- |
-| `tests/cli/watchBatch.test.ts` | default 3; `""` → default; rejects `0`, negatives, non-integers, non-numerics |
+| `tests/cli/watchBatch.test.ts` | default 3; `""` → default; rejects `0`, negatives, non-integers, non-numerics; `.env.example` documents the variable |
 | `tests/app/watchTick.test.ts` | batch reaches both `translate:prepare` and `translate:align`; collect is called with `[]`; a `GAP` line fails the tick before `prepare`; a gapless line still runs the tick |
 | `tests/deploy/watchTiming.test.ts` | `TimeoutStartSec ≤ OnCalendar` period / 2; an unparseable `OnCalendar=` shape fails |
 | `tests/cli/watchStartup.test.ts` | batch size and translation floor appear; unset floor is stated, not omitted |
-| `tests/deploy/watchCutoff.test.ts` | `.env.example` documents `HERALD_WATCH_BATCH` |
+
+`tests/deploy/watchCutoff.test.ts` is left alone — its subject is the two cutoffs, and the batch
+variable's documentation guard belongs beside the parser it documents.
