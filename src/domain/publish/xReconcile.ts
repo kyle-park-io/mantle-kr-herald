@@ -1,0 +1,127 @@
+/**
+ * Reconcile what is live on @0xMantleKR with the copy we approved.
+ *
+ * Three routes lead to a published post — the full pipeline, a partial run finished by hand, and
+ * copy written entirely outside the system — and only the first leaves a trace in our records. So
+ * reading the account back is the only way to know what actually went out. This module is the pure
+ * decision layer: given a live thread and the set of copy we have approved, decide whether they are
+ * the same thing.
+ *
+ * This is a different question from `src/domain/kol/attribution.ts`'s `bestMatch`: that module asks
+ * "which of our campaigns is this KOL echoing?" — topical, deliberately loose, a suggestion a human
+ * always confirms. This asks "is this literally the copy we approved?" A copy-paste scores near 1.0
+ * under `similarity` (it strips URLs, emoji, and whitespace before taking Jaccard over character
+ * 3-grams), so the bands below sit far higher than `MATCH_THRESHOLD`.
+ *
+ * Pure domain: no clock, no environment, no I/O. Every timestamp comes from the thread given to it.
+ */
+
+import { bestMatch, type MatchCandidate } from "../kol/attribution";
+import type { AssembledThread } from "../models";
+import type { PublishRecord } from "../sheet/models";
+import type { DeliveryEntry } from "../delivery/models";
+
+/**
+ * Score at or above which a live thread is treated as the same copy we approved, not merely related
+ * to it. There is no measured true positive to calibrate against — no approved rendering has ever
+ * been posted to this account — and identical text scores 1.0 by construction, so this sits high
+ * enough that only a copy-paste (or something indistinguishable from one) clears it. Set above the
+ * one real measurement available (an unrelated post scoring 0.350) by a wide margin: being wrong
+ * high only demotes a real match to a candidate, costing one human confirmation; being wrong low
+ * writes an irreversible `sent` row for a post that may not be ours.
+ */
+export const CONFIRMED_AT = 0.95;
+
+/**
+ * Score at or above which a live thread is worth a human's attention, even though it does not clear
+ * `CONFIRMED_AT`. The only real measurement — the 0.350 false positive against an unrelated post —
+ * must land below this floor, so it is set well above 0.350. Below this floor a thread is `external`
+ * and never costs anyone a confirmation; at or above it, a `sent` row is never written on a guess —
+ * the verdict is reported and a human decides.
+ */
+export const CANDIDATE_AT = 0.5;
+
+export type Verdict =
+  | { kind: "confirmed" | "candidate"; itemId: string; score: number }
+  | { kind: "external"; score: number };
+
+/**
+ * The text of a thread as one block, in the order `tweets` already holds (chronological — see
+ * `AssembledThread` in `src/domain/models.ts`). Approved copy is written as a single piece, so a
+ * thread's replies must be joined the same way or a real match would score every thread external.
+ */
+export function threadText(thread: AssembledThread): string {
+  return thread.tweets.map((t) => t.text).join("\n\n");
+}
+
+/**
+ * Decide whether a live thread is the copy we approved, a candidate worth a human's attention, or
+ * unrelated to anything we produced. Bands on the best score against `candidates`; a thread with no
+ * match at all (including an empty candidate list) is `external` with score 0.
+ */
+export function classify(thread: AssembledThread, candidates: MatchCandidate[]): Verdict {
+  const match = bestMatch(threadText(thread), candidates);
+  if (match === undefined) return { kind: "external", score: 0 };
+
+  if (match.score >= CONFIRMED_AT) return { kind: "confirmed", itemId: match.itemId, score: match.score };
+  if (match.score >= CANDIDATE_AT) return { kind: "candidate", itemId: match.itemId, score: match.score };
+  return { kind: "external", score: match.score };
+}
+
+/** The public URL of a post on `handle`'s account. */
+export function postUrl(handle: string, rootId: string): string {
+  return `https://x.com/${handle}/status/${rootId}`;
+}
+
+/**
+ * The root tweet of an assembled thread — the tweet whose id is the thread's `rootId`. Found by id
+ * rather than assumed to be `tweets[0]`, and throws if absent: a thread whose root is missing is a
+ * bug worth failing on, not guessing past.
+ */
+function rootTweet(thread: AssembledThread) {
+  const root = thread.tweets.find((t) => t.id === thread.rootId);
+  if (root === undefined) {
+    throw new Error(`thread ${thread.rootId} has no tweet matching its own root id`);
+  }
+  return root;
+}
+
+/**
+ * A history row for a thread that is live on the account but is not any of our approved copy. Keyed
+ * `kr:<rootId>` — never `x:<...>` — because `src/adapters/content/xArticleMeta.ts` short-circuits on
+ * ids that do not start with `x:`, and that short-circuit is the protection: a `kr:` id can never
+ * trigger a lookup for a source post that does not exist. One row per thread, keyed on the root.
+ */
+export function externalHistoryRecord(thread: AssembledThread, handle: string): PublishRecord {
+  const root = rootTweet(thread);
+  return {
+    itemId: `kr:${thread.rootId}`,
+    type: "x",
+    channel: "x",
+    outletId: "x-post",
+    postId: thread.rootId,
+    url: postUrl(handle, thread.rootId),
+    status: "posted",
+    publishedAt: root.createdAt,
+  };
+}
+
+/**
+ * A delivery row for a thread confirmed to be the copy behind `itemId`. `status: "sent"` because
+ * this is an observation — the post is live, read back off the account — never a human's revocable
+ * claim (see `src/domain/delivery/models.ts`). `by: "manual"` because a human pasted it; a machine
+ * only noticed.
+ */
+export function observedDelivery(itemId: string, type: string, thread: AssembledThread, handle: string): DeliveryEntry {
+  const root = rootTweet(thread);
+  return {
+    itemId,
+    type,
+    outletId: "x-post",
+    status: "sent",
+    at: root.createdAt,
+    by: "manual",
+    postId: thread.rootId,
+    url: postUrl(handle, thread.rootId),
+  };
+}
