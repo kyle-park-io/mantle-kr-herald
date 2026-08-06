@@ -76,12 +76,25 @@ describe("HERALD_WATCH_BATCH on the systemd unit", () => {
     // The absent branch is not a free pass: the dial only exists to be tuned without a deploy, and
     // an operator finds it by reading the unit beside the two Environment= lines that *are* set. A
     // commented placeholder is what makes it findable, so its removal fails this test too.
-    const set = /^Environment=HERALD_WATCH_BATCH=(.*)$/m.exec(unit);
-    if (set === null) {
-      expect(unit).toMatch(/^#\s*Environment=HERALD_WATCH_BATCH=/m);
-      return;
+    //
+    // Every line that mentions the variable at all — not just the one the strict live-set regex
+    // happens to match — has to land in one of the two legitimate shapes below. Checking only
+    // "does the strict regex match, else assume it's the placeholder" (the earlier version of this
+    // test) let a live but unparseable shape — `Environment="HERALD_WATCH_BATCH=5"` (quoted), a
+    // leading space, or two assignments crammed onto one Environment= line — fall through into the
+    // placeholder branch and pass, exactly the "refuses shapes it cannot read" discipline
+    // tests/deploy/watchTiming.test.ts's periodSeconds() enforces for OnCalendar=.
+    const candidates = unit.split("\n").filter((line) => line.includes("HERALD_WATCH_BATCH") && line.includes("Environment="));
+    expect(candidates.length).toBeGreaterThan(0); // the dial must be findable at all
+
+    for (const line of candidates) {
+      const set = /^Environment=HERALD_WATCH_BATCH=(.*)$/.exec(line);
+      if (set !== null) {
+        expect(() => parseWatchBatch(set[1].trim())).not.toThrow();
+        continue;
+      }
+      expect(line, line).toMatch(/^#\s*Environment=HERALD_WATCH_BATCH=/);
     }
-    expect(() => parseWatchBatch(set[1].trim())).not.toThrow();
   });
 });
 

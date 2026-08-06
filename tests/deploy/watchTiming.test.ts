@@ -62,15 +62,17 @@ describe("watch scheduler timing", () => {
 
   it("states its schedule exactly once, and only as an OnCalendar=", () => {
     // `onCalendar()` reads the *first* OnCalendar= line. systemd does not: it accumulates them, so
-    // the real fire period is the shortest gap any of them produces, and `OnUnitActiveSec=` sets a
-    // period a third way again. Either could shorten the real period below the bound checked
+    // the real fire period is the shortest gap any of them produces, and `OnUnitActiveSec=`/
+    // `OnUnitInactiveSec=` each set a period a third (and fourth) way again — the latter measured
+    // from the unit's last deactivation rather than its last activation, but just as capable of
+    // shortening the real period. Any of these could push the real period below the bound checked
     // further down while that check kept passing against a line that is no longer the whole
     // schedule. This file already refuses OnCalendar shapes it cannot read rather than skipping the
     // bound; the same discipline says to refuse a *set* of directives it does not model.
     expect(onCalendarLines()).toHaveLength(1);
-    expect(timer).not.toMatch(/^OnUnitActiveSec=/m);
+    expect(timer).not.toMatch(/^(OnUnitActiveSec|OnUnitInactiveSec)=/m);
     // Nor may the service carry its own schedule while looking like a plain oneshot.
-    expect(service).not.toMatch(/^(OnCalendar|OnUnitActiveSec)=/m);
+    expect(service).not.toMatch(/^(OnCalendar|OnUnitActiveSec|OnUnitInactiveSec)=/m);
   });
 
   it("uses an OnCalendar shape this file can read", () => {

@@ -1,5 +1,7 @@
 // tests/app/watchTick.test.ts
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { WatchTick } from "../../src/app/WatchTick";
 import type { StageResult, WorksheetAgent } from "../../src/ports/WorksheetAgent";
 import { formatStatus, pipelineStages } from "../../src/status/pipeline";
@@ -515,6 +517,20 @@ describe("WatchTick", () => {
     expect(report.failure?.detail).toContain("docs/ko/team-runbook.md");
     // Not a bare filename: the runbook is long, and §4's GAP subsection is where the procedure is.
     expect(report.failure?.detail).toContain("수집에 구멍이 생겼을 때");
+  });
+
+  it("points the alert's runbook anchor at a heading that still exists", () => {
+    // WatchTick.ts embeds the Korean anchor above as literal text so an operator can grep
+    // docs/ko/team-runbook.md for the GAP recovery section. Extracted from the source file here,
+    // rather than retyped, so a renamed runbook heading fails this test instead of leaving the
+    // Telegram alert pointing at a section that no longer exists — the same guard
+    // tests/deploy/watchCutoff.test.ts keeps for HERALD_TRANSLATE_SINCE's sibling cross-file value.
+    const source = readFileSync(resolve(__dirname, "../../src/app/WatchTick.ts"), "utf8");
+    const anchor = /team-runbook\.md §4 "([^"]+)"/.exec(source)?.[1];
+    expect(anchor).toBeDefined();
+
+    const runbook = readFileSync(resolve(__dirname, "../../docs/ko/team-runbook.md"), "utf8");
+    expect(runbook).toContain(anchor!);
   });
 
   it("keeps the alert intact through watchOutcome's 300-char budget, even at the GAP text's longest", async () => {
