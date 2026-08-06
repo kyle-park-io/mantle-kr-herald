@@ -76,6 +76,11 @@ EnvironmentFile=%h/.herald/prod.env
 # require raising this bound either: ClaudeCodeAgent is invoked once per worksheet, and one tick
 # makes at most two such calls (translation, then alignment) regardless of how many items each
 # worksheet holds, so the 2 x 600s + 600s arithmetic above is unchanged by a bigger batch.
+# What *does* bound a sane batch size is the other timeout, the one inside each of those calls:
+# ClaudeCodeAgent's own DEFAULT_TIMEOUT_MS caps a single `claude -p` at 600s, and a worksheet of 30
+# items takes longer inside that one call than a worksheet of 3 — so the batch's real ceiling is
+# per-call, not this unit's total, and "this number doesn't have to change" is not the same as
+# "there is nothing to check". Raise the batch in steps and read the tick's duration in the journal.
 TimeoutStartSec=1800
 
 ExecStart=/home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm watch
