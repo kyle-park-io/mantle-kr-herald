@@ -24,7 +24,9 @@ const batch = parseWatchBatch(process.env.HERALD_WATCH_BATCH);
 // the exact mistake that once advanced the collect watermark 39 threads past what production had
 // seen (src/paths.ts's OUTPUT_DIR doc comment) — is visible in every tick's
 // `journalctl --user -u herald-watch`, not only when someone happens to run `pnpm doctor` first.
-console.log(watchStartupLine(OUTPUT_DIR, process.env.HERALD_OUTPUT_DIR, loadDbConfig()));
+// batch and translateSince are already computed above, so this line also names the two values an
+// operator can change without a deploy — the tick's inputs, not just its eventual outcome.
+console.log(watchStartupLine(OUTPUT_DIR, process.env.HERALD_OUTPUT_DIR, loadDbConfig(), { batch, translateSince }));
 
 // No database connection here, deliberately: each stage `runStage` spawns (`collect`,
 // `translate:prepare`, `translate:align`) opens and closes its own. Holding one open here would
