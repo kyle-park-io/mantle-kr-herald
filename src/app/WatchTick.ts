@@ -158,18 +158,21 @@ export class WatchTick {
     // changes, this must still fail loudly rather than fall through to "nothing new".
     if (parsed.gap) {
       const gapText = /GAP .+$/m.exec(collect.stdout)?.[0] ?? "GAP (limit reached)";
-      // Kept under watchSummary.ts's MAX_DETAIL_CHARS (300, minus the "collect: " stage prefix)
-      // on a purpose-built budget, not by accident: this line is what
-      // `deploy/herald-notify-failure.sh` forwards to Telegram, and the gap text plus the
-      // backfill command must survive that cut even when the real boundary timestamps (longer
-      // than this fixture's "(open)") push the line close to the limit.
+      // watchSummary.ts's `watchOutcome` composes `${stage}: ${detail}` (the "collect: " prefix
+      // is 9 chars) and runs it through `condense(…, MAX_DETAIL_CHARS = 300)` before it reaches
+      // `deploy/herald-notify-failure.sh` and Telegram. `condense` truncates from the *tail*, so
+      // this wording is measured, not guessed: with both GAP boundaries as real ISO timestamps
+      // (the longest this ever gets — `gap.to` is always a timestamp, `gap.from` is only shorter
+      // when it's the "(open)" case), the composed line lands at 284 of 300 chars. That leaves
+      // headroom for the one clause that must never be the part that gets cut — the warning that
+      // a later green tick is not proof the hole was filled — to always survive intact.
       return this.fail(stagesRun, {
         ok: false,
         stage: COLLECT_STAGE,
         detail:
-          `permanent tweet loss: ${gapText} (MAX_PAGES=50 cap; this tick never passes --limit). ` +
-          `Backfill: pnpm collect --since <the GAP's earlier boundary> (adhoc, watermark ` +
-          `unmoved). Fires once — next tick is green regardless, not proof of a fix.`,
+          `permanent tweet loss — ${gapText}. MAX_PAGES=50 cap, not --limit. Fix: pnpm collect ` +
+          `--since <the GAP's earlier boundary> (adhoc — watermark unmoved). Fires once: a ` +
+          `later green tick is not proof the hole was filled.`,
       });
     }
 

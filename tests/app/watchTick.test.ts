@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { WatchTick } from "../../src/app/WatchTick";
 import type { StageResult, WorksheetAgent } from "../../src/ports/WorksheetAgent";
 import { formatStatus, pipelineStages } from "../../src/status/pipeline";
+import { watchOutcome } from "../../src/cli/watchSummary";
 
 function recordingAgent(onFill?: (kind: string) => void) {
   const calls: string[] = [];
@@ -45,6 +46,12 @@ const COLLECTED_2 = "collected 2 threads (5 tweets) for @x — covered a ~ b";
 const COLLECTED_2_WITH_GAP =
   "collected 2 threads (5 tweets) for @x — covered 2026-08-06T00:00:00.000Z ~ 2026-08-06T02:00:00.000Z" +
   ", GAP (open) ~ 2026-08-06T00:00:00.000Z (limit reached)";
+// The longest a GAP notice's tail ever gets: `gap.to` is always a real ISO timestamp, and
+// `gap.from` — "(open)" in the fixture above — is only shorter than one when the watermark had
+// never been set at all. A months-old outage's actual boundaries, not shortened for the test.
+const COLLECTED_2_WITH_REALISTIC_GAP =
+  "collected 2 threads (5 tweets) for @Mantle_Official — covered 2026-08-04T12:00:00.000Z ~ 2026-08-06T02:00:00.000Z" +
+  ", GAP 2026-08-04T12:00:00.000Z ~ 2026-08-06T00:00:00.000Z (limit reached)";
 const PREPARED_2 = "prepared 2 item(s) → output/translations/worksheets/batch-X.md";
 const ALIGNED_2 = "aligned 2 · skipped 0 (no precedent) → output/translations/worksheets/align-X.md";
 const NOTHING_TO_ALIGN = "nothing to align · skipped 0 (no precedent)";
@@ -502,6 +509,25 @@ describe("WatchTick", () => {
     expect(report.failure?.detail).toContain("GAP");
     expect(report.failure?.detail).toContain("2026-08-06T00:00:00.000Z");
     expect(report.failure?.detail).toContain("collect --since");
+  });
+
+  it("keeps the alert intact through watchOutcome's 300-char budget, even at the GAP text's longest", async () => {
+    // `watchSummary.ts`'s `watchOutcome` is what actually reaches Telegram — it composes
+    // `${stage}: ${detail}` and runs the result through `condense()`, which truncates from the
+    // *tail* and marks the cut with `…` (src/shared/text/condense.ts). Asserting `!endsWith("…")`
+    // pins this against `condense`'s own documented behaviour, not a copy of `MAX_DETAIL_CHARS`
+    // that could drift out of sync with the real constant. The clause most worth losing to a
+    // silent truncation — that a later green tick is *not* proof the hole was filled, the single
+    // most misleading fact about this failure mode — is asserted by name, not just "not cut".
+    const { run, agent } = pipeline({ collect: COLLECTED_2_WITH_REALISTIC_GAP });
+
+    const report = await new WatchTick(run, agent).run();
+    const { line } = watchOutcome(report);
+
+    expect(line.endsWith("…")).toBe(false);
+    expect(line).toContain("GAP 2026-08-04T12:00:00.000Z ~ 2026-08-06T00:00:00.000Z");
+    expect(line).toContain("collect --since");
+    expect(line).toContain("not proof the hole was filled");
   });
 
   it("runs the tick normally when collect's line carries no GAP", async () => {
