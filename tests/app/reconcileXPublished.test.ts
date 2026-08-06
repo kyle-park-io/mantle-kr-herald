@@ -235,6 +235,43 @@ describe("reconcileXPublished", () => {
     expect(plan.candidates[0].reason).toBe("duplicate-live-thread");
   });
 
+  it("skips a reply into someone else's thread instead of aborting the whole run", () => {
+    // assembleThreads keys a thread on `conversationId || id`, and conversationId is the ROOT's id.
+    // A reply the account made to another account's tweet therefore produces a thread whose root
+    // belongs to an account fetchAuthoredTweets(handle) never returns — 85 of the 196
+    // @Mantle_Official threads in the committed corpus have this shape, all one-tweet replies.
+    // Before the guard, externalHistoryRecord threw inside plan building with no per-thread catch,
+    // registerErrorHandler exited 1, and the timer reconciled nothing every six hours until the
+    // reply aged past --since. It must not fall back to tweets[0] either: that would record another
+    // account's tweet id as our postId behind an x.com/<handle>/status/<their-id> url that
+    // impressions:record would then measure.
+    const reply: AssembledThread = {
+      rootId: "2075199257754169643", // a partner account's tweet — never in our own timeline
+      tweets: [
+        {
+          id: "9999",
+          conversationId: "2075199257754169643",
+          text: "좋은 소식입니다. 함께 축하합니다.",
+          createdAt: "2026-08-01T00:00:00.000Z",
+          authorUserName: "0xMantleKR",
+        } as SourceTweet,
+      ],
+    };
+
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [reply, thread("100", [COPY]), thread("200", ["파이프라인과 무관한 한국팀 자체 공지입니다."])],
+      renderings: [rendering("x:1", COPY)],
+    });
+
+    expect(plan.skipped).toHaveLength(1);
+    expect(plan.skipped[0].rootId).toBe("2075199257754169643");
+    expect(plan.skipped[0].reason).toMatch(/reply into someone else's thread/);
+    // The rest of the plan is still built around it — that is the whole point of skipping per thread.
+    expect(plan.confirmed.map((c) => c.entry.postId)).toEqual(["100"]);
+    expect(plan.external.map((e) => e.record.itemId)).toEqual(["kr:200"]);
+  });
+
   it("returns empty lists for no live threads rather than throwing", () => {
     const plan = reconcileXPublished({ ...base, threads: [], renderings: [rendering("x:1", COPY)] });
     expect(plan).toEqual({ confirmed: [], candidates: [], external: [], skipped: [] });

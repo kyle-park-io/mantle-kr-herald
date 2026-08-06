@@ -17,7 +17,7 @@
  */
 
 import { similarity, type MatchCandidate } from "../kol/attribution";
-import type { AssembledThread } from "../models";
+import type { AssembledThread, SourceTweet } from "../models";
 import type { PublishRecord } from "../sheet/models";
 import type { DeliveryEntry } from "../delivery/models";
 
@@ -95,12 +95,37 @@ export function postUrl(handle: string, rootId: string): string {
 }
 
 /**
- * The root tweet of an assembled thread — the tweet whose id is the thread's `rootId`. Found by id
- * rather than assumed to be `tweets[0]`, and throws if absent: a thread whose root is missing is a
- * bug worth failing on, not guessing past.
+ * The tweet whose id is the thread's `rootId`, or `undefined` when this thread has none.
+ *
+ * That absence is not a bug and not rare. `assembleThreads` keys a thread on
+ * `conversationId || id` and `conversationId` is the *root's* id, so any reply the account made into
+ * **someone else's** thread produces a thread whose root belongs to an account
+ * `fetchAuthoredTweets(handle)` never returns. `CollectAuthoredContent.gapFillMissingRoots` exists
+ * for exactly this shape, and 85 of the 196 @Mantle_Official threads in the committed corpus have
+ * it — all one-tweet replies.
+ *
+ * Exported so `ReconcileXPublished.ts` can ask the question with the *same* spelling the two record
+ * builders below answer it with, rather than re-deriving "does this thread have its own root?" and
+ * risking the two disagreeing.
+ */
+export function findRootTweet(thread: AssembledThread): SourceTweet | undefined {
+  return thread.tweets.find((t) => t.id === thread.rootId);
+}
+
+/**
+ * The root tweet of an assembled thread. Found by id rather than assumed to be `tweets[0]`, and
+ * throws if absent, because at *this* level there is no honest answer: both callers below stamp
+ * `postId`/`publishedAt`/`url` from the root, and falling back to `tweets[0]` would put another
+ * account's tweet id in `postId` behind a `https://x.com/<us>/status/<their-id>` url that
+ * `impressions:record` would then go and measure.
+ *
+ * Callers that walk many threads must therefore ask `findRootTweet` first and route a rootless
+ * thread somewhere that writes nothing — `reconcileXPublished` skips it with a reason. The throw
+ * stays here for the case it is actually right for: a caller that built a thread by hand and got it
+ * wrong.
  */
 function rootTweet(thread: AssembledThread) {
-  const root = thread.tweets.find((t) => t.id === thread.rootId);
+  const root = findRootTweet(thread);
   if (root === undefined) {
     throw new Error(`thread ${thread.rootId} has no tweet matching its own root id`);
   }

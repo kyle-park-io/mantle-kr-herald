@@ -1,4 +1,4 @@
-import { classify, externalHistoryRecord, observedDelivery } from "../domain/publish/xReconcile";
+import { classify, externalHistoryRecord, findRootTweet, observedDelivery } from "../domain/publish/xReconcile";
 import type { MatchCandidate } from "../domain/kol/attribution";
 import type { AssembledThread } from "../domain/models";
 import type { ChannelRendering } from "../domain/formatting/models";
@@ -119,6 +119,10 @@ export type ReconcilePlan = {
  *
  * Both are distinct from a *candidate* verdict from `classify`, which is never confirmed and never
  * filed as external — see `ReconcilePlan`.
+ *
+ * A third thing lands in `skipped`, for a different reason entirely: a thread with no tweet of its
+ * own matching its `rootId` — a reply into someone else's thread. It is per-thread and never fatal,
+ * so one such reply can no longer take the whole run down with it. See the guard in the loop.
  */
 export function reconcileXPublished(input: {
   threads: AssembledThread[];
@@ -166,6 +170,31 @@ export function reconcileXPublished(input: {
   const claimedItemIds = new Set<string>();
 
   for (const thread of threads) {
+    // A thread with no tweet of its own matching its `rootId` is a reply the account made into
+    // SOMEONE ELSE'S thread: `assembleThreads` keys on `conversationId || id` and `conversationId`
+    // is the root's id, so the root belongs to an account `fetchAuthoredTweets(handle)` never
+    // returns. This is common, not exceptional — `CollectAuthoredContent.gapFillMissingRoots` exists
+    // for it, and 85 of the 196 @Mantle_Official threads in the committed corpus have it.
+    //
+    // Skipped, not thrown: `externalHistoryRecord`/`observedDelivery` both stamp
+    // postId/url/publishedAt from the root, so without this guard one reply to a partner account
+    // threw out of plan building — no per-thread try/catch anywhere — and `registerErrorHandler`
+    // exited 1, reconciling NOTHING and re-failing every six hours until the reply aged past
+    // `--since` (30 days on the unit).
+    //
+    // And skipped rather than fallen back to `tweets[0]`, which would be worse than the crash: the
+    // row would carry another account's tweet id as `postId`, behind a
+    // `https://x.com/<handle>/status/<their-id>` url that `impressions:record` then measures.
+    if (findRootTweet(thread) === undefined) {
+      plan.skipped.push({
+        rootId: thread.rootId,
+        reason:
+          `root tweet ${thread.rootId} is not among @${handle}'s own posts — this is a reply into ` +
+          `someone else's thread, so there is no post of ours to record`,
+      });
+      continue;
+    }
+
     const verdict = classify(thread, candidates);
 
     if (verdict.kind === "confirmed" || verdict.kind === "candidate") {

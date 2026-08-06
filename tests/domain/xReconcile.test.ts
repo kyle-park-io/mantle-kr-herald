@@ -4,6 +4,7 @@ import {
   CONFIRMED_AT,
   CANDIDATE_AT,
   classify,
+  findRootTweet,
   threadText,
   externalHistoryRecord,
   observedDelivery,
@@ -171,6 +172,19 @@ describe("record shapes", () => {
 
   it("builds urls from the handle it is given, not a hardcoded account", () => {
     expect(postUrl("someoneElse", "99")).toBe("https://x.com/someoneElse/status/99");
+  });
+
+  it("answers findRootTweet with undefined for a reply into someone else's thread", () => {
+    // The shape callers walking many threads must test BEFORE building a record: a rootless thread
+    // is a reply the account made into another account's thread, which is common (85 of the 196
+    // @Mantle_Official threads in the committed corpus), not a bug. `reconcileXPublished` asks this
+    // question and skips; only a hand-built thread should ever reach the throw below.
+    const reply: AssembledThread = {
+      rootId: "2075199257754169643",
+      tweets: [tweet("9999", "좋은 소식입니다.", "2026-08-01T00:00:00.000Z")],
+    };
+    expect(findRootTweet(reply)).toBeUndefined();
+    expect(findRootTweet(t)?.id).toBe("2084128041543127356");
   });
 
   it("throws rather than guess a publishedAt/postId when the root tweet is missing", () => {
