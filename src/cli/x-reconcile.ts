@@ -12,9 +12,11 @@ import { assembleThreads } from "../domain/threadAssembler";
 import { parseSince } from "../shared/time/parseSince";
 import { postUrl } from "../domain/publish/xReconcile";
 import { reconcileXPublished } from "../app/ReconcileXPublished";
-import { candidateReasonText, externalSummaryLine, xReconcileStartupLine } from "./xReconcileReport";
+import { candidateReasonText, externalSummaryLine, translationNearMisses, xReconcileStartupLine } from "./xReconcileReport";
 import { RecordObservedDelivery } from "../app/RecordObservedDelivery";
 import { RecordPublish } from "../app/RecordPublish";
+import { RetireTranslation } from "../app/RetireTranslation";
+import { notifyOps } from "../shared/notifyOps";
 import type { SourceTweet } from "../domain/models";
 import type { SheetClient } from "../ports/SheetClient";
 
@@ -85,20 +87,22 @@ try {
   const threads = assembleThreads(tweets);
 
   const stores = createStores(db);
-  const [renderings, deliveredKeys, history] = await Promise.all([
+  const [renderings, deliveredKeys, history, allTranslations] = await Promise.all([
     stores.formattingStore.loadAll(),
     stores.deliveryLedger.loadKeys(),
     loadHistoryKeys(sheet),
+    stores.translationStore.loadAll(),
   ]);
+  // Lark-sourced translations never went anywhere near this account — the design scopes Lark out
+  // of this feature entirely (see the spec) — and nothing upstream of this filter does the
+  // narrowing: reconcileXPublished takes whatever `translations` it is handed and would happily
+  // score a Lark translation against an X thread if this file let one through.
+  const translations = allTranslations.filter((t) => t.source === "x");
 
   const plan = reconcileXPublished({
     threads,
     renderings,
-    // Placeholder — Task 3 only builds the second pass, not the wiring that loads real
-    // translations or acts on `plan.posted`. An empty array makes the second pass a no-op,
-    // identical to this CLI's behaviour before Task 3. Task 4 replaces this with a real load and
-    // handles `plan.posted` the same way this file already handles `plan.confirmed`/`plan.external`.
-    translations: [],
+    translations,
     deliveredKeys,
     historyIds: history.itemIds,
     historyPostIds: history.postIds,
@@ -148,6 +152,24 @@ try {
     }
   }
 
+  console.log(
+    `\nposted (${plan.posted.length}) — a translation that already went out by hand; retirable as a history row:`,
+  );
+  for (const p of plan.posted) {
+    console.log(`  ${p.itemId} → post ${p.rootId} — score ${p.score.toFixed(3)} — ${p.url}`);
+  }
+  // Same argument as the `external` near-misses just above: a translation that scored close to
+  // TRANSLATION_MATCH_AT without clearing it is real information, not nothing — see
+  // `translationNearMisses`'s own doc comment for why this calls back into the exact same
+  // `bestThreadFor` the second pass itself uses, purely for display.
+  const translationMisses = translationNearMisses(translations, threads, plan.posted);
+  if (translationMisses.length > 0) {
+    console.log(`  ${translationMisses.length} near-miss(es) scored above 0 but below TRANSLATION_MATCH_AT (highest first):`);
+    for (const { itemId, rootId, score } of translationMisses) {
+      console.log(`    ${itemId} → root ${rootId} — score ${score.toFixed(3)}`);
+    }
+  }
+
   // One line per row, not just a count — same argument as `external` above. `skipped` used to hold
   // only already-recorded rows, but it now also holds every rootless thread (see the guard in
   // `reconcileXPublished`), which is neither already recorded nor recorded by hand: 85 of 196
@@ -160,15 +182,19 @@ try {
 
   if (!writeConfirmed) {
     console.log(
-      `\npreview only — nothing was written. Re-run with --yes to record ${plan.confirmed.length} confirmed and ${plan.external.length} external row(s).`,
+      `\npreview only — nothing was written. Re-run with --yes to record ${plan.confirmed.length} confirmed, ` +
+        `${plan.external.length} external, and retire ${plan.posted.length} posted row(s).`,
     );
   } else {
     const recorder = new RecordObservedDelivery(stores.deliveryLedger);
     const publisher = new RecordPublish(sheet);
+    const retirer = new RetireTranslation(stores.translationStore, publisher, history.itemIds, history.postIds);
     let written = 0;
     let alreadyRecorded = 0;
     let replacedDropped = 0;
     let failed = 0;
+    let retired = 0;
+    const retiredItemIds: string[] = [];
 
     console.log("\nwriting…");
     for (const { entry } of plan.confirmed) {
@@ -205,12 +231,44 @@ try {
       }
     }
 
+    for (const p of plan.posted) {
+      try {
+        const result = await retirer.run({ itemId: p.itemId, rootId: p.rootId, url: p.url, postedAt: p.postedAt });
+        if (result === "retired") {
+          written++;
+          retired++;
+          retiredItemIds.push(p.itemId);
+          console.log(`  ✓ ${p.itemId} retired — already posted by hand (post ${p.rootId})`);
+        } else {
+          alreadyRecorded++;
+          console.log(`  · ${p.itemId} already retired — skipped`);
+        }
+      } catch (err) {
+        failed++;
+        console.error(`  ✗ ${p.itemId}: ${(err as Error).message}`);
+      }
+    }
+
     console.log(
-      `\nwrote ${written}, replaced ${replacedDropped} dropped row(s), already recorded ${alreadyRecorded}, failed ${failed}.`,
+      `\nwrote ${written}, replaced ${replacedDropped} dropped row(s), already recorded ${alreadyRecorded}, ` +
+        `retired ${retired}, failed ${failed}.`,
     );
     // Only an actual write throwing counts as a failure — a plan full of candidates that a human
     // still needs to look at is the normal, expected outcome of a run, not an error.
     if (failed > 0) process.exitCode = 1;
+
+    // A one-off, not an every-run alert: retiring one or two translations is ordinary background
+    // noise from this feature doing its job, but three or more in a single run is unusual enough
+    // (nine production translations total informed TRANSLATION_MATCH_AT's calibration — see
+    // xReconcile.ts) that a human should know it happened without reading this run's journal.
+    // Fired after the write loop, not per-item, so one alert names the whole batch rather than a
+    // Telegram message per retired translation.
+    const NOTIFY_RETIRE_THRESHOLD = 3;
+    if (retired >= NOTIFY_RETIRE_THRESHOLD) {
+      await notifyOps(
+        `x:reconcile retired ${retired} translation(s) already posted by hand on @${handle}: ${retiredItemIds.join(", ")}`,
+      );
+    }
   }
 } finally {
   await db.close();

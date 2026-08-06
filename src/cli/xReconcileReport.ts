@@ -1,7 +1,10 @@
 import { tryDescribeDbTarget, INVALID_DB_URL } from "../doctor/checks";
 import type { DbConfig } from "../config";
 import { isXCandidateRendering, type CandidateReason } from "../app/ReconcileXPublished";
+import { bestThreadFor, findRootTweet, TRANSLATION_MATCH_AT } from "../domain/publish/xReconcile";
 import type { ChannelRendering } from "../domain/formatting/models";
+import type { AssembledThread } from "../domain/models";
+import type { Translation } from "../domain/translation/models";
 
 /**
  * The lines `x-reconcile.ts` decides rather than merely prints, pulled out of the script for the
@@ -90,4 +93,42 @@ export function candidateReasonText(reason: CandidateReason, itemId: string, ren
       return `${itemId} has ${types.length || "several"} eligible x renderings (types: ${types.join(", ") || "?"}) — confirming risked the wrong deliveryKey, so this was refused rather than guessed`;
     }
   }
+}
+
+/**
+ * Translations that scored above 0 but below `TRANSLATION_MATCH_AT` against their own best live
+ * thread — the `posted` section's counterpart to the `external` block's own near-miss list
+ * (`x-reconcile.ts`'s `nearMisses`), so a hand-post whose translation just missed the floor is
+ * still visible to a human rather than silently indistinguishable from "nothing close at all".
+ *
+ * This is a report, not a decision: `reconcileXPublished` never records anything for a sub-floor
+ * score, and this function changes nothing about that — it calls the exact same pure
+ * `bestThreadFor` the second pass itself calls (never a re-spelling of the rule; see
+ * `isXCandidateRendering`'s own doc comment for what a second spelling costs elsewhere in this
+ * feature), just without `reconcileXPublished`'s own pool bookkeeping
+ * (`claimedRootIds`/`consumedRootIds`), which exists to keep two translations from claiming one
+ * thread in a *write*. Nothing here writes, so a near-miss line naming a thread another entry also
+ * names is not a bug — it is only ever informational.
+ *
+ * `posted` — already-retired itemIds this run — and any translation already carrying `postedUrl`
+ * are excluded, same as `reconcileXPublished`'s own guards, so a row that already has an owner
+ * never also shows up as "almost".
+ */
+export function translationNearMisses(
+  translations: Translation[],
+  threads: AssembledThread[],
+  posted: { itemId: string }[],
+): { itemId: string; rootId: string; score: number }[] {
+  const postedItemIds = new Set(posted.map((p) => p.itemId));
+  const rootedThreads = threads.filter((t) => findRootTweet(t) !== undefined);
+
+  const misses: { itemId: string; rootId: string; score: number }[] = [];
+  for (const t of translations) {
+    if (t.postedUrl !== undefined || postedItemIds.has(t.itemId) || t.koreanText === "") continue;
+    const match = bestThreadFor(t.koreanText, rootedThreads);
+    if (match !== undefined && match.score > 0 && match.score < TRANSLATION_MATCH_AT) {
+      misses.push({ itemId: t.itemId, rootId: match.thread.rootId, score: match.score });
+    }
+  }
+  return misses.sort((a, b) => b.score - a.score);
 }

@@ -7,16 +7,45 @@ import { describe, it, expect } from "vitest";
 import {
   candidateReasonText,
   externalSummaryLine,
+  translationNearMisses,
   xReconcileStartupLine,
   xTypesFor,
 } from "../../src/cli/xReconcileReport";
 import type { ChannelRendering } from "../../src/domain/formatting/models";
+import type { AssembledThread, SourceTweet } from "../../src/domain/models";
+import type { Translation } from "../../src/domain/translation/models";
 
 const prod = { url: "postgres://u:p@ep-x-y-123.ap-southeast-1.aws.neon.tech/neondb?sslmode=require", env: "production" as const };
 const dev = { url: "postgres://u:p@127.0.0.1:5432/herald", env: "development" as const };
 
 function rendering(itemId: string, over: Partial<ChannelRendering> = {}): ChannelRendering {
   return { itemId, type: "x", channel: "x", text: "복사된 원고입니다.", status: "approved", ...over } as ChannelRendering;
+}
+
+function thread(rootId: string, texts: string[]): AssembledThread {
+  const tweets = texts.map(
+    (text, i) =>
+      ({
+        id: i === 0 ? rootId : `${rootId}${i}`,
+        conversationId: rootId,
+        text,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        authorUserName: "0xMantleKR",
+      }) as SourceTweet,
+  );
+  return { rootId, tweets };
+}
+
+function translation(itemId: string, koreanText: string, over: Partial<Translation> = {}): Translation {
+  return {
+    itemId,
+    source: "x",
+    sourceText: "en",
+    koreanText,
+    status: "translated",
+    translatedAt: "2026-08-01T00:00:00.000Z",
+    ...over,
+  };
 }
 
 describe("xReconcileStartupLine", () => {
@@ -107,5 +136,66 @@ describe("candidateReasonText", () => {
     ]);
     expect(text).toContain("kol, announcement");
     expect(text).toContain("2 eligible x renderings");
+  });
+});
+
+describe("translationNearMisses", () => {
+  // Every koreanText/thread pair below is real production Korean copy (not synthetic filler), so
+  // similarity()'s score is measured against actual text rather than a hand-tuned toy string.
+  const COPY = "맨틀에서 토큰화 주식이 실시간 시세로 24시간 거래되는 완전한 시장이 열렸습니다. 자본시장 자산이 온체인에 올라온 순간부터 진짜 과제가 시작됩니다.";
+  // Shares just enough vocabulary with COPY (온체인/자산/시작) to score above 0 without
+  // approaching TRANSLATION_MATCH_AT (0.25) — a real near-miss, not a match.
+  const NEAR_MISS_LIVE_TEXT = "온체인 자산이 시장에 올라오면 그 다음이 진짜 시작입니다 여러 팀들이 함께 준비하고 있으니 기대해주세요";
+  // Shares no 3-gram with COPY at all.
+  const UNRELATED_LIVE_TEXT = "이번 주말 커뮤니티 밋업에서 만나요 다들 즐거운 하루 보내시고 편안한 저녁 시간 보내시길 바랍니다 감사합니다 여러분";
+
+  it("reports a translation whose best live thread scored above 0 but below TRANSLATION_MATCH_AT", () => {
+    const misses = translationNearMisses([translation("x:1", COPY)], [thread("100", [NEAR_MISS_LIVE_TEXT])], []);
+    expect(misses).toHaveLength(1);
+    expect(misses[0].itemId).toBe("x:1");
+    expect(misses[0].rootId).toBe("100");
+    expect(misses[0].score).toBeGreaterThan(0);
+    expect(misses[0].score).toBeLessThan(0.25);
+  });
+
+  it("omits a translation whose best thread shares nothing at all (score 0)", () => {
+    const misses = translationNearMisses([translation("x:1", COPY)], [thread("100", [UNRELATED_LIVE_TEXT])], []);
+    expect(misses).toEqual([]);
+  });
+
+  it("omits a translation already carrying postedUrl — it already has an owner", () => {
+    const misses = translationNearMisses(
+      [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/999" })],
+      [thread("100", [NEAR_MISS_LIVE_TEXT])],
+      [],
+    );
+    expect(misses).toEqual([]);
+  });
+
+  it("omits a translation this same run already retired (in `posted`)", () => {
+    const misses = translationNearMisses(
+      [translation("x:1", COPY)],
+      [thread("100", [NEAR_MISS_LIVE_TEXT])],
+      [{ itemId: "x:1" }],
+    );
+    expect(misses).toEqual([]);
+  });
+
+  it("omits a translation with empty koreanText — similarity can never score it above 0", () => {
+    const misses = translationNearMisses([translation("x:1", "")], [thread("100", [NEAR_MISS_LIVE_TEXT])], []);
+    expect(misses).toEqual([]);
+  });
+
+  it("sorts multiple near-misses highest score first", () => {
+    // Shares more vocabulary with NEAR_MISS_LIVE_TEXT than COPY does (score ~0.232 vs ~0.030),
+    // while itself staying far from COPY (~0.019) so it is unambiguously the "closer" one here.
+    const closer = "온체인 자산이 시장에 나오면 진짜 시작은 그 다음부터입니다 팀들이 함께 준비 중이니 많은 기대 부탁드립니다";
+    const misses = translationNearMisses(
+      [translation("x:1", COPY), translation("x:2", closer)],
+      [thread("100", [NEAR_MISS_LIVE_TEXT]), thread("200", [NEAR_MISS_LIVE_TEXT])],
+      [],
+    );
+    expect(misses.map((m) => m.itemId)).toEqual(["x:2", "x:1"]);
+    expect(misses[0].score).toBeGreaterThanOrEqual(misses[1].score);
   });
 });
