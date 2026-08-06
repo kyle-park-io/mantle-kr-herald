@@ -53,6 +53,17 @@ Environment=HERALD_OUTPUT_DIR=%h/.herald/output
 # decision, not a deployment one.
 Environment=HERALD_TRANSLATE_SINCE=2026-07-27T14:35:24.000Z
 
+# The tick's throughput dial: how many items each of translate:prepare/translate:align gets via
+# --limit. Deliberately shipped commented out rather than set, because the code's default is the
+# same 3 this scheduler was armed with (DEFAULT_WATCH_BATCH, src/cli/watchBatch.ts) and a duplicated
+# value is one more thing to drift. Uncomment it to tune throughput without a deploy: at this
+# timer's two-hour cadence the pipeline moves batch * 24 / 2 items per day, and whether that keeps
+# pace with collection is read off the backlog, not off the code. A value that is not a positive
+# integer refuses the tick at startup (see src/cli/watch.ts) instead of reaching `--limit` as
+# garbage, and every tick's first journal line prints the value it actually ran with. Read the
+# TimeoutStartSec= note below before raising it — the bound that matters is per `claude -p` call.
+#Environment=HERALD_WATCH_BATCH=3
+
 # Exactly two lines — DATABASE_URL and HERALD_DB_ENV=production — chmod 600, created by Kyle by
 # hand (a production connection string does not pass through an agent session). Everything else
 # (TWITTERAPI_IO_KEY, TELEGRAM_*, ...) still comes from the repo's own .env via `pnpm watch`'s own
@@ -72,7 +83,15 @@ EnvironmentFile=%h/.herald/prod.env
 # upper bound matters just as much as the lower one: 1800s must stay well under herald-watch.timer's
 # 7200s (two-hour) period, or a single wedged tick would still be "active" when the next OnCalendar=
 # fire comes due, and that fire is the one systemd skips — so the margin here (1800s used out of a
-# 7200s budget, a 4x cushion) is deliberate, not incidental.
+# 7200s budget, a 4x cushion) is deliberate, not incidental. Raising HERALD_WATCH_BATCH does not
+# require raising this bound either: ClaudeCodeAgent is invoked once per worksheet, and one tick
+# makes at most two such calls (translation, then alignment) regardless of how many items each
+# worksheet holds, so the 2 x 600s + 600s arithmetic above is unchanged by a bigger batch.
+# What *does* bound a sane batch size is the other timeout, the one inside each of those calls:
+# ClaudeCodeAgent's own DEFAULT_TIMEOUT_MS caps a single `claude -p` at 600s, and a worksheet of 30
+# items takes longer inside that one call than a worksheet of 3 — so the batch's real ceiling is
+# per-call, not this unit's total, and "this number doesn't have to change" is not the same as
+# "there is nothing to check". Raise the batch in steps and read the tick's duration in the journal.
 TimeoutStartSec=1800
 
 ExecStart=/home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm watch

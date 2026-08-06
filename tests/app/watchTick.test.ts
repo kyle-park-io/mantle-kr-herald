@@ -1,8 +1,11 @@
 // tests/app/watchTick.test.ts
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { WatchTick } from "../../src/app/WatchTick";
 import type { StageResult, WorksheetAgent } from "../../src/ports/WorksheetAgent";
 import { formatStatus, pipelineStages } from "../../src/status/pipeline";
+import { watchOutcome } from "../../src/cli/watchSummary";
 
 function recordingAgent(onFill?: (kind: string) => void) {
   const calls: string[] = [];
@@ -42,6 +45,15 @@ function statusStdout(translated: number): string {
 }
 
 const COLLECTED_2 = "collected 2 threads (5 tweets) for @x — covered a ~ b";
+const COLLECTED_2_WITH_GAP =
+  "collected 2 threads (5 tweets) for @x — covered 2026-08-06T00:00:00.000Z ~ 2026-08-06T02:00:00.000Z" +
+  ", GAP (open) ~ 2026-08-06T00:00:00.000Z (limit reached)";
+// The longest a GAP notice's tail ever gets: `gap.to` is always a real ISO timestamp, and
+// `gap.from` — "(open)" in the fixture above — is only shorter than one when the watermark had
+// never been set at all. A months-old outage's actual boundaries, not shortened for the test.
+const COLLECTED_2_WITH_REALISTIC_GAP =
+  "collected 2 threads (5 tweets) for @Mantle_Official — covered 2026-08-04T12:00:00.000Z ~ 2026-08-06T02:00:00.000Z" +
+  ", GAP 2026-08-04T12:00:00.000Z ~ 2026-08-06T00:00:00.000Z (limit reached)";
 const PREPARED_2 = "prepared 2 item(s) → output/translations/worksheets/batch-X.md";
 const ALIGNED_2 = "aligned 2 · skipped 0 (no precedent) → output/translations/worksheets/align-X.md";
 const NOTHING_TO_ALIGN = "nothing to align · skipped 0 (no precedent)";
@@ -423,5 +435,183 @@ describe("WatchTick", () => {
     expect(report.ok).toBe(true);
     expect(ran).toEqual(["collect"]);
     expect(calls).toEqual([]);
+  });
+
+  // --- the batch size dial -----------------------------------------------------------------
+
+  it("hands the configured batch size to both translate stages", async () => {
+    const { run, agent, ran } = pipeline({
+      prepare: "prepared 5 item(s) → output/translations/worksheets/batch-X.md",
+      savesPerPass: 5,
+      align: NOTHING_TO_ALIGN,
+    });
+
+    const report = await new WatchTick(run, agent, { batch: 5 }).run();
+
+    expect(report.ok).toBe(true);
+    expect(ran).toContain("translate:prepare --limit 5");
+    expect(ran).toContain("translate:align --limit 5");
+  });
+
+  it("defaults both translate stages to 3 when no batch size is configured", async () => {
+    // A hand-run `pnpm watch` with nothing in the environment must keep the behaviour the
+    // scheduler was armed with, not acquire a different one.
+    const { run, agent, ran } = pipeline({ align: NOTHING_TO_ALIGN });
+
+    await new WatchTick(run, agent, {}).run();
+
+    expect(ran).toContain("translate:prepare --limit 3");
+    expect(ran).toContain("translate:align --limit 3");
+  });
+
+  it("keeps the batch size and the cutoff independent on translate:prepare", async () => {
+    // Both options land on the same argument list, so a wiring mistake that dropped one while
+    // keeping the other would still pass the two tests above.
+    const { run, agent, ran } = pipeline({
+      prepare: "prepared 5 item(s) → output/translations/worksheets/batch-X.md",
+      savesPerPass: 5,
+      align: NOTHING_TO_ALIGN,
+    });
+
+    await new WatchTick(run, agent, { batch: 5, translateSince: "2026-07-27T14:35:24.000Z" }).run();
+
+    expect(ran).toContain("translate:prepare --limit 5 --since 2026-07-27T14:35:24.000Z");
+  });
+
+  // --- a coverage GAP is permanent tweet loss, not a warning ----------------------------------
+  //
+  // `fetchAuthoredTweets` pages newest-first and stops at MAX_PAGES=50
+  // (src/adapters/twitterapi/TwitterApiSourceGateway.ts:36,8,57), and
+  // `CollectAuthoredContent` advances the watermark to the newest fetched tweet whether or not it
+  // truncated (:74-79). Newest-first plus a page cap means the tweets left behind are the *older*
+  // ones, and the next tick's floor is already past them. `computeCoverage` records the hole and
+  // `collect.ts:41` prints it — and until now WatchTick's own header said the gap notice was
+  // "free text we don't need to parse".
+
+  it("fails the tick when collect reports a GAP, before any translation runs", async () => {
+    const { run, agent, ran, calls } = pipeline({ collect: COLLECTED_2_WITH_GAP });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("collect");
+    expect(report.stagesRun).toEqual(["collect"]);
+    expect(ran).toEqual(["collect"]);
+    expect(calls).toEqual([]);
+  });
+
+  it("says what was lost and where the backfill procedure is, because this message becomes a Telegram alert", async () => {
+    // herald-notify-failure.sh forwards a journal excerpt. An alert saying only "collect failed"
+    // costs someone an ssh session to discover what to do. It deliberately does NOT inline a
+    // command: the working backfill needs a raised page cap *and* the scheduler's own environment
+    // (prod.env + HERALD_OUTPUT_DIR), and a command carrying only the first half writes the
+    // recovered threads to the local Docker database while production keeps the hole — which is
+    // exactly the confident-looking non-recovery this whole failure path exists to prevent. So the
+    // alert carries the loss and a pointer to the one place that has all of it.
+    const { run, agent } = pipeline({ collect: COLLECTED_2_WITH_GAP });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.failure?.detail).toContain("GAP");
+    expect(report.failure?.detail).toContain("2026-08-06T00:00:00.000Z");
+    expect(report.failure?.detail).toContain("docs/ko/team-runbook.md");
+    // Not a bare filename: the runbook is long, and §4's GAP subsection is where the procedure is.
+    expect(report.failure?.detail).toContain("수집에 구멍이 생겼을 때");
+  });
+
+  it("points the alert's runbook anchor at a heading that still exists", () => {
+    // WatchTick.ts embeds the Korean anchor above as literal text so an operator can grep
+    // docs/ko/team-runbook.md for the GAP recovery section. Extracted from the source file here,
+    // rather than retyped, so a renamed runbook heading fails this test instead of leaving the
+    // Telegram alert pointing at a section that no longer exists — the same guard
+    // tests/deploy/watchCutoff.test.ts keeps for HERALD_TRANSLATE_SINCE's sibling cross-file value.
+    const source = readFileSync(resolve(__dirname, "../../src/app/WatchTick.ts"), "utf8");
+    const anchor = /team-runbook\.md §4 "([^"]+)"/.exec(source)?.[1];
+    expect(anchor).toBeDefined();
+
+    const runbook = readFileSync(resolve(__dirname, "../../docs/ko/team-runbook.md"), "utf8");
+    expect(runbook).toContain(anchor!);
+  });
+
+  it("keeps the alert intact through watchOutcome's 300-char budget, even at the GAP text's longest", async () => {
+    // `watchSummary.ts`'s `watchOutcome` is what actually reaches Telegram — it composes
+    // `${stage}: ${detail}` and runs *that* through `condense()`, which truncates from the tail
+    // and marks the cut with `…` (src/shared/text/condense.ts) — but only THEN appends
+    // ` (ran ${stages})` on top (src/cli/watchSummary.ts:34). So a truncated `line` never ends
+    // with "…" — the marker, if `condense` ever inserts one, always lands mid-string, before that
+    // suffix. `.not.toContain("…")` pins this against `condense`'s actual truncation marker
+    // wherever it falls; an `endsWith` check here would be vacuously true regardless of whether
+    // anything was cut. The clause most worth losing to a silent truncation — that a later green
+    // tick is *not* proof of a fix, the single most misleading fact about this failure mode — is
+    // also asserted by name, not just "nothing was cut". Measured at 261 of 300 characters for
+    // this fixture (see the budget comment in `WatchTick`'s gap branch).
+    const { run, agent } = pipeline({ collect: COLLECTED_2_WITH_REALISTIC_GAP });
+
+    const report = await new WatchTick(run, agent).run();
+    const { line } = watchOutcome(report);
+
+    expect(line).not.toContain("…");
+    expect(line).toContain("GAP 2026-08-04T12:00:00.000Z ~ 2026-08-06T00:00:00.000Z");
+    expect(line).toContain("docs/ko/team-runbook.md");
+    expect(line).toContain("not proof of a fix");
+  });
+
+  it("runs the tick normally when collect's line carries no GAP", async () => {
+    // The discriminating half: a gap check that fired unconditionally would satisfy both tests
+    // above while breaking every tick.
+    const { run, agent, calls } = pipeline({ align: NOTHING_TO_ALIGN });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(calls).toEqual(["translation"]);
+  });
+
+  it("still reads a GAP when pnpm printed its own lines around collect's", async () => {
+    // Same trap the `m`-flag comment on COLLECT_LINE was added for: `pnpm <script>` writes
+    // "Already up to date" / "Done in 463ms" to stdout around the script's own output.
+    const { run, agent } = pipeline({
+      collect: ["Already up to date", "", COLLECTED_2_WITH_GAP, "Done in 463ms using pnpm v11.20.0"].join("\n"),
+    });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("collect");
+  });
+
+  it("fails on a GAP even when the same line reports zero threads — the check order is defence-in-depth", async () => {
+    // `computeCoverage` cannot produce this shape today: it only ever sets `gap` alongside a
+    // non-zero kept count (`if (tweets.length === 0) return { ..., gap: null }`,
+    // src/domain/coverage.ts). So nothing currently exercises this fixture through the real
+    // pipeline — which is exactly why the ordering in WatchTick.run() has to be pinned directly,
+    // not left to whatever `computeCoverage` happens to guarantee. A gap check placed *after* the
+    // `threadCount === 0` early return would make every existing GAP test above still pass (none
+    // of them use a zero count), while quietly returning `{ ok: true }` on a real one the moment
+    // this invariant ever changed.
+    const { run, agent, calls } = pipeline({
+      collect: "collected 0 threads (0 tweets) for @x — nothing new in window, GAP (open) ~ 2026-08-06T00:00:00.000Z (limit reached)",
+    });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("collect");
+    expect(calls).toEqual([]);
+  });
+
+  it("calls collect with no arguments, ever", async () => {
+    // Two distinct losses if this changes. `--since` puts CollectAuthoredContent into adhoc mode
+    // (src/app/CollectAuthoredContent.ts:32, and the `if (!adhoc)` at :74), which skips the
+    // watermark advance: the watermark freezes, the same window is re-collected every tick, and
+    // the zero-threads gate that keeps the agent from being called for nothing never fires again.
+    // `--limit` makes `applyThreadLimit` drop threads while the watermark still advances past
+    // them — permanent, silent loss. Both are what a future "make collect configurable too"
+    // change reaches for first.
+    const { run, agent, ran } = pipeline({ align: NOTHING_TO_ALIGN });
+
+    await new WatchTick(run, agent, { batch: 5, translateSince: "2026-07-27T14:35:24.000Z" }).run();
+
+    expect(ran.filter((r) => r.startsWith("collect"))).toEqual(["collect"]);
   });
 });

@@ -1,0 +1,44 @@
+/**
+ * The validation rule behind every `HERALD_*` positive-integer environment override: blank or
+ * whitespace-only means "unset" (the caller's default applies), and anything else must be a bare,
+ * positive, base-10 integer — refused at read time, naming the variable and the exact value that
+ * was rejected, rather than silently coerced by `Number()` into something nobody chose.
+ *
+ * First written for `HERALD_WATCH_BATCH` (`src/cli/watchBatch.ts`); shared here once
+ * `HERALD_COLLECT_MAX_PAGES` (`src/cli/collectMaxPages.ts`) needed the exact same rule rather than
+ * a second, slightly-different reimplementation of it.
+ *
+ * There is deliberately no separate `example` parameter. It used to sit right after `fallback` —
+ * two adjacent numbers with no way for the compiler to tell a swap from the intended order, and a
+ * swap would only ever show up as odd advice inside an error message nobody reads until something
+ * is already broken. The message names `fallback` instead: it is by definition a valid value for
+ * this variable, so it cannot drift out of step with the variable it illustrates.
+ */
+export function parsePositiveIntEnv(raw: string | undefined, envVar: string, fallback: number): number {
+  // An `X=` line with nothing after it reaches Node as "", not as undefined. Treated as unset:
+  // `Number("")` is 0, which would otherwise pass through as a real (and almost always wrong)
+  // value while the unit/shell that set it looks configured.
+  const value = raw?.trim();
+  if (!value) return fallback;
+
+  // A digit-only pattern, then a positivity check, rather than `Number.isFinite` +
+  // `Number.isInteger`: `Number("0x10")` is 16 and `Number("1e2")` is 100, and both would let a
+  // typo silently become a value nobody chose. `/^\d+$/` also refuses fractions and signs
+  // (`2.5`, `-3`, `+3`) in the same rule, leaving "0" as the only digit-only string still left
+  // for the positivity check to catch.
+  //
+  // `Number.isSafeInteger` closes what the digit pattern alone cannot: a 26-digit string is all
+  // digits and positive, but `Number()` rounds it to a float — so the rule would accept a value it
+  // refuses on input (`String(1e26)` is `"1e+26"`, exactly the exponent notation the pattern above
+  // rejects), and hand `maxPages` a cap of 1e26, disabling the "can never loop forever" backstop
+  // `DEFAULT_MAX_PAGES` exists to be. Anything above 2^53-1 is a typo or a paste accident, never an
+  // intended batch size or page cap.
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) {
+    throw new Error(
+      `${envVar} must be a positive integer: ${JSON.stringify(raw)}. ` +
+        `Use a whole number greater than zero, such as ${fallback}.`,
+    );
+  }
+
+  return Number(value);
+}

@@ -5,7 +5,7 @@ import type { DbConfig } from "../../src/config";
 describe("watchStartupLine", () => {
   it("names the default output root and the database plainly", () => {
     const db: DbConfig = { url: "postgres://user:secret@localhost:5432/herald", env: "development" };
-    const line = watchStartupLine("/repo/output", undefined, db);
+    const line = watchStartupLine("/repo/output", undefined, db, { batch: 3 });
     expect(line).toContain("/repo/output (default)");
     expect(line).toContain("database development");
     expect(line).toContain("localhost:5432/herald");
@@ -16,7 +16,7 @@ describe("watchStartupLine", () => {
 
   it("names a HERALD_OUTPUT_DIR override so a non-default root is never silent", () => {
     const db: DbConfig = { url: "postgres://user:secret@prod-host:5432/herald", env: "production" };
-    const line = watchStartupLine("/home/kyle/.herald/output", "/home/kyle/.herald/output", db);
+    const line = watchStartupLine("/home/kyle/.herald/output", "/home/kyle/.herald/output", db, { batch: 3 });
     expect(line).toContain("/home/kyle/.herald/output (HERALD_OUTPUT_DIR override)");
     expect(line).toContain("database production");
     expect(line).toContain("prod-host:5432/herald");
@@ -31,7 +31,7 @@ describe("watchStartupLine", () => {
     // Telegram. `src/doctor/checks.ts` already refused to take that risk on the identical call.
     const db: DbConfig = { url: "postgres//user:hunter2@localhost:5432/herald", env: "production" };
 
-    const line = watchStartupLine("/home/kyle/.herald/output", "/home/kyle/.herald/output", db);
+    const line = watchStartupLine("/home/kyle/.herald/output", "/home/kyle/.herald/output", db, { batch: 3 });
 
     expect(line).toContain("DATABASE_URL is not a valid URL");
     expect(line).not.toContain("hunter2");
@@ -47,8 +47,45 @@ describe("watchStartupLine", () => {
     // unanswered.
     const devDb: DbConfig = { url: "postgres://u:p@localhost:5432/herald", env: "development" };
     const prodDb: DbConfig = { url: "postgres://u:p@localhost:5432/herald", env: "production" };
-    expect(watchStartupLine("/repo/output", undefined, devDb)).not.toEqual(
-      watchStartupLine("/repo/output", undefined, prodDb),
+    expect(watchStartupLine("/repo/output", undefined, devDb, { batch: 3 })).not.toEqual(
+      watchStartupLine("/repo/output", undefined, prodDb, { batch: 3 }),
     );
+  });
+
+  it("names the batch size and the translation floor this tick will use", () => {
+    const db: DbConfig = { url: "postgres://u:p@prod-host:5432/herald", env: "production" };
+
+    const line = watchStartupLine("/home/kyle/.herald/output", "/home/kyle/.herald/output", db, {
+      batch: 3,
+      translateSince: "2026-07-27T14:35:24.000Z",
+    });
+
+    expect(line).toContain("batch 3");
+    expect(line).toContain("2026-07-27T14:35:24.000Z");
+    // The values this line already carried must survive the addition.
+    expect(line).toContain("/home/kyle/.herald/output (HERALD_OUTPUT_DIR override)");
+    expect(line).toContain("database production");
+  });
+
+  it("states an absent translation floor instead of omitting it", () => {
+    // A line that simply drops the floor when unset is indistinguishable from one where a cutoff
+    // is configured — and "no cutoff" means the tick drains the whole untranslated backlog
+    // oldest-first (211 items reaching back to 2026-06-01, measured 2026-08-06). That is the most
+    // consequential difference there is between two ticks, so it is stated, not implied.
+    const db: DbConfig = { url: "postgres://u:p@localhost:5432/herald", env: "development" };
+
+    const line = watchStartupLine("/repo/output", undefined, db, { batch: 5, translateSince: undefined });
+
+    expect(line).toContain("batch 5");
+    expect(line).toMatch(/translate floor \(none\)/);
+  });
+
+  it("distinguishes two ticks that differ only in their batch size", () => {
+    // Guards against a line that mentions "batch" in fixed text without interpolating the value.
+    const db: DbConfig = { url: "postgres://u:p@localhost:5432/herald", env: "development" };
+    const three = watchStartupLine("/repo/output", undefined, db, { batch: 3 });
+    const ten = watchStartupLine("/repo/output", undefined, db, { batch: 10 });
+
+    expect(three).not.toEqual(ten);
   });
 });

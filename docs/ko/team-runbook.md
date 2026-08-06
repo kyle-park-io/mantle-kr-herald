@@ -414,9 +414,82 @@ Drive `drive/v1`에는 내용을 그 자리에서 바꾸는 엔드포인트가 �
 ad-hoc으로 간주되어 **워터마크를 갱신하지 않으므로**, 정기 자동화의 워터마크 전진 흐름을
 건드리지 않고 안전하게 임시 수집을 돌릴 수 있습니다. 매 실행의 요청/커버 구간, 스레드·트윗
 개수, 잘림 여부는 `output/x/runs.json`에 기록됩니다([`artifacts.md`](artifacts.md) §3, §6).
-자동화를 붙일 때는 매시간 `pnpm collect <target> --since 2h`(`--limit` 없이)를 권장합니다 —
-2시간 창과 1시간 주기가 1시간 겹쳐서 커버리지가 끊기지 않고, 겹치는 구간은 upsert가 중복
-제거합니다.
+자동화는 `pnpm watch`와 그 systemd 타이머입니다(§6) — 이 스케줄러는 `collect`를 **인자 없이**
+실행하도록 되어 있고, 이건 의도된 설계입니다. `--since`/`--limit`은 정기 자동화용이 아니라
+**손으로 돌리는 백필 도구**로 남아 있습니다. 정확히 둘 다 워터마크를 갱신하지 않기 때문입니다:
+자동화 쪽에 `--since`를 붙이면 그 실행이 ad-hoc이 되어 워터마크가 멈추고, 매 tick이 같은
+창을 반복 수집하는 데 더해, `collect`가 신규 스레드 0건일 때 에이전트를 아예 호출하지 않는
+게이트(`WatchTick.ts`의 `threadCount === 0` 분기)까지 다시는 발동하지 않게 됩니다.
+
+### 수집에 구멍이 생겼을 때 (GAP 알림)
+
+**증상** — `herald-watch` 실패 알림의 상세 메시지에 `GAP`이 들어 있습니다.
+
+**원인** — 한 번의 `collect` 실행이 50페이지 상한(`DEFAULT_MAX_PAGES`)까지 다 써버렸습니다 — 보통
+장시간 장애 이후에만 벌어집니다. 워터마크는 그래도 이번에 가져온 가장 최신 트윗까지 전진하므로,
+상한에 걸려 못 가져온 더 오래된 구간은 이후 어떤 정기 수집으로도 다시 채워지지 않습니다.
+
+**조치** — 이 복구는 **두 군데를 동시에 맞춰야** 합니다. 상한 하나만 올리거나 환경 하나만
+맞추면, 명령은 성공하고 원장에도 깨끗한 행이 남는데 **구멍은 그대로 남습니다.**
+
+**(1) 상한** — `--since`만 붙여 그냥 다시 돌리면 **똑같은 지점에서 똑같이 잘리고 아무것도
+복구되지 않습니다.** `gap.from`은 방금 실패한 그 실행이 이미 썼던 floor 그 자체이고,
+`fetchAuthoredTweets`는 항상 최신 트윗부터 아래로 페이지를 넘기므로, 같은 floor로 다시
+요청하면 같은 최신 트윗들을 다시 가져오다 같은 `DEFAULT_MAX_PAGES`(50페이지) 상한에 같은 자리에서
+또 걸립니다. 실제로 구멍에 닿으려면 그 한 번의 실행만 상한을 올려야 합니다.
+
+**(2) 환경** — **저장소에서 맨손으로 `pnpm collect`를 돌리면 안 됩니다.** `pnpm collect`는
+`tsx --env-file-if-exists=.env`이므로 `DATABASE_URL`을 저장소의 `.env`, 즉 **로컬 Docker**에서
+읽고, output 루트도 저장소 안 `output/`을 씁니다. 반면 구멍이 난 쪽은 스케줄러가 쓰는
+**프로덕션 Neon**(`herald-watch.service`의 `EnvironmentFile=%h/.herald/prod.env`)과
+**스케줄러 전용 output 루트**(`Environment=HERALD_OUTPUT_DIR=%h/.herald/output`)입니다 — 이
+분리는 §6의 "스케줄러 전용 output/ 트리"에 그 이유까지 적혀 있고, 실제로 개발 DB를 향한 로컬
+실행이 공유 워터마크를 39개 스레드만큼 밀어버린 사고가 그래서 생겼습니다. 그러니 맨손 실행은
+복구한 스레드를 **개발 DB에 넣고**, 저장소의 `output/x/runs.json`에 `gap: null`인 깨끗한 행을
+하나 남깁니다 — **프로덕션에는 구멍이 그대로인데 화면상으로는 복구가 성공한 것처럼
+보입니다.**
+
+그래서 스케줄러와 **같은 환경으로** 돌리고, `collect`를 실행하기 전에 `pnpm doctor`로 그
+환경이 실제로 적용됐는지 먼저 확인합니다:
+
+```bash
+set -a; . ~/.herald/prod.env; set +a
+HERALD_OUTPUT_DIR=$HOME/.herald/output pnpm doctor
+HERALD_OUTPUT_DIR=$HOME/.herald/output \
+  HERALD_COLLECT_MAX_PAGES=<n> pnpm collect Mantle_Official --since <복구 시작 시점>
+```
+
+**`pnpm doctor` 줄을 건너뛰지 마세요.** `collect`의 출력이나 `runs.json`에는 어느 데이터베이스에
+썼는지가 전혀 남지 않으므로 — 두 변수를 하나만 놓쳐도 명령은 똑같이 성공하고 원장에도 깨끗한
+행이 남습니다. `pnpm doctor`의 `Database` 줄이 `production`을, `Output root` 줄이
+`(HERALD_OUTPUT_DIR override)`와 함께 `~/.herald/output` 경로를 보여주는지 이 시점에 먼저
+확인하세요. 둘 중 하나라도 다르게 나오면(특히 `Database`가 `development`) — 바로 위 (2) 환경
+문단이 경고하는 그 상황이니 여기서 멈추고 `set -a; . ~/.herald/prod.env; set +a`부터 다시
+확인한 뒤에만 `collect`를 돌리세요.
+
+`set -a`는 그 뒤의 대입을 자동으로 export 하므로 `prod.env`의 `DATABASE_URL`/
+`HERALD_DB_ENV`가 이 셸의 환경변수가 됩니다 — 셸에서 export한 값은 Node의
+`--env-file-if-exists=.env`보다 항상 이깁니다(§6에서 이 머신에서 직접 확인한 사실입니다).
+`TWITTERAPI_IO_KEY` 같은 나머지 값은 그대로 저장소 `.env`에서 옵니다. 이 두 변수는
+**한 번의 실행에만** 필요하니, 끝나면 그 터미널을 닫거나 새 창을 여세요 — 프로덕션 DSN이
+남아 있는 셸에서 다른 명령을 계속 돌리지 않는 편이 안전합니다.
+
+`<n>`은 놓친 구간의 길이를 20(페이지당 트윗 수)으로 나눈 값보다 넉넉히 크게 잡으세요 — 장시간
+장애 뒤라면 며칠~몇 주치일 수 있으니 여유를 두는 쪽이 안전합니다. `<복구 시작 시점>`은 보통
+GAP의 `from` 타임스탬프를 그대로 붙이면 되지만, `(open)`으로 찍혀 있으면 워터마크가 그때까지
+한 번도 설정된 적이 없었다는 뜻이라 붙일 타임스탬프 자체가 없습니다 — 이 경우는 직접 복구하고
+싶은 시점을 골라 넣으세요. `--since`가 있는 한 이 실행은 ad-hoc이라 워터마크는 여전히
+건드리지 않습니다.
+
+실행이 끝나면 성공을 가정하지 말고 **스케줄러 쪽 원장**인
+`~/.herald/output/x/runs.json`의 마지막 실행 행에서 `truncated`/`gap`을 직접 확인하세요 —
+저장소 안 `output/x/runs.json`이 **아닙니다**(위 명령의 `HERALD_OUTPUT_DIR`가 원장을 그쪽으로
+보냅니다). 거기 `gap`이 또 찍혀 있으면 상한을 더 올려서 다시 돌려야 합니다.
+
+**참고** — 워터마크가 이미 전진해 있으므로 다음 예정된 tick은 구멍을 채웠는지와 무관하게
+그냥 초록으로 끝납니다. 초록 tick이 구멍이 메워졌다는 증거는 아닙니다. 실패 알림 본문도 명령을
+직접 적어 주지 않고 이 절 하나만 가리킵니다 — 텔레그램 한 줄에 위 환경 설정까지 담을 수 없고,
+절반만 적힌 명령이 바로 위에서 말한 "성공한 것처럼 보이는 실패"를 만들기 때문입니다.
 
 ### 두 발송을 동시에 돌리면 원장 행이 유실될 수 있음
 
@@ -742,6 +815,37 @@ systemd가 순서를 맞춰 주니 신경 쓸 일이 없어집니다.
   **재시작 순간 tick이 한 번 바로 도는** 결과가 됩니다.
 - **재시작을 넘겨서까지 확실히 멈춰 있어야 하면** — `systemctl --user disable --now
   herald-watch.timer`. `enable` 자체를 해제하므로 재시작해도 돌아오지 않습니다.
+
+### 한 tick이 몇 건씩 처리할지 (HERALD_WATCH_BATCH)
+
+한 tick이 `translate:prepare --limit`과 `translate:align --limit`에 넘기는 항목 수입니다.
+**기본값은 3**이고, 스케줄러도 이 값으로 켰습니다. 두 시간 주기이므로 처리량은
+`batch × 24 ÷ 2`건/일 — 기본값이면 하루 36건입니다. 번역이 수집을 따라가고 있는지는 보드의
+미번역 잔량이 늘어나는지 줄어드는지로 판단하고, 안 따라가면 이 값을 올립니다. **코드를 고치거나
+다시 배포할 필요는 없습니다** — 이 값이 변수로 빠져 있는 이유가 그것입니다.
+
+`herald-watch.service`의 `Environment=` 줄로 설정합니다. **단, 고쳐야 하는 파일은 설치 때
+`~/.config/systemd/user/`로 복사해 둔 사본입니다** — 저장소의 `deploy/herald-watch.service`는
+그 복사본의 원본일 뿐이라, 저장소 쪽만 고치고 `daemon-reload`를 돌리면 systemd는 여전히 예전
+값을 읽습니다(복사 절차는 위 "설치" 4번 참고). 그 사본의 `Environment=` 줄에서, 위의
+`HERALD_OUTPUT_DIR`/`HERALD_TRANSLATE_SINCE` 옆에 **주석 처리된 자리가 이미 있으니** 주석만
+풀고 값을 바꾸세요:
+
+```
+Environment=HERALD_WATCH_BATCH=5
+```
+
+바꾼 뒤 `systemctl --user daemon-reload`를 하면 다음 tick부터 적용됩니다(바로 확인하려면
+`systemctl --user start herald-watch.service`). 그 tick이 실제로 어떤 값으로 돌았는지는
+`journalctl --user -u herald-watch` 첫 줄의 `batch N`이 알려 줍니다. 양의 정수가 아닌 값을 넣으면
+tick이 **시작 자체를 거부하고** 실패 알림이 나갑니다 — `--limit 0` 같은 값이 조용히 흘러들어가
+아무것도 번역하지 않으면서 정상처럼 보이는 상태가 더 나쁘기 때문입니다.
+
+**값을 올려도 `TimeoutStartSec=1800`은 손대지 않아도 됩니다** — `claude -p`는 항목마다가 아니라
+워크시트마다 한 번 호출되므로, 배치가 커져도 한 tick의 에이전트 호출은 여전히 최대 두 번(번역,
+정렬)입니다. 다만 **그 한 번의 호출 자체에 10분 상한**이 걸려 있고(`ClaudeCodeAgent`), 30건짜리
+워크시트는 3건짜리보다 그 한 번의 호출 안에서 당연히 더 오래 걸립니다. 실질적인 상한은 이쪽이니
+한 번에 크게 올리지 말고 몇 단계로 나눠 올리면서 tick 소요 시간을 로그로 확인하세요.
 
 ### 스케줄러 전용 output/ 트리
 

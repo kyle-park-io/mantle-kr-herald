@@ -7,6 +7,7 @@ import { LocalJsonStore } from "../adapters/store/LocalJsonStore";
 import { JsonCollectionRunLedger } from "../adapters/store/JsonCollectionRunLedger";
 import { CollectAuthoredContent, type CollectOptions } from "../app/CollectAuthoredContent";
 import { parseSince } from "../shared/time/parseSince";
+import { parseCollectMaxPages } from "./collectMaxPages";
 import { paths } from "../paths";
 
 const handle = process.env.REFERENCE_X_HANDLE?.trim() || "0xMantleKR";
@@ -23,7 +24,14 @@ if (limit) {
 }
 
 const client = new TwitterClient(loadConfig().apiKey);
-const source = new TwitterApiSourceGateway(client);
+// Honours HERALD_COLLECT_MAX_PAGES for the same reason `collect.ts` does: this command also runs
+// `CollectAuthoredContent`, so exhausting the page cap here also advances a watermark past an
+// un-fetched older tail. It is the one command `pnpm tm:measure` exists to size — that report
+// estimates the reference account's volume *against the cap*, which would be an estimate with no
+// dial to act on if the cap were unreachable from here.
+const source = new TwitterApiSourceGateway(client, {
+  maxPages: parseCollectMaxPages(process.env.HERALD_COLLECT_MAX_PAGES),
+});
 const store = new LocalJsonStore(paths.referenceDir);
 const ledger = new JsonCollectionRunLedger(paths.referenceRuns);
 const usecase = new CollectAuthoredContent(source, store, store, ledger);

@@ -9,6 +9,7 @@ import { LocalJsonStore } from "../adapters/store/LocalJsonStore";
 import { JsonCollectionRunLedger } from "../adapters/store/JsonCollectionRunLedger";
 import { CollectAuthoredContent, type CollectOptions } from "../app/CollectAuthoredContent";
 import { parseSince } from "../shared/time/parseSince";
+import { parseCollectMaxPages } from "./collectMaxPages";
 import { paths } from "../paths";
 
 const target = process.argv[2]?.startsWith("--") ? "Mantle_Official" : process.argv[2] ?? "Mantle_Official";
@@ -24,7 +25,13 @@ if (limit) {
 }
 
 const client = new TwitterClient(loadConfig().apiKey);
-const source = new TwitterApiSourceGateway(client);
+// This is the one command HERALD_COLLECT_MAX_PAGES is documented for: raising the page cap for a
+// single hand-run backfill after a coverage GAP alert (docs/ko/team-runbook.md §4). Read here
+// rather than inside the gateway so the override reaches this entry point and not the four others
+// that build the same gateway for unrelated work; an invalid value throws before any API call.
+const source = new TwitterApiSourceGateway(client, {
+  maxPages: parseCollectMaxPages(process.env.HERALD_COLLECT_MAX_PAGES),
+});
 const ledger = new JsonCollectionRunLedger(paths.xRuns);
 
 const db = createDb(loadDbConfig());
