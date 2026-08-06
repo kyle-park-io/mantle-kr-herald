@@ -94,6 +94,11 @@ try {
   const plan = reconcileXPublished({
     threads,
     renderings,
+    // Placeholder — Task 3 only builds the second pass, not the wiring that loads real
+    // translations or acts on `plan.posted`. An empty array makes the second pass a no-op,
+    // identical to this CLI's behaviour before Task 3. Task 4 replaces this with a real load and
+    // handles `plan.posted` the same way this file already handles `plan.confirmed`/`plan.external`.
+    translations: [],
     deliveredKeys,
     historyIds: history.itemIds,
     historyPostIds: history.postIds,

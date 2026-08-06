@@ -1,10 +1,11 @@
 // tests/app/reconcileXPublished.test.ts
 import { describe, it, expect } from "vitest";
 import { isXCandidateRendering, reconcileXPublished, xMatchCandidates } from "../../src/app/ReconcileXPublished";
-import { CANDIDATE_AT } from "../../src/domain/publish/xReconcile";
+import { CANDIDATE_AT, TRANSLATION_MATCH_AT } from "../../src/domain/publish/xReconcile";
 import { deliveryKey } from "../../src/domain/delivery/models";
 import type { AssembledThread, SourceTweet } from "../../src/domain/models";
 import type { ChannelRendering } from "../../src/domain/formatting/models";
+import type { Translation } from "../../src/domain/translation/models";
 
 function thread(rootId: string, texts: string[]): AssembledThread {
   const tweets = texts.map(
@@ -26,11 +27,29 @@ function rendering(itemId: string, text: string, over: Partial<ChannelRendering>
   return { itemId, type: "x", channel: "x", text, status: "approved", ...over } as ChannelRendering;
 }
 
+function translation(itemId: string, koreanText: string, over: Partial<Translation> = {}): Translation {
+  return {
+    itemId,
+    source: "x",
+    sourceText: "en",
+    koreanText,
+    status: "translated",
+    translatedAt: "2026-08-01T00:00:00.000Z",
+    ...over,
+  };
+}
+
+// A rewrite of COPY: the same post, edited the way a human edits it before posting. Scores well
+// above TRANSLATION_MATCH_AT and nowhere near CONFIRMED_AT — which is the whole point.
+const COPY_REWRITTEN =
+  "맨틀에서 토큰화 주식이 실시간 시세로 24시간 거래되는 시장이 열렸습니다. 자본시장 자산이 온체인에 올라온 순간부터 진짜 과제가 시작됩니다.";
+
 const base = {
   deliveredKeys: new Set<string>(),
   historyIds: new Set<string>(),
   historyPostIds: new Set<string>(),
   handle: "0xMantleKR",
+  translations: [] as Translation[],
 };
 
 describe("xMatchCandidates", () => {
@@ -317,6 +336,88 @@ describe("reconcileXPublished", () => {
 
   it("returns empty lists for no live threads rather than throwing", () => {
     const plan = reconcileXPublished({ ...base, threads: [], renderings: [rendering("x:1", COPY)] });
-    expect(plan).toEqual({ confirmed: [], candidates: [], external: [], skipped: [] });
+    expect(plan).toEqual({ confirmed: [], candidates: [], external: [], skipped: [], posted: [] });
+  });
+});
+
+describe("translations that already went out by hand", () => {
+  it("retires a translation whose best live thread clears the threshold", () => {
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY_REWRITTEN])],
+      renderings: [],
+      translations: [translation("x:1", COPY)],
+    });
+    expect(plan.posted).toHaveLength(1);
+    expect(plan.posted[0]).toMatchObject({
+      itemId: "x:1",
+      rootId: "100",
+      url: "https://x.com/0xMantleKR/status/100",
+      postedAt: "2026-08-01T00:00:00.000Z",
+    });
+    expect(plan.posted[0].score).toBeGreaterThanOrEqual(TRANSLATION_MATCH_AT);
+  });
+
+  it("leaves a translation below the threshold alone and writes nothing for it", () => {
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", ["전혀 관계없는 다른 주제의 게시물입니다. 오늘 날씨가 좋네요."])],
+      renderings: [],
+      translations: [translation("x:1", COPY)],
+    });
+    expect(plan.posted).toEqual([]);
+  });
+
+  it("never matches a translation that already has postedUrl", () => {
+    // Even on an exact match. This is what makes 되돌리기 stick: a human who reverts a wrong retire
+    // keeps postedUrl, and the next tick must not undo their undo.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [],
+      translations: [translation("x:1", COPY, { postedUrl: "https://x.com/0xMantleKR/status/100" })],
+    });
+    expect(plan.posted).toEqual([]);
+  });
+
+  it("skips a translation whose item the rendering route confirmed in this run", () => {
+    // The delivery row is the stronger record — it carries a real type and passed 2차 검수.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [rendering("x:1", COPY)],
+      translations: [translation("x:1", COPY)],
+    });
+    expect(plan.confirmed).toHaveLength(1);
+    expect(plan.posted).toEqual([]);
+  });
+
+  it("never reuses a thread already consumed by a confirmed rendering match", () => {
+    // One live post must never become both a delivery row (for x:1) and a retire (for x:2).
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY])],
+      renderings: [rendering("x:1", COPY)],
+      translations: [translation("x:2", COPY)],
+    });
+    expect(plan.confirmed).toHaveLength(1);
+    expect(plan.posted).toEqual([]);
+  });
+
+  it("gives one thread to only one translation", () => {
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("100", [COPY_REWRITTEN])],
+      renderings: [],
+      translations: [translation("x:1", COPY), translation("x:2", COPY)],
+    });
+    expect(plan.posted).toHaveLength(1);
+    expect(plan.posted[0].itemId).toBe("x:1"); // first in input order wins, as claimedItemIds already does
+  });
+
+  it("ignores a rootless thread, which has no url or timestamp to stamp", () => {
+    const rootless: AssembledThread = { rootId: "999", tweets: thread("100", [COPY]).tweets };
+    const plan = reconcileXPublished({ ...base, threads: [rootless], renderings: [], translations: [translation("x:1", COPY)] });
+    expect(plan.posted).toEqual([]);
   });
 });

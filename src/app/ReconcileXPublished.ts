@@ -1,10 +1,19 @@
-import { classify, externalHistoryRecord, findRootTweet, observedDelivery } from "../domain/publish/xReconcile";
+import {
+  bestThreadFor,
+  classify,
+  externalHistoryRecord,
+  findRootTweet,
+  observedDelivery,
+  postUrl,
+  TRANSLATION_MATCH_AT,
+} from "../domain/publish/xReconcile";
 import type { MatchCandidate } from "../domain/kol/attribution";
 import type { AssembledThread } from "../domain/models";
 import type { ChannelRendering } from "../domain/formatting/models";
 import type { DeliveryEntry } from "../domain/delivery/models";
 import { deliveryKey } from "../domain/delivery/models";
 import type { PublishRecord } from "../domain/sheet/models";
+import type { Translation } from "../domain/translation/models";
 
 /**
  * Whether a rendering is one this reconcile may compare a live thread against, and therefore one it
@@ -91,12 +100,20 @@ export type CandidateReason = "possible-match" | "duplicate-live-thread" | "ambi
  * close to zero — collapse into identical rows, and a human reading the plan can no longer tell "a
  * completely unrelated post" apart from "a post that nearly matched something we approved," which
  * is exactly the case worth their attention.
+ *
+ * `posted` rows are the second pass's output — a translation that never went through the rendering
+ * route at all, matched against a live thread by `bestThreadFor`/`TRANSLATION_MATCH_AT` rather than
+ * `classify`/`CONFIRMED_AT`. Not a `DeliveryEntry`: a translation never had a `ChannelRendering`, so
+ * there is no `type` to put on one and no `x-post` delivery row to write. The caller instead stamps
+ * `postedUrl`/`postedAt` onto the `Translation` row itself — see `Translation` in
+ * `src/domain/translation/models.ts`.
  */
 export type ReconcilePlan = {
   confirmed: { entry: DeliveryEntry; score: number }[];
   candidates: { rootId: string; itemId: string; score: number; reason: CandidateReason }[];
   external: { record: PublishRecord; score: number }[];
   skipped: { rootId: string; reason: string }[];
+  posted: { itemId: string; rootId: string; score: number; url: string; postedAt: string }[];
 };
 
 /**
@@ -132,16 +149,43 @@ export type ReconcilePlan = {
  * exactly these hand-posts, or by a `send:channels` send whose rendering later stopped being an
  * eligible candidate — would otherwise get a second row for the same post, and `impressions:record`
  * would write view counts into both.
+ *
+ * A second, separate pass runs after the thread loop above and walks `translations` instead of
+ * `threads`: not "whose copy is this live thread?" but "did this translation already go out by
+ * hand?" The two questions run in opposite directions — the first pass asks each live thread which
+ * approved rendering it is; this one asks each translation which live thread it already is, via
+ * `bestThreadFor`/`TRANSLATION_MATCH_AT` (see `xReconcile.ts`) rather than `classify`/`CONFIRMED_AT`,
+ * because a translation is compared before it was ever formatted into approved copy and so scores
+ * far lower than a copy-paste. Deliberately a second loop, not folded into the first: merging two
+ * predicates that ask different questions is exactly how `isXCandidateRendering`'s doc comment says
+ * a second spelling of one rule gets written — here that would mean one loop body deciding both "is
+ * this thread our approved copy" and "is this thread some translation's hand-post" against two
+ * different scoring functions and two different threshold constants, and a future edit to one
+ * arm's guard silently applying to the other.
+ *
+ * A translation is skipped, never scored: if `postedUrl` is already set (a previous run already
+ * matched it, or a human confirmed one by hand — re-matching an already-posted translation is how a
+ * 되돌리기 would get silently undone); if its `itemId` is one `claimedItemIds` already holds from the
+ * thread loop above (that item has a real delivery row this run, which is the stronger record — it
+ * carries a `type` and passed 2차 검수); or if `koreanText` is empty (`similarity` can never score
+ * it above 0). A thread is excluded from this pass's candidates for two reasons: it has no root
+ * (`findRootTweet` undefined — same guard as the thread loop, for the same reason: there is no
+ * `createdAt` to stamp `postedAt` from), or it was already turned into a `plan.confirmed` row above
+ * — one live post must never become both a delivery row and a translation retire. Each successful
+ * match also removes its thread from the pool for the rest of this pass, so two translations can
+ * never both claim the same live thread; first in input order wins, the same convention
+ * `claimedItemIds` already uses above.
  */
 export function reconcileXPublished(input: {
   threads: AssembledThread[];
   renderings: ChannelRendering[];
+  translations: Translation[];
   deliveredKeys: Set<string>;
   historyIds: Set<string>;
   historyPostIds: Set<string>;
   handle: string;
 }): ReconcilePlan {
-  const { threads, renderings, deliveredKeys, historyIds, historyPostIds, handle } = input;
+  const { threads, renderings, translations, deliveredKeys, historyIds, historyPostIds, handle } = input;
 
   // ONE list, filtered ONCE by `isXCandidateRendering`, feeding all three things derived from it:
   // the match candidates, the itemId → rendering lookup a confirmed verdict takes its `type` from,
@@ -176,7 +220,7 @@ export function reconcileXPublished(input: {
     itemIdOccurrences.set(r.itemId, (itemIdOccurrences.get(r.itemId) ?? 0) + 1);
   }
 
-  const plan: ReconcilePlan = { confirmed: [], candidates: [], external: [], skipped: [] };
+  const plan: ReconcilePlan = { confirmed: [], candidates: [], external: [], skipped: [], posted: [] };
   const claimedItemIds = new Set<string>();
 
   for (const thread of threads) {
@@ -281,6 +325,43 @@ export function reconcileXPublished(input: {
       continue;
     }
     plan.external.push({ record: externalHistoryRecord(thread, handle), score: verdict.score });
+  }
+
+  // Second pass: walk translations, not threads — see the doc comment above for why this is a
+  // separate loop rather than folded into the one above.
+  //
+  // Rootless threads are never a candidate here (no root, no createdAt to stamp `postedAt` from —
+  // same reason the thread loop skips them), and neither is a thread this run already turned into a
+  // `plan.confirmed` delivery row: one live post must never become both a delivery row and a retire.
+  const consumedRootIds = new Set(plan.confirmed.map((c) => c.entry.postId));
+  const availableThreads = threads.filter((t) => findRootTweet(t) !== undefined && !consumedRootIds.has(t.rootId));
+
+  // Threads this pass has already handed to an earlier (in input order) translation. Removed from
+  // the pool as they're claimed, so a later translation's `bestThreadFor` call can only see what's
+  // left — the same "first in input order wins" convention `claimedItemIds` uses above, applied to
+  // threads instead of itemIds.
+  const claimedRootIds = new Set<string>();
+
+  for (const translation of translations) {
+    if (translation.postedUrl !== undefined) continue; // already matched — never re-match, so a human's revert sticks
+    if (claimedItemIds.has(translation.itemId)) continue; // the rendering route already confirmed this item this run
+    if (translation.koreanText === "") continue; // similarity() can never score this above 0
+
+    const pool = availableThreads.filter((t) => !claimedRootIds.has(t.rootId));
+    const match = bestThreadFor(translation.koreanText, pool);
+    if (match === undefined || match.score < TRANSLATION_MATCH_AT) continue;
+
+    const root = findRootTweet(match.thread);
+    if (root === undefined) continue; // unreachable: availableThreads is pre-filtered to threads with a root
+
+    claimedRootIds.add(match.thread.rootId);
+    plan.posted.push({
+      itemId: translation.itemId,
+      rootId: match.thread.rootId,
+      score: match.score,
+      url: postUrl(handle, match.thread.rootId),
+      postedAt: root.createdAt,
+    });
   }
 
   return plan;
