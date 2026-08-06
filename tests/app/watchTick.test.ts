@@ -513,18 +513,21 @@ describe("WatchTick", () => {
 
   it("keeps the alert intact through watchOutcome's 300-char budget, even at the GAP text's longest", async () => {
     // `watchSummary.ts`'s `watchOutcome` is what actually reaches Telegram — it composes
-    // `${stage}: ${detail}` and runs the result through `condense()`, which truncates from the
-    // *tail* and marks the cut with `…` (src/shared/text/condense.ts). Asserting `!endsWith("…")`
-    // pins this against `condense`'s own documented behaviour, not a copy of `MAX_DETAIL_CHARS`
-    // that could drift out of sync with the real constant. The clause most worth losing to a
-    // silent truncation — that a later green tick is *not* proof the hole was filled, the single
-    // most misleading fact about this failure mode — is asserted by name, not just "not cut".
+    // `${stage}: ${detail}` and runs *that* through `condense()`, which truncates from the tail
+    // and marks the cut with `…` (src/shared/text/condense.ts) — but only THEN appends
+    // ` (ran ${stages})` on top (src/cli/watchSummary.ts:34). So a truncated `line` never ends
+    // with "…" — the marker, if `condense` ever inserts one, always lands mid-string, before that
+    // suffix. `.not.toContain("…")` pins this against `condense`'s actual truncation marker
+    // wherever it falls; an `endsWith` check here would be vacuously true regardless of whether
+    // anything was cut. The clause most worth losing to a silent truncation — that a later green
+    // tick is *not* proof the hole was filled, the single most misleading fact about this failure
+    // mode — is also asserted by name, not just "nothing was cut".
     const { run, agent } = pipeline({ collect: COLLECTED_2_WITH_REALISTIC_GAP });
 
     const report = await new WatchTick(run, agent).run();
     const { line } = watchOutcome(report);
 
-    expect(line.endsWith("…")).toBe(false);
+    expect(line).not.toContain("…");
     expect(line).toContain("GAP 2026-08-04T12:00:00.000Z ~ 2026-08-06T00:00:00.000Z");
     expect(line).toContain("collect --since");
     expect(line).toContain("not proof the hole was filled");
@@ -552,6 +555,26 @@ describe("WatchTick", () => {
 
     expect(report.ok).toBe(false);
     expect(report.failure?.stage).toBe("collect");
+  });
+
+  it("fails on a GAP even when the same line reports zero threads — the check order is defence-in-depth", async () => {
+    // `computeCoverage` cannot produce this shape today: it only ever sets `gap` alongside a
+    // non-zero kept count (`if (tweets.length === 0) return { ..., gap: null }`,
+    // src/domain/coverage.ts). So nothing currently exercises this fixture through the real
+    // pipeline — which is exactly why the ordering in WatchTick.run() has to be pinned directly,
+    // not left to whatever `computeCoverage` happens to guarantee. A gap check placed *after* the
+    // `threadCount === 0` early return would make every existing GAP test above still pass (none
+    // of them use a zero count), while quietly returning `{ ok: true }` on a real one the moment
+    // this invariant ever changed.
+    const { run, agent, calls } = pipeline({
+      collect: "collected 0 threads (0 tweets) for @x — nothing new in window, GAP (open) ~ 2026-08-06T00:00:00.000Z (limit reached)",
+    });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("collect");
+    expect(calls).toEqual([]);
   });
 
   it("calls collect with no arguments, ever", async () => {

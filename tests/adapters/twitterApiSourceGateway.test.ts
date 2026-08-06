@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { TwitterApiSourceGateway } from "../../src/adapters/twitterapi/TwitterApiSourceGateway";
 import type { IHttpClient } from "../../src/shared/http/IHttpClient";
 
@@ -159,5 +159,90 @@ describe("TwitterApiSourceGateway", () => {
       { path: "/twitter/article", params: { tweet_id: "2042617042537451733" } },
     ]);
     expect(blocks).toEqual([{ type: "header-one", text: "Hello" }, { type: "divider" }]);
+  });
+
+  // --- HERALD_COLLECT_MAX_PAGES: the page cap is a hand-run backfill dial, not a permanent one --
+  //
+  // The default (50, unchanged) is already exercised by "fetchAuthoredTweets returns true when it
+  // hits the MAX_PAGES cap" above, with no env var set at all — these three pin the override
+  // itself. Each restores `process.env` afterwards so a leaked value can never change what other
+  // tests in this file (or this suite) see the default as.
+  describe("HERALD_COLLECT_MAX_PAGES", () => {
+    const ORIGINAL = process.env.HERALD_COLLECT_MAX_PAGES;
+    afterEach(() => {
+      if (ORIGINAL === undefined) delete process.env.HERALD_COLLECT_MAX_PAGES;
+      else process.env.HERALD_COLLECT_MAX_PAGES = ORIGINAL;
+    });
+
+    /** Every page reports more pages available, forever, so the loop always runs to the cap. */
+    function unboundedHttp(): FakeHttpClient {
+      return new FakeHttpClient((_path, params) => {
+        const cursor = params?.cursor ?? "";
+        const next = `${cursor}x`;
+        return { tweets: [raw(`t${next}`)], has_next_page: true, next_cursor: next };
+      });
+    }
+
+    it("defaults to 50 when unset — the constructor never sees the variable", async () => {
+      delete process.env.HERALD_COLLECT_MAX_PAGES;
+      const http = unboundedHttp();
+      const gw = new TwitterApiSourceGateway(http);
+
+      const it_ = gw.fetchAuthoredTweets("Mantle_Official");
+      let r = await it_.next();
+      while (!r.done) r = await it_.next();
+
+      expect(r.value).toBe(true);
+      expect(http.calls.length).toBe(50);
+    });
+
+    it("honours an override — the real reason this exists: recovering a GAP needs more than 50 pages", async () => {
+      process.env.HERALD_COLLECT_MAX_PAGES = "75";
+      const http = unboundedHttp();
+      const gw = new TwitterApiSourceGateway(http);
+
+      const it_ = gw.fetchAuthoredTweets("Mantle_Official");
+      let r = await it_.next();
+      while (!r.done) r = await it_.next();
+
+      expect(r.value).toBe(true);
+      expect(http.calls.length).toBe(75);
+    });
+
+    it("also raises fetchThread's cap — the same constant, the same override, the same safety backstop", async () => {
+      process.env.HERALD_COLLECT_MAX_PAGES = "3";
+      const http = new FakeHttpClient((_path, params) => {
+        const cursor = params?.cursor ?? "";
+        const next = `${cursor}x`;
+        return { tweets: [raw(`t${next}`)], has_next_page: true, next_cursor: next };
+      });
+      const gw = new TwitterApiSourceGateway(http);
+
+      const tweets = await gw.fetchThread("root");
+
+      expect(tweets.length).toBe(3);
+      expect(http.calls.length).toBe(3);
+    });
+
+    it("refuses an invalid value at construction, naming the variable and the value", () => {
+      process.env.HERALD_COLLECT_MAX_PAGES = "0";
+      expect(() => new TwitterApiSourceGateway(unboundedHttp())).toThrow(/HERALD_COLLECT_MAX_PAGES/);
+      expect(() => new TwitterApiSourceGateway(unboundedHttp())).toThrow(/"0"/);
+
+      process.env.HERALD_COLLECT_MAX_PAGES = "many";
+      expect(() => new TwitterApiSourceGateway(unboundedHttp())).toThrow(/HERALD_COLLECT_MAX_PAGES/);
+    });
+
+    it("treats an empty or whitespace-only value as unset, same as HERALD_WATCH_BATCH does", async () => {
+      process.env.HERALD_COLLECT_MAX_PAGES = "   ";
+      const http = unboundedHttp();
+      const gw = new TwitterApiSourceGateway(http);
+
+      const it_ = gw.fetchAuthoredTweets("Mantle_Official");
+      let r = await it_.next();
+      while (!r.done) r = await it_.next();
+
+      expect(http.calls.length).toBe(50);
+    });
   });
 });

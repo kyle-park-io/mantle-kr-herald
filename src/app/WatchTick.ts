@@ -61,15 +61,21 @@ const NOTHING_TO_ALIGN_LINE = /^nothing to align · skipped (\d+) \(no precedent
 const TRANSLATED_LINE = /^\s*Translated\s+(\d+)/m;
 
 /**
- * Returns the thread count `collect` reported and whether its line carries a coverage GAP, or
- * `undefined` if the stdout doesn't match the known shape at all. Unrecognised stdout must be
- * treated as a failure by the caller — never as "nothing new" — or a broken collector reads as a
- * scheduler that succeeds forever while doing nothing.
+ * Returns the thread count `collect` reported, whether its line carries a coverage GAP, and the
+ * tail of the line (everything after "— ") that decision was made from — or `undefined` if the
+ * stdout doesn't match the known shape at all. Unrecognised stdout must be treated as a failure by
+ * the caller — never as "nothing new" — or a broken collector reads as a scheduler that succeeds
+ * forever while doing nothing.
+ *
+ * `tail` is exposed so the caller can pull the GAP's own text (boundary timestamps included) back
+ * out of the *matched line* rather than re-scanning the whole stdout buffer with a second, looser
+ * pattern: a second `/GAP .+$/m` over the untrimmed buffer would let the first `GAP ` *anywhere*
+ * in pnpm's own surrounding noise win, not necessarily collect's.
  */
-function parseCollect(stdout: string): { threadCount: number; gap: boolean } | undefined {
+function parseCollect(stdout: string): { threadCount: number; gap: boolean; tail: string } | undefined {
   const match = COLLECT_LINE.exec(stdout.trim());
   if (!match) return undefined;
-  return { threadCount: Number(match[1]), gap: match[2].includes(GAP_MARKER) };
+  return { threadCount: Number(match[1]), gap: match[2].includes(GAP_MARKER), tail: match[2] };
 }
 
 type Prepared = { count: number; worksheetPath: string };
@@ -157,22 +163,33 @@ export class WatchTick {
     // kept count today, so the ordering is unobservable right now — but if that invariant ever
     // changes, this must still fail loudly rather than fall through to "nothing new".
     if (parsed.gap) {
-      const gapText = /GAP .+$/m.exec(collect.stdout)?.[0] ?? "GAP (limit reached)";
+      // `parsed.tail.includes(GAP_MARKER)` is what made `gap` true, so the marker is guaranteed
+      // present here — no fallback needed. Sliced from the tail `COLLECT_LINE` already matched,
+      // not re-scanned from the whole stdout buffer, so pnpm's own surrounding noise can never be
+      // mistaken for collect's own GAP text (see the header comment above `parseCollect`).
+      const gapText = parsed.tail.slice(parsed.tail.indexOf(GAP_MARKER) + 2);
+      // A plain `pnpm collect --since <gap.from>` does NOT recover this: `gap.from` is the exact
+      // floor the failing run already used (src/domain/coverage.ts:34), and `fetchAuthoredTweets`
+      // always starts from the newest tweet and pages *down* (TwitterApiSourceGateway.ts:33-38),
+      // so re-requesting the same floor just re-fetches the same newest ~1000 tweets and hits the
+      // same MAX_PAGES=50 cap at the same place. The only remedy that actually reaches the hole is
+      // raising the cap for that one run via HERALD_COLLECT_MAX_PAGES.
+      //
       // watchSummary.ts's `watchOutcome` composes `${stage}: ${detail}` (the "collect: " prefix
       // is 9 chars) and runs it through `condense(…, MAX_DETAIL_CHARS = 300)` before it reaches
       // `deploy/herald-notify-failure.sh` and Telegram. `condense` truncates from the *tail*, so
       // this wording is measured, not guessed: with both GAP boundaries as real ISO timestamps
       // (the longest this ever gets — `gap.to` is always a timestamp, `gap.from` is only shorter
-      // when it's the "(open)" case), the composed line lands at 284 of 300 chars. That leaves
+      // when it's the "(open)" case), the composed line lands at 288 of 300 chars. That leaves
       // headroom for the one clause that must never be the part that gets cut — the warning that
       // a later green tick is not proof the hole was filled — to always survive intact.
       return this.fail(stagesRun, {
         ok: false,
         stage: COLLECT_STAGE,
         detail:
-          `permanent tweet loss — ${gapText}. MAX_PAGES=50 cap, not --limit. Fix: pnpm collect ` +
-          `--since <the GAP's earlier boundary> (adhoc — watermark unmoved). Fires once: a ` +
-          `later green tick is not proof the hole was filled.`,
+          `permanent tweet loss — ${gapText}. A bare --since re-run repeats this. Fix: ` +
+          `HERALD_COLLECT_MAX_PAGES=<n> pnpm collect --since <earlier boundary> (adhoc). Fires ` +
+          `once: a later green tick is not proof the hole was filled.`,
       });
     }
 
