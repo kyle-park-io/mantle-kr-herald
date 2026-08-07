@@ -56,11 +56,43 @@ function acceptable(expected: string): string[] {
  * across `pre-IPO`/`Pre-IPO:`) trades false negatives for false positives. This check's whole value
  * is that a human reads its output, so it is tuned to under-report rather than to be ignored.
  */
+/** Escape a glossary term for use inside a RegExp — terms contain `$`, `(`, `.`, `-`. */
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Where a term really occurs in the source: as prose, or only inside an `@handle`.
+ *
+ * Two filters, each removing a false-positive class measured on a real run of 14 translations:
+ *
+ * 1. **Word boundaries for ASCII terms.** `UR` (Mantle's smart-money app) matched inside "yo*ur*",
+ *    "capt*ure*" and "s*ure*" — six false positives in one run, the largest single source of noise.
+ *    Applied only to terms that are wholly ASCII: a Korean or mixed term has no word boundary in
+ *    the JS sense, and `\b` around one matches nothing.
+ * 2. **Mentions are not prose.** `@Fluxion_network` is a handle, and style-guide §11 keeps handles
+ *    verbatim, so the decided Korean does not apply there — without this, every partner post is
+ *    flagged. Only suppressed when *every* occurrence is inside a mention: 12번's source says
+ *    "went live on Fluxion and @MerchantMoe_xyz", a bare name in running text, and that one is a
+ *    genuine finding this must not swallow.
+ */
+function occursAsProse(sourceText: string, term: string): boolean {
+  const ascii = /^[\x20-\x7E]+$/.test(term);
+  const body = escape(term);
+  const pattern = ascii ? `(?<![A-Za-z0-9])${body}(?![A-Za-z0-9])` : body;
+  const re = new RegExp(pattern, "gi");
+  for (const m of sourceText.matchAll(re)) {
+    const start = m.index ?? 0;
+    // Walk back over the handle's own characters to see whether an `@` introduces this occurrence.
+    let i = start - 1;
+    while (i >= 0 && /[A-Za-z0-9_]/.test(sourceText[i])) i--;
+    if (sourceText[i] !== "@") return true; // at least one plain-prose occurrence
+  }
+  return false;
+}
+
 export function checkGlossary(t: CheckedTranslation, glossary: GlossaryEntry[]): GlossaryMiss[] {
-  const source = t.sourceText.toLowerCase();
   const misses: GlossaryMiss[] = [];
   for (const entry of glossary) {
-    if (!source.includes(entry.term.toLowerCase())) continue;
+    if (!occursAsProse(t.sourceText, entry.term)) continue;
     const expected = entry.rule === "keep" ? entry.term : entry.target;
     if (!expected) continue;
     if (acceptable(expected).some((a) => t.koreanText.includes(a))) continue;

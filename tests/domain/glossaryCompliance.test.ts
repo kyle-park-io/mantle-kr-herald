@@ -72,6 +72,49 @@ describe("checkGlossary", () => {
     expect(checkGlossary({ itemId: "x:1", sourceText: "TVL rose", koreanText: "TVL이 늘었습니다" }, [g("TVL", undefined, "keep")])).toEqual([]);
   });
 
+  it("does not match a short term inside a longer English word", () => {
+    // Measured against production: `UR` (Mantle's smart-money app) matched inside "yo*ur*",
+    // "capt*ure*", "s*ure*" and produced six false positives in one run — the single largest source
+    // of noise, and the kind that gets a report ignored.
+    expect(
+      checkGlossary({ itemId: "x:1", sourceText: "Access that once ran through your brokers", koreanText: "브로커" }, [
+        g("UR", undefined, "keep"),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("still matches a short term standing on its own", () => {
+    expect(
+      terms(checkGlossary({ itemId: "x:1", sourceText: "UR is live", koreanText: "앱이 출시됐습니다" }, [g("UR", undefined, "keep")])),
+    ).toEqual(["UR"]);
+  });
+
+  it("ignores a name that appears only inside an @mention", () => {
+    // `@Fluxion_network` is a handle, and style-guide §11 keeps handles verbatim — demanding the
+    // decided Korean there would flag every partner post. The decision applies to prose, not to the
+    // account tag.
+    expect(
+      checkGlossary(
+        { itemId: "x:1", sourceText: "trade on @Fluxion_network today", koreanText: "@Fluxion_network에서 거래" },
+        [g("Fluxion", "플럭션", "transliterate")],
+      ),
+    ).toEqual([]);
+  });
+
+  it("still reports a name used as prose alongside its mention", () => {
+    // The real one: 12번's source says "went live on Fluxion and @MerchantMoe_xyz" — a bare
+    // `Fluxion` in running text, which is exactly where the decided rendering applies. Suppressing
+    // the mention case must not suppress this one.
+    expect(
+      terms(
+        checkGlossary(
+          { itemId: "x:1", sourceText: "live on Fluxion and @Fluxion_network", koreanText: "Fluxion에서 시작" },
+          [g("Fluxion", "플럭션", "transliterate")],
+        ),
+      ),
+    ).toEqual(["Fluxion"]);
+  });
+
   it("reports every missed term on one item, not just the first", () => {
     const misses = checkGlossary(
       { itemId: "x:1", sourceText: "Money markets and Commodities", koreanText: "단기금융과 상품" },
