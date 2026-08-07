@@ -37,9 +37,10 @@ export class SaveTranslation {
   async run(input: SaveInput): Promise<{ itemId: string; promoted: boolean }> {
     const timestamp = this.now();
     // `upsert` writes a whole row (see PgTranslationStore), so a save that just constructs a fresh
-    // Translation would silently drop postedUrl/postedAt on any edit to an item reconcile already
-    // retired. Reading the existing row first — rather than adding a second, narrower write path —
-    // keeps `upsert` the only place a Translation ever reaches the store, so nothing can race it.
+    // Translation would silently drop postedUrl/postedAt/publishedText on any edit to an item
+    // reconcile already retired. Reading the existing row first — rather than adding a second,
+    // narrower write path — keeps `upsert` the only place a Translation ever reaches the store, so
+    // nothing can race it.
     const existing = (await this.translationStore.loadAll()).find((t) => t.itemId === input.itemId);
     const translation: Translation = {
       itemId: input.itemId,
@@ -53,6 +54,7 @@ export class SaveTranslation {
       refUrl: input.refUrl,
       postedUrl: existing?.postedUrl,
       postedAt: existing?.postedAt,
+      publishedText: existing?.publishedText,
     };
     await this.translationStore.upsert(translation);
 

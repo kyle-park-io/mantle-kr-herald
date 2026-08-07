@@ -258,11 +258,11 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
 
   /**
    * 되돌리기's write path. Reuses `SaveTranslation.run` (`approve: false`) rather than a narrow store
-   * method, because that class already preserves `postedUrl`/`postedAt` across an ordinary save — it
-   * reads the existing row before it writes, specifically so a save landing on an item reconcile just
-   * retired does not silently drop the evidence (see `SaveTranslation.run`'s own comment). Reusing it
-   * here means the one preservation rule lives in one place rather than being re-implemented for the
-   * dashboard's own write path.
+   * method, because that class already preserves `postedUrl`/`postedAt`/`publishedText` across an
+   * ordinary save — it reads the existing row before it writes, specifically so a save landing on an
+   * item reconcile just retired does not silently drop the evidence (see `SaveTranslation.run`'s own
+   * comment). Reusing it here means the one preservation rule lives in one place rather than being
+   * re-implemented for the dashboard's own write path.
    *
    * A no-op — never a throw — when the item has already vanished: the route above already 404s
    * before ever calling this, so the only way to reach this branch is a race between two requests for

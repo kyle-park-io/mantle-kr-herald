@@ -90,10 +90,11 @@ describe("SaveTranslation", () => {
     expect(s.saved[0].refUrl).toBe("https://x.com/a/status/1");
   });
 
-  it("does not clear postedUrl or postedAt when an edit is saved", async () => {
+  it("does not clear postedUrl, postedAt, or publishedText when an edit is saved", async () => {
     // `run` builds a whole new Translation and upserts it, so without care the retire evidence is
     // silently dropped — and losing postedUrl means the next reconcile re-retires an item a human
-    // deliberately reverted.
+    // deliberately reverted. publishedText is the same kind of evidence: a captured published copy
+    // that reconcile may never see again once its `--since` window passes.
     const retired: Translation = {
       itemId: "x:1",
       source: "x",
@@ -103,6 +104,7 @@ describe("SaveTranslation", () => {
       translatedAt: "2026-05-05T00:00:00.000Z",
       postedUrl: "https://x.com/0xMantleKR/status/999",
       postedAt: "2026-07-31T05:39:41.000Z",
+      publishedText: "안녕하세요 여러분",
     };
     const s = replacingStores([retired]);
     const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-06T00:00:00.000Z");
@@ -114,5 +116,6 @@ describe("SaveTranslation", () => {
     expect(s.saved[0].status).toBe("translated"); // the revert path: off `posted`…
     expect(s.saved[0].postedUrl).toBe("https://x.com/0xMantleKR/status/999"); // …but the evidence stays
     expect(s.saved[0].postedAt).toBe("2026-07-31T05:39:41.000Z");
+    expect(s.saved[0].publishedText).toBe("안녕하세요 여러분");
   });
 });
