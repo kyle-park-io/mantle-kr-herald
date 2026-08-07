@@ -34,6 +34,7 @@
     "send:x-article": "tsx --env-file-if-exists=.env src/cli/send-x-article.ts",
     "send:reconcile": "tsx --env-file-if-exists=.env src/cli/send-reconcile.ts",
     "x:reconcile": "tsx --env-file-if-exists=.env src/cli/x-reconcile.ts",
+    "x:link": "tsx --env-file-if-exists=.env src/cli/x-link.ts",
     "sheet:init": "tsx --env-file-if-exists=.env src/cli/sheet-init.ts",
     "doctor": "tsx --env-file-if-exists=.env src/cli/doctor.ts",
     "deploy:check": "tsx --env-file-if-exists=.env src/cli/deploy-check.ts",
