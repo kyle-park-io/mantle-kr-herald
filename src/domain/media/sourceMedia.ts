@@ -5,9 +5,21 @@
  * through translation/convert/format (stored in rendering.text), and the send reads them back here.
  */
 
-/** An empty-alt markdown image alone on its line — the exact form renderArticle emits for an
- *  article's inline images, so a photo looks identical in a post and an article. */
-const PHOTO_LINE = /^!\[\]\(([^)]+)\)[ \t]*$/;
+/**
+ * A photo marker alone on its line. Two spellings, both matched:
+ *
+ *   `[사진](url)`  — what the pipeline writes now. Labelled like `[영상]`, so a reviewer reads what
+ *                    the line *is* before reading a 60-character CDN url.
+ *   `![](url)`     — the original empty-alt markdown image, still matched so every translation and
+ *                    rendering saved before the change keeps working. Nothing re-derives stored
+ *                    text on read, so dropping this would strand them.
+ *
+ * The label form is a markdown link, which `linksToPlain`'s `MD_LINK` would happily rewrite — but it
+ * never sees one: `emit()` calls `stripMedia` before any destination emitter runs
+ * (`emitters/index.ts`), so the marker line is gone by then. (`[영상]` is paren-free on the theory
+ * that it had to dodge `MD_LINK`; given that ordering, it never did.)
+ */
+const PHOTO_LINE = /^(?:\[사진\]|!\[\])\(([^)]+)\)[ \t]*$/;
 /** A video marker alone on its line: `[영상]`, optionally followed by a bare url (the follow-up puts
  *  the mp4 there; this cycle it has none). Paren-free so linksToPlain's MD_LINK never rewrites it. */
 const VIDEO_LINE = /^\[영상\](?:[ \t]+(\S+))?[ \t]*$/;

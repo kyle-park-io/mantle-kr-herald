@@ -37,10 +37,10 @@ function isCommenterReply(t: SourceTweet): boolean {
 
 /** Surface a post's media as canonical markers, each on its own line, so it is visible through the
  *  pipeline and delivered from the reviewed text (see domain/media/sourceMedia). Photos use the
- *  empty-alt image form; a video/gif uses a paren-free [영상] marker (mp4 upload is a follow-up). */
+ *  labelled `[사진](url)` form, matching `[영상]`; a video/gif uses a paren-free [영상] marker (mp4 upload is a follow-up). */
 function mediaMarkers(media: MediaItem[] | undefined): string {
   if (!media || media.length === 0) return "";
-  const lines = media.map((m) => (m.type === "photo" ? `![](${m.url})` : "[영상]"));
+  const lines = media.map((m) => (m.type === "photo" ? `[사진](${m.url})` : "[영상]"));
   return `\n\n${lines.join("\n")}`;
 }
 

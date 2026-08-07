@@ -104,7 +104,7 @@ describe("PgContentSource", () => {
       tweets: [tweet({ id: "300", text: "본문", media: [{ type: "photo", url: "https://pbs.twimg.com/media/a.jpg" }] })],
     });
     const pending = await new PgContentSource(db).loadPending(new Set());
-    expect(pending[0].text).toBe("본문\n\n![](https://pbs.twimg.com/media/a.jpg)");
+    expect(pending[0].text).toBe("본문\n\n[사진](https://pbs.twimg.com/media/a.jpg)");
   });
 
   it("maps Lark messages to ContentItem (lark: id) and excludes translated", async () => {

@@ -43,7 +43,7 @@ describe("renderArticle", () => {
         "1. **The Giga Claw ($10,000 USD):** Awarded to the top 100 participants by total trading volume.",
         "2. **The Sharp Claw ($5,000 USD):** Awarded to the top 50 participants by highest profit percentage (ROI).",
         "",
-        "![](https://pbs.twimg.com/media/HFjMjT_aMAACN55.jpg)",
+        "[사진](https://pbs.twimg.com/media/HFjMjT_aMAACN55.jpg)",
       ].join("\n"),
     );
   });
