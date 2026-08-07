@@ -332,6 +332,7 @@ describe("the scheduled units run through the wrapper", () => {
   const UNITS = [
     { path: "deploy/herald-watch.service", command: "pnpm watch" },
     { path: "deploy/herald-x-reconcile.service", command: "pnpm x:reconcile --yes" },
+    { path: "deploy/herald-convert.service", command: "pnpm convert:tick" },
   ] as const;
 
   for (const { path, command } of UNITS) {

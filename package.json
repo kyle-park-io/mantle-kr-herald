@@ -21,6 +21,7 @@
     "watch": "tsx --env-file-if-exists=.env src/cli/watch.ts",
     "convert:prepare": "tsx --env-file-if-exists=.env src/cli/convert-prepare.ts",
     "convert:save": "tsx --env-file-if-exists=.env src/cli/convert-save.ts",
+    "convert:tick": "tsx --env-file-if-exists=.env src/cli/convert-tick.ts",
     "format": "tsx --env-file-if-exists=.env src/cli/format.ts",
     "format:save": "tsx --env-file-if-exists=.env src/cli/format-save.ts",
     "drive:publish": "tsx --env-file-if-exists=.env src/cli/publish.ts",

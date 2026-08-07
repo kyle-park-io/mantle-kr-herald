@@ -1,17 +1,50 @@
 import { describe, it, expect } from "vitest";
 import { ClaudeCodeAgent } from "../../../src/adapters/agent/ClaudeCodeAgent";
 import type { WorksheetKind } from "../../../src/ports/WorksheetAgent";
+import { ALL_TYPES, typeLabel } from "../../../src/domain/conversion/models";
 import { paths } from "../../../src/paths";
 
 const ok = (stdout: string) => async () => ({ code: 0, stdout, stderr: "" });
 
 const VALID_ENVELOPE = JSON.stringify({ is_error: false, permission_denials: [], result: "ok" });
 
-/** Both worksheet kinds are the same thing from a permissions standpoint: a second `claude -p`
- *  call, running the same `SAVE_STEPS`, with the same ability to reach `translate:save`. Anything
- *  asserted about one has to hold for the other, or the alignment pass becomes an unguarded second
- *  door to an approved translation. */
-const KINDS: WorksheetKind[] = ["translation", "alignment"];
+/** Every worksheet kind, because every one of them is a `claude -p` call running unattended against
+ *  the production database with a save command in reach. Anything asserted about one has to hold for
+ *  all of them, or the newest kind becomes the unguarded door: a prompt test that only ever called
+ *  fill(..., "translation") stayed green when buildPrompt was changed to omit APPROVAL_BOUNDARY for
+ *  `kind === "alignment"`. */
+const KINDS: WorksheetKind[] = ["translation", "alignment", "conversion"];
+
+/** Which directory each kind's worksheets live in, and therefore the only one it may address. */
+const WORKSHEETS_DIR: Record<WorksheetKind, string> = {
+  translation: paths.translationsWorksheets,
+  alignment: paths.translationsWorksheets,
+  conversion: paths.variantsWorksheets,
+};
+
+/** The one `Bash(...)` rule each kind is given. `translate:save` and `convert:save` take different
+ *  flags, and a conversion pass handed the translation rule cannot save anything at all. */
+const SAVE_RULE: Record<WorksheetKind, string> = {
+  translation: "Bash(pnpm translate:save --id * --file *)",
+  alignment: "Bash(pnpm translate:save --id * --file *)",
+  conversion: "Bash(pnpm convert:save --id * --type * --file *)",
+};
+
+/** The phrase naming the human gate each kind must not step over: a draft translation waits for
+ *  1차 검수, a converted variant is already past that and waits for 2차 검수. */
+const REVIEW_GATE: Record<WorksheetKind, string> = {
+  translation: "A human performs 1차 검수",
+  alignment: "A human performs 1차 검수",
+  conversion: "2차 검수 (second-pass review)",
+};
+
+/** Each kind's own task text, so "all kinds are covered" can never be true in the trivial sense of
+ *  three kinds sharing one prompt. */
+const TASK_MARKER: Record<WorksheetKind, string> = {
+  translation: "translation worksheet",
+  alignment: "alignment worksheet",
+  conversion: "conversion worksheet",
+};
 
 /** The argv `fill()` handed to `claude`. */
 async function argvFor(kind: WorksheetKind): Promise<string[]> {
@@ -20,8 +53,15 @@ async function argvFor(kind: WorksheetKind): Promise<string[]> {
     seen = args;
     return { code: 0, stdout: VALID_ENVELOPE, stderr: "" };
   });
-  await agent.fill(`${paths.translationsWorksheets}/batch-X.md`, kind);
+  await agent.fill(`${WORKSHEETS_DIR[kind]}/batch-X.md`, kind);
   return seen;
+}
+
+/** The prompt `fill()` built, located by position: "-p"'s value is always the prompt. */
+function promptOf(args: string[]): string {
+  const at = args.indexOf("-p");
+  expect(at).toBeGreaterThanOrEqual(0);
+  return args[at + 1];
 }
 
 /**
@@ -70,40 +110,41 @@ describe("ClaudeCodeAgent", () => {
     expect(seen).not.toContain("bypassPermissions");
   });
 
-  // Both kinds, not just translation: the alignment pass is a second `claude -p` call running the
-  // same SAVE_STEPS against the same `translate:save`, so it is an equal path to an approved
-  // translation. A prompt test that only ever called fill(..., "translation") stayed green when
-  // buildPrompt was changed to omit APPROVAL_BOUNDARY for `kind === "alignment"`.
   it.each(KINDS)("tells the model plainly, in the %s prompt itself, never to pass --approve", async (kind) => {
-    const seen = await argvFor(kind);
+    const prompt = promptOf(await argvFor(kind));
 
-    // Located by position, not content: "-p"'s value is always the prompt, unambiguously.
-    const promptIndex = seen.indexOf("-p");
-    expect(promptIndex).toBeGreaterThanOrEqual(0);
-    const prompt = seen[promptIndex + 1];
     // The prohibitive phrasing itself, not just the substring "--approve" — a flipped instruction
     // like "Always pass `--approve`" also contains that substring and must not pass this test.
     expect(prompt).toContain("Never pass `--approve`");
     // The rest of the boundary, so deleting all but the first sentence is caught too: the whole
-    // point of this block is that it argues with the `[--approve]` hint the model will see in
-    // `translate:prepare`'s own output, rather than just forbidding the flag once.
-    expect(prompt).toContain("A human performs 1차 검수");
-    // Guard against the two kinds silently collapsing into one prompt: each must still carry its
-    // own task text, or "both kinds are covered" would be true only in the trivial sense.
-    expect(prompt).toContain(kind === "translation" ? "translation worksheet" : "alignment worksheet");
+    // point of that block is that it argues with the `[--approve]` hint the model will see in a
+    // prepare stage's own output, rather than just forbidding the flag once. Which human gate it
+    // names differs per kind — a draft translation waits for 1차 검수, a variant for 2차 검수 — so
+    // asserting one phrase for all three would only prove they share a prompt.
+    expect(prompt).toContain(REVIEW_GATE[kind]);
+    // Guard against the kinds silently collapsing into one prompt.
+    expect(prompt).toContain(TASK_MARKER[kind]);
   });
 
-  // The deny rule is the only control in this file that is not an instruction the model may
-  // decide to ignore — a deny beats every allow rule regardless of specificity, and it is what
-  // structurally stops an `--approve` appended after `--file <path>`, which the allow rule's own
-  // trailing `*` would otherwise match. Deleting it from the argv left the whole suite green.
-  it.each(KINDS)("passes a --disallowedTools rule that denies --approve, on the %s pass", async (kind) => {
+  // The deny rules are the only controls in this file that are not instructions the model may
+  // decide to ignore — a deny beats every allow rule regardless of specificity, and they are what
+  // structurally stops an `--approve`, or a second command behind a `;`, appended after
+  // `--file <path>`, which the allow rule's own trailing `*` would otherwise match. Deleting the
+  // list from the argv left the whole suite green.
+  it.each(KINDS)("denies --approve and every send/publish command, on the %s pass", async (kind) => {
     const denied = valuesOf(await argvFor(kind), "--disallowedTools");
 
     // The exact list, not "contains something": a rule that no longer names `--approve` (or one
-    // appended after a broader rule that never matches) is the mutation this has to catch, and
-    // both are invisible to a containment check on the flag alone.
-    expect(denied).toEqual(["Bash(*--approve*)"]);
+    // appended after a broader rule that never matches) is the mutation this has to catch, and both
+    // are invisible to a containment check on the flag alone. The three `pnpm` entries are every way
+    // this repo has of putting text in front of an audience; no worksheet pass may reach any of
+    // them, and the conversion pass in particular exists to stop at `converted` and wait for 2차 검수.
+    expect(denied).toEqual([
+      "Bash(*--approve*)",
+      "Bash(*pnpm send:*)",
+      "Bash(*pnpm lark:send*)",
+      "Bash(*pnpm drive:publish*)",
+    ]);
   });
 
   // Untested in both directions before this: deleting the Bash rule (after which nothing can ever
@@ -115,37 +156,26 @@ describe("ClaudeCodeAgent", () => {
 
     // Equality on the Bash rules, so both directions fail: removing the rule empties this list,
     // and widening it — `Bash(*)`, `Bash(pnpm *)`, or an extra rule alongside this one — changes
-    // it. The command, both flags and the order they must appear in are all pinned, because the
-    // rule is what confines the agent to `translate:save`.
-    expect(bashRules).toEqual(["Bash(pnpm translate:save --id * --file *)"]);
+    // it. The command, every flag and the order they must appear in are all pinned, because the
+    // rule is what confines the agent to that one save command.
+    expect(bashRules).toEqual([SAVE_RULE[kind]]);
     // Said once more as a statement about capability rather than about a string, since this is the
     // consequence that matters: no rule here may grant shell beyond that one command.
     expect(allowed.some((rule) => /^Bash\(\*+\)$/.test(rule))).toBe(false);
   });
 
-  it("scopes the Read/Edit rules to the real, absolute worksheets directory", async () => {
-    let seen: string[] = [];
-    const agent = new ClaudeCodeAgent(async (_cmd, args) => {
-      seen = args;
-      return { code: 0, stdout: VALID_ENVELOPE, stderr: "" };
-    });
+  it.each(KINDS)("scopes the %s pass's Read/Edit rules to its own absolute worksheets directory", async (kind) => {
+    const seen = await argvFor(kind);
+    const dir = WORKSHEETS_DIR[kind];
 
-    await agent.fill(`${paths.translationsWorksheets}/batch-X.md`, "translation");
-
-    // paths.translationsWorksheets is itself absolute (built from REPO_ROOT), so the rule needs
-    // one extra leading "/" per Claude Code's "//path" absolute-path syntax.
-    expect(seen).toContain(`Read(/${paths.translationsWorksheets}/**)`);
-    expect(seen).toContain(`Edit(/${paths.translationsWorksheets}/**)`);
+    // paths.* are themselves absolute (built from OUTPUT_DIR), so the rule needs one extra leading
+    // "/" per Claude Code's "//path" absolute-path syntax.
+    expect(seen).toContain(`Read(/${dir}/**)`);
+    expect(seen).toContain(`Edit(/${dir}/**)`);
   });
 
-  it("widens the workspace to the worksheets directory with --add-dir", async () => {
-    let seen: string[] = [];
-    const agent = new ClaudeCodeAgent(async (_cmd, args) => {
-      seen = args;
-      return { code: 0, stdout: VALID_ENVELOPE, stderr: "" };
-    });
-
-    await agent.fill(`${paths.translationsWorksheets}/batch-X.md`, "translation");
+  it.each(KINDS)("widens the workspace to the %s pass's worksheets directory with --add-dir", async (kind) => {
+    const seen = await argvFor(kind);
 
     // Required in addition to (not instead of) the Read/Edit rules: once HERALD_OUTPUT_DIR moves
     // the worksheets directory outside the spawned process's cwd (REPO_ROOT), an allow rule alone
@@ -153,7 +183,44 @@ describe("ClaudeCodeAgent", () => {
     // path, no "//" prefix: that rule-syntax quirk doesn't apply to a directory argument.
     const addDirIndex = seen.indexOf("--add-dir");
     expect(addDirIndex).toBeGreaterThanOrEqual(0);
-    expect(seen[addDirIndex + 1]).toBe(paths.translationsWorksheets);
+    expect(seen[addDirIndex + 1]).toBe(WORKSHEETS_DIR[kind]);
+  });
+
+  it("gives the conversion pass no reach into the translation worksheets, and vice versa", async () => {
+    // The two directories hold different stages' work under different review gates. A conversion
+    // pass that could edit `output/translations/worksheets/` would be able to rewrite a draft a
+    // human is about to review in 1차 검수, and a translation pass that could reach
+    // `output/variants/` could rewrite a variant already approved in 2차 검수. Nothing enforced this
+    // while both kinds shared one module-level constant.
+    const conversion = (await argvFor("conversion")).join(" ");
+    const translation = (await argvFor("translation")).join(" ");
+
+    expect(conversion).not.toContain(paths.translationsWorksheets);
+    expect(translation).not.toContain(paths.variantsWorksheets);
+  });
+
+  it("tells the conversion pass how the worksheet's Korean type labels map to --type", async () => {
+    // The one thing an unattended pass cannot infer: the worksheet says `## 유형: 공지`, and
+    // `convert:save --type` takes `announcement`. Getting it wrong is not a soft failure —
+    // `convert:save` refuses an unknown --type outright, so the whole batch fails and the tick
+    // reports an agent that saved nothing. Asserted through `typeLabel`/`ALL_TYPES` rather than
+    // against a hand-written list, so a type added or relabelled later fails here instead of
+    // leaving the prompt describing a set that no longer exists.
+    const prompt = promptOf(await argvFor("conversion"));
+
+    for (const type of ALL_TYPES) {
+      expect(prompt, type).toContain(`${typeLabel(type)} → ${type}`);
+    }
+  });
+
+  it("tells the conversion pass to save every (item, type) pair, not one file per item", async () => {
+    // A variant's identity is (itemId, type), so one item across four sections is four saves into
+    // four scratch files. A pass that reused one filename per item would silently overwrite each
+    // section's text with the next one's and save the same copy under four different types.
+    const prompt = promptOf(await argvFor("conversion"));
+
+    expect(prompt).toContain("x-123.announcement.ko.txt");
+    expect(prompt).toContain("--type <type>");
   });
 
   it("succeeds on a clean envelope: exit 0, is_error false, no permission denials", async () => {

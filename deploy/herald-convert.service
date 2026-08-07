@@ -1,0 +1,130 @@
+# deploy/herald-convert.service
+#
+# systemd --user unit for one `pnpm convert:tick` — convert:prepare, and (only if it prepared
+# anything) one `claude -p` pass that fills the worksheet and calls `pnpm convert:save` for each
+# variant. It exists so the 2차 검수 board is already populated when a reviewer gets there: the
+# pipeline was automated up to `translated` by herald-watch.service and stopped, so everything after
+# a 1차 검수 approval was manual and in practice the work went out by hand instead.
+#
+# WHAT THIS UNIT NEVER DOES: format, publish, or send. It stops at `status: "converted"`. Whether a
+# variant ever reaches X, Telegram, Typefully or Drive is exactly what 2차 검수 decides, and an
+# unattended timer must not pre-empt a human review gate. That is enforced in three places, not
+# stated in one: src/app/ConvertTick.ts runs no such stage, ClaudeCodeAgent's allowlist gives the
+# agent one shell command (`pnpm convert:save`) and denies the send/publish commands outright, and
+# tests/deploy/convertTiming.test.ts fails if this ExecStart= ever grows one.
+#
+# NOT installed by any committed script. Copying this into ~/.config/systemd/user/ and running
+# `systemctl --user daemon-reload` is a later, human-supervised step (see the team runbook) — same as
+# herald-watch.service and herald-x-reconcile.service.
+#
+# Machine-specific by design, not templated: every absolute path below was found with
+# `command -v pnpm|node|claude` on the one machine this runs on — the same machine, and the same
+# lookup, the two units before it used. A different machine needs its own copy of this file with its
+# own paths, not a parameterised one.
+
+[Unit]
+Description=Mantle KR Herald conversion scheduler — one tick (convert:prepare -> claude -p -> convert:save)
+# The same hook the other two scheduled units use, and the same reason: `OnFailure=` can only name a
+# unit, never a bare script, so the actual notification logic lives in deploy/herald-notify-failure.sh,
+# run via the templated wrapper unit deploy/herald-notify-failure@.service names. `%n` below expands
+# to this unit's own full name (herald-convert.service) before systemd resolves the OnFailure= target
+# — the `OnFailure=bar@%n.service` idiom documented in `man systemd.unit` — so that name becomes the
+# templated unit's `%i`, and this unit is always the one named and tailed on its own failure, never
+# herald-watch's or herald-x-reconcile's. Fires on ANY non-zero exit from ExecStart, including this
+# unit's own TimeoutStartSec= below.
+OnFailure=herald-notify-failure@%n.service
+
+[Service]
+Type=oneshot
+# The deploy checkout — merged `main` only, never the tree anyone edits. A user unit runs
+# `pnpm <script>` out of this directory, so whatever is checked out here IS what production runs the
+# next time the timer fires. While the other units pointed at the development checkout, every feature
+# branch was live in production the moment it was checked out; on 2026-08-07 that cost a real
+# incident. Updated only by deploy/herald-deploy.sh, and
+# tests/deploy/workingDirectory.test.ts fails if this line ever names a development checkout again.
+WorkingDirectory=%h/.herald/app
+
+# pnpm, node, and claude — none of them are on a systemd user unit's default PATH. node must be
+# reachable even though pnpm is invoked below by its absolute path: pnpm's own file starts with
+# `#!/usr/bin/env node`, and `env` resolves "node" via this PATH, not via ExecStart='s path. claude is
+# spawned from inside the Node process by ClaudeCodeAgent (src/adapters/agent/), exactly as it is for
+# herald-watch.service — unlike herald-x-reconcile.service, which needs no `claude` on its PATH.
+Environment=PATH=/home/kyle/.nvm/versions/node/v24.14.0/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# The scheduler's own artifact tree — the same one herald-watch.service uses, and never the repo's
+# own output/. tests/deploy/convertTiming.test.ts pins the two units' values equal, because this is
+# one decision written in two files.
+#
+# It matters here for a file of its own: `convert:prepare` writes output/variants/pending.json and
+# `convert:save` reads it back to find each variant's sourceKorean. There is exactly one such file
+# per output root, and `convert:prepare` *moves* the previous one into output/archive/ before writing
+# its own (src/shared/store/archive.ts renames, it does not copy). Sharing a root with the
+# development checkout would mean a hand-run `pnpm convert:prepare` relocating the batch this tick's
+# agent is midway through saving — after which every remaining `convert:save` in that batch fails
+# with "run convert:prepare first". See src/paths.ts's OUTPUT_DIR doc comment for the incident that
+# made this override exist at all.
+Environment=HERALD_OUTPUT_DIR=%h/.herald/output
+
+# The tick's throughput dial: how many approved *items* each fire hands to `convert:prepare --limit`.
+# Deliberately shipped commented out rather than set, because the code's default is the same 1 this
+# scheduler is armed with (DEFAULT_CONVERT_BATCH, src/cli/convertBatch.ts) and a duplicated value is
+# one more thing to drift.
+#
+# Items, not variants: one approved item fans out to every type it has not been converted for — up to
+# six (ALL_TYPES) — and all of them are written by the SAME single `claude -p` call, under
+# ClaudeCodeAgent's 10-minute cap. So this dial multiplies by six before it reaches the only timeout
+# that actually bounds a pass, which is why its default is 1 where herald-watch.service's is 3. Raise
+# it a step at a time and read the tick's duration out of the run log. Throughput is not the
+# constraint anyway: one item every 30 minutes is 48 a day, against a translate side whose own
+# ceiling is 36. A value that is not a positive integer refuses the tick at startup (see
+# src/cli/convert-tick.ts) instead of reaching `--limit` as garbage, and every tick's first journal
+# line prints the value it actually ran with.
+#Environment=HERALD_CONVERT_BATCH=1
+
+# No HERALD_TRANSLATE_SINCE and no HERALD_WATCH_BATCH here. Both exist to bound `translate:prepare`'s
+# (and `translate:align`'s) `--limit`, and this tick runs neither — setting them would be dead
+# configuration implying a code path this unit does not have. No HERALD_COLLECT_MAX_PAGES either, for
+# the same reason: nothing here collects.
+#
+# There is deliberately no cutoff variable of this unit's own, either. `convert:prepare` selects from
+# translations a human has *approved*, which is already a deliberate act on each item — unlike
+# `translate:prepare`, which would otherwise walk a 211-item backlog reaching back to 2026-06-01
+# oldest-first. An old approval that was later published by hand leaves the queue on its own:
+# `x:reconcile` retires it to `posted`, and `PrepareConversions` only ever selects `approved`.
+
+# Exactly two lines — DATABASE_URL and HERALD_DB_ENV=production — chmod 600, created by Kyle by hand
+# (a production connection string does not pass through an agent session). Everything else still
+# comes from the repo's own .env via `pnpm convert:tick`'s own `tsx --env-file-if-exists=.env`: a
+# shell-exported variable wins over Node's --env-file (verified on this machine), so these two
+# override .env's local-Docker DATABASE_URL without this unit ever touching .env itself.
+EnvironmentFile=%h/.herald/prod.env
+
+# Outer bound on a wedged run. ClaudeCodeAgent times out at 10 minutes per `claude -p` call
+# (src/adapters/agent/ClaudeCodeAgent.ts) and one tick makes at most ONE of those — not two, as
+# herald-watch does — so the agent budget here is 600s rather than 1200s. convert:prepare and the two
+# `pnpm status` runs that bracket the agent pass (see ConvertTick) are ordinary DB round trips that
+# normally finish in seconds; 240s between the three of them is generous even against a cold Neon
+# compute that has to wake up first. 600 + 240 = 840.
+#
+# The upper bound matters as much as the lower one: systemd skips a timer fire that comes due while
+# the unit is still active, so 840s must stay under herald-convert.timer's 1800s period or one wedged
+# tick becomes a scheduler that looks armed and has silently stopped.
+# tests/deploy/convertTiming.test.ts checks both directions — at most half the fire period, and more
+# than the 600s a single healthy `claude -p` may legitimately take.
+TimeoutStartSec=840
+
+# Wrapped in deploy/herald-run-logged.sh rather than invoked directly, so that every tick leaves a
+# durable run log under %h/.herald/logs/herald-convert/ as well as in the journal. The journal alone
+# is not a record on this box: journald rotates on every backwards clock step, this machine's WSL2
+# host sync and timesyncd both step the clock constantly, and the readable window has been measured
+# at roughly eight minutes. `%n` is this unit's own name and keys the per-unit log directory — the
+# same key deploy/herald-notify-failure.sh derives its fallback excerpt from, so the two agree without
+# either hardcoding a unit list. tests/deploy/runLogging.test.ts holds the wrapper's own contract
+# (the tick's exit status reaches systemd unchanged; a wrapper that swallowed it would switch off
+# this unit's Telegram alert permanently and invisibly).
+#
+# Ordering note for whoever installs this: the wrapper lives in the deploy checkout, so
+# `bash deploy/herald-deploy.sh` must have run (landing this commit in %h/.herald/app) BEFORE this
+# unit file is copied into ~/.config/systemd/user/ — otherwise the next fire runs an ExecStart= that
+# does not exist yet.
+ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n /home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm convert:tick

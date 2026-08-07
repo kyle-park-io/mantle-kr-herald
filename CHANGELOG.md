@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A scheduled conversion tick (`pnpm convert:tick`, `deploy/herald-convert.{service,timer}`), so
+  the 2차 검수 board is already populated when a reviewer gets there.** The pipeline was automated up
+  to `translated` and stopped: after a 1차 검수 approval, turning that approval into channel variants
+  (`convert:prepare` → an agent pass → `convert:save`) was manual, so in practice the work went out
+  by hand and the pipeline was bypassed. The new unit fires **every 30 minutes, 24 hours a day**, at
+  `:07` and `:37`.
+  - **The agent turn is gated on there being work, and verified afterwards** — the `WatchTick`
+    contract, stage for stage. `src/app/ConvertTick.ts` runs `convert:prepare --limit N`, parses its
+    stdout, and spawns `claude -p` only when the count is above zero; it then compares `pnpm status`'
+    `Converted (variants)` total before and after the pass and **fails the tick** when fewer variants
+    landed than were handed over. A clean `claude -p` (exit 0, `is_error: false`, no
+    `permission_denials`) proves the process ran and was never blocked — it does not prove the model
+    ever called `convert:save`, and reading it as success is a scheduler that is green forever while
+    the board never fills. Unrecognised stage stdout fails the tick too, never "nothing to do".
+  - **It stops at `converted`, enforced in three places rather than documented in one.** The tick
+    runs no format/publish/send stage; `ClaudeCodeAgent` gives the conversion pass exactly one shell
+    command (`pnpm convert:save --id * --type * --file *`) and now **denies** `pnpm send:*`,
+    `pnpm lark:send` and `pnpm drive:publish` outright for every worksheet kind; and
+    `tests/deploy/convertTiming.test.ts` fails if the unit's `ExecStart=` ever grows one. Whether a
+    variant is ever sent is what 2차 검수 decides.
+  - **Why 30 minutes and not faster.** The database is Neon `free_v3` — 100 CU-hours a month at
+    0.25 CU is 400 wall-clock hours — and Neon autosuspends after about five minutes idle, so a
+    30-minute poll keeps the compute awake roughly 17% of the time (≈30 CU-hours, 30% of the budget).
+    A 10-minute poll is ~91% of it and a 5-minute poll does not fit. The period is asserted at 1800s
+    so halving it has to be a deliberate billing decision. Not folded into `herald-watch.timer`
+    either: two hours is far too slow for work a reviewer is waiting on. 24 hours a day rather than a
+    business-hours window because measured human activity spans 10:00–04:00 KST.
+  - **`HERALD_CONVERT_BATCH` defaults to 1**, where `HERALD_WATCH_BATCH` is 3, because the two count
+    different things: one approved *item* fans out to up to six types and all of them are written by
+    the **same single** `claude -p` call under a 10-minute cap. Throughput is not the constraint —
+    one item every 30 minutes is 48 a day against a translate side whose ceiling is 36.
+  - **`convert:prepare` no longer writes a worksheet for an empty batch.** It wrote one
+    unconditionally, which was harmless at the rate a human runs the command and is not harmless at
+    48 fires a day into a directory nothing prunes — and, worse than the litter, its `archiveFile`
+    call *moves* `output/variants/pending.json` out of the way before replacing it with `[]`
+    (`archive.ts` renames, it does not copy), so a batch someone was midway through saving would be
+    relocated into `output/archive/` by the next fire and every remaining `convert:save` would refuse
+    with "run convert:prepare first". An empty batch now writes nothing at all and prints
+    `prepared 0 variant(s) — nothing approved is waiting to be converted`; the dashboard's
+    `[변환 준비]` button (`PrepareConversionRun`) already behaved this way. Nothing parsed that
+    stdout before the tick did, and both sides now build the line from
+    `src/cli/convertPrepareLines.ts` so a rewording cannot silently break the scheduler.
+  - **Approved-only selection was not re-implemented.** `PrepareConversions` already filters
+    `status === "approved"`, which is the gate that keeps an unreviewed translation from being
+    converted; a second copy of that rule in the tick would be a second place for it to drift.
+
 - **Both scheduled units now leave a durable run log under `~/.herald/logs/`, because the journal on
   this box is a roughly eight-minute window rather than a record.** journald rotates on every
   backwards clock step and this machine's WSL2 host sync and `systemd-timesyncd` both step the clock
