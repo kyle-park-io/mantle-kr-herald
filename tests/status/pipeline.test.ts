@@ -12,11 +12,28 @@ describe("pipelineStages", () => {
     });
     expect(stages.map((s) => [s.label, s.total, s.note])).toEqual([
       ["Collected (X + Lark)", 42, undefined],
-      ["Translated", 3, "approved 2"],
+      ["Translated", 3, "pending 1 · approved 2 · posted 0"],
       ["Converted (variants)", 2, "approved 1"],
       ["Rendered (channels)", 3, "approved 1"],
       ["Published (drive)", 5, undefined],
     ]);
+  });
+
+  it("splits the translated note three ways, so a terminal `posted` is not read as a review queue", () => {
+    const stages = pipelineStages({
+      collected: 0,
+      translations: [
+        { status: "translated" },
+        { status: "translated" },
+        ...Array.from({ length: 21 }, () => ({ status: "posted" })),
+      ],
+      variants: [],
+      renderings: [],
+      published: 0,
+    });
+    const translated = stages.find((s) => s.label === "Translated");
+    expect(translated?.total).toBe(23);
+    expect(translated?.note).toBe("pending 2 · approved 0 · posted 21");
   });
 
   it("is all-zero on an empty pipeline", () => {
@@ -40,7 +57,7 @@ describe("formatStatus", () => {
     expect(out).toContain("Collected (X + Lark)");
     expect(out).toContain("7");
     expect(out).toContain("Translated");
-    expect(out).toContain("(approved 1)");
+    expect(out).toContain("(pending 0 · approved 1 · posted 0)");
     expect(out).toContain("Published (drive)");
   });
 });

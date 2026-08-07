@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`pnpm status` and the 1차 검수 tabs now say how many items are actually waiting, instead of
+  letting a finished queue look like a full one.** Once `x:reconcile` began retiring hand-published
+  translations to the terminal status `posted`, the funnel's `Translated 23 (approved 0)` read as
+  "23 waiting, none approved" when the truth was 21 done and **2** waiting — the same misreading the
+  sync line's own comment had already warned about for its half of the report. The translated stage
+  now names all three buckets, actionable first (`pending 2 · approved 0 · posted 21`); the other
+  stages keep the bare `approved N`, having no terminal third status to hide behind it. The sidebar
+  tabs carry the matching per-filter counts, derived from the same predicate that decides which rows
+  a tab shows, so a tab can never promise a row it then does not display. Tab labels shortened to the
+  `StatusChip` vocabulary one row below them (대기 · 승인 · 게시됨): four tabs plus counts do not fit a
+  `w-80` sidebar at the old widths — `검수 대기 5` wrapped its count onto a second line — and a tab
+  should not name a status differently from the chip it filters for. A rendering underneath a
+  `posted` translation is deliberately **not** discounted anywhere: the X post having gone out by
+  hand says nothing about whether its 공지 is still owed to Telegram and Kakao.
+
 - **Replies Mantle made to other accounts no longer enter the pipeline at all.** Measured against
   production on 2026-08-07: **92 of 221 collected threads (42%) were reply-only** — "@elfa_ai 🥳🥳",
   "@Agnidex 💚", "@ethereum Onwards." — each arriving in 1차 검수 as its own row for a human to skip.

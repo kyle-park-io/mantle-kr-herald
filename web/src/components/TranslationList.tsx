@@ -3,10 +3,17 @@ import { datePrefix, type Translation } from "../types";
 
 type Filter = "all" | "translated" | "approved" | "posted";
 
+/**
+ * Labels match the `StatusChip` vocabulary a row over — 대기 · 승인 · 게시됨 — rather than the
+ * longer 검수 대기 · 승인됨 they used before the counts arrived. Two reasons, one of them physical:
+ * four tabs plus their counts do not fit a `w-80` sidebar at the old widths, and `검수 대기 5` wrapped
+ * its count onto a second line, which made that one tab taller than its neighbours. The other is that
+ * a tab and the chip it filters for should not name the same status two different ways.
+ */
 const FILTERS: [Filter, string][] = [
   ["all", "전체"],
-  ["translated", "검수 대기"],
-  ["approved", "승인됨"],
+  ["translated", "대기"],
+  ["approved", "승인"],
   ["posted", "게시됨"],
 ];
 
@@ -73,8 +80,18 @@ export function TranslationList(props: {
   onSelect: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
+  const matches = (t: Translation, f: Filter) => f === "all" || t.status === f;
   // Copied before sorting: `props.items` is App's state array, and sorting in place would mutate it.
-  const shown = props.items.filter((t) => filter === "all" || t.status === filter).slice().sort(newestFirst);
+  const shown = props.items.filter((t) => matches(t, filter)).slice().sort(newestFirst);
+  /**
+   * Same predicate as `shown`, so a tab can never promise a row it does not then show.
+   *
+   * The counts exist because the labels alone made a finished queue look like a full one: once
+   * reconcile started retiring hand-published items to `posted`, 전체 could read 23 while 검수 대기
+   * held 2, and the only way to learn that was to click. `pnpm status` had the same blind spot on
+   * the same data (`src/status/pipeline.ts`).
+   */
+  const count = (f: Filter) => props.items.filter((t) => matches(t, f)).length;
   return (
     <div className="flex h-full flex-col">
       <div className="sticky top-0 z-10 border-b border-line bg-surface/90 px-3 py-2.5 backdrop-blur">
@@ -83,11 +100,11 @@ export function TranslationList(props: {
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`flex-1 rounded-[7px] px-2 py-1 text-[12px] font-medium transition-colors ${
+              className={`flex-1 whitespace-nowrap rounded-[7px] px-2 py-1 text-[12px] font-medium transition-colors ${
                 filter === f ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
               }`}
             >
-              {label}
+              {label} <span className="font-mono text-[11px] tabular-nums text-faint">{count(f)}</span>
             </button>
           ))}
         </div>
