@@ -49,6 +49,20 @@ const POST_BOUNDARY = "\n\n\n";
 export const SEPARATOR_LINE = /^[ \t]*-{3,}[ \t]*$/gm;
 
 /**
+ * What to WRITE between two tweets of one thread — the separator `SEPARATOR_LINE` above matches when
+ * reading it back. Lives here, beside that pattern, so the two spellings of one convention cannot
+ * drift; `XContentSource` (which has joined collected tweets this way since before canonical text
+ * existed) and `capturePublishedTexts` both import it rather than keeping their own copy.
+ *
+ * A bare blank line will not do, and that is the whole reason this is a constant rather than a
+ * `"\n\n"`: a blank line is indistinguishable from a line break inside a single tweet, so a thread
+ * joined without this loses its boundaries irreversibly. Learned twice — once when
+ * `XContentSource` was written, and again on 2026-08-07 when the published-copy capture reused
+ * `threadText`'s `"\n\n"` join and the review screen showed a thread as one undivided block.
+ */
+export const THREAD_TWEET_SEPARATOR = "\n\n---\n\n";
+
+/**
  * Normalise text into canonical form. Channel-independent by definition.
  *
  * Note the blank-line rule differs from the pre-canonical formatter, which collapsed 3+ newlines

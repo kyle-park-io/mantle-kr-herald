@@ -10,7 +10,8 @@
  * Pure domain: no clock, no environment, no I/O. Same inputs, same captures, every time.
  */
 
-import { threadText, parsePostUrl } from "./xReconcile";
+import { parsePostUrl } from "./xReconcile";
+import { THREAD_TWEET_SEPARATOR } from "../formatting/canonical";
 import type { AssembledThread } from "../models";
 import type { Translation } from "../translation/models";
 
@@ -47,10 +48,18 @@ export interface CapturePublishedTextsInput {
  * `settledTranslationDisposition` makes when it lets this run's own output take precedence over a
  * stored record (see its `settledRootIds` handling in `xReconcile.ts`).
  *
- * Reuses `threadText` for the thread body and `parsePostUrl` for the url, rather than re-deriving
- * either: `threadText` is the exact join `classify`/`bestThreadFor` score against, and a second
- * joining rule here would risk storing a body that reads differently from the one a human's
- * confirmation was actually based on. `parsePostUrl` already narrows a url to a candidate
+ * **The stored body is NOT `threadText`'s.** `threadText` joins a thread's tweets with a bare
+ * `"\n\n"`, which is what `classify`/`bestThreadFor` score against, and this function used to reuse
+ * it on the argument that the stored text should read exactly like the one a score was computed
+ * from. That argument was wrong twice over: nothing anywhere recomputes a score from a stored body,
+ * so the invariant bought nothing — and a blank line is indistinguishable from a line break inside
+ * one tweet, so joining that way destroys the thread's boundaries. On 2026-08-07 the review screen
+ * showed a six-tweet thread as one undivided block, next to a draft that marked every boundary.
+ * Capture therefore uses `THREAD_TWEET_SEPARATOR`, the same separator `XContentSource` writes into
+ * every draft, so the published block and the draft above it read in the same units. Scoring is
+ * untouched — `threadText` still feeds it, and the thresholds calibrated against it stay valid.
+ *
+ * `parsePostUrl` already narrows a url to a candidate
  * `(handle, rootId)` pair and returns `undefined` for anything malformed — this function skips
  * those rather than guessing, the same refusal `settledTranslationDisposition` makes for a
  * `postedUrl` that fails its own round-trip check.
@@ -92,7 +101,7 @@ export function capturePublishedTexts(input: CapturePublishedTextsInput): Publis
     if (thread === undefined) continue; // aged out of this run's pool; a later, wider run fills it
 
     seenItemIds.add(itemId);
-    captures.push({ itemId, rootId, text: threadText(thread) });
+    captures.push({ itemId, rootId, text: thread.tweets.map((t) => t.text).join(THREAD_TWEET_SEPARATOR) });
   }
 
   return captures;
