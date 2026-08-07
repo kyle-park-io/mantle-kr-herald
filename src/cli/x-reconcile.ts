@@ -19,6 +19,7 @@ import {
   sortedPostedNearMisses,
   xReconcileStartupLine,
 } from "./xReconcileReport";
+import { CapturePublishedText } from "../app/CapturePublishedText";
 import { RecordObservedDelivery } from "../app/RecordObservedDelivery";
 import { RecordPublish } from "../app/RecordPublish";
 import { RetireTranslation } from "../app/RetireTranslation";
@@ -193,10 +194,17 @@ try {
     console.log(`  ${rootId} — ${reason}`);
   }
 
+  // Fill-only: every row here already lacks publishedText (capturePublishedTexts skips anything
+  // already filled), so listing them names exactly what --yes would add, never what it would change.
+  console.log(`\ncaptures (${plan.captures.length}) — published text this run can fill in:`);
+  for (const c of plan.captures) {
+    console.log(`  ${c.itemId} → post ${c.rootId}`);
+  }
+
   if (!writeConfirmed) {
     console.log(
       `\npreview only — nothing was written. Re-run with --yes to record ${plan.confirmed.length} confirmed, ` +
-        `${plan.external.length} external, and retire ${plan.posted.length} posted row(s).`,
+        `${plan.external.length} external, retire ${plan.posted.length} posted, and capture ${plan.captures.length} published text row(s).`,
     );
   } else {
     const recorder = new RecordObservedDelivery(stores.deliveryLedger);
@@ -207,6 +215,7 @@ try {
     // `x:<id>` into column A). historyPostIds (column D, the postId) is the guard that actually
     // protects against two rows for one post.
     const retirer = new RetireTranslation(stores.translationStore, publisher, history.postIds);
+    const capturer = new CapturePublishedText(stores.translationStore);
     let written = 0;
     let alreadyRecorded = 0;
     let replacedDropped = 0;
@@ -215,6 +224,8 @@ try {
     let alreadyRetired = 0;
     let historyWritten = 0;
     let historyFailed = 0;
+    let captured = 0;
+    let capturesAlreadyPresent = 0;
     const retiredItemIds: string[] = [];
 
     console.log("\nwriting…");
@@ -293,10 +304,29 @@ try {
       }
     }
 
+    for (const c of plan.captures) {
+      try {
+        const result = await capturer.run({ itemId: c.itemId, text: c.text });
+        if (result === "captured") {
+          captured++;
+          console.log(`  ✓ ${c.itemId} published text captured (post ${c.rootId})`);
+        } else {
+          capturesAlreadyPresent++;
+          console.log(`  · ${c.itemId} published text already present`);
+        }
+      } catch (err) {
+        // A missing row here means a stale plan (see CapturePublishedText's own doc comment) —
+        // genuinely exceptional, but still one bad row, not a reason to stop capturing the rest.
+        failed++;
+        console.error(`  ✗ ${c.itemId}: ${(err as Error).message}`);
+      }
+    }
+
     console.log(
       `\nwrote ${written}, replaced ${replacedDropped} dropped row(s), already recorded ${alreadyRecorded}, ` +
         `retired ${retired}, already retired ${alreadyRetired}, history written ${historyWritten}, ` +
-        `history failed ${historyFailed}, failed ${failed}.`,
+        `history failed ${historyFailed}, captured ${captured}, captures already present ${capturesAlreadyPresent}, ` +
+        `failed ${failed}.`,
     );
     // Only an actual write throwing counts as a failure — a plan full of candidates that a human
     // still needs to look at is the normal, expected outcome of a run, not an error. A failed
