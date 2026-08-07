@@ -1,7 +1,7 @@
 // tests/shared/notifyOps.test.ts — fetch is injected as notifyOps's second (test-only) parameter
 // rather than stubbing the global, matching how TelegramBotSender is tested
 // (tests/adapters/send/telegramBotSender.test.ts's own fakeFetch).
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { notifyOps } from "../../src/shared/notifyOps";
 
 function fakeFetch(responses: { ok: boolean; status: number; body?: unknown }[]) {
@@ -57,6 +57,42 @@ describe("notifyOps", () => {
     process.env.TELEGRAM_CHAT_ID_OPS = "-100999";
     await expect(notifyOps("x", fnNoToken)).resolves.toBeUndefined();
     expect(callsNoToken).toHaveLength(0);
+  });
+
+  it("says on stdout that it sent, so the journal answers 'did the alert go out?' directly", async () => {
+    // Before this, only the FAILURE path logged. Answering "did the alert go out?" then took a
+    // three-step deduction — env vars are set, the threshold was met, and no failure line appears,
+    // therefore it sent — run against a journal by a human who should not have to do that. A
+    // successful send now says so.
+    process.env.TELEGRAM_BOT_TOKEN = "TOK";
+    process.env.TELEGRAM_CHAT_ID_OPS = "-100999";
+    const { fn } = fakeFetch([{ ok: true, status: 200, body: { result: true } }]);
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
+
+    await notifyOps("3 translations retired: x:1, x:2, x:3", fn);
+
+    spy.mockRestore();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\[notifyOps\] sent to ops chat -100999$/);
+  });
+
+  it("says on stdout that no ops chat is configured, so a silent install is not mistaken for a sent alert", async () => {
+    // An unconfigured install and a successful send used to look identical in the journal: both
+    // silent. They call for opposite responses, so they must not read the same.
+    process.env.TELEGRAM_BOT_TOKEN = "TOK";
+    delete process.env.TELEGRAM_CHAT_ID_OPS;
+    const { fn, calls } = fakeFetch([{ ok: true, status: 200 }]);
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
+
+    await notifyOps("x", fn);
+
+    spy.mockRestore();
+    expect(calls).toHaveLength(0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/TELEGRAM_CHAT_ID_OPS/);
+    expect(lines[0]).toMatch(/not sent/);
   });
 
   it("swallows a failing request", async () => {
