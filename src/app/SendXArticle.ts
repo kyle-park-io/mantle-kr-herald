@@ -1,5 +1,5 @@
 import type { TranslationStore } from "../ports/TranslationStore";
-import { toXArticleMarkdown } from "../domain/publish/articleMarkdown";
+import { ARTICLE_IMAGE, toXArticleMarkdown } from "../domain/publish/articleMarkdown";
 import { matchesItemId } from "../domain/itemId";
 import type { Translation } from "../domain/translation/models";
 import type { Headroom } from "../domain/send/headroom";
@@ -10,7 +10,10 @@ interface Media { upload(url: string): Promise<string> }
 interface ArticleSender { send(req: { content_markdown: string; cover_media_id?: string }): Promise<{ postId?: string; url?: string }> }
 interface Ledger { loadKeys(): Promise<Set<string>>; add(entry: { itemId: string; postId?: string; url?: string; sentAt: string }): Promise<void> }
 
-const IMG = /!\[[^\]]*\]\(([^)]+)\)/g;
+// The upload pass and `toXArticleMarkdown`'s rewrite pass must read the same markers — a url
+// uploaded but not embedded burns a `media/upload` call against a 20/hour ceiling, and one embedded
+// but not uploaded posts a broken article. Shared rather than re-declared here; see ARTICLE_IMAGE.
+const IMG = ARTICLE_IMAGE;
 
 export class SendXArticle {
   constructor(

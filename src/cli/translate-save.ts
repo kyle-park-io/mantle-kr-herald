@@ -55,6 +55,12 @@ try {
   if (approve) {
     suffix = res.promoted ? " (approved → few-shot)" : " (approved; source too long for few-shot)";
   }
+  // Reported, never refused (same reasoning as `checkGlossary`'s): the save is correct either way
+  // because SaveTranslation already restored the label. Printing it is what keeps the rewrite from
+  // being invisible again — it went unnoticed until someone happened to read a stored row.
+  if (res.normalizedPhotoMarkers > 0) {
+    suffix += ` (restored ${res.normalizedPhotoMarkers} [사진] marker(s) the translation rewrote)`;
+  }
   console.log(`saved ${res.itemId}${suffix}`);
 } finally {
   await db.close();

@@ -27,6 +27,16 @@ describe("assembleSharedContext", () => {
     expect(out).toContain("Mantle mainnet");
     expect(out).toContain("맨틀 메인넷");
   });
+
+  it("tells the agent to carry media marker lines through untouched", () => {
+    // Measured 2026-08-07: 8 of 8 photo-carrying translations in one batch came back with the
+    // source's `[사진](url)` rewritten to `![](url)`. Nothing in the prompt had ever mentioned the
+    // marker, so the agent was normalising markdown as it saw fit. `SaveTranslation` restores the
+    // label either way — this is the cheaper half, asking it not to happen in the first place.
+    const out = assembleSharedContext(ctx);
+    expect(out).toContain("[사진]");
+    expect(out).toContain("[영상]");
+  });
 });
 
 describe("assembleItemBlock", () => {
