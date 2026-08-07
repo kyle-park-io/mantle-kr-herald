@@ -9,12 +9,28 @@ import { renderArticle } from "../../domain/articleMarkdown";
  *  from a line break inside a single tweet). */
 const THREAD_TWEET_SEPARATOR = "\n\n---\n\n";
 
-/** A reply Mantle made to someone else's comment, bundled into a thread by conversationId — its text
- *  leads with an @mention. A self-thread continuation is also `isReply` but does NOT lead with `@`, so
- *  it stays unmarked. Applied to non-root tweets only: a standalone reply item (root isReply) is already
- *  flagged by the item-level header marker (ContentItem.isReply). */
-export const COMMENTER_REPLY_MARKER = "(댓글 · 지워도 됨)";
-
+/**
+ * A reply Mantle made to someone else, bundled into a thread by conversationId — it is `isReply`
+ * AND its text leads with an @mention. Both halves are required, and each rules out a real case the
+ * other would destroy: a self-thread continuation is `isReply` but does not lead with `@`
+ * ("Come Saturday, trade here"), while a genuine post can open with a mention without being a reply
+ * ("@Fluxion_network is now live on Mantle.").
+ *
+ * These are dropped from the pipeline entirely — the thread never becomes a `ContentItem`, and a
+ * nested one never reaches the 원문. They used to be kept: a reply-rooted thread arrived in 1차 검수
+ * as its own row, and a nested one was prefixed "(댓글 · 지워도 됨)", an instruction to the
+ * translator to delete it by hand on every worksheet, forever.
+ *
+ * Measured against production on 2026-08-07: **92 of 221 collected threads (42%) were reply-only**,
+ * and 140 nested reply blocks sat across 46 threads. None of it is Korean announcement copy — it is
+ * "@elfa_ai 🥳🥳", "@Agnidex 💚", "@ethereum Onwards." Filtering at the source, rather than asking a
+ * human to skip them, is the same call `collect:reference` already makes for @0xMantleKR's own
+ * posts: content that can never be the pipeline's input does not belong in its queue.
+ *
+ * The cost, stated plainly: this is total. A reply excluded here cannot be recovered by
+ * `translate:prepare --ids`, because it never becomes an item for the selector to find. Reaching one
+ * would take a code change or a hand-written `translate:save`.
+ */
 function isCommenterReply(t: SourceTweet): boolean {
   return t.isReply && t.text.trimStart().startsWith("@");
 }
@@ -61,14 +77,20 @@ export function flattenXThreads(
     const id = `x:${thread.rootId}`;
     if (translatedIds.has(id)) continue;
     const first = thread.tweets[0];
+    // A thread that opens with a reply to someone else is that conversation, not a Mantle post —
+    // skipped before anything is rendered, so it never becomes a review row. See isCommenterReply.
+    if (first && isCommenterReply(first)) continue;
+    // Nested replies go the same way, and are removed here rather than marked, so the 원문 holds
+    // only what a translator is meant to translate.
+    const kept = thread.tweets.filter((t, i) => i === 0 || !isCommenterReply(t));
     // Handling this per tweet rather than per thread means a thread mixing an article with
     // ordinary replies still reads correctly.
     let hasArticle = false;
-    const text = thread.tweets
-      .map((t, i) => {
+    const text = kept
+      .map((t) => {
         const rendered = renderTweetText(t);
         if (rendered.isArticle) hasArticle = true;
-        return i > 0 && isCommenterReply(t) ? `${COMMENTER_REPLY_MARKER} ${rendered.text}` : rendered.text;
+        return rendered.text;
       })
       .join(THREAD_TWEET_SEPARATOR);
     items.push({
