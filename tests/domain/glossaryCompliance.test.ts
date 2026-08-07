@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkGlossary, type GlossaryMiss } from "../../src/domain/translation/glossaryCompliance";
+import { checkGlossary, checkPublishedOverrides, type GlossaryMiss } from "../../src/domain/translation/glossaryCompliance";
 import type { GlossaryEntry } from "../../src/domain/translation/models";
 
 const g = (term: string, target?: string, rule: GlossaryEntry["rule"] = "translate"): GlossaryEntry => ({
@@ -121,5 +121,60 @@ describe("checkGlossary", () => {
       [g("Money markets", "머니마켓", "transliterate"), g("Commodities", "원자재")],
     );
     expect(terms(misses)).toEqual(["Money markets", "Commodities"]);
+  });
+});
+
+describe("checkPublishedOverrides", () => {
+  const glossary = [{ term: "narrative", rule: "translate" as const, target: "내러티브", updatedAt: "2026-07-14" }];
+
+  it("reports a decided term our draft used and the published post dropped", () => {
+    const out = checkPublishedOverrides({
+      itemId: "x:1",
+      sourceText: "the narrative is shifting",
+      koreanText: "내러티브가 바뀌고 있습니다",
+      publishedText: "이야기가 바뀌고 있습니다",
+    }, glossary);
+    expect(out).toEqual([{ itemId: "x:1", term: "narrative", expected: "내러티브" }]);
+  });
+
+  it("reports nothing when the published post kept the decided term", () => {
+    const out = checkPublishedOverrides({
+      itemId: "x:1",
+      sourceText: "the narrative is shifting",
+      koreanText: "내러티브가 바뀌고 있습니다",
+      publishedText: "내러티브가 달라지고 있습니다",
+    }, glossary);
+    expect(out).toEqual([]);
+  });
+
+  it("reports nothing when our draft never used the decided term either", () => {
+    // That is a plain drift, which checkGlossary already reports. Reporting it here too would
+    // double-count it and make the override list untrustworthy as a signal about the glossary.
+    const out = checkPublishedOverrides({
+      itemId: "x:1",
+      sourceText: "the narrative is shifting",
+      koreanText: "이야기가 바뀌고 있습니다",
+      publishedText: "이야기가 바뀌고 있습니다",
+    }, glossary);
+    expect(out).toEqual([]);
+  });
+
+  it("reports nothing when the term never occurs as prose in the source", () => {
+    const out = checkPublishedOverrides({
+      itemId: "x:1",
+      sourceText: "ask @narrative_xyz about it",
+      koreanText: "내러티브",
+      publishedText: "이야기",
+    }, glossary);
+    expect(out).toEqual([]);
+  });
+
+  it("reports nothing when there is no published text yet", () => {
+    const out = checkPublishedOverrides({
+      itemId: "x:1",
+      sourceText: "the narrative is shifting",
+      koreanText: "내러티브가 바뀌고 있습니다",
+    }, glossary);
+    expect(out).toEqual([]);
   });
 });
