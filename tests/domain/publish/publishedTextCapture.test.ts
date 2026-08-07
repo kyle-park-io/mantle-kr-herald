@@ -80,6 +80,22 @@ describe("capturePublishedTexts", () => {
     expect(out).toHaveLength(1);
   });
 
+  it("prefers the posted entry's rootId over a stale postedUrl for the same item", () => {
+    // A stored postedUrl is a *previous* run's value and can point at the wrong post (aged out,
+    // hand-edited, or simply superseded); a `posted` entry is this run's own fresh match, made
+    // moments ago against these same threads. When both name the same itemId, the fresh match wins
+    // — both candidate threads are in the pool so a wrong-branch bug fails on content, not on a
+    // missing thread.
+    const t = tr({ postedUrl: "https://x.com/0xMantleKR/status/111" });
+    const out = capturePublishedTexts({
+      translations: [t],
+      threads: [thread("111", "옛 글"), thread("999", "새 글")],
+      posted: [{ itemId: "x:1", rootId: "999" }],
+      handle,
+    });
+    expect(out).toEqual([{ itemId: "x:1", rootId: "999", text: "새 글" }]);
+  });
+
   it("joins a multi-tweet thread the same way scoring does", () => {
     const multi: AssembledThread = {
       rootId: "999",
