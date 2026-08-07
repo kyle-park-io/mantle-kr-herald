@@ -2,15 +2,23 @@ import { Fragment, useState } from "react";
 import { countMediaMarkers, splitMediaMarkers } from "../media";
 
 /**
- * The marker line, still spelled exactly as it is stored, with the image behind its url one hover
- * away. The url stays visible on purpose: it is what the reviewer reads today, and the send path
- * uploads that exact string.
+ * A photo marker, shown as its label with the image one hover away and the original one click away.
+ *
+ * The raw url is no longer printed. It used to be, on the reasoning that "it is what the reviewer
+ * reads today, and the send path uploads that exact string" — but a 60-character CDN url is not
+ * something a reviewer reads, and in a thread carrying four photos it was most of the 원문. The url
+ * is still there in the stored text, unchanged and still what gets uploaded; this is the read-only
+ * pane, and the editable textarea beside it shows the line verbatim.
+ *
+ * `원본 보기` rather than making the label itself a link: the label is the hover target for the
+ * preview, and one element cannot usefully be both "hover to peek" and "click to leave".
  */
 function PhotoMarker({ text, url }: { text: string; url: string }) {
   const [failed, setFailed] = useState(false);
+  const label = text.startsWith("[사진]") ? "[사진]" : "[이미지]";
   return (
     <span className="group/media relative cursor-help text-mint">
-      {text}
+      {label}
       <span className="pointer-events-none absolute left-0 top-full z-30 mt-1 hidden rounded-lg border border-line bg-surface p-1.5 shadow-lg group-hover/media:block">
         {failed ? (
           <span className="block w-64 px-1 py-0.5 text-[12px] leading-relaxed text-muted">
@@ -25,11 +33,21 @@ function PhotoMarker({ text, url }: { text: string; url: string }) {
           />
         )}
       </span>
+      {/* Outside the hover target above, so moving the pointer here to click does not dismiss the
+          preview the reviewer is comparing against. */}
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="ml-1.5 cursor-pointer text-[12px] font-medium text-muted underline-offset-2 hover:text-mint hover:underline"
+      >
+        원본 보기 ↗
+      </a>
     </span>
   );
 }
 
-/** Reviewed text, rendered verbatim, with a hover preview on every photo marker. */
+/** Reviewed text, with each photo marker shown as its label plus a hover preview and a link. */
 export function MarkerText({ text }: { text: string }) {
   const segments = splitMediaMarkers(text);
   return (

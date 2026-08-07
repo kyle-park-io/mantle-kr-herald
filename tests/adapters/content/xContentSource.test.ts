@@ -81,12 +81,12 @@ describe("XContentSource isReply", () => {
 });
 
 describe("XContentSource media markers", () => {
-  it("surfaces a post's photo as an empty-alt image marker after the text", async () => {
+  it("surfaces a post's photo as a labelled [사진] marker after the text", async () => {
     const p = await writeThreads([{ rootId: "300", status: "active", tweets: [
       tweet({ id: "300", text: "본문", media: [{ type: "photo", url: "https://pbs.twimg.com/media/a.jpg" }] }),
     ] }]);
     const [item] = await new XContentSource(p).loadPending(new Set());
-    expect(item.text).toBe("본문\n\n![](https://pbs.twimg.com/media/a.jpg)");
+    expect(item.text).toBe("본문\n\n[사진](https://pbs.twimg.com/media/a.jpg)");
   });
 
   it("surfaces a video as a paren-free [영상] marker, without the thumbnail url", async () => {

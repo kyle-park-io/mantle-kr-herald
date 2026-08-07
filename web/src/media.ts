@@ -8,7 +8,7 @@
  * the DOM lib, and `web/` builds on its own tsconfig. A looser pattern here would preview something
  * the send path does not treat as media, which is worse than not previewing at all.
  */
-const PHOTO_LINE = /^!\[\]\(([^)]+)\)[ \t]*$/;
+const PHOTO_LINE = /^(?:\[사진\]|!\[\])\(([^)]+)\)[ \t]*$/;
 const VIDEO_LINE = /^\[영상\](?:[ \t]+(\S+))?[ \t]*$/;
 
 export type MediaSegment =

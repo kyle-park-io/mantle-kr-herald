@@ -96,7 +96,7 @@ function applyBold(text: string, ranges: InlineStyleRange[]): string {
 /** One block → one piece, or null when the block contributes nothing. */
 function renderBlock(block: ArticleBlock, ordinal: number): Piece | null {
   if (block.type === "divider") return null;
-  if (block.type === "image") return block.url ? { text: `![](${block.url})`, kind: "block" } : null;
+  if (block.type === "image") return block.url ? { text: `[사진](${block.url})`, kind: "block" } : null;
 
   const text = applyBold(block.text ?? "", block.inlineStyleRanges ?? []).trim();
   if (text === "") return null;

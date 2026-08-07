@@ -4,20 +4,41 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MarkerText, MediaEditNotice, MediaEditNoticeSlot } from "../src/components/MarkerText";
 
 const URL = "https://pbs.twimg.com/media/HOUihv6bgAA52e_.jpg";
-const PHOTO = `![](${URL})`;
+const PHOTO = `[사진](${URL})`;
 
 afterEach(cleanup);
 
 describe("MarkerText", () => {
-  it("renders the reviewed text unchanged", () => {
+  it("shows the marker's label and the surrounding text, but never the raw url", () => {
+    // This used to assert the text rendered byte-for-byte. It deliberately no longer does: a
+    // 60-character CDN url is not something a reviewer reads, and a thread carrying four photos was
+    // mostly url. The stored text is unchanged — the editable textarea beside this pane still shows
+    // the line verbatim, and the send path still uploads that exact string.
     const text = `본문 첫 줄\n\n${PHOTO}`;
     const { container } = render(<MarkerText text={text} />);
-    expect(container.textContent).toBe(text);
+    expect(container.textContent).toContain("본문 첫 줄");
+    expect(container.textContent).toContain("[사진]");
+    expect(container.textContent).not.toContain(URL);
+  });
+
+  it("links each photo marker to its original", () => {
+    const { container } = render(<MarkerText text={PHOTO} />);
+    const link = container.querySelector("a")!;
+    expect(link.getAttribute("href")).toBe(URL);
+    expect(link.textContent).toContain("원본 보기");
+  });
+
+  it("still reads a legacy ![](url) marker, so text saved before the label existed keeps working", () => {
+    // Nothing re-derives stored text on read. Every translation and rendering saved before this
+    // change carries the old spelling, and must still preview and still strip at send time.
+    const { container } = render(<MarkerText text={`![](${URL})`} />);
+    expect(container.querySelector("img")!.getAttribute("src")).toBe(URL);
+    expect(container.textContent).toContain("[이미지]");
   });
 
   it("gives each photo marker an image to preview", () => {
     const other = "https://pbs.twimg.com/media/OTHER.jpg";
-    const { container } = render(<MarkerText text={`${PHOTO}\n\n---\n\n![](${other})`} />);
+    const { container } = render(<MarkerText text={`${PHOTO}\n\n---\n\n[사진](${other})`} />);
     expect([...container.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual([URL, other]);
   });
 
@@ -36,7 +57,7 @@ describe("MarkerText", () => {
   it("clears the failed state when a different photo url is rendered at the same position", () => {
     const urlA = "https://pbs.twimg.com/media/A.jpg";
     const urlB = "https://pbs.twimg.com/media/B.jpg";
-    const { container, rerender } = render(<MarkerText text={`![](${urlA})`} />);
+    const { container, rerender } = render(<MarkerText text={`[사진](${urlA})`} />);
 
     // First image fails
     fireEvent.error(container.querySelector("img")!);
@@ -44,7 +65,7 @@ describe("MarkerText", () => {
     expect(container.textContent).toContain("이미지를 불러오지 못했습니다");
 
     // Rerender with a different url at the same position
-    rerender(<MarkerText text={`![](${urlB})`} />);
+    rerender(<MarkerText text={`[사진](${urlB})`} />);
 
     // New image should be present, failure message should be gone
     const imgs = container.querySelectorAll("img");
@@ -58,7 +79,7 @@ describe("MarkerText", () => {
     const OTHER = "https://pbs.twimg.com/media/OTHER.jpg";
 
     // Item A: DUP appears twice
-    const textA = `![](${DUP})\n\n중간\n\n![](${DUP})`;
+    const textA = `[사진](${DUP})\n\n중간\n\n[사진](${DUP})`;
     const { container, rerender } = render(<MarkerText text={textA} />);
 
     // First image in item A fails
@@ -66,11 +87,11 @@ describe("MarkerText", () => {
     expect(container.querySelectorAll("img")).toHaveLength(1); // Only second DUP remains
 
     // Item B: DUP once + OTHER
-    const textB = `![](${OTHER})\n\n중간\n\n![](${DUP})`;
+    const textB = `[사진](${OTHER})\n\n중간\n\n[사진](${DUP})`;
     rerender(<MarkerText text={textB} />);
 
     // No orphaned failure message from item A
-    expect(container.textContent).toBe(textB);
+    expect(container.textContent).not.toContain("이미지를 불러오지 못했습니다");
     expect(container.querySelectorAll("img")).toHaveLength(2);
     expect([...container.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual([OTHER, DUP]);
   });
