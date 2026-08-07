@@ -31,6 +31,12 @@ dist/
 # file the tool writes per-machine permissions into, and tracking .claude/ must not invite it in.
 .claude/settings.local.json
 
+# Agent-created git worktrees. Untracked they show up as a dirty tree, which `pnpm deploy:check`
+# refuses to deploy over — and `vercel deploy --prod` uploads the local directory, so a worktree
+# left here would otherwise be *inside the deployment*. See vitest.config.ts for the matching
+# test-collection exclusion; the two are the same problem seen from two sides.
+.claude/worktrees/
+
 # Collector output (local JSON)
 output/
 

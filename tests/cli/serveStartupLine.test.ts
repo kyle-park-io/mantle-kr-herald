@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -12,7 +13,14 @@ import { describe, expect, it } from "vitest";
  * names its database on its first line; this one did not, and the omission surfaced as a bare
  * `connect ECONNREFUSED 127.0.0.1:5432` with no indication of what was even being attempted.
  */
-const SOURCE = readFileSync("src/cli/serve.ts", "utf8");
+/**
+ * Resolved from this file, never from the working directory. A CWD-relative path reads whichever
+ * checkout Vitest happened to start in — so this test, collected out of a git worktree by a run
+ * launched from the main checkout, asserted against the *other* tree's `serve.ts` and failed for a
+ * reason that had nothing to do with either branch. Same `import.meta.url` anchoring `src/paths.ts`
+ * uses, and for the same reason.
+ */
+const SOURCE = readFileSync(fileURLToPath(new URL("../../src/cli/serve.ts", import.meta.url)), "utf8");
 
 describe("serve's startup line", () => {
   it("names the database env and target", () => {
