@@ -476,3 +476,27 @@ export function describeDbTarget(cfg: DbConfig): string {
   const database = url.pathname.replace(/^\//, "");
   return `${url.hostname}${url.port ? `:${url.port}` : ""}/${database}`;
 }
+
+/**
+ * `describeDbTarget`, with the one guarantee its callers actually need: it never throws, and its
+ * failure never carries anything derived from `DATABASE_URL`. `loadDbConfig` does not validate
+ * that the value parses as a URL at all, so `describeDbTarget`'s own `new URL(cfg.url)` can throw
+ * for a malformed one — and a `URL` constructor's error message is not guaranteed, across engines,
+ * not to echo the invalid input back (which could still contain `user:password@`). Every context
+ * this is used from ends up in a shared journal or a report, so the guard belongs with the call,
+ * not with each caller's memory of needing it: `runDbCheck` below and `watchStartupLine`
+ * (`src/cli/watchStartup.ts`, whose line is the first thing every scheduled tick writes to
+ * `journalctl --user -u herald-watch`) both go through this.
+ */
+export function tryDescribeDbTarget(cfg: DbConfig): string | undefined {
+  try {
+    return describeDbTarget(cfg);
+  } catch {
+    return undefined;
+  }
+}
+
+/** What a caller prints in place of the target when `tryDescribeDbTarget` returns nothing. Fixed
+ *  text, never the thrown error and never the value that caused it. */
+export const INVALID_DB_URL = "DATABASE_URL is not a valid URL";
+

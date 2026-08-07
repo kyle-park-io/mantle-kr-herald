@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig, configDefaults } from "vitest/config";
 
 /**
  * The default `vitest run`/`vitest` config — everything except `pnpm probe`, which has its own
@@ -28,6 +28,19 @@ import { defineConfig } from "vitest/config";
  */
 export default defineConfig({
   test: {
+    /**
+     * Agent worktrees live under `.claude/worktrees/`, and Vitest's default excludes do not cover
+     * them — so a run from the main checkout collected every *other* branch's tests too. That is
+     * not merely noisy: `pnpm deploy:check` gates a production deploy on `pnpm test`, and
+     * `vercel deploy --prod` uploads the local directory, so an unrelated branch sitting in a
+     * worktree could fail the gate — or ship — a deploy that has nothing to do with it. Found
+     * exactly that way, blocking a real deploy.
+     *
+     * Spreading `configDefaults.exclude` rather than replacing it: written as a bare array, this
+     * would silently drop Vitest's own node_modules and dist exclusions, which is how a "small"
+     * exclude turns into collecting every dependency's tests.
+     */
+    exclude: [...configDefaults.exclude, "**/.claude/worktrees/**"],
     testTimeout: 20000,
     hookTimeout: 20000,
     poolOptions: {

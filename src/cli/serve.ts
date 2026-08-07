@@ -6,12 +6,21 @@ import { createDb } from "../adapters/db/createDb";
 import { applySchema } from "../adapters/db/schema";
 import { assertLedgerMigrated } from "./assertLedgerMigrated";
 import { startReconcileScheduler } from "./reconcileScheduler";
-import { loadDbConfig, loadTypefullyConfig, loadSessionConfig, loadClientIpConfig, loadAuthConfig } from "../config";
+import { loadDbConfig, loadTypefullyConfig, loadSessionConfig, loadClientIpConfig, loadAuthConfig, tryDescribeDbTarget, INVALID_DB_URL } from "../config";
 import { REPO_ROOT, OUTPUT_DIR, paths } from "../paths";
 import { createDeps } from "../app/createDeps";
 
 const port = Number(process.env.PORT) || 5757;
 const dbConfig = loadDbConfig();
+
+// Printed BEFORE anything connects, which is the whole point: `pnpm status`, `pnpm watch`,
+// `pnpm x:reconcile` and `pnpm db:migrate` all name their database on their first line, and this
+// long-lived, write-capable board — the one place a human approves copy — was the only entry point
+// that did not. A server that comes up silently gives no clue whether it is attached to the local
+// Postgres or to production, and one that dies while connecting never reaches a startup line at
+// all. `tryDescribeDbTarget`, not `describeDbTarget`, for the same reason `watchStartupLine` uses
+// it: this runs before any validation, so it must not throw over a malformed DATABASE_URL.
+console.log(`serve — database ${dbConfig.env} · ${tryDescribeDbTarget(dbConfig) ?? INVALID_DB_URL}`);
 
 // Fail fast, before ever opening a connection. These three throw on their own — a missing/short
 // `HERALD_SESSION_SECRET`, an invalid `HERALD_TRUST_PROXY_HOPS`, no dashboard account configured —

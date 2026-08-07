@@ -1,4 +1,4 @@
-import { tryDescribeDbTarget, INVALID_DB_URL } from "../doctor/checks";
+import { tryDescribeDbTarget, INVALID_DB_URL } from "../config";
 import type { DbConfig } from "../config";
 import { isXCandidateRendering, type CandidateReason } from "../app/ReconcileXPublished";
 import type { ChannelRendering } from "../domain/formatting/models";

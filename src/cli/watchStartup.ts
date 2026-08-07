@@ -1,4 +1,5 @@
-import { outputRootResult, tryDescribeDbTarget, INVALID_DB_URL } from "../doctor/checks";
+import { outputRootResult } from "../doctor/checks";
+import { tryDescribeDbTarget, INVALID_DB_URL } from "../config";
 import type { DbConfig } from "../config";
 
 /**
