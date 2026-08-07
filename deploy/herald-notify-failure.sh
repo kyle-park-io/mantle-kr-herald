@@ -43,7 +43,12 @@ if [ -z "$UNIT" ]; then
   exit 1
 fi
 
-REPO_DIR="/home/kyle/code/mantle-kr-herald"
+# Derived from this script's own location, not hardcoded. Since 2026-08-07 the scheduled units run
+# out of the deploy checkout (%h/.herald/app) rather than the development tree, and this script is
+# invoked from there too — a hardcoded development path would send it back to read a *different*
+# tree's .env, which works today only because that file happens to be symlinked and would be
+# silently wrong the moment it is not. tests/deploy/workingDirectory.test.ts pins this shape.
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$REPO_DIR/.env"
 
 # Captured immediately, before anything else in this script runs, because it may not be readable

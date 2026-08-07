@@ -31,4 +31,11 @@ WorkingDirectory=/home/kyle/code/mantle-kr-herald
 # A generous but bounded backstop over the script's own internal 10s curl timeout — this must never
 # be the reason a failure notice hangs.
 TimeoutStartSec=30
-ExecStart=/home/kyle/code/mantle-kr-herald/deploy/herald-notify-failure.sh %i
+# The deploy checkout, not the development tree. This unit runs a script by absolute path rather
+# than through a WorkingDirectory, so it needs saying separately — and it is the path that matters
+# most: a scheduled unit running unmerged code fails loudly, while a failure *hook* running
+# unmerged code fails silently, because the only thing it would ever have said is that something
+# else failed. Merging an edit to this script has already broken the live alert once for ~6
+# minutes (PR #124). Updated by deploy/herald-deploy.sh; pinned by
+# tests/deploy/workingDirectory.test.ts.
+ExecStart=%h/.herald/app/deploy/herald-notify-failure.sh %i

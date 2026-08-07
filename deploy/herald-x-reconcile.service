@@ -30,7 +30,18 @@ OnFailure=herald-notify-failure@%n.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/kyle/code/mantle-kr-herald
+# The deploy checkout — merged `main` only, never the tree anyone edits. A user unit runs
+# `pnpm <script>` out of this directory, so whatever is checked out here IS what production
+# runs the next time the timer fires. While this pointed at the development checkout, every
+# feature branch was live in production the moment it was checked out: on 2026-08-07 a branch
+# adding `translations.published_text` made the 18:41 fire query a column production did not
+# have, which exited non-zero and fired the OnFailure= Telegram hook below. Nothing was wrong
+# with that branch — it simply was not merged yet.
+#
+# Updated only by deploy/herald-deploy.sh (fetch, hard reset to origin/main, install, relink
+# the git-ignored steering config, migrate). tests/deploy/workingDirectory.test.ts fails if
+# this line ever names a development checkout again.
+WorkingDirectory=%h/.herald/app
 
 # pnpm and node — neither is on a systemd user unit's default PATH. node must be reachable even
 # though pnpm is invoked below by its absolute path: pnpm's own file starts with

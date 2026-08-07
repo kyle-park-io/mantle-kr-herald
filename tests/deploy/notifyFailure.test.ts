@@ -27,7 +27,11 @@ import { REPO_ROOT } from "../../src/paths";
 
 const TEST_UNIT = "herald-x-reconcile.service";
 const REAL_SCRIPT_PATH = join(REPO_ROOT, "deploy", "herald-notify-failure.sh");
-const REAL_REPO_DIR_LINE = 'REPO_DIR="/home/kyle/code/mantle-kr-herald"';
+// Since 2026-08-07 the script derives REPO_DIR from its own location rather than hardcoding a
+// development path, because it is now invoked out of the deploy checkout (%h/.herald/app) — see
+// tests/deploy/workingDirectory.test.ts. The repoint below still has to override it, because the
+// throwaway copy this test writes lives in a temp directory whose parent is not a checkout at all.
+const REAL_REPO_DIR_LINE = 'REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"';
 
 let workDir: string;
 let repoDir: string;
