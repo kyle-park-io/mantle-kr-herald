@@ -59,3 +59,33 @@ export function extractMedia(text: string): ExtractedMedia {
 export function stripMedia(text: string): string {
   return extractMedia(text).text;
 }
+
+/**
+ * Rewrite every legacy `![](url)` marker line back to the canonical `[사진](url)`, and say how many
+ * were rewritten.
+ *
+ * Every reader here takes both spellings (`PHOTO_LINE` above, `web/src/media.ts`'s own copy,
+ * `ARTICLE_IMAGE` in domain/publish/articleMarkdown.ts), so this changes nothing about what the
+ * pipeline *can* do. What it protects is the label's only reason to exist: a reviewer reading
+ * `[사진]` and knowing what the line is without parsing a CDN url. The translating agent drops that
+ * label — 8 of 8 photo-carrying items in one production batch on 2026-08-07, against sources that
+ * all carried it — so the source's spelling is restored here rather than hoped for in a prompt.
+ *
+ * Line-anchored, exactly like `PHOTO_LINE`: an inline `![](url)` inside a sentence is not a media
+ * marker, and an `![alt](url)` with real alt text is a caption. Neither is this function's business,
+ * and `ARTICLE_IMAGE` embeds an article's inline images either way.
+ *
+ * `changed` is returned rather than logged so the caller decides what to do with it — see
+ * `SaveTranslation.run`, which surfaces it, and `checkGlossary`'s doc comment for the same
+ * report-don't-throw reasoning: this is drift worth seeing, never a reason to refuse a save.
+ */
+export function normalizePhotoMarkers(text: string): { text: string; changed: number } {
+  let changed = 0;
+  const lines = text.split("\n").map((line) => {
+    const photo = PHOTO_LINE.exec(line);
+    if (!photo || line.startsWith("[사진]")) return line;
+    changed++;
+    return `[사진](${photo[1]})`;
+  });
+  return { text: changed === 0 ? text : lines.join("\n"), changed };
+}

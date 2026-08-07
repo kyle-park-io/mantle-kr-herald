@@ -82,14 +82,14 @@ describe("lineage capture", () => {
     const res = await new SaveTranslation(noTranslationStore, noFewShot, () => "T", throwing).run({
       itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕", approve: false,
     });
-    expect(res).toEqual({ itemId: "x:1", promoted: false });
+    expect(res).toEqual({ itemId: "x:1", promoted: false, normalizedPhotoMarkers: 0 });
   });
 
   it("no lineage store injected = no append, unchanged behavior", async () => {
     const res = await new SaveTranslation(noTranslationStore, noFewShot, () => "T").run({
       itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕", approve: false,
     });
-    expect(res).toEqual({ itemId: "x:1", promoted: false });
+    expect(res).toEqual({ itemId: "x:1", promoted: false, normalizedPhotoMarkers: 0 });
   });
 });
 

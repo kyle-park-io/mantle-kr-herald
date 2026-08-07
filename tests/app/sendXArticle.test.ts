@@ -34,6 +34,19 @@ describe("SendXArticle", () => {
     expect(ledgerKeys.has("x:1")).toBe(true);
   });
 
+  // `renderArticle` writes an article's image blocks as `[사진](url)`, so a translation that kept
+  // the marker it was given — rather than rewriting it to `![]` — must still get its images
+  // uploaded and embedded. Before ARTICLE_IMAGE widened, this uploaded only the cover and published
+  // the body with a bare `[사진](url)` link where the photo belonged, with no error anywhere.
+  it("uploads and embeds an image carried as a [사진](url) marker", async () => {
+    const { d, uploaded, sent } = deps({ rows: [tr({ koreanText: "# 제목\n\n[사진](https://img/a.jpg)" })] });
+    const res = await new SendXArticle(d.translationStore as any, d.articleMeta, d.media, d.sender, d.ledger).run({});
+    expect(res).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(uploaded).toEqual(["https://img/a.jpg", "https://img/cover.jpg"]);
+    expect(sent[0].content_markdown).toContain('<typ:media media_id="M_a.jpg" />');
+    expect(sent[0].content_markdown).not.toContain("[사진](");
+  });
+
   it("skips a non-article translation and one already in the ledger", async () => {
     const { d } = deps({ articleMeta: async () => ({ isArticle: false }) });
     expect((await new SendXArticle(d.translationStore as any, d.articleMeta, d.media, d.sender, d.ledger).run({})).sent).toBe(0);

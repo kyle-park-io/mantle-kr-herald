@@ -1,3 +1,4 @@
+import { normalizePhotoMarkers } from "../domain/media/sourceMedia";
 import type { Translation } from "../domain/translation/models";
 import type { TranslationStore } from "../ports/TranslationStore";
 import type { FewShotStore } from "../ports/FewShotStore";
@@ -34,8 +35,13 @@ export class SaveTranslation {
     private readonly lineage?: LineageStore,
   ) {}
 
-  async run(input: SaveInput): Promise<{ itemId: string; promoted: boolean }> {
+  async run(input: SaveInput): Promise<{ itemId: string; promoted: boolean; normalizedPhotoMarkers: number }> {
     const timestamp = this.now();
+    // Every translation reaches the store through here — the agent's `translate:save`, the
+    // dashboard's edit, and the 되돌리기 path in createDeps — so this is the one place that can put
+    // the `[사진]` label back without a second write path racing `upsert`. See
+    // `normalizePhotoMarkers` for why the agent keeps dropping it and why restoring beats asking.
+    const { text: koreanText, changed: normalizedPhotoMarkers } = normalizePhotoMarkers(input.koreanText);
     // `upsert` writes a whole row (see PgTranslationStore), so a save that just constructs a fresh
     // Translation would silently drop postedUrl/postedAt/publishedText on any edit to an item
     // reconcile already retired. Reading the existing row first — rather than adding a second,
@@ -46,7 +52,7 @@ export class SaveTranslation {
       itemId: input.itemId,
       source: input.source,
       sourceText: input.sourceText,
-      koreanText: input.koreanText,
+      koreanText,
       status: input.approve ? "approved" : "translated",
       translatedAt: timestamp,
       approvedAt: input.approve ? timestamp : undefined,
@@ -60,7 +66,7 @@ export class SaveTranslation {
 
     if (this.lineage) {
       try {
-        await this.lineage.append({ itemId: input.itemId, stage: "translated", content: input.koreanText, status: translation.status, sourceText: input.sourceText, at: timestamp });
+        await this.lineage.append({ itemId: input.itemId, stage: "translated", content: koreanText, status: translation.status, sourceText: input.sourceText, at: timestamp });
       } catch (err) {
         console.warn(`[lineage] append failed for ${input.itemId}: ${(err as Error).message}`);
       }
@@ -70,8 +76,8 @@ export class SaveTranslation {
     // corpus is gated, so an oversized source (an X Article) does not dominate every future prompt.
     const promote = input.approve && input.sourceText.length <= MAX_FEW_SHOT_SOURCE_LENGTH;
     if (promote) {
-      await this.fewShotStore.add({ source: input.sourceText, target: input.koreanText, itemId: input.itemId });
+      await this.fewShotStore.add({ source: input.sourceText, target: koreanText, itemId: input.itemId });
     }
-    return { itemId: input.itemId, promoted: promote };
+    return { itemId: input.itemId, promoted: promote, normalizedPhotoMarkers };
   }
 }
