@@ -125,9 +125,14 @@ export function TranslationDetail(props: {
               게시된 글 보기 ↗
             </a>
             {/* When it went out, beside the link to it. A reviewer's first question about a row they
-                did not approve is "when did this happen?", and the answer is one field away. */}
+                did not approve is "when did this happen?", and the answer is one field away.
+
+                Labelled, because this header carries TWO dates: the `[YYMMDD]` prefix at the far
+                left is the *English source* post's date, and this is when our Korean copy actually
+                went out on X. Unlabelled they read as the same kind of thing, and the gap between
+                them — how long the item sat in review — is the very thing worth noticing. */}
             {kstStamp(props.item.postedAt) && (
-              <span className="text-[12px] text-faint">{kstStamp(props.item.postedAt)}</span>
+              <span className="text-[12px] text-faint">게시 시각 {kstStamp(props.item.postedAt)}</span>
             )}
           </>
         )}
@@ -152,7 +157,9 @@ export function TranslationDetail(props: {
           >
             게시된 글 보기 ↗
           </a>
-          {kstStamp(props.item.postedAt) && <span className="text-slate-ink/70">{kstStamp(props.item.postedAt)}</span>}
+          {kstStamp(props.item.postedAt) && (
+            <span className="text-slate-ink/70">게시 시각 {kstStamp(props.item.postedAt)}</span>
+          )}
         </p>
       )}
 

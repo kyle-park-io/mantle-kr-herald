@@ -116,7 +116,7 @@ describe("TranslationDetail — 게시됨 (posted)", () => {
     // 05:39 UTC is 14:39 the same day in Seoul. A reviewer's first question about a row nobody
     // approved is "when did this happen?" — and reading UTC as local would be nine hours wrong.
     mount(translation({ status: "posted", postedUrl: POSTED_URL, postedAt: "2026-07-31T05:39:41.000Z" }));
-    expect(screen.getByText("2026-07-31 14:39 KST")).toBeTruthy();
+    expect(screen.getByText("게시 시각 2026-07-31 14:39 KST")).toBeTruthy();
   });
 
   it("renders no timestamp when postedAt is absent, rather than an empty slot", () => {
@@ -128,7 +128,7 @@ describe("TranslationDetail — 게시됨 (posted)", () => {
   it("shows the timestamp on the reverted-item note too", () => {
     mount(translation({ status: "translated", postedUrl: POSTED_URL, postedAt: "2026-07-31T22:10:00.000Z" }));
     // 22:10 UTC is already the next day in Seoul — the case a naive ISO slice gets wrong.
-    expect(screen.getByText("2026-08-01 07:10 KST")).toBeTruthy();
+    expect(screen.getByText("게시 시각 2026-08-01 07:10 KST")).toBeTruthy();
   });
 
   it("offers 되돌리기 on a posted item and not on any other status", () => {
