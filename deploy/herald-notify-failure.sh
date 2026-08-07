@@ -7,10 +7,11 @@
 # script directly. Each source unit sets its own `OnFailure=herald-notify-failure@%n.service`; `%n`
 # expands to the failing unit's own full name before systemd resolves that target, so it becomes the
 # template's `%i`, which systemd hands to `ExecStart=` and this script reads as $1. Sends ONE
-# Telegram message naming the unit that failed, a short tail of *that* unit's own journal captured
-# right now, and the `journalctl` command to read more, then exits 0 unconditionally once past the
-# argument check below: a failure-handler that can itself fail is a loop, not a safety net, and
-# nothing here is worth the timer never firing again over.
+# Telegram message naming the unit that failed, a short tail of *that* unit's own output — from its
+# journal if the journal still has it, otherwise from the durable run log
+# deploy/herald-run-logged.sh leaves under %h/.herald/logs/ — and the command to read more, then
+# exits 0 unconditionally once past the argument check below: a failure-handler that can itself fail
+# is a loop, not a safety net, and nothing here is worth the timer never firing again over.
 #
 # Takes the failing unit's name as $1 rather than hardcoding it. This used to hardcode
 # herald-watch.service, the only unit this hook served at the time; once herald-x-reconcile.service
@@ -63,6 +64,38 @@ ENV_FILE="$REPO_DIR/.env"
 # failure — this hook still has to reach `exit 0` regardless.
 LOG_TAIL_LINES=5
 LOG_EXCERPT="$(journalctl --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat 2>/dev/null)" || LOG_EXCERPT=""
+# Where the reader is pointed for more, once they open the alert. Replaced below if the excerpt
+# turns out to have come from the durable run log instead of the journal.
+LOG_POINTER="journalctl --user -u ${UNIT} -n 50 --no-pager"
+
+# Fallback: the durable run log deploy/herald-run-logged.sh writes for every scheduled run. This is
+# the payoff of that script existing. "Captured immediately" above buys nothing when the journal was
+# already rotated *before* this hook ran — an eight-minute window is not much of a window, and a run
+# that failed at minute nine of a thirty-minute TimeoutStartSec= has already outlived its own log.
+# The run log has no such window: the wrapper's tee has flushed and exited before ExecStart= returns,
+# which is before systemd transitions the unit to failed and activates this hook, so by the time
+# this line runs the file is complete on disk.
+#
+# Same root expression as the wrapper's, character for character — tests/deploy/runLogging.test.ts
+# pins the two equal, because a wrapper writing where this hook does not look is a fallback that
+# silently never fires while both scripts keep passing their own tests. Same `${UNIT%.service}`
+# per-unit directory, so this reads only the failing unit's own runs.
+#
+# Newest by NAME, not by mtime: the run logs are UTC-timestamped, `ls -1` sorts them
+# lexicographically, and mtime ordering is exactly what this machine's constantly stepping clock
+# makes untrustworthy — the same clock that destroyed the journal this fallback exists for.
+if [ -z "$LOG_EXCERPT" ]; then
+  LOG_ROOT="${HERALD_LOG_DIR:-${HOME:-}/.herald/logs}"
+  RUN_LOG_DIR="$LOG_ROOT/${UNIT%.service}"
+  RUN_LOG="$(ls -1 "$RUN_LOG_DIR"/*.log 2>/dev/null | tail -n 1)" || RUN_LOG=""
+  if [ -n "$RUN_LOG" ]; then
+    LOG_EXCERPT="$(tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null)" || LOG_EXCERPT=""
+    # Point at the file, not at a journalctl invocation that just came back empty. Never fatal on
+    # its own either: an unreadable or absent run log degrades to an empty excerpt and the plain
+    # notice below, exactly as an unreadable journal does.
+    [ -n "$LOG_EXCERPT" ] && LOG_POINTER="tail -n 50 ${RUN_LOG}"
+  fi
+fi
 
 # Cap the excerpt independent of how long the captured lines actually are — a single stack-trace
 # or a long `claude -p` error can dwarf a phone screen on its own. Keeps the tail (the most recent,
@@ -130,11 +163,13 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
   if [ -n "$LOG_EXCERPT" ]; then
     TEXT="⚠ ${UNIT} failed
 ${LOG_EXCERPT}
-— journalctl --user -u ${UNIT} -n 50 --no-pager"
+— ${LOG_POINTER}"
   else
-    # journalctl above returned nothing (or failed outright) — still send the alert; the pointer
-    # is the fallback the excerpt exists to make unnecessary, not a replacement for it.
-    TEXT="⚠ ${UNIT} failed (no journal lines captured) — journalctl --user -u ${UNIT} -n 50 --no-pager"
+    # Neither source had anything: the journal was already rotated (or unreadable), AND there is no
+    # durable run log — the unit never reached deploy/herald-run-logged.sh, or could not write under
+    # %h/.herald/logs. Still send the alert; the pointer is the fallback the excerpt exists to make
+    # unnecessary, not a replacement for it.
+    TEXT="⚠ ${UNIT} failed (no journal lines captured, and no durable run log either) — journalctl --user -u ${UNIT} -n 50 --no-pager"
   fi
   # -4: this machine's IPv6 route to api.telegram.org is known broken while the AAAA record still
   # resolves (see src/cli/preferIpv4.ts) — curl itself is unaffected by that bug, but there is no

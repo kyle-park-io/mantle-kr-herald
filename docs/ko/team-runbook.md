@@ -817,7 +817,27 @@ bash deploy/herald-deploy.sh
   (유닛 이름 없이 `systemctl --user status`만 실행하면 systemd 사용자 매니저 전체 상태만 보이고,
   타이머가 켜져 있든 멈춰 있든 설치조차 안 됐든 화면이 똑같습니다 — 여기서는 반드시 유닛 이름을
   붙이세요)
-- **로그** — `journalctl --user -u herald-watch`
+- **로그** — `ls ~/.herald/logs/herald-watch/` 로 실행 목록을, `cat` 으로 그 실행 하나를 봅니다.
+  실행마다 파일 하나(UTC 타임스탬프 이름)이고, 유닛당 최근 60개까지 남습니다 — watch는 2시간
+  주기이니 약 5일치, x-reconcile은 6시간 주기이니 약 15일치입니다.
+
+  ```bash
+  ls -1 ~/.herald/logs/herald-watch/ | tail -5      # 최근 실행 5개
+  cat "$(ls -1 ~/.herald/logs/herald-watch/*.log | tail -1)"   # 가장 최근 실행 전체
+  ```
+
+  **`journalctl --user -u herald-watch` 도 여전히 같은 내용을 받지만, 이 머신에서는 몇 분 뒤면
+  사라집니다.** journald는 시계가 뒤로 점프할 때마다 저널을 회전시키는데, 이 박스는 WSL2 호스트
+  동기화와 `systemd-timesyncd`가 둘 다 시계를 계속 밟습니다 — 디스크에 365MB가 쌓여 있어도 실제로
+  읽히는 구간은 **8분 남짓**으로 측정됐습니다. 실제로 02:17에 **성공한** 실행이 같은 날 03:30에는
+  한 줄도 남아 있지 않았습니다. 그래서 "어젯밤 tick이 뭘 했지"는 저널로는 답이 안 나오고,
+  `~/.herald/logs/` 가 그 답을 갖고 있습니다. 시계 자체를 고치는 건 root 권한이 필요한 별개
+  작업입니다.
+
+  파일에 남는 내용은 저널과 **글자 그대로 같습니다** — 각 실행은 `=== <유닛> started … — <명령> ===`
+  로 시작해서 `=== <유닛> exited <종료코드> at … ===` 로 끝나므로, 성공/실패와 실제로 실행된
+  명령줄(`--yes`가 붙었는지 같은 것)을 파일만 보고 알 수 있습니다. 이 래핑은
+  `deploy/herald-run-logged.sh`가 합니다.
 - **알림 자체가 안 갔는지 확인** —
   `journalctl --user -u herald-notify-failure@herald-watch.service.service`.
   `herald-watch.service`의 로그와는 별도 유닛이라, "실패는 났는데 텔레그램에 아무것도 안 왔다"를
@@ -1074,6 +1094,14 @@ cp deploy/herald-watch.service deploy/herald-x-reconcile.service deploy/herald-x
 rm -f ~/.config/systemd/user/herald-notify-failure.service   # 템플릿과 같이 두면 안 됩니다
 systemctl --user daemon-reload
 ```
+
+**순서 주의 — 유닛을 복사하기 전에 `bash deploy/herald-deploy.sh`를 먼저 돌리세요.** 두 스케줄
+유닛의 `ExecStart=`는 이제 배포 체크아웃 안의 래퍼
+(`%h/.herald/app/deploy/herald-run-logged.sh`, 위 "로그" 항목 참고)를 거쳐 명령을 실행합니다.
+`~/.herald/app`이 아직 그 스크립트가 없는 커밋에 머물러 있는 상태에서 유닛만 복사하면, 다음 타이머
+실행은 **존재하지 않는 `ExecStart=`**를 돌리려다 실패합니다. 실패 훅
+(`herald-notify-failure@.service`)이 같은 이유로 이미 배포 체크아웃 경로를 가리키고 있는 것과 같은
+제약이고, 방향도 같습니다: **먼저 배포, 그다음 유닛 설치.**
 
 **여기서 아직 `enable --now`를 하지 마세요.** watch 스케줄러의 설치 5번("타이머를 켜기 전에 손으로
 한 번 돌려봅니다")에 해당하는 단계가 이 유닛에는 **그대로 복사되지 않습니다** —

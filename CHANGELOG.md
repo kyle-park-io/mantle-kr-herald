@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Both scheduled units now leave a durable run log under `~/.herald/logs/`, because the journal on
+  this box is a roughly eight-minute window rather than a record.** journald rotates on every
+  backwards clock step and this machine's WSL2 host sync and `systemd-timesyncd` both step the clock
+  constantly: 365MB of journal on disk was measured holding under ten minutes of history, and a
+  **successful** `herald-watch` run at 02:17 had zero recoverable lines by 03:30 the same morning.
+  `deploy/herald-notify-failure.sh` already worked around this for the failure path by capturing a
+  five-line excerpt the instant a unit fails; a run that succeeded and did the wrong thing, or any
+  post-hoc investigation, had nothing at all. `deploy/herald-run-logged.sh` now wraps each unit's
+  command (`ExecStart=… herald-run-logged.sh %n …/pnpm watch`), tees its output to
+  `~/.herald/logs/<unit>/<UTC timestamp>.log`, and keeps the newest 60 runs per unit — five days of
+  watch at its two-hour cadence, fifteen of reconcile at its six-hour one. Each run is framed by
+  `=== <unit> started … — <command> ===` / `=== <unit> exited <status> at … ===`, so a past run's
+  result and the exact command line it ran (whether `--yes` was passed, for instance) are readable
+  from the file alone.
+  - **The journal still receives everything.** `StandardOutput=append:` was the obvious one-line
+    alternative and was measured before being rejected: a scratch unit using it logged **zero**
+    application lines to `journalctl --user -u <unit>` while an identical control unit logged
+    normally — it replaces the journal rather than adding to it, which would have traded a working
+    failure alert for a log file. (Also measured, for the record: systemd opens an `append:` file
+    once per `Exec*` line, not once per unit, so an `ExecStartPre=` rotation works but orphans its
+    own output into the previous run's file.)
+  - **The command's exit status reaches systemd unchanged**, which is the whole risk of the design:
+    both units set `OnFailure=herald-notify-failure@%n.service`, and a wrapper that swallowed a
+    non-zero exit would not lose a log line, it would switch off the Telegram alert for a dead
+    scheduler permanently and invisibly. A bare `cmd | tee log` reports *tee's* status. Proven end
+    to end against real systemd — a scratch unit whose command exits 7 produces `ExecMainStatus=7`,
+    `Result=exit-code`, and a fired `OnFailure=` — and held by `tests/deploy/runLogging.test.ts`,
+    which runs the real script against commands exiting 0, 1, 7 and 42.
+  - **`herald-notify-failure.sh` falls back to the run log when the journal excerpt comes back
+    empty**, and then points the reader at the file instead of at a `journalctl` invocation already
+    known to return nothing. This is the actual payoff: "captured immediately" buys nothing when the
+    journal rotated *before* the hook ran, and a run that failed at minute nine of a thirty-minute
+    `TimeoutStartSec=` has already outlived its own journal. Its "never fatal, always exit 0"
+    contract is unchanged, including on the new path. The newest run is chosen by **name**, not
+    mtime — mtime ordering is exactly what a constantly stepping clock makes untrustworthy.
 - **`pnpm lineage --activity [--since <date>]` — a date × stage rollup of the append-only lineage,
   because "when did what happen" had no command and the question kept being put to `pnpm status`
   instead.** `status` counts `status` columns, which say where a record stands *now*; a record that
