@@ -49,13 +49,32 @@ export function KindBadge({ kind }: { kind?: "post" | "article" }) {
 
 const preview = (t: Translation) => (t.koreanText || t.sourceText).replace(/\s+/g, " ").trim();
 
+/**
+ * Newest first, by the date the row actually shows — its `[YYMMDD]` prefix, which is the *source*
+ * post's date (`sourcePostedAt`), not when we translated it.
+ *
+ * Sorted here rather than in the store: `loadAll()`'s `order by ordinal` is insertion order, and
+ * `PgTranslationStore`'s own doc comment makes that a contract other consumers rely on (`db:export`'s
+ * round-trip reproduces it). Reading order is a property of this screen, so it belongs on this screen.
+ *
+ * `sourcePostedAt` is joined from the source item and can be absent, so `translatedAt` — always
+ * present — is the fallback; without it a row missing that join would sink to the bottom as though it
+ * were the oldest thing in the queue. The itemId tiebreak keeps two posts sharing a timestamp from
+ * swapping places between renders (X ids increase with time, so it also happens to be right).
+ */
+const newestFirst = (a: Translation, b: Translation): number => {
+  const at = (t: Translation) => t.sourcePostedAt ?? t.translatedAt;
+  return at(b).localeCompare(at(a)) || b.itemId.localeCompare(a.itemId, undefined, { numeric: true });
+};
+
 export function TranslationList(props: {
   items: Translation[];
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
-  const shown = props.items.filter((t) => filter === "all" || t.status === filter);
+  // Copied before sorting: `props.items` is App's state array, and sorting in place would mutate it.
+  const shown = props.items.filter((t) => filter === "all" || t.status === filter).slice().sort(newestFirst);
   return (
     <div className="flex h-full flex-col">
       <div className="sticky top-0 z-10 border-b border-line bg-surface/90 px-3 py-2.5 backdrop-blur">
