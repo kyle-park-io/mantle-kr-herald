@@ -45,4 +45,20 @@ describe("JsonlLineageStore", () => {
     await s.append(entry({ stage: "converted", variant: "announcement" }));
     expect(await s.listItems()).toEqual([{ itemId: "x:1", entries: 2, lastStage: "converted" }]);
   });
+
+  it("listEvents flattens every item's file into one list", async () => {
+    const s = new JsonlLineageStore(dir);
+    await s.append(entry({ itemId: "x:1", stage: "translated" }));
+    await s.append(entry({ itemId: "lark:2", stage: "converted" }));
+    const events = await s.listEvents();
+    // Order across items is unspecified by the port (one file per item, `readdir` order), so this
+    // asserts membership rather than sequence.
+    expect(events).toHaveLength(2);
+    expect(events.map((e) => e.itemId).sort()).toEqual(["lark:2", "x:1"]);
+    expect(events.every((e) => e.at === "2026-07-28T00:00:00.000Z")).toBe(true);
+  });
+
+  it("listEvents returns [] when the directory does not exist", async () => {
+    expect(await new JsonlLineageStore(join(dir, "nope")).listEvents()).toEqual([]);
+  });
 });

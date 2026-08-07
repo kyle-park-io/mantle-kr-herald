@@ -44,6 +44,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `TimeoutStartSec=` has already outlived its own journal. Its "never fatal, always exit 0"
     contract is unchanged, including on the new path. The newest run is chosen by **name**, not
     mtime — mtime ordering is exactly what a constantly stepping clock makes untrustworthy.
+- **`pnpm lineage --activity [--since <date>]` — a date × stage rollup of the append-only lineage,
+  because "when did what happen" had no command and the question kept being put to `pnpm status`
+  instead.** `status` counts `status` columns, which say where a record stands *now*; a record that
+  has moved on carries no trace of ever having been anywhere else. That cost a wrong conclusion: a
+  hand-rolled `select status, count(*) from translations` returned `approved 0` and was read as "1차
+  검수 has stalled for ten days", when `x:reconcile` had simply retired 21 items to `posted` (18 of
+  them with a null `approved_at`, published by hand and matched later) and the day before had carried
+  22 events. `lineage` is the only append-only table in the schema, so it is the only place the past
+  still exists — and this command reads it and nothing else.
+  - **Rolled up in Asia/Seoul, not UTC.** A UTC rollup is wrong in both directions, not merely
+    shifted: 08:00 KST files under the *previous* UTC date, so a Korean working day begins on the day
+    before it; and 22:00 KST with 01:00 the next morning share a UTC date, so an evening and the
+    small hours after it merge into one. `--since` floors on the same Seoul date the buckets use —
+    normalising it to an instant the way `HERALD_TRANSLATE_SINCE` does would make `--since
+    2026-08-07` mean 09:00 KST and silently drop that morning's review while still claiming to cover
+    the day.
+  - **Every row is labelled `machine`, `human` or `either`, and the split is not by stage.** Read off
+    every caller of `LineageStore.append` and every construction site of the five use-cases behind
+    them: `converted` is machine-only (`convert:save`; no dashboard route builds `SaveConversion`);
+    both `approved` shapes and every `forked` shape are human-only (`ApproveRendering` and
+    `SaveOutletOverride` exist only in `createDeps`, and the scheduler's agent is denied
+    `Bash(*--approve*)` outright); and an unapproved `translated` or `rendered` is written
+    byte-identically by the agent's `translate:save`/`format:save` **and** by a reviewer's dashboard
+    edit, so those count as `either` rather than being guessed. Presenting `translated` — which the
+    watch scheduler's own two-hourly ticks dominate — beside the rest as one "activity" number would
+    mislead in the opposite direction from the bug above. All three labels always print with their
+    counts, so a `human 0` cannot be misread as "not measured" the way `approved 0` was.
+  - `pnpm status` now closes with a pointer here, saying why its counts are not a history.
+  - Existing `pnpm lineage` readings are untouched: no args still lists items, `--id <id>` and a bare
+    positional still print one item's journey. `--since` without `--activity`, and `--activity` with
+    an item id, are both refused rather than silently ignored.
 
 - **`게시됨으로` — the other half of 되돌리기, which until now was a one-way door.** 되돌리기 disputes a
   reconcile match and moves an item off `posted`; nothing could move it back. Not by oversight, but as

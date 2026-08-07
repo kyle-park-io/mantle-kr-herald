@@ -6,13 +6,22 @@
  */
 export type LineageStage = "translated" | "converted" | "rendered" | "forked";
 
-export interface LineageEntry {
+/**
+ * A lineage row with its text left behind — when something happened and what kind of thing it was,
+ * and nothing that grows with the copy.
+ *
+ * Split out of `LineageEntry` for `activity.ts`, which counts rows and never reads a word of one.
+ * `content` on a single entry can be a whole X Article body (3,774–12,215 characters — see
+ * `SaveTranslation`'s `MAX_FEW_SHOT_SOURCE_LENGTH` comment for where those numbers come from), and
+ * a date rollup over the whole table would otherwise pull every byte of every version of every
+ * item across the wire to do arithmetic on `at`. `LineageStore.listEvents` projects to this shape
+ * in SQL for exactly that reason, and `LineageEntry` extends it rather than repeating its fields,
+ * so a full entry is always a valid event and the two can never disagree about what a stage or a
+ * status is.
+ */
+export interface LineageEvent {
   itemId: string;
   stage: LineageStage;
-  // stage qualifier: type ("announcement"), "type/channel" ("announcement/telegram"), or — on a
-  // "forked" entry — "type/outletId" ("announcement/tg-blockchain"), the same shape one axis over.
-  variant?: string;
-  content: string; // the meaningful text produced at this stage
   /**
    * Normally the record's own status at this point ("translated", "rendered", "approved"). One
    * value is an *event* rather than a status: **`"reverted"`** means this entry records a removal
@@ -25,6 +34,13 @@ export interface LineageEntry {
    * "(내용 동일)". Any future producer of a removal should use the same string.
    */
   status?: string;
-  sourceText?: string; // only on a "translated" entry: the English 원문
   at: string; // ISO timestamp
+}
+
+export interface LineageEntry extends LineageEvent {
+  // stage qualifier: type ("announcement"), "type/channel" ("announcement/telegram"), or — on a
+  // "forked" entry — "type/outletId" ("announcement/tg-blockchain"), the same shape one axis over.
+  variant?: string;
+  content: string; // the meaningful text produced at this stage
+  sourceText?: string; // only on a "translated" entry: the English 원문
 }

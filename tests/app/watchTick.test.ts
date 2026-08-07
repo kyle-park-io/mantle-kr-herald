@@ -365,6 +365,31 @@ describe("WatchTick", () => {
     expect(calls).toEqual([]);
   });
 
+  it("still reads the Translated total out of a status that now points at `pnpm lineage --activity`", async () => {
+    // `formatStatus` grew a two-line pointer telling a reader that these counts are current states
+    // rather than a history (`src/status/pipeline.ts`). This stage's parser is line-anchored with
+    // `m`, so prose below the stages is harmless — but "harmless" is a claim about a regex against
+    // text someone will edit again, and getting it wrong fails every scheduled tick, not a page.
+    // Asserted through the real formatter for the reason `statusStdout`'s own comment gives.
+    expect(statusStdout(7)).toContain("pnpm lineage --activity");
+
+    let translated = 7;
+    const run = async (script: string, args: string[]): Promise<StageResult> => {
+      if (script === "collect") return { ok: true, stdout: COLLECTED_2 };
+      if (script === "translate:prepare") return { ok: true, stdout: PREPARED_2 };
+      if (script === "status") return { ok: true, stdout: statusStdout(translated) };
+      return { ok: true, stdout: NOTHING_TO_ALIGN };
+    };
+    // Both items saved: the tick may only pass if the parser read 7 and then 9 out of that output.
+    const { agent, calls } = recordingAgent(() => { translated += 2; });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(report.failure).toBeUndefined();
+    expect(calls).toEqual(["translation"]);
+  });
+
   // --- a clean-but-idle agent is not a success ------------------------------------------------
 
   it("fails the tick when the agent exits cleanly without saving anything", async () => {

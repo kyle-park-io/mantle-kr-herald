@@ -105,4 +105,32 @@ describe("PgLineageStore", () => {
     db = await createTestDb();
     expect(await new PgLineageStore(db).listItems()).toEqual([]);
   });
+
+  it("listEvents returns every row across every item, without its text", async () => {
+    // The projection is the reason this method exists rather than a `loadAll()`: the activity
+    // rollup counts rows and reads no copy, and `content` here is every version of every item.
+    db = await createTestDb();
+    const s = new PgLineageStore(db);
+    await s.append(entry({ itemId: "x:1", stage: "translated", content: "본문", sourceText: "body" }));
+    await s.append(entry({ itemId: "lark:2", stage: "converted", status: "converted", variant: "announcement" }));
+    const events = await s.listEvents();
+    expect(events).toEqual([
+      { itemId: "x:1", stage: "translated", status: "translated", at: "2026-07-28T00:00:00.000Z" },
+      { itemId: "lark:2", stage: "converted", status: "converted", at: "2026-07-28T00:00:00.000Z" },
+    ]);
+  });
+
+  it("listEvents omits an absent status rather than returning null", async () => {
+    db = await createTestDb();
+    const s = new PgLineageStore(db);
+    await s.append({ itemId: "x:1", stage: "translated", content: "안녕", at: "2026-07-28T00:00:00.000Z" });
+    const [event] = await s.listEvents();
+    expect(event).not.toHaveProperty("status", null);
+    expect(event?.status).toBeUndefined();
+  });
+
+  it("listEvents returns [] when no entries are stored", async () => {
+    db = await createTestDb();
+    expect(await new PgLineageStore(db).listEvents()).toEqual([]);
+  });
 });

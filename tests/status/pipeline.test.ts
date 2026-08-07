@@ -123,4 +123,34 @@ describe("formatStatus", () => {
     expect(out).toContain("(pending 0 · approved 1 · posted 0)");
     expect(out).toContain("Published (drive)");
   });
+
+  it("points at `pnpm lineage --activity`, so a count is not read as a history", () => {
+    const out = formatStatus(
+      pipelineStages({ collected: 0, translations: [], variants: [], renderings: [], published: [] }),
+    );
+    expect(out).toContain("pnpm lineage --activity");
+    // The pointer has to say *why*, not just name a command: "approved 0" was misread precisely
+    // because nothing said the number stops counting an item once it is posted.
+    expect(out).toContain("current states, not a history");
+  });
+
+  it("adds no line that `WatchTick`'s TRANSLATED_LINE could match ahead of the real stage line", () => {
+    // Copied from `src/app/WatchTick.ts` deliberately — this asserts the *parser's* view of this
+    // formatter's output, and importing the private constant would widen that module's surface for
+    // a test. `tests/app/watchTick.test.ts` runs the real parser over this same output; this one
+    // pins the property that makes it safe, which is that exactly one line can ever match.
+    const TRANSLATED_LINE = /^\s*Translated\s+(\d+)/;
+    const out = formatStatus(
+      pipelineStages({
+        collected: 128,
+        translations: Array.from({ length: 41 }, () => ({ status: "posted" })),
+        variants: [],
+        renderings: [],
+        published: [],
+      }),
+    );
+    const matches = out.split("\n").filter((l) => TRANSLATED_LINE.test(l));
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatch(/^\s*Translated\s+41/);
+  });
 });
