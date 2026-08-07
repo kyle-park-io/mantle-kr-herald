@@ -2,9 +2,23 @@
 import type { ApiDeps } from "../../src/adapters/web/apiHandlers";
 import { SESSION_TTL_MS } from "../../src/domain/auth/session";
 import type { ClientIpConfig } from "../../src/config";
+import type { FunnelCounts } from "../../src/status/pipeline";
 
 /** Off — the safe default `loadClientIpConfig()` itself returns when `HERALD_TRUST_PROXY` is unset. */
 export const TEST_IP_CONFIG: ClientIpConfig = { trustProxy: false, trustedHopsFromEnd: 1 };
+
+/**
+ * An empty funnel, for the tests that need a whole `StatusView` but nothing from this part of it.
+ * Named rather than inlined five times: `funnelCounts` gains a stage roughly as often as the
+ * pipeline does, and five hand-written literals is five places to forget.
+ */
+export const EMPTY_FUNNEL: FunnelCounts = {
+  collected: { items: 0, rows: 0 },
+  translated: { items: 0, rows: 0 },
+  converted: { items: 0, rows: 0 },
+  rendered: { items: 0, rows: 0 },
+  published: { items: 0, rows: 0 },
+};
 
 /**
  * A fixed secret so a caller (`httpServer.test.ts`) can sign a matching cookie itself, rather than
@@ -64,7 +78,7 @@ export function fakeDeps(): ApiDeps {
     ...fakeRenderingDeps(),
     ...fakeBoardDeps(),
     ...fakeConvertFormatDeps(),
-    loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true }),
+    loadStatus: async () => ({ storageMode: "cloud", funnel: EMPTY_FUNNEL, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true }),
     loadPublishState: async () => [],
     loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
     xMaxWeighted: 280,

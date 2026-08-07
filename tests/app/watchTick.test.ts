@@ -38,7 +38,7 @@ function statusStdout(translated: number): string {
         translations: Array.from({ length: translated }, () => ({ status: "translated" })),
         variants: [],
         renderings: [],
-        published: 0,
+        published: [],
       }),
     ),
   ].join("\n");

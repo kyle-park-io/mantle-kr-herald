@@ -105,7 +105,15 @@ function makeDeps(
     approveRendering,
     loadStatus: async () => ({
       storageMode: "cloud" as const,
-      funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
+      funnel: {
+        collected: { items: 5, rows: 5 },
+        translated: { items: 3, rows: 3 },
+        // Distinct items and rows deliberately differ past the branch, so a handler that
+        // flattened the tally back to one number would show up here.
+        converted: { items: 2, rows: 6 },
+        rendered: { items: 2, rows: 4 },
+        published: { items: 1, rows: 3 },
+      },
       sync: { synced: 1, needsRepublish: 2, unpublished: 0 },
       availableTargets: ["local"],
       integrations: [],
@@ -361,7 +369,15 @@ describe("handleApi", () => {
     expect(res.status).toBe(200);
     expect(res.json).toEqual({
       storageMode: "cloud",
-      funnel: { collected: 5, translated: 3, converted: 2, rendered: 4, published: 1 },
+      funnel: {
+        collected: { items: 5, rows: 5 },
+        translated: { items: 3, rows: 3 },
+        // Distinct items and rows deliberately differ past the branch, so a handler that
+        // flattened the tally back to one number would show up here.
+        converted: { items: 2, rows: 6 },
+        rendered: { items: 2, rows: 4 },
+        published: { items: 1, rows: 3 },
+      },
       sync: { synced: 1, needsRepublish: 2, unpublished: 0 },
       availableTargets: ["local"],
       integrations: [],

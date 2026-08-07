@@ -34,7 +34,13 @@ function stubFetch() {
       return new Response(
         JSON.stringify({
           storageMode: "local",
-          funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 },
+          funnel: {
+            collected: { items: 0, rows: 0 },
+            translated: { items: 0, rows: 0 },
+            converted: { items: 0, rows: 0 },
+            rendered: { items: 0, rows: 0 },
+            published: { items: 0, rows: 0 },
+          },
           sync: { synced: 0, needsRepublish: 0, unpublished: 0 },
           availableTargets: ["local"],
           integrations: [],
@@ -123,7 +129,13 @@ describe("App's data refetch on authEpoch", () => {
         return new Response(
           JSON.stringify({
             storageMode: "local",
-            funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 },
+            funnel: {
+            collected: { items: 0, rows: 0 },
+            translated: { items: 0, rows: 0 },
+            converted: { items: 0, rows: 0 },
+            rendered: { items: 0, rows: 0 },
+            published: { items: 0, rows: 0 },
+          },
             sync: { synced: 0, needsRepublish: 0, unpublished: 0 },
             availableTargets: ["local"],
             integrations: [],
@@ -160,7 +172,13 @@ describe("App's data refetch on authEpoch", () => {
         return new Response(
           JSON.stringify({
             storageMode: "local",
-            funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 },
+            funnel: {
+            collected: { items: 0, rows: 0 },
+            translated: { items: 0, rows: 0 },
+            converted: { items: 0, rows: 0 },
+            rendered: { items: 0, rows: 0 },
+            published: { items: 0, rows: 0 },
+          },
             sync: { synced: 0, needsRepublish: 0, unpublished: 0 },
             availableTargets: ["local"],
             integrations: [],
@@ -184,5 +202,62 @@ describe("App's data refetch on authEpoch", () => {
     // board for the rest of the session, in the driver's English, telling the reviewer their signed-in
     // dashboard is not signed in.
     expect(screen.queryByText("unauthenticated")).toBeNull();
+  });
+});
+
+/**
+ * The header funnel used to read `수집 134 → 번역 23 → 변환 10 → 렌더 13 → 발행 16`, and every one of
+ * those arrows was a claim the data does not support. Past the translation stage a row stops being
+ * an item — a variant is `(itemId, type)`, a rendering `(itemId, type, channel)`, a publish-ledger
+ * row `(itemId, status, target)` — so the line appeared to *gain* work between 변환 and 렌더 when
+ * three items had simply fanned out twice. And 발행 is not downstream of 렌더 at all: it counts the
+ * translation markdown uploaded to Drive, a sibling branch off 번역, with published items that have
+ * no rendering to their name.
+ */
+describe("App's header funnel", () => {
+  it("names items and rows separately, and draws no arrow between stages", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/translations")) return new Response(JSON.stringify([]), { status: 200 });
+        if (url.endsWith("/api/publish/state")) return new Response(JSON.stringify([]), { status: 200 });
+        if (url.endsWith("/api/status")) {
+          return new Response(
+            JSON.stringify({
+              storageMode: "cloud",
+              funnel: {
+                collected: { items: 134, rows: 134 },
+                translated: { items: 23, rows: 23 },
+                converted: { items: 3, rows: 10 },
+                rendered: { items: 3, rows: 13 },
+                published: { items: 9, rows: 16 },
+              },
+              sync: { synced: 0, needsRepublish: 0, unpublished: 0 },
+              availableTargets: ["local"],
+              integrations: [],
+              sheetLinks: {},
+              dbEnv: "production",
+            }),
+            { status: 200 },
+          );
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    const funnel = await screen.findByTestId("funnel");
+    const stage = (key: string) =>
+      [...screen.getByTestId(`funnel-${key}`).querySelectorAll("span")].map((s) => s.textContent).join(" ");
+
+    // Items lead — the only count comparable with the stage before. Rows follow, named as rows, and
+    // only where the two differ: at 수집 and 번역 one row *is* one item, so a `건` there would be noise.
+    expect(stage("collected")).toBe("수집 134");
+    expect(stage("translated")).toBe("번역 23");
+    expect(stage("converted")).toBe("변환 3 10건");
+    expect(stage("rendered")).toBe("렌더 3 13건");
+    expect(stage("published")).toBe("발행 9 16건");
+    // No arrow: this pipeline branches, and a funnel is the wrong picture of it.
+    expect(funnel.textContent).not.toContain("→");
   });
 });

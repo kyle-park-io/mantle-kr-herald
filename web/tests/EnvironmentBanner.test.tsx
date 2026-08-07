@@ -7,7 +7,13 @@ import type { AppStatus } from "../src/types";
 const baseStatus: AppStatus = {
   storageMode: "local",
   availableTargets: ["local"],
-  funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 },
+  funnel: {
+    collected: { items: 0, rows: 0 },
+    translated: { items: 0, rows: 0 },
+    converted: { items: 0, rows: 0 },
+    rendered: { items: 0, rows: 0 },
+    published: { items: 0, rows: 0 },
+  },
   sync: { synced: 0, needsRepublish: 0, unpublished: 0 },
   integrations: [],
   sheetLinks: {},

@@ -10,6 +10,7 @@ import type { ConversionStore } from "../../ports/ConversionStore";
 import type { SaveRendering } from "../../app/SaveRendering";
 import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
+import type { FunnelCounts } from "../../status/pipeline";
 import { emitAll } from "../../domain/formatting/emitters";
 import type { ApiTranslation } from "./attachKind";
 import type { SheetLink, ClientIpConfig } from "../../config";
@@ -34,7 +35,9 @@ export interface IntegrationStatus {
 
 export interface StatusView {
   storageMode: StorageMode;
-  funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
+  /** Per stage, the distinct items that reached it and the rows they produced there — see
+   *  `src/status/pipeline.ts`'s `funnelCounts`, which the CLI's own funnel is built from too. */
+  funnel: FunnelCounts;
   sync: { synced: number; needsRepublish: number; unpublished: number };
   availableTargets: ("local" | "google" | "lark")[];
   integrations: IntegrationStatus[];

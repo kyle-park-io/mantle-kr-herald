@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api } from "./api";
 import type { Translation, AppStatus, PublishStateRow } from "./types";
 import { TranslationList } from "./components/TranslationList";
@@ -19,6 +19,12 @@ type Mode = "translations" | "renderings";
  */
 const modeFromHash = (): Mode => (window.location.hash === "#renderings" ? "renderings" : "translations");
 
+/**
+ * Not a funnel, despite the name it kept: the stages after 번역 branch rather than narrow, and 발행
+ * hangs off 번역 rather than off 렌더 (it counts the translation markdown on Drive). The separator
+ * is `·` and not `→` for exactly that reason — an arrow claims "of these N, M advanced", which is
+ * false at every step here. Each stage shows its item count, plus its row count when the two differ.
+ */
 const FUNNEL_STEPS = [
   ["수집", "collected"],
   ["번역", "translated"],
@@ -294,14 +300,32 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                     )}
                   </span>
                 )}
-                <div className="flex items-center gap-1.5 text-[13px]">
-                  {FUNNEL_STEPS.map(([label, key], i) => (
-                    <div key={key} className="flex items-center gap-1.5">
-                      {i > 0 && <span className="text-line-strong">→</span>}
-                      <span className="text-muted">{label}</span>
-                      <span className="font-mono text-xs font-semibold tabular-nums">{status.funnel[key]}</span>
-                    </div>
-                  ))}
+                <div
+                  data-testid="funnel"
+                  className="flex items-center gap-1.5 text-[13px]"
+                  title={
+                    "숫자는 항목 수, N건은 그 항목들이 만든 행 수입니다 — " +
+                    "변환은 타입마다, 렌더는 채널마다, 발행은 업로드 대상마다 한 행씩 생깁니다. " +
+                    "발행은 렌더가 아니라 번역에서 갈라져 나오는 별개 가지입니다."
+                  }
+                >
+                  {FUNNEL_STEPS.map(([label, key], i) => {
+                    const tally = status.funnel[key];
+                    return (
+                      // The separator is a sibling of the stage, not a child of it, so a stage's own
+                      // text is exactly its own — which is what lets a test read one stage at a time.
+                      <Fragment key={key}>
+                        {i > 0 && <span className="text-line-strong">·</span>}
+                        <div data-testid={`funnel-${key}`} className="flex items-center gap-1.5">
+                          <span className="text-muted">{label}</span>
+                          <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
+                          {tally.rows !== tally.items && (
+                            <span className="font-mono text-[11px] tabular-nums text-faint">{tally.rows}건</span>
+                          )}
+                        </div>
+                      </Fragment>
+                    );
+                  })}
                 </div>
                 <span className="h-4 w-px bg-line" />
                 <span
