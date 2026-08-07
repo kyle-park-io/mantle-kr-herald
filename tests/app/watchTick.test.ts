@@ -97,19 +97,48 @@ function pipeline(
 }
 
 describe("WatchTick", () => {
-  it("stops after collect when nothing is new, without calling the agent", async () => {
+  it("still runs the translate stages when nothing new was collected, without calling the agent", async () => {
+    // This test used to assert `ran === ["collect"]`, encoding an early return whose comment
+    // claimed "zero new threads: nothing downstream has work to do". That claim is false: the
+    // collect queue and the translate queue are independent. Measured 2026-08-07 against
+    // production — @Mantle_Official went quiet for 21 hours, every tick stopped after collect, and
+    // 19 items sat translatable and untranslated the whole time. The backlog could only ever drain
+    // while the source account was *also* posting, which is precisely backwards.
+    //
+    // What the early return was protecting is the `claude -p` subscription turn, and that is
+    // already guarded twice below, per stage: `prepared.count > 0` and `aligned !== null`. So the
+    // assertion worth keeping is this one — the agent is still never called.
     const { agent, calls } = recordingAgent();
     const ran: string[] = [];
     const run = async (script: string): Promise<StageResult> => {
       ran.push(script);
-      return { ok: true, stdout: "collected 0 threads (0 tweets) for @x — nothing new in window" };
+      if (script === "collect") return { ok: true, stdout: "collected 0 threads (0 tweets) for @x — nothing new in window" };
+      if (script === "translate:prepare") return { ok: true, stdout: "prepared 0 item(s) → output/translations/worksheets/batch-X.md" };
+      return { ok: true, stdout: NOTHING_TO_ALIGN };
     };
 
     const report = await new WatchTick(run, agent).run();
 
     expect(report.ok).toBe(true);
-    expect(ran).toEqual(["collect"]);
+    expect(ran).toEqual(["collect", "translate:prepare", "translate:align"]);
     expect(calls).toEqual([]);
+  });
+
+  it("drains the translate backlog on a tick that collected nothing — the bug this fixes", async () => {
+    // The regression itself. Nothing new arrived, but items are waiting to be translated, so the
+    // agent must be handed the worksheet. Before the fix this returned after collect and the
+    // backlog never moved.
+    const { run, agent, ran, calls } = pipeline({
+      collect: "collected 0 threads (0 tweets) for @x — nothing new in window",
+      prepare: PREPARED_2,
+      align: NOTHING_TO_ALIGN,
+    });
+
+    const report = await new WatchTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(calls).toEqual(["translation"]);
+    expect(ran).toContain("translate:prepare --limit 3");
   });
 
   it("reports the failing stage and runs nothing after it", async () => {
@@ -418,22 +447,28 @@ describe("WatchTick", () => {
   });
 
   it("still reads collect's zero-threads line when pnpm printed its own output above it", async () => {
-    // The same leading noise on the early-exit path: it must still stop after collect, not be
-    // mistaken for unrecognised output and fail the tick.
+    // The point of this one is parsing, not control flow: leading pnpm noise must not make the
+    // zero-threads line unrecognisable and fail the tick. It keeps its value now that a zero
+    // collect no longer ends the tick — an unrecognised collect line still fails it, so "ok" here
+    // is what proves the line was read.
     const { agent, calls } = recordingAgent();
     const ran: string[] = [];
     const run = async (script: string): Promise<StageResult> => {
       ran.push(script);
-      return {
-        ok: true,
-        stdout: ["Already up to date", "collected 0 threads (0 tweets) for @x — nothing new in window"].join("\n"),
-      };
+      if (script === "collect") {
+        return {
+          ok: true,
+          stdout: ["Already up to date", "collected 0 threads (0 tweets) for @x — nothing new in window"].join("\n"),
+        };
+      }
+      if (script === "translate:prepare") return { ok: true, stdout: "prepared 0 item(s) → output/translations/worksheets/batch-X.md" };
+      return { ok: true, stdout: NOTHING_TO_ALIGN };
     };
 
     const report = await new WatchTick(run, agent).run();
 
     expect(report.ok).toBe(true);
-    expect(ran).toEqual(["collect"]);
+    expect(ran).toEqual(["collect", "translate:prepare", "translate:align"]);
     expect(calls).toEqual([]);
   });
 
@@ -584,11 +619,15 @@ describe("WatchTick", () => {
     // `computeCoverage` cannot produce this shape today: it only ever sets `gap` alongside a
     // non-zero kept count (`if (tweets.length === 0) return { ..., gap: null }`,
     // src/domain/coverage.ts). So nothing currently exercises this fixture through the real
-    // pipeline — which is exactly why the ordering in WatchTick.run() has to be pinned directly,
-    // not left to whatever `computeCoverage` happens to guarantee. A gap check placed *after* the
-    // `threadCount === 0` early return would make every existing GAP test above still pass (none
-    // of them use a zero count), while quietly returning `{ ok: true }` on a real one the moment
-    // this invariant ever changed.
+    // pipeline — which is exactly why this is pinned directly rather than left to whatever
+    // `computeCoverage` happens to guarantee.
+    //
+    // The `threadCount === 0` early return this comment used to warn about is gone (a quiet
+    // collect no longer ends the tick — see WatchTick.run()), so a zero-thread GAP would now fall
+    // through to the translate stages instead of returning `{ ok: true }`. Still worth pinning,
+    // and now for a sharper reason: permanent tweet loss must fail the tick *before* anything
+    // downstream runs, and a tick that keeps working past a GAP looks healthier than one that
+    // stops — which is the direction a future edit is most likely to drift.
     const { run, agent, calls } = pipeline({
       collect: "collected 0 threads (0 tweets) for @x — nothing new in window, GAP (open) ~ 2026-08-06T00:00:00.000Z (limit reached)",
     });

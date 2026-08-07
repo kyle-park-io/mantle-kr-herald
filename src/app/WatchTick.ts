@@ -205,10 +205,18 @@ export class WatchTick {
       });
     }
 
-    // Zero new threads: nothing downstream has work to do, and the agent is never touched.
-    if (parsed.threadCount === 0) {
-      return { ok: true, stagesRun };
-    }
+    // A zero-thread collect does NOT end the tick. It used to, on the claim that "nothing
+    // downstream has work to do" — but the collect queue and the translate queue are independent,
+    // and that claim cost a measured 21 hours: @Mantle_Official went quiet on 2026-08-06, every
+    // tick from 17:17Z on stopped right here, and 19 items sat translatable and untranslated the
+    // whole time. The backlog could only drain while the source account was *also* posting, which
+    // is exactly backwards — a quiet stretch is when there is finally room to catch up.
+    //
+    // Nothing is spent by continuing. What that early return was really protecting is the
+    // `claude -p` subscription turn, and both turns are already guarded, per stage, by the work
+    // they would actually do: `prepared.count > 0` below, and `aligned !== null` after it. A tick
+    // with genuinely nothing to do now spends two short subprocesses instead of zero, which at one
+    // tick every two hours is not worth a rule that can strand a backlog.
 
     // `--since` only on prepare, never on align: `translate:align` selects by precedent among
     // items that are *already* translated — everything it can see is past the cutoff by
