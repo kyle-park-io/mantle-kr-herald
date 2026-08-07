@@ -85,6 +85,27 @@ describe("TranslationList order", () => {
     );
     // Default filter is 전체: all three, newest first.
     expect(shownIds(container)).toEqual(["x:1", "x:3", "x:2"]);
-    screen.getByRole("button", { name: "검수 대기" }).click();
+    screen.getByRole("button", { name: /^대기/ }).click();
+  });
+});
+
+describe("TranslationList filter counts", () => {
+  it("counts each filter, so a queue of 2 behind 21 게시됨 is legible without clicking", () => {
+    // The shape that misled a reader of `pnpm status`: 23 translations, only 2 of them waiting.
+    render(
+      <TranslationList
+        items={[
+          t({ itemId: "x:1" }),
+          t({ itemId: "x:2" }),
+          ...Array.from({ length: 21 }, (_, i) => t({ itemId: `x:1${i}`, status: "posted" })),
+        ]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    screen.getByRole("button", { name: "전체 23" });
+    screen.getByRole("button", { name: "대기 2" });
+    screen.getByRole("button", { name: "승인 0" });
+    screen.getByRole("button", { name: "게시됨 21" });
   });
 });
