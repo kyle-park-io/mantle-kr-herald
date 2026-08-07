@@ -2,7 +2,14 @@ export type StageResult = { ok: true; stdout: string } | { ok: false; stage: str
 
 export type StageRunner = (script: string, args: string[]) => Promise<StageResult>;
 
-export type WorksheetKind = "translation" | "alignment";
+/**
+ * Which worksheet the agent is being asked to fill, and therefore which directory it may touch and
+ * which single `pnpm` command it may run. `translation` and `alignment` both end in
+ * `pnpm translate:save`; `conversion` ends in `pnpm convert:save` and reads a different directory
+ * entirely (`paths.variantsWorksheets`). `ClaudeCodeAgent` holds one profile per kind — adding a
+ * kind here without one there is a type error, which is the point.
+ */
+export type WorksheetKind = "translation" | "alignment" | "conversion";
 
 export interface WorksheetAgent {
   fill(worksheetPath: string, kind: WorksheetKind): Promise<StageResult>;

@@ -19,7 +19,14 @@ import { resolve } from "node:path";
 
 const repoRoot = resolve(__dirname, "../..");
 
-const UNITS = ["deploy/herald-watch.service", "deploy/herald-x-reconcile.service"] as const;
+// Every scheduled unit, not a sample of them: this list is what makes the checks below apply to a
+// unit added later, and a unit missing from it is exactly the one that quietly runs from wherever
+// somebody left it.
+const UNITS = [
+  "deploy/herald-watch.service",
+  "deploy/herald-x-reconcile.service",
+  "deploy/herald-convert.service",
+] as const;
 
 /** The unit's `WorkingDirectory=` value. */
 function workingDirectory(unitPath: string): string | undefined {

@@ -1,0 +1,49 @@
+# deploy/herald-convert.timer
+#
+# Fires herald-convert.service every 30 minutes, at :07 and :37, 24 hours a day.
+#
+# Why 30 minutes and not faster. The database is Neon `free_v3`: 100 CU-hours a month at 0.25 CU is
+# 400 wall-clock hours of compute. Neon autosuspends an idle compute after about five minutes, so a
+# poll every 30 minutes keeps it awake roughly 17% of the time — about 30 CU-hours, 30% of the
+# monthly budget, alongside everything else that touches the same database. A 10-minute poll is ~91%
+# of the budget and a 5-minute poll does not fit at all. Halving this interval is a billing decision,
+# not a tuning one; tests/deploy/convertTiming.test.ts asserts the period is 1800s so that decision
+# has to be made deliberately rather than in passing.
+#
+# Why not folded into herald-watch.timer instead of a second unit: that timer's period is two hours,
+# which is far too slow for the job this does. The point of pre-rendering variants is that 2차 검수 is
+# already populated when a reviewer arrives, and a reviewer who approves in 1차 검수 and moves to the
+# 2차 board would routinely be waiting on an hour-and-a-half-old tick. The two ticks also have
+# genuinely different economics — this one makes at most one `claude -p` call per fire, herald-watch
+# makes up to two — so their timeouts and batch sizes want to move independently.
+#
+# Why 24 hours a day rather than a business-hours window: measured human activity on this pipeline
+# spans 10:00–04:00 KST. A window would save six hours a day of polling and miss real work in the
+# other eighteen.
+#
+# The minutes are pinned off :00 on purpose — every scheduler on the planet fires there and there is
+# no reason to join it — and off :17 (herald-watch) and :41 (herald-x-reconcile) specifically: all
+# three units run `pnpm` from the same deploy checkout against the same database, and two of them
+# spawn `claude -p`, so sharing a minute buys nothing and only invites two ticks starting at once on
+# a cold Neon compute. tests/deploy/convertTiming.test.ts reads the other two timers' own files and
+# asserts the minutes are disjoint, so they cannot drift back together unnoticed.
+#
+# Verified before committing: `systemd-analyze calendar --iterations=4 '*-*-* *:07,37:00'` parses
+# cleanly and elapses at :07, :37, :07, :37 — 30 minutes apart across the hour boundary, which is the
+# part a single "Next elapse" line would not have shown.
+#
+# NOT installed by any committed script — see herald-convert.service's header.
+
+[Unit]
+Description=Timer for herald-convert.service — Mantle KR Herald conversion scheduler
+
+[Timer]
+OnCalendar=*-*-* *:07,37:00
+# Runs the tick once on the next boot/login if the machine was off (or the user manager wasn't
+# running — WSL2's usual failure mode) through a scheduled fire, instead of silently skipping it.
+# Same reasoning as the other two timers' own Persistent=true. Note this coalesces: a machine that
+# was off for six hours fires this once on login, not twelve times.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

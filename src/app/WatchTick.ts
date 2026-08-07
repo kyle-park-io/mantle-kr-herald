@@ -1,11 +1,11 @@
 import { agentStage, type StageResult, type StageRunner, type WorksheetAgent } from "../ports/WorksheetAgent";
+import type { TickReport } from "./TickReport";
 import { DEFAULT_WATCH_BATCH } from "../cli/watchBatch";
 
-export type TickReport = {
-  ok: boolean;
-  stagesRun: string[];
-  failure?: { stage: string; detail: string };
-};
+// Declared in ./TickReport since `ConvertTick` reports the same shape and `src/cli/tickOutcome.ts`
+// formats both. Re-exported here because this is where every existing caller imports it from, and a
+// type's import path is not worth churning across the suite to make a point about where it lives.
+export type { TickReport };
 
 const COLLECT_STAGE = "collect";
 const PREPARE_STAGE = "translate:prepare";
