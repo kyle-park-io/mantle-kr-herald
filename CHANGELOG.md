@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`게시됨으로` — the other half of 되돌리기, which until now was a one-way door.** 되돌리기 disputes a
+  reconcile match and moves an item off `posted`; nothing could move it back. Not by oversight, but as
+  the sum of two rules that each exist for a good reason: `postedUrl` survives the dispute so the next
+  unattended `x:reconcile` tick cannot re-retire what a human just corrected (`ReconcileXPublished` —
+  a row with `postedUrl` set is "never scored — read, not re-matched"), and `RetireTranslation` reports
+  `already-retired` *without writing the status* for the same reason. Both protect a human's
+  correction from a machine; together they also made a mis-click permanent. `POST
+  /api/translations/:id/retire` restores `posted` from the `postedUrl`/`postedAt` still on the row,
+  and the button sits in the note that already tells the reviewer this item was once matched to a
+  live post. **Gated on `postedUrl`, which is what stops it inventing history** — 게시됨 is restorable
+  only for an item carrying the evidence it went out; a draft that was never posted has nothing to be
+  restored to, and the route answers 409. An edit made after the dispute is kept rather than refused:
+  `publishedText` still holds the copy that actually went out and 1차 검수 diffs the two, so the
+  divergence is displayed instead of being silently asserted away. No history-tab write, unlike
+  `RetireTranslation`'s second half — the row already exists from the original retire, and if that
+  write had failed, reconcile's conjunctive skip still re-admits the item and repairs it.
+
 ### Changed
 
 - **The dashboard header stopped drawing a funnel over a pipeline that branches.** It read

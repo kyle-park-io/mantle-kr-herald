@@ -284,6 +284,26 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     });
   };
 
+  /**
+   * 게시됨으로 — the withdrawal of a 되돌리기 dispute, and the reason `unretireTranslation` above is no
+   * longer a one-way door.
+   *
+   * Written as a bare `upsert` rather than through `RetireTranslation` on purpose: that class is
+   * idempotent *on `postedUrl` already being set* — it returns `already-retired` without touching
+   * the status — precisely so an unattended reconcile pass can never re-apply a match a human just
+   * disputed. Every item reaching this function has `postedUrl` set (the route checks first), so
+   * routing it through that class would be a guaranteed no-op.
+   *
+   * Spreads `existing`, so an edit the reviewer made after the dispute survives — Kyle's call. The
+   * copy that actually went out is still on the row as `publishedText`, and 1차 검수 diffs the two,
+   * so a divergence is displayed rather than silently asserted away.
+   */
+  const retireTranslation = async (itemId: string): Promise<void> => {
+    const existing = (await translationStore.loadAll()).find((t) => t.itemId === itemId);
+    if (!existing) return;
+    await translationStore.upsert({ ...existing, status: "posted" });
+  };
+
   const loadPublishState = async (): Promise<PublishStateRow[]> => {
     const [entries, translations] = await Promise.all([publishStore.listEntries(), translationStore.loadAll()]);
     const byId = new Map(translations.map((t) => [t.itemId, t] as const));
@@ -498,6 +518,7 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     translationStore,
     saveTranslation,
     unretireTranslation,
+    retireTranslation,
     publishOne,
     login,
     sessionConfig,

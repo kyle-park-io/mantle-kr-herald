@@ -73,6 +73,7 @@ export function fakeDeps(): ApiDeps {
     translationStore: { loadAll: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }], upsert: async () => {}, listTranslatedIds: async () => new Set() },
     saveTranslation: { run: async () => ({ itemId: "x:1", promoted: false }) } as unknown as ApiDeps["saveTranslation"],
     unretireTranslation: async () => {},
+    retireTranslation: async () => {},
     publishOne: async () => ({ uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }),
     storageMode: "cloud",
     ...fakeRenderingDeps(),

@@ -156,6 +156,13 @@ function makeDeps(
       if (!ex) return;
       await translationStore.upsert({ ...ex, status: "translated" });
     },
+    // Mirrors createDeps.ts's real implementation: status only, every other column carried through,
+    // which is what lets an edit made after the dispute survive the restore.
+    retireTranslation: async (itemId: string) => {
+      const ex = state.list.find((t) => t.itemId === itemId);
+      if (!ex) return;
+      await translationStore.upsert({ ...ex, status: "posted" });
+    },
     sendToOutlet: async (itemId: string, type: string, outletId: string, opts?: { resend?: boolean; pin?: boolean }) => {
       spy.sends.push({ itemId, type, outletId, opts });
       return board.send?.() ?? { sent: 1, failed: 0 };
@@ -252,6 +259,55 @@ describe("handleApi", () => {
    * surviving the round trip is not incidental — it is what stops the next `x:reconcile` tick from
    * re-retiring the same item (`RetireTranslation.run` skips whenever `postedUrl` is already set).
    */
+  /**
+   * The other half of the door. `unretire` disputes a reconcile match; without this route that
+   * dispute is irreversible — `postedUrl` survives it precisely so the next unattended tick will
+   * not re-retire the item (`ReconcileXPublished`, "never scored — read, not re-matched"), and
+   * `RetireTranslation` reports `already-retired` without writing whenever `postedUrl` is set. So
+   * nothing in the system could put the item back, and a mis-click was permanent.
+   */
+  it("POST /api/translations/:id/retire puts a disputed item back on posted", async () => {
+    const d = makeDeps([
+      tr({ itemId: "x:1", status: "translated", postedUrl: "https://x.com/0xMantleKR/status/1", postedAt: "p" }),
+    ]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A1/retire", undefined);
+    expect(res.status).toBe(200);
+    expect((res.json as Translation).status).toBe("posted");
+    expect((res.json as Translation).postedUrl).toBe("https://x.com/0xMantleKR/status/1");
+  });
+
+  /**
+   * The invariant that keeps this route from inventing history: 게시됨 may only be restored on an
+   * item that carries the evidence it was posted. Without the guard the route is a way to mark any
+   * draft as published — which would then leave 1차 검수, refuse approval, and claim a post that
+   * does not exist.
+   */
+  it("POST /api/translations/:id/retire refuses an item that was never posted", async () => {
+    const d = makeDeps([tr({ itemId: "x:1", status: "translated" })]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A1/retire", undefined);
+    expect(res.status).toBe(409);
+    expect((res.json as { error: string }).error).toMatch(/게시/);
+  });
+
+  it("POST /api/translations/:id/retire keeps an edit made after the dispute", async () => {
+    // Kyle's call: the reviewer may edit after 되돌리기, and restoring 게시됨 keeps that edit rather
+    // than refusing. `publishedText` still holds what actually went out, and 1차 검수 diffs the two —
+    // so the divergence is shown, not hidden.
+    const d = makeDeps([
+      tr({
+        itemId: "x:1",
+        status: "translated",
+        koreanText: "고쳐 쓴 초안",
+        publishedText: "실제로 나간 글",
+        postedUrl: "https://x.com/0xMantleKR/status/1",
+      }),
+    ]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A1/retire", undefined);
+    expect(res.status).toBe(200);
+    expect((res.json as Translation).koreanText).toBe("고쳐 쓴 초안");
+    expect((res.json as Translation).publishedText).toBe("실제로 나간 글");
+  });
+
   it("POST /api/translations/:id/unretire moves it off posted and keeps postedUrl", async () => {
     const d = makeDeps([
       tr({ itemId: "x:1", status: "posted", postedUrl: "https://x.com/0xMantleKR/status/1", postedAt: "p" }),
