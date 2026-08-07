@@ -37,6 +37,38 @@ export const kstStamp = (iso?: string): string | undefined => {
   return `${at("year")}-${at("month")}-${at("day")} ${at("hour")}:${at("minute")} KST`;
 };
 
+/**
+ * `07. 29. 06:20` in Korea time — the compact form for a chip label ("발송됨", "전달함 ☑", "예약됨").
+ *
+ * Unlabelled on purpose: those chips sit in narrow rows where a trailing ` KST` would wrap. The
+ * zone is stated in `kstStampFull`, which is the tooltip on the very same element, so the label
+ * exists exactly where there is room for it.
+ *
+ * Returns `""` rather than `undefined` because callers interpolate it straight into a label.
+ */
+export const kstStampShort = (iso?: string): string => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleString("ko-KR", {
+        timeZone: "Asia/Seoul",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+};
+
+/** The same instant spelled out, with the zone named — the row is narrow, the tooltip is not.
+ *  Returns `undefined` so callers can keep their `?? "이미"` fallbacks. */
+export const kstStampFull = (iso?: string): string | undefined => {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? undefined : `${d.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })} KST`;
+};
+
 // Mirrors ALL_TRANSLATION_STATUSES in src/domain/translation/models.ts — same reason as ALL_TYPES
 // below (the frontend cannot import the domain), and `tests/web/typeMirror.test.ts` fails if this
 // drifts. `posted` is the reconcile-retired state (Task 2): a translation reconcile matched against
