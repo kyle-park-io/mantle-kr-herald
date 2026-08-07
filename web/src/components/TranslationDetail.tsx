@@ -3,6 +3,7 @@ import { datePrefix, itemUrl, kstStamp } from "../types";
 import type { Translation, PublishStateRow } from "../types";
 import { StatusChip, KindBadge } from "./TranslationList";
 import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
+import { diffPublished } from "../publishedDiff";
 
 const TARGET_LABEL: Record<"local" | "google" | "lark", string> = {
   local: "로컬 폴더",
@@ -15,6 +16,57 @@ const TARGET_RANK: Record<string, number> = { local: 0, google: 1, lark: 2 };
 /** Why a `posted` item's editor and 승인 are locked — "lock, do not hide": the text is still shown,
  *  read-only, and 되돌리기 is the way back. */
 const POSTED_LOCK = "이미 X에 직접 게시된 것으로 확인되어 편집할 수 없습니다. 되돌리기를 누르면 다시 검수할 수 있습니다.";
+
+/**
+ * The copy the account actually published, under the draft it came from, with the human's edits
+ * highlighted.
+ *
+ * Only for a `posted` item, and only once `x:reconcile` has captured one — see `Translation`'s own
+ * `publishedText` comment for why a posted item may legitimately not have it yet. Rendered as text,
+ * never an editor: this is a record of what went out, and nothing on this screen may imply it can
+ * be changed from here.
+ *
+ * The highlighting is the point, not decoration. In the case that motivated this block, the entire
+ * difference was `구매하신 → 구매한` and `무엇입니까 → 무엇인가요` — a register the team chooses
+ * deliberately and the steering config forbids. Two paragraphs side by side hide that; a
+ * highlight does not. When a copy is rewritten wholesale the highlight is dropped for a note, since
+ * an end-to-end wash of colour carries no information (see `diffPublished`).
+ */
+function PublishedCopy({ item, posted }: { item: Translation; posted: boolean }) {
+  if (!posted || !item.publishedText) return null;
+  const diff = diffPublished(item.koreanText, item.publishedText);
+  return (
+    <section className="mt-6">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="eyebrow">실제 게시된 글 · published</span>
+        {!diff.tooDifferent && (
+          <span className="text-[11px] text-faint">칠해진 부분이 사람이 고친 대목입니다</span>
+        )}
+      </div>
+      <div
+        data-testid="published-copy"
+        className="rounded-xl border border-line bg-bg p-4 text-[15px] leading-relaxed whitespace-pre-wrap text-ink/80 shadow-sm"
+      >
+        {diff.tooDifferent
+          ? item.publishedText
+          : diff.parts.map((part, i) => (
+              <span
+                key={i}
+                data-changed={part.changed || undefined}
+                className={part.changed ? "rounded bg-amber-ink/15 px-0.5 text-ink" : undefined}
+              >
+                {part.text}
+              </span>
+            ))}
+      </div>
+      {diff.tooDifferent && (
+        <div className="mt-1.5 text-[11px] text-faint">
+          초안과 견줘 거의 새로 쓰였습니다 — 바뀐 대목을 칠하면 글 전체가 칠해져서, 칠하지 않고 그대로 보여줍니다.
+        </div>
+      )}
+    </section>
+  );
+}
 
 /**
  * An "open" link that is only active when the row is synced. A "재발행 필요" row's files are the
@@ -197,6 +249,8 @@ export function TranslationDetail(props: {
         {/* Same problem the "편집 중" chip above solves, and the same fix — see `MediaEditNoticeSlot`. */}
         <MediaEditNoticeSlot text={korean} where="원문" className="mt-1.5" />
       </section>
+
+      <PublishedCopy item={props.item} posted={posted} />
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button
