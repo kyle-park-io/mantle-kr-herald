@@ -63,7 +63,17 @@ describe("kstStampShort / kstStampFull", () => {
   it("formats the spelled-out tooltip in Seoul, and says KST", () => {
     // The chip is narrow and stays unlabelled; the tooltip has room, so this is where the zone is
     // stated outright rather than assumed.
-    expect(kstStampFull(LATE)).toBe("2026. 8. 1. AM 7:10:00 KST");
+    //
+    // Asserted in pieces, NOT as one exact string: `toLocaleString("ko-KR")` renders the meridiem
+    // from whatever ICU data the runtime carries — `오전` on a full-icu Node (CI, and every
+    // browser), `AM` on a small-icu one (this author's laptop). Pinning the whole string passed
+    // locally and failed in CI on a difference that has nothing to do with what this test is for.
+    // These three assertions still go red the moment the Asia/Seoul pin is removed: in UTC the same
+    // instant is 2026. 7. 31. at 22:10.
+    const full = kstStampFull(LATE);
+    expect(full).toContain("2026. 8. 1.");
+    expect(full).toContain("7:10:00");
+    expect(full?.endsWith(" KST")).toBe(true);
   });
 
   it("returns empty/undefined for a missing value, matching what the callers already handle", () => {
