@@ -1,6 +1,7 @@
 import "./registerErrorHandler";
 import { stdin, stderr } from "node:process";
 import { ask } from "./prompt";
+import { smokeCredentials } from "./smokeCredentials";
 import { formatReport, type CheckResult } from "../doctor/report";
 import {
   checkAnonymous,
@@ -94,8 +95,15 @@ results.push(...checkAnonymous({ root, status: anonymousStatus, foreignOrigin })
 /** Same helper shape `src/cli/auth-hash.ts` already uses over the same `ask`. */
 const prompt = (question: string, hidden = false) => ask(question, { hidden, input: stdin, output: stderr });
 
-const username = (await prompt("Username: ")).trim();
-const password = await prompt("Password: ", true);
+// Environment first, prompt as the interactive fallback — see `smokeCredentials` for why the
+// half-configured case refuses instead of falling through to a prompt that would hang a CI runner.
+const source = smokeCredentials({
+  HERALD_SMOKE_USERNAME: process.env.HERALD_SMOKE_USERNAME,
+  HERALD_SMOKE_PASSWORD: process.env.HERALD_SMOKE_PASSWORD,
+});
+if (source.kind === "refuse") throw new Error(source.reason);
+const username = source.kind === "env" ? source.username : (await prompt("Username: ")).trim();
+const password = source.kind === "env" ? source.password : await prompt("Password: ", true);
 
 // Judged before the request. An empty entry cannot log in, and sending it anyway would spend one of
 // the five attempts this address gets per minute — see `checkCredentials`.

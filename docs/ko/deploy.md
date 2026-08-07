@@ -44,6 +44,19 @@ npx vercel deploy --prod
 pnpm deploy:smoke https://mantle-kr-herald.vercel.app
 ```
 
+`deploy:smoke`는 배포본에 **실제로 로그인해서** 확인합니다. 기본은 아이디·비밀번호를 물어보지만,
+환경변수로 주면 묻지 않습니다 — CI나 스크립트에서 돌릴 때 쓰세요:
+
+```bash
+HERALD_SMOKE_USERNAME=... HERALD_SMOKE_PASSWORD=... \
+  pnpm deploy:smoke https://mantle-kr-herald.vercel.app
+```
+
+**둘 다 주거나 둘 다 안 주거나** 해야 합니다. 하나만 주면 나머지를 묻지 않고 **거절합니다** —
+tty 없는 러너에서 프롬프트가 뜨면 잡이 타임아웃날 때까지 멈춰 있고, 그건 "시크릿 하나 빠짐"이
+아니라 "배포가 망가짐"처럼 보이기 때문입니다. 참고로 여기 넣는 건 **비밀번호 원문**입니다
+(서버 쪽 `HERALD_AUTH_PASSWORD_HASH`와 달리 이건 클라이언트 쪽입니다).
+
 `deploy:check`는 **로컬 디렉터리가 곧 배포본**이라는 사실 위에 서 있습니다 — `main` 여부,
 워킹 트리 청결, `origin/main`과의 동기화, `pnpm test`, Vercel 프로젝트의 환경변수 이름 28개,
 금지 변수 2개 부재, 리전 일치, 도메인. `--skip-tests`는 환경변수만 고치고 재시도할 때 씁니다.
