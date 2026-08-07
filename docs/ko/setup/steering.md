@@ -81,6 +81,20 @@ wc -l translation/style-guide.md conversion/x.md conversion/announcement.md
 문서(초기 이관본)에도 반영할 수 있습니다. Lark를 정본으로 되돌리지 마세요: 승인으로 자동으로 자란
 few-shot은 Lark에 없고, 정기 백업은 §6의 `config:push`(→ Google Drive)가 담당합니다.
 
+**고쳤으면 바로 `pnpm config:push`를 돌리세요.**
+
+```bash
+pnpm config:push
+```
+
+이 디렉터리는 git이 추적하지 않습니다. 그래서 고친 내용은 **이 머신에만** 있고, 커밋도 PR도 되돌리기도
+없습니다. Drive 스냅샷이 이 변경의 유일한 사본이며, 밀기 전까지는 그마저 없습니다.
+
+§6에는 이 명령이 "정기 백업"으로 적혀 있었고, 그래서 편집과 백업이 서로 다른 일처럼 읽혔습니다.
+2026-08-08에 어투 규칙(`locale.json`의 `honorific`, 그리고 `style-guide.md`의 대응 문장)을 고치고도
+밀지 않아, 한동안 이 머신에만 존재했습니다 — 그 일이 이 문단을 여기에 쓰게 만들었습니다. 편집한
+사람이 곧 미는 사람입니다.
+
 ## 5. 잃어버렸을 때
 
 `git pull` 한 번에 사라진 적이 실제로 있습니다([`CHANGELOG.md`](../../../CHANGELOG.md) 상단
