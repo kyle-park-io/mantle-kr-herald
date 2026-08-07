@@ -219,3 +219,54 @@ describe("TranslationDetail — 게시됨 (posted)", () => {
     await vi.waitFor(() => expect(calls).toEqual(["x:2081711456320655644"]));
   });
 });
+
+/**
+ * The published block. `x:reconcile` stores the copy @0xMantleKR actually published beside the draft
+ * we produced; until this block existed, the only way to read it was SQL. Its whole value is showing
+ * *what the human changed* — the motivating case was `구매하신 → 구매한` and `무엇입니까 → 무엇인가요`,
+ * a register shift the team makes deliberately and the steering config forbids.
+ */
+describe("TranslationDetail published copy", () => {
+  const posted = (publishedText?: string) =>
+    translation({
+      status: "posted",
+      koreanText: "가장 최근에 구매하신 토큰화 자산은 무엇입니까?",
+      postedUrl: "https://x.com/0xMantleKR/status/999",
+      postedAt: "2026-07-31T05:39:41.000Z",
+      publishedText,
+    });
+
+  it("shows the published copy for a posted item", () => {
+    mount(posted("가장 최근에 구매한 토큰화 자산은 무엇인가요?"));
+    expect(screen.getByText(/실제 게시된 글/)).toBeTruthy();
+    expect(screen.getByTestId("published-copy").textContent).toBe(
+      "가장 최근에 구매한 토큰화 자산은 무엇인가요?",
+    );
+  });
+
+  it("highlights only the words the human changed", () => {
+    const { container } = mount(posted("가장 최근에 구매한 토큰화 자산은 무엇인가요?"));
+    const marks = [...container.querySelectorAll("[data-changed='true']")].map((n) => n.textContent?.trim());
+    expect(marks).toEqual(["구매한", "무엇인가요?"]);
+  });
+
+  it("renders nothing when the item has no published copy yet", () => {
+    mount(posted(undefined));
+    expect(screen.queryByText(/실제 게시된 글/)).toBeNull();
+  });
+
+  it("renders nothing for an item that was never posted", () => {
+    mount(translation({ publishedText: "어쩌다 남은 값" }));
+    expect(screen.queryByText(/실제 게시된 글/)).toBeNull();
+  });
+
+  it("drops the highlighting, and says so, when most of the copy is new", () => {
+    const { container } = mount(posted("완전히 다른 문장이 여기에 들어갑니다 전부 새로 쓴 내용입니다."));
+    expect(container.querySelectorAll("[data-changed='true']").length).toBe(0);
+    expect(screen.getByText(/거의 새로 쓰였습니다/)).toBeTruthy();
+    // The copy itself is still shown in full — the note replaces the highlighting, not the text.
+    expect(screen.getByTestId("published-copy").textContent).toBe(
+      "완전히 다른 문장이 여기에 들어갑니다 전부 새로 쓴 내용입니다.",
+    );
+  });
+});

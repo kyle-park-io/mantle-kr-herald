@@ -114,6 +114,16 @@ export interface Translation {
    * interval a reviewer looking at a row nobody approved is trying to see.
    */
   postedAt?: string;
+  /**
+   * The Korean copy @0xMantleKR actually published, as read off the account by `x:reconcile` — not
+   * what we produced, which is `koreanText`. Already on the wire (`attachKind` spreads the domain
+   * row); this declaration is what lets the dashboard read it.
+   *
+   * Absent until a reconcile run captures it: only a translation reconcile matched to a live post
+   * has one, capture is fill-only, and a post that has aged out of the run's `--since` window is
+   * never fetched. So a `posted` item without this field is ordinary, not an error.
+   */
+  publishedText?: string;
 }
 export interface PublishResult {
   uploaded: number;
