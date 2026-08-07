@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The dashboard header stopped drawing a funnel over a pipeline that branches.** It read
+  `수집 134 → 번역 23 → 변환 10 → 렌더 13 → 발행 16`, and every arrow claimed something the data does
+  not support. Past 번역 a row stops being an item — a variant is keyed `(itemId, type)`, a rendering
+  `(itemId, type, channel)`, a publish-ledger row `(itemId, status, target)` — so the line appeared to
+  *gain* work between 변환 and 렌더 when **three items** had simply fanned out twice (10 and 13 rows
+  over the same 3 items). And 발행 is not downstream of 렌더 at all: it counts the translation
+  markdown uploaded to Drive, a sibling branch off 번역, and 3 of its 9 items have no rendering.
+  Each stage now shows its item count, plus its row count as `N건` where the two differ, separated by
+  `·` instead of `→`. `pnpm status` gained the same item counts. Both are now built by one function,
+  `funnelCounts` in `src/status/pipeline.ts`, alongside the CLI's own `pipelineStages` — they were
+  separate code, and it showed: the CLI learned about the terminal `posted` status while the header
+  kept counting it as work in progress.
+- **The `GET /api/status` funnel is now pinned by `tests/web/typeMirror.test.ts`.** Changing it from
+  five numbers to five `{ items, rows }` tallies left **both typechecks green** while the dashboard
+  kept its own `number` declaration — it would have rendered `[object Object]` in the header on the
+  first deploy. The mirror test file existed for exactly this class of drift but was not pointed at
+  this payload.
+
 - **`pnpm status` and the 1차 검수 tabs now say how many items are actually waiting, instead of
   letting a finished queue look like a full one.** Once `x:reconcile` began retiring hand-published
   translations to the terminal status `posted`, the funnel's `Translated 23 (approved 0)` read as

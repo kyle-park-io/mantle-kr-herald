@@ -18,10 +18,10 @@ try {
   const variants = await stores.conversionStore.loadAll();
   const renderings = await stores.formattingStore.loadAll();
   const entries = await stores.publishStore.listEntries();
-  // The funnel's "Published (drive)" counts ledger rows (one per upload target).
-  const published = entries.length;
 
-  console.log(formatStatus(pipelineStages({ collected, translations, variants, renderings, published })));
+  // "Published (drive)" counts ledger rows — one per (itemId, status, target) upload — and names
+  // the items behind them, because one item published to google and lark is two rows.
+  console.log(formatStatus(pipelineStages({ collected, translations, variants, renderings, published: entries })));
   // The sync line's "N published" counts unique translations with at least one ledger row.
   // These two numbers will diverge once multiple upload targets are enabled (e.g. Google and Lark).
   console.log(

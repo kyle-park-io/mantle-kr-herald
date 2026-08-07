@@ -9,7 +9,7 @@ import { startServer } from "../../../src/adapters/web/HttpServer";
 import type { ApiDeps } from "../../../src/adapters/web/apiHandlers";
 import { SESSION_COOKIE_NAME } from "../../../src/adapters/web/sessionCookie";
 import { signSession, SESSION_TTL_MS } from "../../../src/domain/auth/session";
-import { fakeDeps, fakeRenderingDeps, fakeBoardDeps, fakeConvertFormatDeps, TEST_SESSION_SECRET } from "../../support/fakeApiDeps";
+import { fakeDeps, fakeRenderingDeps, fakeBoardDeps, fakeConvertFormatDeps, TEST_SESSION_SECRET, EMPTY_FUNNEL } from "../../support/fakeApiDeps";
 
 const servers: import("node:http").Server[] = [];
 afterEach(() => servers.forEach((s) => s.close()));
@@ -284,7 +284,7 @@ describe("startServer", () => {
       ...fakeRenderingDeps(),
       ...fakeBoardDeps(),
       ...fakeConvertFormatDeps(),
-      loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true }),
+      loadStatus: async () => ({ storageMode: "cloud", funnel: EMPTY_FUNNEL, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true }),
       loadPublishState: async () => [],
       loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
       xMaxWeighted: 280,
@@ -330,7 +330,7 @@ describe("startServer", () => {
       ...fakeRenderingDeps(),
       ...fakeBoardDeps(),
       ...fakeConvertFormatDeps(),
-      loadStatus: async () => ({ storageMode: "cloud", funnel: { collected: 0, translated: 0, converted: 0, rendered: 0, published: 0 }, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true }),
+      loadStatus: async () => ({ storageMode: "cloud", funnel: EMPTY_FUNNEL, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true }),
       loadPublishState: async () => [],
       loadTranslations: async () => {
         throw new Error("boom");

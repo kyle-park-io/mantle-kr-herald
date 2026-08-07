@@ -45,6 +45,7 @@ import { singleFlight } from "../shared/concurrency/singleFlight";
 import { createUploaders, resolveTargets } from "../cli/uploaders";
 import { paths } from "../paths";
 import { syncSummary } from "../status/sync";
+import { funnelCounts } from "../status/pipeline";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { contentHash, isStale } from "../domain/publish/syncLedger";
 import type { Translation } from "../domain/translation/models";
@@ -229,13 +230,13 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     const sync = syncSummary({ translations, entries, render: renderFor });
     return {
       storageMode,
-      funnel: {
+      funnel: funnelCounts({
         collected: collected.length,
-        translated: translations.length,
-        converted: variants.length,
-        rendered: renderings.length,
-        published: entries.length,
-      },
+        translations,
+        variants,
+        renderings,
+        published: entries,
+      }),
       sync,
       availableTargets: usableTargets,
       integrations,

@@ -10,6 +10,7 @@ import { ALL_DELIVERY_STATUSES, deliveredToRoom } from "../../src/domain/deliver
 import { ALL_TRANSLATION_STATUSES } from "../../src/domain/translation/models";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
 import type { FormatWarning } from "../../src/app/FormatVariants";
+import type { FunnelCounts } from "../../src/status/pipeline";
 import {
   ALL_TYPES as WEB_TYPES,
   ALL_CHANNELS as WEB_CHANNELS,
@@ -30,6 +31,7 @@ import {
   type BoardGroup as WebBoardGroup,
   type BoardRow as WebBoardRow,
   type FormatWarning as WebFormatWarning,
+  type FunnelCounts as WebFunnelCounts,
 } from "../../web/src/types";
 
 /**
@@ -134,6 +136,22 @@ describe("web type mirror", () => {
     const fromDomain: WebFormatWarning = {} as FormatWarning;
     const toDomain: FormatWarning = {} as WebFormatWarning;
     const keys: SameKeys<WebFormatWarning, FormatWarning> = true;
+    expect([fromDomain, toDomain]).toHaveLength(2);
+    expect(keys).toBe(true);
+  });
+
+  /**
+   * `GET /api/status`'s funnel mirror. This one is written from an actual near-miss: the funnel
+   * moved from five bare numbers to a per-stage `{ items, rows }`, and **both typechecks stayed
+   * green** — the dashboard kept its own `number` declaration and would have rendered `[object
+   * Object]` in the header on the first deploy. `number` vs `StageTally` is exactly the "a *type*
+   * change" case the assignability half of the board check above catches, and nothing was pointing
+   * it at this payload.
+   */
+  it("mirrors the status funnel field-for-field, in both directions", () => {
+    const fromDomain: WebFunnelCounts = {} as FunnelCounts;
+    const toDomain: FunnelCounts = {} as WebFunnelCounts;
+    const keys: SameKeys<WebFunnelCounts, FunnelCounts> = true;
     expect([fromDomain, toDomain]).toHaveLength(2);
     expect(keys).toBe(true);
   });

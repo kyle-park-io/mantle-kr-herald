@@ -187,10 +187,33 @@ export interface SheetLink {
   title: string;
 }
 
+/**
+ * Mirrors `StageTally`/`FunnelCounts` in `src/status/pipeline.ts` — pinned by
+ * `tests/web/typeMirror.test.ts`, which exists because both typechecks stayed green when these two
+ * declarations last disagreed.
+ *
+ * Two counts because past the translation stage a row stops meaning an item: a variant is keyed
+ * `(itemId, type)`, a rendering `(itemId, type, channel)`, a publish-ledger row
+ * `(itemId, status, target)`. Showing only `rows` made 변환 10 → 렌더 13 look like the pipeline
+ * gaining work between two stages when three items had simply fanned out twice.
+ */
+export interface StageTally {
+  items: number;
+  rows: number;
+}
+
+export interface FunnelCounts {
+  collected: StageTally;
+  translated: StageTally;
+  converted: StageTally;
+  rendered: StageTally;
+  published: StageTally;
+}
+
 export interface AppStatus {
   storageMode: StorageMode;
   availableTargets: ("local" | "google" | "lark")[];
-  funnel: { collected: number; translated: number; converted: number; rendered: number; published: number };
+  funnel: FunnelCounts;
   sync: { synced: number; needsRepublish: number; unpublished: number };
   integrations: IntegrationStatus[];
   /** Header links to the team workbooks — absent when the id is not configured. */
