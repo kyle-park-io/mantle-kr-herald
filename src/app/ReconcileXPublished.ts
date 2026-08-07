@@ -8,6 +8,7 @@ import {
   settledTranslationDisposition,
   TRANSLATION_MATCH_AT,
 } from "../domain/publish/xReconcile";
+import { capturePublishedTexts, type PublishedTextCapture } from "../domain/publish/publishedTextCapture";
 import type { MatchCandidate } from "../domain/kol/attribution";
 import type { AssembledThread } from "../domain/models";
 import type { ChannelRendering } from "../domain/formatting/models";
@@ -140,6 +141,14 @@ export type ReconcilePlan = {
   skipped: { rootId: string; reason: string }[];
   posted: { itemId: string; rootId: string; score: number; url: string; postedAt: string }[];
   postedNearMisses: { itemId: string; rootId: string; score: number }[];
+  /**
+   * Published texts a caller can back-fill onto `Translation.publishedText`, via
+   * `capturePublishedTexts`. Not derived from `posted` alone: a settled translation whose history
+   * row already exists (`retire: false` in `settledTranslationDisposition`) never enters `posted`
+   * at all, yet its live post is still readable back through its own `postedUrl` — see
+   * `capturePublishedTexts`'s own doc comment for the full rule.
+   */
+  captures: PublishedTextCapture[];
 };
 
 /**
@@ -324,7 +333,15 @@ export function reconcileXPublished(input: {
     itemIdOccurrences.set(r.itemId, (itemIdOccurrences.get(r.itemId) ?? 0) + 1);
   }
 
-  const plan: ReconcilePlan = { confirmed: [], candidates: [], external: [], skipped: [], posted: [], postedNearMisses: [] };
+  const plan: ReconcilePlan = {
+    confirmed: [],
+    candidates: [],
+    external: [],
+    skipped: [],
+    posted: [],
+    postedNearMisses: [],
+    captures: [],
+  };
   const claimedItemIds = new Set<string>();
 
   // rootIds the thread loop took out of play WITHOUT leaving a row in `plan.confirmed` or
@@ -606,6 +623,17 @@ export function reconcileXPublished(input: {
   // loop, so there is exactly one place this rule is spelled out.
   const retiredRootIds = new Set(plan.posted.map((p) => p.rootId));
   plan.external = plan.external.filter((e) => e.record.postId === undefined || !retiredRootIds.has(e.record.postId));
+
+  // Independent of the retire machinery above: reads `plan.posted` (now complete) and the full
+  // `translations`/`threads` given to this run, not `availableThreads` or any of the claimed/
+  // released/settled sets — a thread claimed by a retire is exactly the thread whose text this is
+  // meant to read. See `capturePublishedTexts`'s own doc comment for the matching rule itself.
+  plan.captures = capturePublishedTexts({
+    translations,
+    threads,
+    posted: plan.posted.map(({ itemId, rootId }) => ({ itemId, rootId })),
+    handle,
+  });
 
   assertOnePostOneRow(plan, releasedRootIds);
 

@@ -345,7 +345,15 @@ describe("reconcileXPublished", () => {
 
   it("returns empty lists for no live threads rather than throwing", () => {
     const plan = reconcileXPublished({ ...base, threads: [], renderings: [rendering("x:1", COPY)] });
-    expect(plan).toEqual({ confirmed: [], candidates: [], external: [], skipped: [], posted: [], postedNearMisses: [] });
+    expect(plan).toEqual({
+      confirmed: [],
+      candidates: [],
+      external: [],
+      skipped: [],
+      posted: [],
+      postedNearMisses: [],
+      captures: [],
+    });
   });
 });
 
@@ -1001,5 +1009,59 @@ describe("translations that already went out by hand", () => {
       expect(plan.posted).toEqual([]);
       expect(plan.postedNearMisses).toEqual([]);
     });
+  });
+});
+
+describe("published text capture", () => {
+  it("captures a freshly retired translation", () => {
+    // The Phase B path: our draft matched a hand-posted thread this run.
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("999", ["가장 최근에 구매한 토큰화 자산은 무엇인가요?"])],
+      renderings: [],
+      translations: [translation("x:1", "가장 최근에 구매하신 토큰화 자산은 무엇입니까?")],
+    });
+    expect(plan.posted).toHaveLength(1);
+    expect(plan.captures).toEqual([{ itemId: "x:1", rootId: "999", text: "가장 최근에 구매한 토큰화 자산은 무엇인가요?" }]);
+  });
+
+  // THE regression guard for this feature. xReconcile.ts:427 returns `retire: false` for a settled
+  // translation whose post already carries a history row — it never re-enters plan.posted. All 14
+  // translations retired on 2026-08-07 are in exactly that state, so a capture hanging off the
+  // retire path would back-fill none of them, silently, forever.
+  it("captures a settled translation whose post already has a history row and is NOT re-retired", () => {
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("999", ["올라간 글"])],
+      renderings: [],
+      translations: [
+        translation("x:1", "무관한 원문", {
+          status: "posted",
+          postedUrl: "https://x.com/0xMantleKR/status/999",
+          postedAt: "2026-08-01T00:00:00.000Z",
+        }),
+      ],
+      historyPostIds: new Set(["999"]), // history already written -> retire: false
+    });
+    expect(plan.posted).toEqual([]); // proves the retire path would have missed it
+    expect(plan.captures).toEqual([{ itemId: "x:1", rootId: "999", text: "올라간 글" }]);
+  });
+
+  it("captures nothing when every settled row already has its published text", () => {
+    const plan = reconcileXPublished({
+      ...base,
+      threads: [thread("999", ["올라간 글"])],
+      renderings: [],
+      translations: [
+        translation("x:1", "무관한 원문", {
+          status: "posted",
+          postedUrl: "https://x.com/0xMantleKR/status/999",
+          postedAt: "2026-08-01T00:00:00.000Z",
+          publishedText: "이미 있음",
+        }),
+      ],
+      historyPostIds: new Set(["999"]),
+    });
+    expect(plan.captures).toEqual([]);
   });
 });

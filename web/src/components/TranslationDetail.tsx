@@ -47,9 +47,10 @@ export function TranslationDetail(props: {
   onApprove: (id: string) => Promise<void>;
   onUnapprove: (id: string) => Promise<void>;
   /**
-   * 되돌리기 — disputes a reconcile match: `posted` → `translated`, with `postedUrl`/`postedAt` left
-   * on the row (the server preserves them; see `SaveTranslation.run`'s own comment). That is what
-   * stops the next unattended `x:reconcile` tick from re-retiring the same item.
+   * 되돌리기 — disputes a reconcile match: `posted` → `translated`, with `postedUrl`/`postedAt`/
+   * `publishedText` left on the row (the server preserves them; see `SaveTranslation.run`'s own
+   * comment). That is what stops the next unattended `x:reconcile` tick from re-retiring the same
+   * item.
    */
   onUnretire: (id: string) => Promise<void>;
   onPublish: (id: string, target: string) => Promise<void>;

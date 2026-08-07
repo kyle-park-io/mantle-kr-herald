@@ -100,3 +100,42 @@ export function checkGlossary(t: CheckedTranslation, glossary: GlossaryEntry[]):
   }
   return misses;
 }
+
+/**
+ * A decided term our draft rendered correctly, but that the published post — the human's own
+ * rewrite — dropped anyway.
+ *
+ * This is not `checkGlossary` run twice: it is a statement about the glossary itself, not about a
+ * single translation. `checkGlossary` catches a draft that missed a decision; this catches a
+ * decision the humans keep overriding once it reaches their hands, which is a signal the glossary
+ * entry may be wrong rather than that anyone made a mistake. Reported, never thrown, for the same
+ * reason as `checkGlossary`.
+ *
+ * Deliberately silent when our own draft never used the decided term either (`checkGlossary` already
+ * reports that as a miss) and when there is no `publishedText` yet — a row nobody has captured a
+ * published copy for is not evidence of anything.
+ */
+export interface GlossaryOverride {
+  itemId: string;
+  term: string;
+  /** What the glossary decided — the entry's `target`, or the term itself for a `keep` rule. */
+  expected: string;
+}
+
+export function checkPublishedOverrides(
+  t: { itemId: string; sourceText: string; koreanText: string; publishedText?: string },
+  glossary: GlossaryEntry[],
+): GlossaryOverride[] {
+  if (!t.publishedText) return [];
+  const overrides: GlossaryOverride[] = [];
+  for (const entry of glossary) {
+    if (!occursAsProse(t.sourceText, entry.term)) continue;
+    const expected = entry.rule === "keep" ? entry.term : entry.target;
+    if (!expected) continue;
+    const forms = acceptable(expected);
+    if (!forms.some((a) => t.koreanText.includes(a))) continue; // our draft never used it either
+    if (forms.some((a) => t.publishedText!.includes(a))) continue; // the human kept it
+    overrides.push({ itemId: t.itemId, term: entry.term, expected });
+  }
+  return overrides;
+}

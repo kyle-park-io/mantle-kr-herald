@@ -5,11 +5,18 @@ import { createDb } from "../adapters/db/createDb";
 import { createStores } from "./stores";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { paths } from "../paths";
-import { checkGlossary, type GlossaryMiss } from "../domain/translation/glossaryCompliance";
+import { checkGlossary, checkPublishedOverrides, type GlossaryMiss, type GlossaryOverride } from "../domain/translation/glossaryCompliance";
 
 /**
- * `pnpm translate:check [--status <s>] [--since <ISO>]` — reports translations whose source used a
- * decided glossary term but whose Korean did not use the decided rendering.
+ * `pnpm translate:check [--status <s>] [--since <ISO>] [--published]` — answers two questions
+ * about the glossary.
+ *
+ * 1. Did our draft use a decided term the source called for? (`checkGlossary`, over `koreanText`
+ *    by default, or over `publishedText` under `--published` — see below.)
+ * 2. Which decided terms do the humans keep overriding once a translation reaches their hands?
+ *    (`checkPublishedOverrides`, always run.) That is a statement about the glossary itself — a
+ *    term the humans routinely drop is a candidate for the humans being right and the glossary
+ *    entry being wrong — not about any single translation, so it runs regardless of `--published`.
  *
  * Read-only. Writes nothing, changes no status, and never exits non-zero on a finding: a glossary
  * has real exceptions, so this is a list a human reads before 1차 검수, not a gate.
@@ -25,6 +32,7 @@ import { checkGlossary, type GlossaryMiss } from "../domain/translation/glossary
  */
 const wantStatus = argValue("--status");
 const since = argValue("--since");
+const usePublished = process.argv.includes("--published");
 
 const dbConfig = loadDbConfig();
 console.log(`translate:check — database ${dbConfig.env} · ${tryDescribeDbTarget(dbConfig) ?? INVALID_DB_URL}`);
@@ -55,9 +63,29 @@ try {
     .filter((t) => (wantStatus ? t.status === wantStatus : true))
     .filter((t) => (since ? (t.approvedAt ?? t.translatedAt) >= since : true));
 
-  const misses: GlossaryMiss[] = selected.flatMap((t) => checkGlossary(t, glossary));
+  // Under --published, a row with no published text is not a passing row — it is untested, and
+  // silently counting it as one would be the same vacuous-pass failure the empty-glossary refusal
+  // above exists to prevent. So it is excluded, and how many were excluded is printed rather than
+  // swallowed.
+  const publishedRows = selected.filter((t) => t.publishedText);
+  const skippedForNoPublished = selected.length - publishedRows.length;
+  const checkedRows = usePublished
+    ? publishedRows.map((t) => ({ ...t, koreanText: t.publishedText! }))
+    : selected;
 
-  console.log(`\nchecked ${selected.length} translation(s) against ${glossary.length} glossary entries.\n`);
+  const misses: GlossaryMiss[] = checkedRows.flatMap((t) => checkGlossary(t, glossary));
+  // Always runs, regardless of --published: this is the second question the command answers, a
+  // statement about the glossary rather than about any one translation, and it costs one extra
+  // pass only over rows that already carry a published text.
+  const overrides: GlossaryOverride[] = selected.flatMap((t) => checkPublishedOverrides(t, glossary));
+
+  console.log(
+    `\nchecked ${checkedRows.length} translation(s)${usePublished ? " (published text)" : ""} against ${glossary.length} glossary entries.`,
+  );
+  if (usePublished) {
+    console.log(`skipped ${skippedForNoPublished} row(s) with no published text yet.`);
+  }
+  console.log();
 
   if (misses.length === 0) {
     console.log("no drift found.");
@@ -72,6 +100,25 @@ try {
     }
     console.log(`\nNot every line is a defect — a term inside a quoted English sentence, or a rephrasing`);
     console.log(`that drops the noun, will show up here. Read them; do not batch-apply them.`);
+  }
+
+  console.log();
+  if (overrides.length === 0) {
+    console.log("no published overrides found.");
+  } else {
+    // Grouped by item, same as the miss report above.
+    const byItem = new Map<string, GlossaryOverride[]>();
+    for (const o of overrides) byItem.set(o.itemId, [...(byItem.get(o.itemId) ?? []), o]);
+    console.log(
+      `${overrides.length} published override(s) across ${byItem.size} item(s) — decided terms the humans ` +
+        `dropped once the post actually went out:`,
+    );
+    for (const [itemId, os] of byItem) {
+      console.log(`\n  ${itemId}`);
+      for (const o of os) console.log(`    "${o.term}" → expected ${o.expected}`);
+    }
+    console.log(`\nThis is a statement about the glossary entry, not about these translations — a term`);
+    console.log(`the humans keep overriding may be a decision worth revisiting.`);
   }
 } finally {
   await db.close();

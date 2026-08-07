@@ -30,6 +30,9 @@ export const ALTERED_COLUMNS: readonly { table: string; column: string; type: st
   // motivating case (see this file's `alterColumnStatement` and `isSchemaApplied` below).
   { table: "translations", column: "posted_url", type: "text" },
   { table: "translations", column: "posted_at", type: "text" },
+  // `published_text` — the live post's body, filled in by the same reconcile match that fills in
+  // `posted_url`/`posted_at` above; a later task backfills existing rows, so this starts null.
+  { table: "translations", column: "published_text", type: "text" },
 ];
 
 /**

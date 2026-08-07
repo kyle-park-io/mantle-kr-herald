@@ -87,6 +87,25 @@ describe("PgTranslationStore", () => {
     expect(await store.listTranslatedIds()).toEqual(new Set(["x:1", "x:2"]));
   });
 
+  it("round-trips publishedText", async () => {
+    db = await createTestDb();
+    const store = new PgTranslationStore(db);
+    await store.upsert(translation("x:1", { publishedText: "실제로 올라간 한국어" }));
+    const [row] = await store.loadAll();
+    expect(row?.publishedText).toBe("실제로 올라간 한국어");
+  });
+
+  it("omits publishedText entirely when the column is null", async () => {
+    // omitNulls contract: an absent value must not come back as `null`, or every
+    // `publishedText === undefined` check downstream silently stops working.
+    db = await createTestDb();
+    const store = new PgTranslationStore(db);
+    await store.upsert(translation("x:2"));
+    const [row] = await store.loadAll();
+    expect(row).toBeDefined();
+    expect(row && "publishedText" in row).toBe(false);
+  });
+
   it("update leaves ordinal untouched, so loadAll() keeps insertion order after an edit", async () => {
     const localDb = await createTestDb();
     db = localDb;
