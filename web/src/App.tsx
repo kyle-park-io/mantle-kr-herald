@@ -158,6 +158,16 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
       setError(String((e as Error).message ?? e));
     }
   };
+  const onRetire = async (id: string) => {
+    setError(null);
+    try {
+      await api.retire(id);
+      await refresh();
+      refreshStatus();
+    } catch (e) {
+      setError(String((e as Error).message ?? e));
+    }
+  };
 
   const isCloud = status?.storageMode === "cloud";
   const syncWarn = !!status && (status.sync.needsRepublish > 0 || status.sync.unpublished > 0);
@@ -367,6 +377,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                 onApprove={onApprove}
                 onUnapprove={onUnapprove}
                 onUnretire={onUnretire}
+                onRetire={onRetire}
                 onPublish={onPublishOne}
                 onDirtyChange={setDirty}
               />

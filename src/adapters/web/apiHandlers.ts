@@ -98,6 +98,9 @@ export interface ApiDeps {
    * below — `createDeps.ts` wires this for both route sets, not gated by the hosted/local split.
    */
   unretireTranslation: (itemId: string) => Promise<void>;
+  /** 게시됨으로 — the withdrawal of `unretireTranslation`'s dispute. Callers must have checked
+   *  `postedUrl` first; this only writes the status. */
+  retireTranslation: (itemId: string) => Promise<void>;
   publishOne: (id: string, target: string) => Promise<PublishResult>;
   storageMode: StorageMode;
   formattingStore: FormattingStore;
@@ -382,6 +385,34 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     if (method === "POST" && segments.length === 4 && segments[3] === "unretire") {
       if (!existing) return { status: 404, json: { error: "not found" } };
       await deps.unretireTranslation(existing.itemId);
+      return { status: 200, json: await findById(deps.translationStore, id) };
+    }
+
+    /**
+     * 게시됨으로: withdraw the dispute `unretire` filed, putting the item back on `posted`.
+     *
+     * Without this route `unretire` is a one-way door, and not by oversight — `postedUrl` survives
+     * it so the next unattended tick cannot re-retire the item (`ReconcileXPublished`: a row with
+     * `postedUrl` set is "never scored — read, not re-matched"), and `RetireTranslation` reports
+     * `already-retired` *without writing* for exactly the same reason. Both rules exist to protect a
+     * human's correction from being undone by a machine; together they also meant a mis-click was
+     * permanent.
+     *
+     * Gated on `postedUrl`, which is the whole reason this cannot invent history: 게시됨 is
+     * restorable only for an item that already carries the evidence it went out. A draft that was
+     * never posted has no `postedUrl`, so there is nothing here to restore it *to*.
+     *
+     * No history-tab write, unlike `RetireTranslation`'s second half: this item was retired once
+     * already, so its row exists. And if that original write had failed, reconcile still repairs it
+     * — its conjunctive skip re-admits a `postedUrl`-set translation whose rootId is missing from
+     * `historyPostIds`, and `RetireTranslation` attempts the history half regardless of `status`.
+     */
+    if (method === "POST" && segments.length === 4 && segments[3] === "retire") {
+      if (!existing) return { status: 404, json: { error: "not found" } };
+      if (!existing.postedUrl) {
+        return { status: 409, json: { error: "게시 기록이 없는 항목은 게시됨으로 되돌릴 수 없습니다." } };
+      }
+      await deps.retireTranslation(existing.itemId);
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
   }

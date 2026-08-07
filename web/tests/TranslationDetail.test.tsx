@@ -17,7 +17,14 @@ const translation = (o: Partial<Translation> = {}): Translation => ({
   ...o,
 });
 
-function mount(item: Translation, o: { onUnretire?: (id: string) => Promise<void>; publishRows?: PublishStateRow[] } = {}) {
+function mount(
+  item: Translation,
+  o: {
+    onUnretire?: (id: string) => Promise<void>;
+    onRetire?: (id: string) => Promise<void>;
+    publishRows?: PublishStateRow[];
+  } = {},
+) {
   return render(
     <TranslationDetail
       item={item}
@@ -27,6 +34,7 @@ function mount(item: Translation, o: { onUnretire?: (id: string) => Promise<void
       onApprove={async () => {}}
       onUnapprove={async () => {}}
       onUnretire={o.onUnretire ?? (async () => {})}
+      onRetire={o.onRetire ?? (async () => {})}
       onPublish={async () => {}}
       onDirtyChange={() => {}}
     />,
@@ -272,5 +280,42 @@ describe("TranslationDetail published copy", () => {
     expect(screen.getByTestId("published-copy").textContent).toBe(
       "완전히 다른 문장이 여기에 들어갑니다 전부 새로 쓴 내용입니다.",
     );
+  });
+});
+
+/**
+ * The other half of 되돌리기. `postedUrl` survives the dispute so no unattended tick can undo a
+ * human's correction — which also meant nothing could undo the human's own mis-click. The button
+ * lives in the note that already tells the reviewer this item was once matched to a live post.
+ */
+describe("TranslationDetail 게시됨으로", () => {
+  const disputed = { status: "translated" as const, postedUrl: "https://x.com/0xMantleKR/status/1" };
+
+  it("offers 게시됨으로 on an item that carries a posted record but is not posted", () => {
+    mount(translation(disputed));
+    expect(screen.getByRole("button", { name: "게시됨으로" })).toBeTruthy();
+  });
+
+  it("offers it on an approved item too, since that is where a dispute plus an approval lands", () => {
+    mount(translation({ ...disputed, status: "approved", approvedAt: "2026-08-08T00:00:00.000Z" }));
+    expect(screen.getByRole("button", { name: "게시됨으로" })).toBeTruthy();
+  });
+
+  it("does not offer it on an item that was never posted — there is nothing to restore", () => {
+    mount(translation({ status: "translated" }));
+    expect(screen.queryByRole("button", { name: "게시됨으로" })).toBeNull();
+  });
+
+  it("does not offer it on an item already posted — 되돌리기 is the control there", () => {
+    mount(translation({ status: "posted", postedUrl: "https://x.com/0xMantleKR/status/1" }));
+    expect(screen.queryByRole("button", { name: "게시됨으로" })).toBeNull();
+    expect(screen.getByRole("button", { name: "되돌리기" })).toBeTruthy();
+  });
+
+  it("hands the item's id to onRetire", async () => {
+    const onRetire = vi.fn(async () => {});
+    mount(translation(disputed), { onRetire });
+    fireEvent.click(screen.getByRole("button", { name: "게시됨으로" }));
+    expect(onRetire).toHaveBeenCalledWith("x:2081711456320655644");
   });
 });

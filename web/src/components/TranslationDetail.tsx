@@ -105,6 +105,13 @@ export function TranslationDetail(props: {
    * item.
    */
   onUnretire: (id: string) => Promise<void>;
+  /**
+   * 게시됨으로 — withdraws the dispute `onUnretire` filed, putting the item back on `posted` from the
+   * `postedUrl`/`postedAt` still on its row. Offered only where that record exists, so it can never
+   * assert a post that never happened. Any edit made since the dispute is kept: `publishedText`
+   * holds the copy that actually went out and this pane diffs the two, so the divergence is shown.
+   */
+  onRetire: (id: string) => Promise<void>;
   onPublish: (id: string, target: string) => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
 }) {
@@ -213,6 +220,20 @@ export function TranslationDetail(props: {
           {kstStamp(props.item.postedAt) && (
             <span className="text-slate-ink/70">게시 시각 {kstStamp(props.item.postedAt)}</span>
           )}
+          {/* Withdraws the dispute. It belongs in this note rather than in the action row below
+              because it is about the *record* the note describes, not about this draft's review —
+              and because the note is the only place the reviewer can see what they would be
+              re-asserting. Not shown when the item is already `posted`: 되돌리기 is the control
+              there, and two buttons naming the same axis in opposite directions would read as a
+              toggle the rest of this pane deliberately avoids. */}
+          <button
+            className="ml-auto rounded-md border border-slate-ink/25 bg-surface px-2.5 py-1 text-[12px] font-medium text-slate-ink transition-colors hover:bg-slate-soft disabled:opacity-40"
+            disabled={busy}
+            onClick={() => run(() => props.onRetire(props.item.itemId))}
+            title="이 항목을 다시 게시됨으로 표시합니다. 지금 초안이 실제 게시본과 다르면, 1차 검수에 그 차이가 표시됩니다."
+          >
+            게시됨으로
+          </button>
         </p>
       )}
 
