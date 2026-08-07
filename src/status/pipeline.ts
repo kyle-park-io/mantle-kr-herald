@@ -96,11 +96,33 @@ export function funnelCounts(input: StatusInput): FunnelCounts {
   };
 }
 
+/**
+ * Where to go when the question was actually about history.
+ *
+ * Every number above is a `status` column: where a record stands *now*. The `translatedNote`
+ * comment names what that hides; this names the tool that does not hide it. Without a pointer here
+ * the next person reads a count as a history — which has already happened, by hand-rolling
+ * `select status, count(*) from translations`, seeing `approved 0`, and concluding 1차 검수 had
+ * stalled for ten days when the day before had carried 22 events.
+ *
+ * ⚠️ **`src/app/WatchTick.ts` parses this command's stdout and fails a scheduled tick on output it
+ * does not recognise.** Its `TRANSLATED_LINE = /^\s*Translated\s+(\d+)/m` is line-anchored with the
+ * `m` flag, so extra lines are safe *provided none of them begins with optional whitespace and the
+ * word `Translated` followed by a number* — a second match would be found before the real stage
+ * line and read as the translated total. Neither line below starts with a capitalised word at all.
+ * `tests/app/watchTick.test.ts` builds its `pnpm status` fixture by calling this function, so that
+ * suite is the regression check; do not hand-write a fixture there.
+ */
+const HISTORY_POINTER = [
+  "  these are current states, not a history — a `posted` row was `approved` once and no longer says so",
+  "  `pnpm lineage --activity` rolls up the append-only lineage by date: what happened, and when",
+];
+
 export function formatStatus(stages: StageCount[]): string {
   const labelW = stages.reduce((w, s) => Math.max(w, s.label.length), 0);
   const numW = stages.reduce((w, s) => Math.max(w, String(s.total).length), 0);
   const lines = stages.map(
     (s) => `  ${s.label.padEnd(labelW)}  ${String(s.total).padStart(numW)}${s.note ? `   (${s.note})` : ""}`,
   );
-  return ["Pipeline status", "", ...lines].join("\n");
+  return ["Pipeline status", "", ...lines, "", ...HISTORY_POINTER].join("\n");
 }

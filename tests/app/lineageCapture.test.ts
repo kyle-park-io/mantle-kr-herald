@@ -19,6 +19,7 @@ function fakeLineage() {
     append: async (e) => { appended.push(e); },
     load: async () => [],
     listItems: async (): Promise<LineageSummary[]> => [],
+    listEvents: async () => [],
   };
   return { store, appended };
 }
@@ -78,7 +79,7 @@ describe("lineage capture", () => {
   });
 
   it("a lineage append failure is swallowed — the save still succeeds", async () => {
-    const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [] };
+    const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [], listEvents: async () => [] };
     const res = await new SaveTranslation(noTranslationStore, noFewShot, () => "T", throwing).run({
       itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕", approve: false,
     });
@@ -173,7 +174,7 @@ describe("lineage capture — outlet forks", () => {
    * operator a retry; swallowing costs them the text.
    */
   it("a lineage append failure aborts the revert — the fork survives instead of vanishing", async () => {
-    const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [] };
+    const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [], listEvents: async () => [] };
     const s = fakeOverrideStore([forked({ text: "지켜져야 할 글" })]);
     await expect(new SaveOutletOverride(s, () => "T", throwing).run({ ...fork, revert: true })).rejects.toThrow(/disk full/);
     expect(s.rows()).toEqual([forked({ text: "지켜져야 할 글" })]); // still there — nothing was lost
@@ -194,7 +195,7 @@ describe("lineage capture — outlet forks", () => {
 
   /** The other two sites stay best-effort: the override survives them, so a lost append costs only history. */
   it("a throwing lineage store leaves a text save's outcome and the override store unchanged", async () => {
-    const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [] };
+    const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [], listEvents: async () => [] };
     const s = fakeOverrideStore();
     const saved = await new SaveOutletOverride(s, () => "T", throwing).run({ ...fork, text: "이 방 전용" });
     expect(saved).toMatchObject({ text: "이 방 전용", status: "rendered", createdAt: "T" });
@@ -202,7 +203,7 @@ describe("lineage capture — outlet forks", () => {
   });
 
   it("a throwing lineage store leaves an approve's outcome and the override store unchanged", async () => {
-    const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [] };
+    const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [], listEvents: async () => [] };
     const s = fakeOverrideStore([forked()]);
     const res = await new SaveOutletOverride(s, () => "T2", throwing).run({ ...fork, approve: true });
     expect(res).toMatchObject({ status: "approved", approvedAt: "T2" });

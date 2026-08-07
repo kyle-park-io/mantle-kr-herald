@@ -1,6 +1,6 @@
 import type { Db } from "../db/Db";
 import { omitNulls } from "../db/omitNulls";
-import type { LineageEntry, LineageStage } from "../../domain/lineage/models";
+import type { LineageEntry, LineageEvent, LineageStage } from "../../domain/lineage/models";
 import type { LineageStore, LineageSummary } from "../../ports/LineageStore";
 
 /** The shape a row from `lineage` (see `src/adapters/db/schema.ts`) comes back as. */
@@ -31,6 +31,9 @@ interface LineageSummaryRow {
   entries: number;
   last_stage: string;
 }
+
+/** `LineageRow` without the two text columns — see `listEvents`. */
+type LineageEventRow = Pick<LineageRow, "item_id" | "stage" | "status" | "at">;
 
 /**
  * `LineageStore` backed by the `lineage` table. Replaces `JsonlLineageStore`, which appended one
@@ -80,6 +83,23 @@ export class PgLineageStore implements LineageStore {
       [itemId],
     );
     return rows.map(toLineageEntry);
+  }
+
+  /**
+   * The projection is the point: `content` and `source_text` are never named in this select, so a
+   * rollup over the whole table transfers a few dozen bytes a row instead of every version of every
+   * item's copy. The port's doc comment has the full reasoning.
+   *
+   * `order by ordinal` — insertion order, matching `load()`. The caller sorts by date and does not
+   * depend on this, but a stable order costs nothing here and makes the query reproducible by hand.
+   */
+  async listEvents(): Promise<LineageEvent[]> {
+    const rows = await this.db.query<LineageEventRow>(
+      `select item_id, stage, status, at from lineage order by ordinal`,
+    );
+    return rows.map((r) =>
+      omitNulls({ itemId: r.item_id, stage: r.stage as LineageStage, status: r.status, at: r.at }),
+    );
   }
 
   async listItems(): Promise<LineageSummary[]> {
