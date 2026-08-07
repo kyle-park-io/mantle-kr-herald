@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { kstStamp } from "../src/types";
+import { kstStamp, kstStampShort, kstStampFull } from "../src/types";
 
 /**
  * Forced to UTC for the duration of this file, and this is the point of the file.
@@ -42,5 +42,46 @@ describe("kstStamp", () => {
     expect(kstStamp(undefined)).toBeUndefined();
     expect(kstStamp("")).toBeUndefined();
     expect(kstStamp("not a date")).toBeUndefined();
+  });
+});
+
+/**
+ * The outlet board's own timestamps, which used to format in the *viewer's* zone. Same instant,
+ * two answers depending on who was looking — on a ledger whose entire job is "did this go out, and
+ * when". These are the same two helpers `OutletCard` used to define privately, now pinned to Seoul
+ * like everything else that answers that question.
+ */
+describe("kstStampShort / kstStampFull", () => {
+  // 22:10 UTC is already the next day in Seoul: the case that separates a pinned formatter from an
+  // ambient one, and the one an operator would misread as "yesterday".
+  const LATE = "2026-07-31T22:10:00.000Z";
+
+  it("formats the compact chip in Seoul, not the ambient zone", () => {
+    expect(kstStampShort(LATE)).toBe("08. 01. 07:10");
+  });
+
+  it("formats the spelled-out tooltip in Seoul, and says KST", () => {
+    // The chip is narrow and stays unlabelled; the tooltip has room, so this is where the zone is
+    // stated outright rather than assumed.
+    //
+    // Asserted in pieces, NOT as one exact string: `toLocaleString("ko-KR")` renders the meridiem
+    // from whatever ICU data the runtime carries — `오전` on a full-icu Node (CI, and every
+    // browser), `AM` on a small-icu one (this author's laptop). Pinning the whole string passed
+    // locally and failed in CI on a difference that has nothing to do with what this test is for.
+    // These three assertions still go red the moment the Asia/Seoul pin is removed: in UTC the same
+    // instant is 2026. 7. 31. at 22:10.
+    const full = kstStampFull(LATE);
+    expect(full).toContain("2026. 8. 1.");
+    expect(full).toContain("7:10:00");
+    expect(full?.endsWith(" KST")).toBe(true);
+  });
+
+  it("returns empty/undefined for a missing value, matching what the callers already handle", () => {
+    // `kstStampShort` returns "" because OutletCard interpolates it directly into a chip label;
+    // `kstStampFull` returns undefined because its callers use `?? "이미"` fallbacks.
+    expect(kstStampShort(undefined)).toBe("");
+    expect(kstStampShort("not a date")).toBe("");
+    expect(kstStampFull(undefined)).toBeUndefined();
+    expect(kstStampFull("not a date")).toBeUndefined();
   });
 });

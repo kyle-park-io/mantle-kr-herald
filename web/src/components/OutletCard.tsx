@@ -17,6 +17,8 @@ import {
   SENDS_CLOSED_MESSAGE,
   TYPE_LABEL,
   deliveredToRoom,
+  kstStampFull,
+  kstStampShort,
   outletLabel,
   type BoardGroup,
   type BoardRow,
@@ -36,23 +38,14 @@ import {
 type ViewRow = BoardRow & { pending?: boolean };
 
 /**
- * ISO (UTC) → `07. 29. 06:20` in the reviewer's own zone. Slicing the ISO string instead would
- * print UTC as if it were local — nine hours and one calendar day off in KST, on a ledger whose
- * entire job is "did this go out, and when".
+ * Both timestamp formatters now live in `../types` (`kstStampShort`/`kstStampFull`), pinned to
+ * `Asia/Seoul`. They used to be defined here and formatted in the *reviewer's own* zone, which
+ * meant one instant read two ways depending on who opened the board — on a ledger whose entire job
+ * is "did this go out, and when". Aliased rather than renamed at ~10 call sites so this change
+ * stays a behaviour fix, readable as one line.
  */
-const stamp = (iso?: string): string => {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ""
-    : d.toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
-};
-/** The same instant, spelled out — the row is narrow, the tooltip does not have to be. */
-const stampFull = (iso?: string): string | undefined => {
-  if (!iso) return undefined;
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? undefined : d.toLocaleString("ko-KR");
-};
+const stamp = kstStampShort;
+const stampFull = kstStampFull;
 
 const SAVE_FIRST = "편집 내용을 먼저 저장하세요";
 const APPROVED_LOCK = "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요.";
