@@ -95,4 +95,18 @@ TimeoutStartSec=600
 # forever — every fire prints a preview to a journal nobody is tailing and writes nothing — which is
 # exactly the "looks armed but has silently stopped" failure this whole unit exists to avoid, so the
 # flag is spelled out here rather than assumed.
-ExecStart=/home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm x:reconcile --yes
+#
+# Wrapped in deploy/herald-run-logged.sh for the same reason herald-watch.service is: the journal on
+# this box holds roughly eight minutes of history (journald rotates on every backwards clock step,
+# and this machine's WSL2 host sync and timesyncd both step the clock constantly), so a run six
+# hours ago leaves nothing to read. That bites this unit harder than it bites watch — reconcile
+# fires a quarter as often, and its interesting output is a *successful* run's matching decisions:
+# which live threads it matched to approved renderings, and which it recorded as hand-posted. Those
+# are exactly the writes worth checking after the fact, and until now they were unreadable by the
+# time anyone thought to look. `%n` keys the per-unit log directory (%h/.herald/logs/herald-x-reconcile/),
+# the same key deploy/herald-notify-failure.sh derives its fallback excerpt from.
+#
+# Ordering note for whoever installs this: the wrapper lives in the deploy checkout, so
+# `bash deploy/herald-deploy.sh` must have run (landing this commit in %h/.herald/app) BEFORE this
+# unit file is copied into ~/.config/systemd/user/.
+ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n /home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm x:reconcile --yes

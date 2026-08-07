@@ -82,7 +82,14 @@ describe("x-reconcile service — the lines whose absence fails silently", () =>
     // The unit's own comment calls the alternative "armed but silently stopped": without --yes every
     // fire prints a preview to a journal nobody is tailing, writes nothing, and exits 0. There is no
     // failing unit and no alert — the exact shape this whole timer exists to avoid.
-    expect(service).toMatch(/^ExecStart=\S*pnpm x:reconcile --yes$/m);
+    //
+    // Anchored on the tail of the line rather than on the whole of it: since the durable-run-log
+    // change the command is invoked through deploy/herald-run-logged.sh, so `ExecStart=` now starts
+    // with the wrapper and its `%n` argument. What this test is about is unchanged — the flag must
+    // be there, and it must be the last thing on the line, where `pnpm` will actually forward it.
+    // tests/deploy/runLogging.test.ts owns the other half (that the wrapper is what runs it, from
+    // the deploy checkout); duplicating that here would just be two places to update.
+    expect(service).toMatch(/^ExecStart=.*\/pnpm x:reconcile --yes$/m);
   });
 
   it("reads the production environment file, so it does not write to the development database", () => {
