@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Replies Mantle made to other accounts no longer enter the pipeline at all.** Measured against
+  production on 2026-08-07: **92 of 221 collected threads (42%) were reply-only** — "@elfa_ai 🥳🥳",
+  "@Agnidex 💚", "@ethereum Onwards." — each arriving in 1차 검수 as its own row for a human to skip.
+  A further 140 nested reply blocks sat inside 46 real threads, prefixed `(댓글 · 지워도 됨)`, which
+  was an instruction to delete them by hand on every worksheet, forever. Both are now filtered at the
+  source (`XContentSource.flattenXThreads`): a reply-rooted thread never becomes a `ContentItem`, and
+  a nested reply never reaches the 원문. The predicate is unchanged and deliberately narrow — a reply
+  is `isReply` **and** its text leads with an `@`. Each half rules out a case the other would destroy:
+  a self-thread continuation is `isReply` without a leading `@`, and a genuine post can open with a
+  mention without being a reply. The exclusion is total, matching how `collect:reference` already
+  isolates @0xMantleKR's own posts: a filtered reply cannot be recovered by `translate:prepare --ids`,
+  because it never becomes an item for the selector to find.
+
 ### Added
 
 - **`pnpm x:reconcile` — reads @0xMantleKR's live timeline back and reconciles it against our own
