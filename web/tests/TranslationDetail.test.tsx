@@ -244,10 +244,14 @@ describe("TranslationDetail published copy", () => {
     );
   });
 
-  it("highlights only the words the human changed", () => {
+  it("highlights only the changed part of a word, not the whole word", () => {
+    // Character-level, deliberately: `구매하신` → `구매한` shares the stem, and marking the whole
+    // token would repaint text the human did not touch. Korean is agglutinative, so word-level
+    // marking also called light rewrites "mostly new" and switched the highlight off — see
+    // publishedDiff's own doc comment for the measurement.
     const { container } = mount(posted("가장 최근에 구매한 토큰화 자산은 무엇인가요?"));
-    const marks = [...container.querySelectorAll("[data-changed='true']")].map((n) => n.textContent?.trim());
-    expect(marks).toEqual(["구매한", "무엇인가요?"]);
+    const marks = [...container.querySelectorAll("[data-changed='true']")].map((n) => n.textContent);
+    expect(marks).toEqual(["한", "인가요"]);
   });
 
   it("renders nothing when the item has no published copy yet", () => {
