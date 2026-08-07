@@ -119,4 +119,24 @@ EnvironmentFile=%h/.herald/prod.env
 # "there is nothing to check". Raise the batch in steps and read the tick's duration in the journal.
 TimeoutStartSec=1800
 
-ExecStart=/home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm watch
+# Wrapped in deploy/herald-run-logged.sh rather than invoked directly, so that every tick leaves a
+# durable run log under %h/.herald/logs/herald-watch/ as well as in the journal. The journal alone
+# is not a record on this box: journald rotates on every backwards clock step, this machine's WSL2
+# host sync and timesyncd both step the clock constantly, and the readable window has been measured
+# at roughly eight minutes — a successful 02:17 tick had zero recoverable lines by 03:30 the same
+# morning. That leaves "the tick succeeded but did the wrong thing" with no evidence at all, and
+# TimeoutStartSec= above is a bound whose only diagnosis is the log of the run it killed.
+#
+# `%n` is this unit's own name, and it keys the per-unit log directory — the same key
+# deploy/herald-notify-failure.sh derives its fallback excerpt from, so the two agree without either
+# hardcoding a unit list. The wrapper's own header explains why `StandardOutput=append:` is not used
+# instead (measured: it replaces the journal rather than adding to it, which would break the
+# OnFailure= hook's excerpt), and why the tick's exit status still reaches systemd unchanged —
+# a `| tee` that swallowed a non-zero exit would silently switch this unit's Telegram alert off
+# forever. tests/deploy/runLogging.test.ts is what holds that.
+#
+# Ordering note for whoever installs this: the wrapper lives in the deploy checkout, so
+# `bash deploy/herald-deploy.sh` must have run (landing this commit in %h/.herald/app) BEFORE this
+# unit file is copied into ~/.config/systemd/user/ — otherwise the next fire runs an ExecStart= that
+# does not exist yet.
+ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n /home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm watch

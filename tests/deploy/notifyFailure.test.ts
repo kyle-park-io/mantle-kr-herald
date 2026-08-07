@@ -18,7 +18,7 @@
 // REPO_DIR-repointed copy against a synthetic .env, diffed against Node's own --env-file parsing)
 // — kept here so a regression is caught by `pnpm test`, not only by re-reading a report.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, chmod, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, chmod, mkdir, readFile, rm, utimes } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +37,13 @@ let workDir: string;
 let repoDir: string;
 let stubDir: string;
 let scriptPath: string;
+/**
+ * Stands in for ~/.herald/logs — the durable run logs deploy/herald-run-logged.sh writes, which the
+ * script now falls back to when the journal excerpt comes back empty. Always pointed at a temp
+ * directory, never left to the default: without the override every test whose journalctl stub
+ * returns nothing would read Kyle's real production run logs.
+ */
+let logRoot: string;
 
 /** curl stub: records the JSON body (the argument immediately after `-d`) to curl-body.log, and
  *  exits with $STUB_CURL_EXIT (default 0) — lets tests simulate Telegram accepting or rejecting
@@ -70,6 +77,20 @@ async function writeExecutable(path: string, lines: string[]): Promise<void> {
   await chmod(path, 0o755);
 }
 
+/**
+ * Writes a durable run log for `unit` under the stand-in log root, named the way
+ * deploy/herald-run-logged.sh names one. `mtime` is settable so a test can invert the mtime order
+ * against the name order — see the test that relies on it.
+ */
+async function seedRunLog(unit: string, stamp: string, body: string, mtime?: Date): Promise<string> {
+  const dir = join(logRoot, unit.replace(/\.service$/, ""));
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, `${stamp}.log`);
+  await writeFile(path, body, "utf8");
+  if (mtime) await utimes(path, mtime, mtime);
+  return path;
+}
+
 async function writeSyntheticEnv(vars: Record<string, string>): Promise<void> {
   const body = Object.entries(vars)
     .map(([k, v]) => `${k}=${v}`)
@@ -91,6 +112,7 @@ function runScript(
       PATH: `${stubDir}:/usr/bin:/bin`,
       STUB_DIR: stubDir,
       HOME: process.env.HOME, // journalctl/curl stubs don't need it, but bash itself may
+      HERALD_LOG_DIR: logRoot,
       ...env,
     },
     encoding: "utf8",
@@ -103,6 +125,9 @@ beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "herald-notify-failure-test-"));
   repoDir = join(workDir, "repo");
   stubDir = join(workDir, "stubs");
+  // Deliberately NOT created: an absent log root is the state on a box where no scheduled run has
+  // happened yet, and every test that does not seed a run log exercises exactly that.
+  logRoot = join(workDir, "logs");
   await mkdir(repoDir, { recursive: true });
   await mkdir(stubDir, { recursive: true });
 
@@ -158,7 +183,9 @@ describe("deploy/herald-notify-failure.sh", () => {
     expect(body.text).toContain(nasty);
   });
 
-  it("falls back to a plain notice, still valid JSON, when journalctl returns nothing", async () => {
+  it("falls back to a plain notice, still valid JSON, when neither the journal nor a run log has anything", async () => {
+    // No run log is seeded here, so the log root does not even exist — the state on a box where
+    // the failing unit never reached deploy/herald-run-logged.sh at all.
     await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
     const { status } = runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "" });
     expect(status).toBe(0);
@@ -211,6 +238,104 @@ describe("deploy/herald-notify-failure.sh", () => {
     expect(status).not.toBe(0);
     expect(stderr).toContain("no unit name");
     expect(existsSync(join(stubDir, "curl-invoked"))).toBe(false);
+  });
+
+  // The durable-log fallback — the actual payoff of deploy/herald-run-logged.sh existing. journald
+  // on this box holds roughly eight minutes of history because it rotates on every backwards clock
+  // step, so "captured immediately" buys nothing when the journal was already rotated *before* this
+  // hook ran: a run that failed at minute nine of a thirty-minute TimeoutStartSec= has outlived its
+  // own journal. The run log has no such window.
+  describe("durable run-log fallback", () => {
+    it("uses the run log's tail when the journal comes back empty, and points at the file", async () => {
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      const runLog = await seedRunLog(
+        TEST_UNIT,
+        "20260808T004126Z",
+        "x:reconcile: reading @0xMantleKR\nx:reconcile: FAILED — ECONNREFUSED\n",
+      );
+      const { status } = runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "" });
+      expect(status).toBe(0);
+
+      const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
+      expect(body.text).toContain(`⚠ ${TEST_UNIT} failed`);
+      expect(body.text).toContain("ECONNREFUSED");
+      // Pointing at `journalctl` here would send the reader to the one place already known to be
+      // empty. The path is the whole point of the fallback.
+      expect(body.text).toContain(`tail -n 50 ${runLog}`);
+      expect(body.text).not.toContain("no journal lines captured");
+    });
+
+    it("reads only the failing unit's own run logs", async () => {
+      // Same hazard the hook was templated for in the first place: reporting one unit's failure
+      // with another unit's output. The per-unit directory is what prevents it here.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog("herald-watch.service", "20260808T021700Z", "watch: FAILED — wrong unit\n");
+      await seedRunLog(TEST_UNIT, "20260808T004126Z", "reconcile: FAILED — right unit\n");
+      runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "" });
+
+      const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
+      expect(body.text).toContain("right unit");
+      expect(body.text).not.toContain("wrong unit");
+    });
+
+    it("picks the newest run log by name, not by mtime", async () => {
+      // This box's clock steps constantly — it is why the journal is unusable in the first place —
+      // so mtime ordering is exactly the thing that cannot be trusted here. The two files below are
+      // seeded with mtimes in the opposite order to their names; a `ls -t` implementation picks the
+      // older run and reports a failure that already happened.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(TEST_UNIT, "20260808T004126Z", "the newer run\n", new Date("2020-01-01T00:00:00Z"));
+      await seedRunLog(TEST_UNIT, "20260807T184126Z", "the older run\n", new Date("2030-01-01T00:00:00Z"));
+      runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "" });
+
+      const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
+      expect(body.text).toContain("the newer run");
+      expect(body.text).not.toContain("the older run");
+    });
+
+    it("prefers the journal when it has lines, and keeps the journalctl pointer", async () => {
+      // The journal stays the primary source when it is readable: it is live, and it does not
+      // depend on the failing unit having reached the wrapper at all. The fallback is a fallback.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(TEST_UNIT, "20260808T004126Z", "from the run log\n");
+      runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "from the journal" });
+
+      const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
+      expect(body.text).toContain("from the journal");
+      expect(body.text).not.toContain("from the run log");
+      expect(body.text).toContain(`journalctl --user -u ${TEST_UNIT} -n 50 --no-pager`);
+    });
+
+    it("truncates an oversized run-log excerpt the same way it truncates a journal one", async () => {
+      // The 500-character phone budget applies to whichever source answered — the truncation step
+      // runs after the fallback, not before it, and a run log is if anything the more likely of the
+      // two to carry a full stack trace.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(TEST_UNIT, "20260808T004126Z", "y".repeat(2000) + "RUNLOG-TAIL-MARKER\n");
+      runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "" });
+
+      const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
+      expect(body.text).toContain("(truncated)");
+      expect(body.text).toContain("RUNLOG-TAIL-MARKER");
+      expect(body.text.length).toBeLessThan(2000);
+    });
+
+    it("still exits 0 when the run log directory is unreadable", async () => {
+      // The never-fatal contract covers the new code path too: a failure handler that can itself
+      // fail is a loop, not a safety net. Blocked with a regular file where a directory component
+      // has to be, so this holds even if the suite runs as root.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      const blocker = join(workDir, "blocker");
+      await writeFile(blocker, "not a directory\n", "utf8");
+      const { status } = runScript(TEST_UNIT, {
+        STUB_JOURNAL_OUTPUT: "",
+        HERALD_LOG_DIR: join(blocker, "logs"),
+      });
+      expect(status).toBe(0);
+
+      const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
+      expect(body.text).toContain("no journal lines captured");
+    });
   });
 
   it("refuses to run the same way when the unit name is present but empty", async () => {
