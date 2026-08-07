@@ -27,7 +27,14 @@ export async function notifyOps(text: string, fetchFn: typeof fetch = fetch): Pr
   // Unset means: no ops room configured (yet, or ever, on this install) — the same fail-safe
   // posture herald-notify-failure.sh takes when it finds either variable empty. This must never
   // read as "notifyOps is broken"; there is simply nowhere configured to send to.
-  if (!token || !chatId) return;
+  //
+  // Announced rather than returned silently, because an unconfigured install and a successful send
+  // used to produce the SAME journal — nothing — and they call for opposite responses.
+  if (!token || !chatId) {
+    const missing = [!token && "TELEGRAM_BOT_TOKEN", !chatId && "TELEGRAM_CHAT_ID_OPS"].filter(Boolean).join(" and ");
+    console.log(`[notifyOps] ${missing} not set — no ops chat configured, alert not sent`);
+    return;
+  }
 
   try {
     const res = await fetchFn(`${API}/bot${token}/sendMessage`, {
@@ -40,6 +47,14 @@ export async function notifyOps(text: string, fetchFn: typeof fetch = fetch): Pr
       // by Telegram (bad token, bad chat id, ...) is a failure to swallow, not a reason to throw.
       throw new Error(`Telegram sendMessage failed: HTTP ${res.status}`);
     }
+    // The whole point of this line. A bot cannot read back its own sent messages (`getUpdates`
+    // returns incoming updates only, and privacy mode hides the group besides), so delivery cannot
+    // be confirmed after the fact through the API — the journal is the only record, and until this
+    // existed it held nothing on the success path. "Did the alert go out?" was then a three-step
+    // deduction: both env vars set, the caller's threshold met, and no failure line present,
+    // therefore it sent. That is not a question an operator should have to reconstruct, and the
+    // only other observer available is the human whose phone it was sent to.
+    console.log(`[notifyOps] sent to ops chat ${chatId}`);
   } catch (err) {
     // Swallowed on purpose — see this function's own doc comment. Logged, not re-thrown: the
     // caller (x-reconcile.ts) already printed its own summary; a broken alert path should show up
