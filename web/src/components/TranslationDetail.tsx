@@ -12,6 +12,10 @@ const TARGET_LABEL: Record<"local" | "google" | "lark", string> = {
 
 const TARGET_RANK: Record<string, number> = { local: 0, google: 1, lark: 2 };
 
+/** Why a `posted` item's editor and 승인 are locked — "lock, do not hide": the text is still shown,
+ *  read-only, and 되돌리기 is the way back. */
+const POSTED_LOCK = "이미 X에 직접 게시된 것으로 확인되어 편집할 수 없습니다. 되돌리기를 누르면 다시 검수할 수 있습니다.";
+
 /**
  * An "open" link that is only active when the row is synced. A "재발행 필요" row's files are the
  * outdated version, so opening them is disabled (greyed) to avoid the review-doc-looks-current
@@ -42,6 +46,12 @@ export function TranslationDetail(props: {
   onSave: (id: string, koreanText: string) => Promise<void>;
   onApprove: (id: string) => Promise<void>;
   onUnapprove: (id: string) => Promise<void>;
+  /**
+   * 되돌리기 — disputes a reconcile match: `posted` → `translated`, with `postedUrl`/`postedAt` left
+   * on the row (the server preserves them; see `SaveTranslation.run`'s own comment). That is what
+   * stops the next unattended `x:reconcile` tick from re-retiring the same item.
+   */
+  onUnretire: (id: string) => Promise<void>;
   onPublish: (id: string, target: string) => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
 }) {
@@ -65,15 +75,24 @@ export function TranslationDetail(props: {
 
   const url = itemUrl(props.item.itemId);
   const approved = props.item.status === "approved";
+  const posted = props.item.status === "posted";
   // A published row is out of date (status changed since upload, or content edited) — the server
   // computes this against the current render. Flag it so "파일 열기" showing the old doc isn't confusing.
-  const stalePublish = props.publishRows.some((r) => r.synced === false);
+  //
+  // Never for a `posted` item. The server is the source of truth here and already reports a retired
+  // item's rows as synced (`createDeps.loadPublishState`), so this is not a second spelling of that
+  // rule — it covers the window where the two halves of this view disagree. `App.tsx` fetches
+  // `publishState` and `translations` as separate requests, so a retire landing between them leaves
+  // a fresh `posted` item beside a stale `synced: false` row, and the notice this drives ("발행을 다시
+  // 눌러 갱신하세요") points at 발행 buttons that are now disabled — an instruction the reviewer
+  // cannot follow, for an item where following it would have deleted the approved Drive doc.
+  const stalePublish = !posted && props.publishRows.some((r) => r.synced === false);
 
   return (
     <div className="mx-auto max-w-3xl p-6 sm:p-8">
       <div className="mb-6 flex flex-wrap items-center gap-2.5">
-        {props.item.postedAt && (
-          <span className="font-mono text-[13px] font-medium text-faint">{datePrefix(props.item.postedAt)}</span>
+        {props.item.sourcePostedAt && (
+          <span className="font-mono text-[13px] font-medium text-faint">{datePrefix(props.item.sourcePostedAt)}</span>
         )}
         {url ? (
           <a
@@ -92,7 +111,42 @@ export function TranslationDetail(props: {
         </span>
         <KindBadge kind={props.item.kind} />
         <StatusChip status={props.item.status} />
+        {/* The reviewer's own read on what actually went out — "lock, do not hide": the Korean text
+            below is locked read-only for a posted item, but the live post itself must stay one click
+            away, not merely asserted by the chip above. */}
+        {posted && props.item.postedUrl && (
+          <a
+            href={props.item.postedUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[12px] font-medium text-slate-ink underline-offset-2 hover:underline"
+          >
+            게시된 글 보기 ↗
+          </a>
+        )}
       </div>
+
+      {/*
+        `postedUrl` surviving a 되돌리기 is the whole mechanism that stops the next unattended
+        `x:reconcile` tick from re-retiring the same item (see `RetireTranslation`'s own doc
+        comment) — but a silent survival would make the undo look like it lost information. This is
+        the note that says otherwise: the item reads and acts like any other `translated`/`approved`
+        row, plus a pointer to the match a human already disputed.
+      */}
+      {!posted && props.item.postedUrl && (
+        <p className="mb-6 flex flex-wrap items-center gap-1.5 rounded-lg bg-slate-soft px-3 py-2 text-[12px] text-slate-ink">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-ink" />
+          되돌리기 전 게시됨으로 연결됐던 글이 있습니다 —{" "}
+          <a
+            href={props.item.postedUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium underline underline-offset-2"
+          >
+            게시된 글 보기 ↗
+          </a>
+        </p>
+      )}
 
       <section className="mb-6">
         <div className="eyebrow mb-2">원문 · source</div>
@@ -114,13 +168,14 @@ export function TranslationDetail(props: {
         </div>
         <textarea
           className={`min-h-64 w-full resize-y rounded-xl border border-line p-4 text-[15px] leading-relaxed shadow-sm outline-none transition-colors ${
-            approved
+            approved || posted
               ? "bg-bg text-muted"
               : "bg-surface text-ink focus:border-mint focus:ring-4 focus:ring-mint/10"
           }`}
           value={korean}
           onChange={(e) => setKorean(e.target.value)}
-          readOnly={approved}
+          readOnly={approved || posted}
+          title={posted ? POSTED_LOCK : undefined}
           spellCheck={false}
         />
         {/* Same problem the "편집 중" chip above solves, and the same fix — see `MediaEditNoticeSlot`. */}
@@ -130,17 +185,39 @@ export function TranslationDetail(props: {
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button
           className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:opacity-40"
-          disabled={busy || !dirty || approved}
+          disabled={busy || !dirty || approved || posted}
           onClick={() => run(() => props.onSave(props.item.itemId, korean))}
           title={
-            approved
-              ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요."
-              : "편집한 번역을 저장합니다. Drive/로컬 파일은 오른쪽 발행 버튼을 눌러야 갱신됩니다."
+            posted
+              ? POSTED_LOCK
+              : approved
+                ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요."
+                : "편집한 번역을 저장합니다. Drive/로컬 파일은 오른쪽 발행 버튼을 눌러야 갱신됩니다."
           }
         >
           저장
         </button>
-        {approved ? (
+        {posted ? (
+          <>
+            {/* Not a button — 게시됨 is a fact about this item, not a toggle a click could undo the
+                way 승인 취소 undoes approval. 되돌리기 below is the actual (distinct, deliberate)
+                undo. */}
+            <span
+              className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-slate-soft px-3.5 py-1.5 text-[13px] font-medium text-slate-ink"
+              title={POSTED_LOCK}
+            >
+              게시됨 ✓
+            </span>
+            <button
+              className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:opacity-40"
+              disabled={busy}
+              onClick={() => run(() => props.onUnretire(props.item.itemId))}
+              title="게시 처리를 취소하고 검수 대기로 되돌립니다. 게시 기록은 남아 있어 다음 자동 확인이 다시 게시됨으로 표시하지 않습니다."
+            >
+              되돌리기
+            </button>
+          </>
+        ) : approved ? (
           <button
             className="group grid min-w-[5.5rem] place-items-center rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
             disabled={busy}
@@ -174,9 +251,23 @@ export function TranslationDetail(props: {
             <button
               key={t}
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:border-line disabled:bg-bg disabled:text-faint disabled:opacity-60"
-              disabled={busy || !usable || dirty}
+              // `posted` disables these for the same reason it disables 저장 and 승인 above: the item
+              // is terminal for the Drive path. The server refuses it too (409) — this is the half
+              // that stops a reviewer being invited into it in the first place. Leaving them live was
+              // the sharp edge: a retired-but-previously-approved item used to read "재발행 필요", and
+              // pressing 발행 re-rendered it as a review doc, uploaded it to review/, and deleted the
+              // approved doc that recorded the copy actually published.
+              disabled={busy || !usable || dirty || posted}
               onClick={() => run(() => props.onPublish(props.item.itemId, t))}
-              title={!usable ? "이 모드에서는 사용할 수 없는 타깃" : dirty ? "편집 내용을 먼저 저장하세요" : undefined}
+              title={
+                posted
+                  ? POSTED_LOCK
+                  : !usable
+                    ? "이 모드에서는 사용할 수 없는 타깃"
+                    : dirty
+                      ? "편집 내용을 먼저 저장하세요"
+                      : undefined
+              }
             >
               {TARGET_LABEL[t]}
             </button>

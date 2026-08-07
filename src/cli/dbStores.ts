@@ -1,6 +1,3 @@
-import type { Db } from "../adapters/db/Db";
-import { TABLE_NAMES } from "../adapters/db/schema";
-
 /**
  * The eleven stores `db:import`/`db:export` move between `output/` (plus the `translation/` and
  * `conversion/` config trees) and Postgres — see `docs/superpowers/specs/2026-07-31-hosted-writes-
@@ -104,24 +101,11 @@ export async function previewCount(fn: () => Promise<number>): Promise<number> {
   }
 }
 
-/**
- * Standalone, one-shot check: has this database ever had the FULL schema applied? Checks every
- * table `applySchema` creates (`TABLE_NAMES`, from `schema.ts`) against `information_schema.tables`
- * — not just `deliveries`. A single-table probe answers "yes" the moment the oldest table exists,
- * which is wrong the instant a later table is added to `schema.ts` and an already-migrated database
- * never gets it: that database would report "applied" forever, right up until the first read against
- * the new table fails at runtime with no earlier warning. (`auth_attempts`, added after the tables
- * this probe used to check, is exactly that case.)
- *
- * `previewCount` above reports 0 for a missing table the same way it would for a genuinely empty,
- * migrated one, so the two cannot be told apart from a preview's counts alone. `db-import.ts`'s and
- * `db-export.ts`'s entry scripts call this once, before printing the preview, to print an explicit
- * "schema not applied yet" line when that is why every count reads 0.
- */
-export async function isSchemaApplied(db: Db): Promise<boolean> {
-  const rows = await db.query<{ table_name: string }>(
-    "select table_name from information_schema.tables where table_schema = 'public'",
-  );
-  const existing = new Set(rows.map((r) => r.table_name));
-  return TABLE_NAMES.every((name) => existing.has(name));
-}
+// `isSchemaApplied` used to live here. Task 4.5 review moved it into `src/adapters/db/schema.ts`,
+// beside `TABLE_NAMES` and `ALTERED_COLUMNS` — its two inputs — because `src/doctor/checks.ts`
+// needed it too, and every other cross-reference between `src/cli` and `src/doctor` goes from `cli`
+// importing out of `doctor/checks.ts`, never the other way around: a `doctor` file importing out of
+// `cli/dbStores.ts` would have been the one import in this codebase pointed backwards. Its callers
+// (`db-import.ts`, `db-export.ts`, `doctor/checks.ts`) now import it straight from `schema.ts`
+// instead — not re-exported from here — so there is exactly one place it is defined and exactly one
+// place each caller reaches for it, rather than an indirection through this file that adds nothing.

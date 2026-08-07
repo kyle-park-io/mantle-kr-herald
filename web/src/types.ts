@@ -6,16 +6,41 @@ export const itemUrl = (itemId: string): string | null =>
 export const datePrefix = (iso?: string): string =>
   iso && iso.length >= 10 ? `[${iso.slice(2, 10).replace(/-/g, "")}]` : "";
 
+// Mirrors ALL_TRANSLATION_STATUSES in src/domain/translation/models.ts — same reason as ALL_TYPES
+// below (the frontend cannot import the domain), and `tests/web/typeMirror.test.ts` fails if this
+// drifts. `posted` is the reconcile-retired state (Task 2): a translation reconcile matched against
+// a live @0xMantleKR post and marked done outside this dashboard — never `published`, which already
+// means "uploaded to Drive" elsewhere in this repo.
+export const ALL_TRANSLATION_STATUSES = ["translated", "approved", "posted"] as const;
+export type TranslationStatus = (typeof ALL_TRANSLATION_STATUSES)[number];
+
 export interface Translation {
   itemId: string;
   source: "x" | "lark";
   sourceText: string;
   koreanText: string;
-  status: "translated" | "approved";
+  status: TranslationStatus;
   translatedAt: string;
   approvedAt?: string;
   kind?: "post" | "article";
-  postedAt?: string; // source post date (ISO), for the [YYMMDD] prefix
+  /**
+   * Source post date (ISO), for the `[YYMMDD]` prefix — deliberately NOT named `postedAt`.
+   * `src/domain/translation/models.ts`'s `Translation.postedAt` means something else entirely (Task
+   * 2's reconcile-match timestamp), and `GET /api/translations` is not the only route that answers
+   * with a translation shape: `/approve`, `/unapprove`, and `/unretire` (`apiHandlers.ts`) return the
+   * raw domain row via `findById`, never routed through `attachKind`. A field literally named
+   * `postedAt` here would type-check against both — a raw domain row cast to this `Translation` type
+   * would silently carry the reconcile-match time under a field this interface documents as "source
+   * post date", with no compiler error, only a wrong `[YYMMDD]` prefix the moment some future caller
+   * reads it (e.g. an optimistic UI update off one of those three routes' response, which today every
+   * `App.tsx` handler discards in favor of a full `refresh()`). Naming it `sourcePostedAt` instead
+   * means those three raw-domain responses simply lack this field (`undefined`, not wrong), and
+   * mirrors `src/adapters/web/attachKind.ts`'s `ApiTranslation.sourcePostedAt`, which this is a
+   * hand-kept copy of.
+   */
+  sourcePostedAt?: string;
+  /** The live X post a reconcile match found this translation already published as, by hand. */
+  postedUrl?: string;
 }
 export interface PublishResult {
   uploaded: number;

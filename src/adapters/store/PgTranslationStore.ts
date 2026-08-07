@@ -14,6 +14,8 @@ interface TranslationRow {
   approved_at: string | null;
   is_reply: boolean | null;
   ref_url: string | null;
+  posted_url: string | null;
+  posted_at: string | null;
 }
 
 function toTranslation(row: TranslationRow): Translation {
@@ -27,6 +29,8 @@ function toTranslation(row: TranslationRow): Translation {
     approvedAt: row.approved_at,
     isReply: row.is_reply,
     refUrl: row.ref_url,
+    postedUrl: row.posted_url,
+    postedAt: row.posted_at,
   });
 }
 
@@ -45,7 +49,8 @@ export class PgTranslationStore implements TranslationStore {
 
   async loadAll(): Promise<Translation[]> {
     const rows = await this.db.query<TranslationRow>(
-      `select item_id, source, source_text, korean_text, status, translated_at, approved_at, is_reply, ref_url
+      `select item_id, source, source_text, korean_text, status, translated_at, approved_at, is_reply, ref_url,
+              posted_url, posted_at
        from translations
        order by ordinal`,
     );
@@ -55,8 +60,9 @@ export class PgTranslationStore implements TranslationStore {
   async upsert(t: Translation): Promise<void> {
     await this.db.query(
       `insert into translations
-         (item_id, source, source_text, korean_text, status, translated_at, approved_at, is_reply, ref_url)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (item_id, source, source_text, korean_text, status, translated_at, approved_at, is_reply, ref_url,
+          posted_url, posted_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        on conflict (item_id) do update set
          source = excluded.source,
          source_text = excluded.source_text,
@@ -65,7 +71,9 @@ export class PgTranslationStore implements TranslationStore {
          translated_at = excluded.translated_at,
          approved_at = excluded.approved_at,
          is_reply = excluded.is_reply,
-         ref_url = excluded.ref_url`,
+         ref_url = excluded.ref_url,
+         posted_url = excluded.posted_url,
+         posted_at = excluded.posted_at`,
       [
         t.itemId,
         t.source,
@@ -76,6 +84,8 @@ export class PgTranslationStore implements TranslationStore {
         t.approvedAt ?? null,
         t.isReply ?? null,
         t.refUrl ?? null,
+        t.postedUrl ?? null,
+        t.postedAt ?? null,
       ],
     );
   }

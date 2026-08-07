@@ -1,6 +1,7 @@
 import type { CheckResult } from "./report";
 import { describeDbTarget, type DbConfig } from "../config";
 import type { Db } from "../adapters/db/Db";
+import { isSchemaApplied } from "../adapters/db/schema";
 
 /** Run a config loader: ok if it doesn't throw, fail with its own message otherwise. */
 export function configCheck(name: string, run: () => void, okDetail = "configured"): CheckResult {
@@ -99,17 +100,23 @@ export async function runDbCheck(cfg: DbConfig, probe: () => Promise<boolean>): 
 
 /**
  * The literal line to paste, matching `storage/mode.ts`'s `REMEDY` register: a command, not a
- * pointer to another command. `pnpm db:import --yes` (not a separate `pnpm db:schema`) is the fix
- * because `importOutputTree` applies `applySchema` itself — every statement there is `create table
- * if not exists`, so this is safe to run even against a database that already has the tables, and
- * safe on one with no `output/` tree to import from (it creates the tables and imports zero rows).
- * `--yes` is required in the text itself: the flagless preview path (`previewImport`/`previewExport`,
- * `src/cli/db-import.ts`/`db-export.ts`) deliberately does **not** apply the schema any more — a
- * preview must stay side-effect-free, reachable against production or a read-only role without
- * risking a `CREATE` — so pointing an operator at a flagless `pnpm db:import` here would not
- * actually apply it.
+ * pointer to another command. `pnpm db:migrate` (Task 4.5) leads now — a thin, dedicated wrapper
+ * over `applySchema` (`src/adapters/db/schema.ts`) built for exactly this: every statement it runs
+ * is `create table if not exists` / `alter table ... add column if not exists` / `insert ... on
+ * conflict do nothing`, so it is always safe to re-run, whatever state the database is in, and it
+ * has no `--yes` gate to remember because it can only ever add schema, never lose data.
+ *
+ * Before `db:migrate` existed, this pointed at `pnpm db:import --yes` instead — the only command
+ * that happened to apply the schema as a side effect of a much heavier job (importing `output/`).
+ * That still works (`importOutputTree` calls `applySchema` itself, so it is safe to run even against
+ * a database that already has the tables, or one with no `output/` tree to import from), and remains
+ * the right remedy when the goal is *also* to load `output/` into a fresh database — but it needs
+ * `--yes` precisely because it can write real data, which is more than a schema-only fix calls for.
+ * This text mentions it second, for that case.
  */
-export const SCHEMA_REMEDY = "Run pnpm db:import --yes to apply the schema (safe on an empty database — it also imports output/ into it once you are ready).";
+export const SCHEMA_REMEDY =
+  "Run pnpm db:migrate to apply the schema (safe to re-run — every statement is idempotent). " +
+  "If you also want to load output/ into a fresh database, pnpm db:import --yes does both.";
 
 /**
  * `select 1` — `doctor`'s probe before this function existed — passes on a database that has never
@@ -132,6 +139,16 @@ export function describeSchemaProbeError(err: unknown): Error {
  * the check only cares that the query fails with "relation ... does not exist" when the schema was
  * never applied) rather than `select 1`, which cannot tell a migrated database from a table-less
  * one. Zero rows is not a failure — only the query itself throwing is.
+ *
+ * That select alone is table-only, though: `deliveries` has no `alter table ... add column`
+ * columns of its own, so it stays silent about a database that has every table but is missing a
+ * column added to one of them later (Task 4.5 — see `ALTERED_COLUMNS`'s doc comment in `schema.ts`
+ * for how `translations.posted_url`/`posted_at` broke `pnpm x:reconcile` against production this
+ * exact way). Once the raw select has ruled out "no connection" / "not even the tables exist" —
+ * and been given the chance to report *that* failure with its own, more specific message via
+ * `describeSchemaProbeError` — this also runs `isSchemaApplied` (`src/adapters/db/schema.ts`), the
+ * same column-aware check `db-import.ts`/`db-export.ts` already use, so `doctor` cannot report "ok"
+ * on a database those commands would call unmigrated.
  */
 export function databaseProbe(db: Db): () => Promise<boolean> {
   return async () => {
@@ -139,6 +156,9 @@ export function databaseProbe(db: Db): () => Promise<boolean> {
       await db.query("select 1 from deliveries limit 1");
     } catch (err) {
       throw describeSchemaProbeError(err);
+    }
+    if (!(await isSchemaApplied(db))) {
+      throw new Error(`Schema not fully applied — a column applySchema adds is missing. ${SCHEMA_REMEDY}`);
     }
     return true;
   };

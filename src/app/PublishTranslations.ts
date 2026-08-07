@@ -38,6 +38,24 @@ export class PublishTranslations {
     const all = await this.translationStore.loadAll();
     const translations = opts.itemId ? all.filter((t) => t.itemId === opts.itemId) : all;
     for (const t of translations) {
+      // `posted` is terminal for the Drive path, and this is the one place that rule can be enforced
+      // for every caller — the CLI's bulk `drive:publish`, the dashboard's per-item button, and any
+      // future one.
+      //
+      // The Drive layer knows exactly two statuses: the two lines below pick `renderApproved` +
+      // `approved/` when the status is literally `"approved"`, and `renderReview` + `review/`
+      // otherwise. A third status therefore does not read as "third folder", it reads as "review" —
+      // so an item that was approved, published to `approved/`, and then retired to `posted` by
+      // reconcile would be **demoted**: re-rendered as a review doc, uploaded to `review/`, and its
+      // approved doc deleted by the move-don't-copy sweep below. That is data loss driven by a
+      // status change that has nothing to do with Drive. `x:2080608995371597892` — one of the five
+      // items that retire on the first production run — is exactly this shape.
+      //
+      // Skipping instead of extending the two-way branch is deliberate: a `posted` item is finished.
+      // Its doc, at whatever status it was published under, is the correct record of the copy that
+      // went out. 되돌리기 puts it back to `translated` and publishing resumes normally from there.
+      if (t.status === "posted") continue;
+
       const content = t.status === "approved" ? renderApproved(t) : renderReview(t);
       const folder: FolderKind = t.status === "approved" ? "approved" : "review";
       const name = publishFileName(t);

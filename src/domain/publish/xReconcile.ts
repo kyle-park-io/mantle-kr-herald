@@ -20,6 +20,7 @@ import { similarity, type MatchCandidate } from "../kol/attribution";
 import type { AssembledThread, SourceTweet } from "../models";
 import type { PublishRecord } from "../sheet/models";
 import type { DeliveryEntry } from "../delivery/models";
+import type { Translation } from "../translation/models";
 
 /**
  * Score at or above which a live thread is treated as the same copy we approved, not merely related
@@ -40,6 +41,22 @@ export const CONFIRMED_AT = 0.95;
  * the verdict is reported and a human decides.
  */
 export const CANDIDATE_AT = 0.5;
+
+/**
+ * Score at or above which a live thread is treated as the hand-posted twin of a translation that
+ * never went through the rendering route. Calibrated 2026-08-07 against nine production
+ * translations, each scored with `similarity()` against its own best live thread and then labelled
+ * `samePost` by reading both texts (see `docs/superpowers/specs/2026-08-07-hand-posted-
+ * reconciliation-design.md` §"The measurement" and `tests/fixtures/handPostedPairs.json`): the five
+ * true rewrites scored 0.3077-0.4837, the four unrelated pairs scored 0.0124-0.0917. This constant
+ * is deliberately off-centre in that gap — 0.058 below the lowest true positive, not centred at
+ * ~0.20 — because the two errors it can make are not symmetric. Set it too high and a missed match
+ * leaves the translation exactly where it already is, in 검수 대기, at zero cost. Set it too low and
+ * a false match silently retires a translation a human still needed to see, which nothing then
+ * surfaces again. So it sits close to the positives, spending margin against the cheap error to buy
+ * margin against the expensive one.
+ */
+export const TRANSLATION_MATCH_AT = 0.25;
 
 export type Verdict =
   | { kind: "confirmed" | "candidate"; itemId: string; score: number }
@@ -89,9 +106,334 @@ export function classify(thread: AssembledThread, candidates: MatchCandidate[]):
   return { kind: "external", score: best.score };
 }
 
+/**
+ * The single best-scoring live thread for a translation that was never rendered — the second-pass
+ * question "did this one go out?", asked over `threads` rather than over approved copy.
+ *
+ * Deliberately does not go through `classify` or `bestMatch`. `classify` bands its result into
+ * confirmed/candidate/external against `CONFIRMED_AT`/`CANDIDATE_AT`, which are calibrated for a
+ * copy-paste of an approved rendering, not a hand-typed rewrite; those bands do not apply here.
+ * `bestMatch` discards anything below `MATCH_THRESHOLD` and returns `undefined`, throwing away the
+ * raw score this caller needs to compare against `TRANSLATION_MATCH_AT`. So this scores every thread
+ * directly with `similarity`, the same call `classify` makes, keeping its argument order
+ * (`similarity(text, candidate.text)`, i.e. thread text first) for readability parity with that
+ * sibling function — the score is symmetric, so the order has no effect on the result.
+ *
+ * Ties resolve to the first thread in input order, matching `classify`'s and `bestMatch`'s own
+ * tie-break convention.
+ *
+ * Returns `undefined` when `threads` is empty; never throws, never reads a clock or the environment.
+ */
+export function bestThreadFor(
+  koreanText: string,
+  threads: AssembledThread[],
+): { thread: AssembledThread; score: number } | undefined {
+  let best: { thread: AssembledThread; score: number } | undefined;
+
+  for (const thread of threads) {
+    const score = similarity(threadText(thread), koreanText);
+    if (best === undefined || score > best.score) {
+      best = { thread, score };
+    }
+  }
+
+  return best;
+}
+
 /** The public URL of a post on `handle`'s account. */
 export function postUrl(handle: string, rootId: string): string {
   return `https://x.com/${handle}/status/${rootId}`;
+}
+
+/**
+ * The inverse of `postUrl`: the handle **and** the rootId embedded in a url this module itself
+ * built. Kept beside `postUrl` on purpose, not as a standalone regex somewhere else, so the two
+ * spellings of "how a post's url is shaped" cannot drift apart.
+ *
+ * Exists for a caller that already has a `postedUrl` (a `Translation`'s own record of a post
+ * already confirmed as its own) and needs to read it back — `reconcileXPublished`'s second pass is
+ * the first such caller, reading it here instead of re-scoring the translation against this run's
+ * live threads via `bestThreadFor`. Re-scoring an already-settled translation could silently pick a
+ * *different* thread if the original one aged out of `--since`, attributing the wrong live post to
+ * an item and feeding the wrong postId to `impressions:record` (Task 4 review round 2's Concern 1)
+ * — reading the rootId back out of the url this codebase already wrote down sidesteps that
+ * entirely, and means a retry no longer depends on the original thread still being inside the
+ * current fetch window.
+ *
+ * Returns the handle as well as the rootId (Task 4 review round 4) because "is this url corrupt?"
+ * and "is this url for a *different account*?" are two genuinely different questions and a caller
+ * must be able to answer them separately — the first is a defect worth failing a run over, the
+ * second is merely out of scope for a run pointed at another handle. A caller that could only ask
+ * `postUrl(myHandle, rootId) === url` collapses both into one, and so turns `--handle
+ * someone-else` into a crash. See `reconcileXPublished`'s Phase A for both answers.
+ *
+ * Captures **only** a run of digits immediately after `/status/`, terminated by `/`, `?`, `#`, or
+ * the end of the string — never `[^/]+` (Task 4 review round 3): a looser capture would swallow a
+ * tracking query string (`.../status/123?s=20` → `"123?s=20"`, a postId `impressions:record` would
+ * then try to measure verbatim) or hand back a non-numeric id straight through. Returns `undefined`,
+ * never throws, for anything that doesn't fit that shape — a bare `/status/` with nothing after it,
+ * no `/status/` segment at all, no digits immediately following it, or a host that is not `x.com`.
+ *
+ * **Parsing is deliberately looser than `postUrl` is exact.** A url that parses here has *not* been
+ * proven to be one `postUrl` would produce: `.../status/123?s=20` and `.../status/123/` both parse.
+ * That is what keeps the round-trip check at the call site (`postUrl(parsed.handle, parsed.rootId)
+ * === url`) load-bearing rather than a tautology — this function narrows a string to a candidate
+ * (handle, rootId); only the round trip proves it is byte-for-byte a url this codebase wrote.
+ */
+export function parsePostUrl(url: string): { handle: string; rootId: string } | undefined {
+  const match = /^https:\/\/x\.com\/([^/?#]+)\/status\/(\d+)(?:[/?#]|$)/.exec(url);
+  return match === null ? undefined : { handle: match[1], rootId: match[2] };
+}
+
+/**
+ * Why a settled translation was **released** — handed back without its post being claimed. One value
+ * per release site in `settledTranslationDisposition`, named for the fact that produced it:
+ *
+ * - `"item-confirmed-elsewhere"` — this run's rendering route already confirmed this same itemId
+ *   against a live thread, and a delivery row carries a real `type` and passed 2차 검수, so it is the
+ *   stronger record.
+ * - `"already-consumed"` — a *different* item's rendering already confirmed this exact post this run,
+ *   or the post is sitting in `plan.candidates` awaiting a human. Two items claim one post: a data
+ *   conflict that never self-heals, so it must reach a person.
+ * - `"foreign-account"` — the stored url names a different account than this run is pointed at. Not
+ *   corruption; simply not this run's business.
+ */
+export type SettledReleaseReason = "item-confirmed-elsewhere" | "already-consumed" | "foreign-account";
+
+/**
+ * Everything `settledTranslationDisposition` is allowed to read. Deliberately five sets and a string
+ * rather than the whole reconcile input: this decision must be a function of facts already
+ * established, never of the live threads' text (a settled translation is read, never re-scored — see
+ * `parsePostUrl`).
+ */
+export type SettledTranslationContext = {
+  /** The account this run is pointed at. Compared case-insensitively: an X handle is not case-sensitive. */
+  handle: string;
+  /**
+   * The rootIds still available for a fresh match — the pool Phase B will score against. **This is
+   * the set that makes the release invariant checkable**: releasing a post that is still in it hands
+   * that post to whatever translation happens to score against it next.
+   */
+  poolRootIds: ReadonlySet<string>;
+  /**
+   * rootIds this run already turned into a `confirmed` delivery row, a `candidate` awaiting a human,
+   * or a thread-loop skip because the matched item ALREADY has an `x-post` delivery row. All three
+   * mean the same thing to this decision: the post is spoken for by the rendering route.
+   */
+  consumedRootIds: ReadonlySet<string>;
+  /**
+   * itemIds the rendering route accounted for in this run — confirmed against a live thread now, or
+   * found to already carry an `x-post` delivery row (`deliveredKeys`). Both are a delivery row, which
+   * is a stronger record than a translation match.
+   */
+  claimedItemIds: ReadonlySet<string>;
+  /** postIds already carrying a publish-history row, under any itemId. */
+  historyPostIds: ReadonlySet<string>;
+  /**
+   * rootIds an EARLIER settled translation in this same pass already resolved — claimed or released.
+   * Two translations whose `postedUrl` names one live post is a data conflict (hand-edited legacy
+   * rows are the only known source), and the second one must not produce a second row for that post:
+   * that is how one postId ends up with two history rows, which `impressions:record` then measures
+   * into both. Only the first is acted on; the rest are claimed and reported.
+   */
+  settledRootIds: ReadonlySet<string>;
+};
+
+/**
+ * What to do with one translation whose post is already settled (`postedUrl` written). Exhaustive by
+ * construction — there is no sixth thing this decision can be:
+ *
+ * - `"phase-b"` — not settled at all (`postedUrl` unset). Nothing for this decision to say; the
+ *   caller's second phase scores it against live threads instead.
+ * - `"claim"` — this post belongs to this translation, or at minimum must not be handed to anybody
+ *   else. The caller must take its rootId out of the pool. `retire: true` additionally means "the
+ *   history row is still owed, write it" (and carries the `url`/`postedAt` to write it from, so the
+ *   caller never has to re-derive either). `retire: false` writes nothing; a `reason` on it means the
+ *   claim resolved a conflict the caller must also report in `plan.skipped`.
+ * - `"release"` — the caller does **not** claim this post, and must report the row (`reason` is
+ *   operator-facing prose; `because` is the machine-readable why).
+ * - `"fail"` — refuse the whole run. Reserved for data that cannot be reasoned about at all, where
+ *   continuing would mis-record someone's history.
+ *
+ * **The one invariant, enforced here so no caller can get it wrong: a release is legal only when its
+ * post is not something this run could hand to somebody else.** Concretely, `rootId` must be absent
+ * from `poolRootIds`, or already in `consumedRootIds`. That failure has been found and point-fixed at
+ * three separate release sites; it is one rule, so it lives in one place, and every new exit added
+ * below inherits it for free.
+ *
+ * **A release that fails that test becomes a `claim` with `retire: false`, not a `fail`.** Claiming
+ * satisfies the invariant by the strongest possible means — the post leaves the pool entirely, so no
+ * other translation can be retired against it — while writing nothing at all, and the conflict is
+ * still reported to a human through the claim's `reason`. It used to be a `fail`, and that was wrong
+ * for the way this code actually runs: `x:reconcile` is an unattended timer, so a throw does not
+ * "refuse one item", it reconciles **nothing**, every six hours, until the offending post ages out of
+ * a 30-day window or somebody edits Postgres by hand. 되돌리기 preserves `postedUrl`, so the dashboard
+ * offers no way out either. A reported skip on a timer beats a total refusal that nobody is watching.
+ *
+ * Why the remaining exits are still `fail`: a `postedUrl` that does not round-trip through `postUrl`
+ * is not merely unusable, it is *unattributable* — its digits could name any post at all, including
+ * one of this run's own, so there is no rootId to claim, none to test the invariant against, and no
+ * honest way to skip it. Same for a missing `postedAt` on a retire, which would otherwise write a
+ * blank `publishedAt` into the team's history sheet. Both values are written exclusively by this
+ * codebase and always together, so reaching either means something outside it produced the value —
+ * genuinely corrupt data rather than a conflict between two defensible records.
+ *
+ * Pure: no clock, no I/O, no environment. Same inputs, same disposition, every time.
+ */
+export type SettledTranslationDisposition =
+  | { kind: "phase-b" }
+  | { kind: "claim"; rootId: string; retire: false; reason?: string }
+  | { kind: "claim"; rootId: string; retire: true; url: string; postedAt: string }
+  | { kind: "release"; rootId: string; because: SettledReleaseReason; reason: string }
+  | { kind: "fail"; message: string };
+
+/**
+ * The release invariant, in one place. Everything that wants to release goes through here, so
+ * "does this exit leave a post unclaimed, and is that safe?" is answered once by code instead of
+ * once per branch by a comment.
+ *
+ * An unsafe release becomes a **claim that writes nothing** — see `SettledTranslationDisposition`
+ * for why this is not a `fail`. The claim is reported, because both situations that reach it (a stale
+ * `REFERENCE_X_HANDLE`/typo'd `--handle`, and one live post that a rendering says is item A while a
+ * translation's own `postedUrl` says is item B) never self-heal: they are re-derived every tick and
+ * are only ever fixed by a person seeing them.
+ */
+function releaseOrClaim(
+  itemId: string,
+  candidate: { rootId: string; because: SettledReleaseReason; reason: string },
+  ctx: SettledTranslationContext,
+): SettledTranslationDisposition {
+  const { rootId, because } = candidate;
+  if (!ctx.poolRootIds.has(rootId) || ctx.consumedRootIds.has(rootId)) return { kind: "release", ...candidate };
+  return {
+    kind: "claim",
+    rootId,
+    retire: false,
+    reason:
+      `${itemId}: ${because} — but post ${rootId} is still live in this run's pool, so this run claims ` +
+      `it (writes nothing, takes it out of matching) rather than releasing it, which would leave that ` +
+      `post free for a different translation to be retired against and record one real post against ` +
+      `two items. Nothing self-heals here: check ${itemId}'s postedUrl, and this run's --handle. ` +
+      `${candidate.reason}`,
+  };
+}
+
+/**
+ * Decide what a settled translation's own record means for this run. See
+ * `SettledTranslationDisposition` for the four outcomes and for the invariant this enforces.
+ *
+ * Order matters and is not arbitrary. The url is parsed and round-tripped **first**, before any of
+ * the three release questions, because a release cannot be checked — or reported — without the
+ * rootId it releases; an exit that fires before the post has a name is exactly the silent skip this
+ * function exists to make impossible. After that the three releases run strongest-record-first:
+ * the same item confirmed elsewhere, then a foreign account, then this post already spoken for.
+ *
+ * The round trip is against the url's **own** handle, never this run's. "Is this url corrupt?" and
+ * "is this url for a different account?" are two different questions, and answering both with one
+ * comparison is what once turned `--handle <someone else>` into a guaranteed crash the moment a
+ * single settled translation for another account existed.
+ */
+export function settledTranslationDisposition(
+  translation: Pick<Translation, "itemId" | "postedUrl" | "postedAt">,
+  ctx: SettledTranslationContext,
+): SettledTranslationDisposition {
+  const { itemId, postedUrl, postedAt } = translation;
+
+  if (postedUrl === undefined) return { kind: "phase-b" };
+
+  // Parse-and-verify, not parse-then-trust: `parsePostUrl` narrows a string to a *candidate*
+  // (handle, rootId) — it accepts a stray query string or trailing slash — and only the round trip
+  // against `postUrl`, the one other place this url shape is spelled, proves the value is one this
+  // codebase wrote.
+  const parsed = parsePostUrl(postedUrl);
+  if (parsed === undefined || postUrl(parsed.handle, parsed.rootId) !== postedUrl) {
+    return {
+      kind: "fail",
+      message:
+        `reconcileXPublished: ${itemId}'s postedUrl "${postedUrl}" is not a well-formed post url — ` +
+        `refusing to skip its retire silently, which would leave its thread unclaimed and open to a ` +
+        `different translation`,
+    };
+  }
+  const rootId = parsed.rootId;
+
+  // Checked before every other question, because it is a fact about this pass's OWN output and no
+  // later branch can undo it: whatever else is true of this translation, a post an earlier settled
+  // translation already resolved must not produce a second row. Claiming (not releasing) is what
+  // keeps that true no matter which way the earlier one went — a release here could hand back a post
+  // that is sitting in `plan.posted` for the earlier translation, and the caller's own post-condition
+  // would then refuse the whole plan.
+  if (ctx.settledRootIds.has(rootId)) {
+    return {
+      kind: "claim",
+      rootId,
+      retire: false,
+      reason:
+        `${itemId} records post ${rootId} as its own, but an earlier translation in this run already ` +
+        `resolved that same post — two translations name one live post, so only the first is acted on ` +
+        `and ${itemId} is left exactly as it is; check both items' postedUrl`,
+    };
+  }
+
+  if (ctx.claimedItemIds.has(itemId)) {
+    return releaseOrClaim(
+      itemId,
+      {
+        rootId,
+        because: "item-confirmed-elsewhere",
+        reason:
+          `${itemId} records post ${rootId} as its own, but this run already confirmed ${itemId} ` +
+          `against an approved rendering — the delivery row is the stronger record, so its postedUrl ` +
+          `is left alone`,
+      },
+      ctx,
+    );
+  }
+
+  if (parsed.handle.toLowerCase() !== ctx.handle.toLowerCase()) {
+    // Well-formed, just not ours. Compared case-insensitively because an X handle is
+    // case-insensitive: `--handle 0xmantlekr` names the SAME account as a stored
+    // `https://x.com/0xMantleKR/...`, so it must fall through to the claim below, not release.
+    return releaseOrClaim(
+      itemId,
+      {
+        rootId,
+        because: "foreign-account",
+        reason:
+          `${itemId} was posted on @${parsed.handle}, not @${ctx.handle} — not this run's account, ` +
+          `so its retire belongs to a run pointed at @${parsed.handle}`,
+      },
+      ctx,
+    );
+  }
+
+  if (ctx.consumedRootIds.has(rootId)) {
+    return releaseOrClaim(
+      itemId,
+      {
+        rootId,
+        because: "already-consumed",
+        reason:
+          `${itemId} records post ${rootId} as its own, but this run already matched that post to a ` +
+          `different item's approved rendering (see the confirmed/candidate rows above) — two items ` +
+          `claim one post; check ${itemId}'s postedUrl`,
+      },
+      ctx,
+    );
+  }
+
+  // Claimed whether or not anything is owed: this post belongs to this translation either way, and a
+  // DIFFERENT translation must never be free to match it just because this one needs no fresh write.
+  if (ctx.historyPostIds.has(rootId)) return { kind: "claim", rootId, retire: false };
+
+  if (postedAt === undefined) {
+    return {
+      kind: "fail",
+      message: `reconcileXPublished: ${itemId} has postedUrl but no postedAt — refusing to write a blank publishedAt`,
+    };
+  }
+
+  return { kind: "claim", rootId, retire: true, url: postedUrl, postedAt };
 }
 
 /**

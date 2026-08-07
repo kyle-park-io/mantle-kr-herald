@@ -91,3 +91,39 @@ export function candidateReasonText(reason: CandidateReason, itemId: string, ren
     }
   }
 }
+
+/**
+ * `plan.postedNearMisses`, highest score first, for the `posted` section's near-miss block — the
+ * counterpart to the `external` block's own `nearMisses` sort in `x-reconcile.ts`.
+ *
+ * The near-misses themselves are no longer computed here. They used to be
+ * (`translationNearMisses`, removed in Task 4 review round 2): this file's own re-derivation of
+ * "which threads were still available" went stale again the moment a settled-but-genuinely-done
+ * translation started claiming its thread without ever appearing in `plan.posted` (Concern 2) — a
+ * caller reconstructing the excluded set from `plan.posted` alone could no longer see that claim.
+ * `reconcileXPublished` now computes `postedNearMisses` itself, against the exact pool it used at
+ * the moment of scoring (see `ReconcilePlan`'s own doc comment), so there is exactly one place this
+ * list is built. This function is display-only: sorting, not deciding.
+ */
+export function sortedPostedNearMisses<T extends { score: number }>(nearMisses: T[]): T[] {
+  return [...nearMisses].sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Minimum retire count within a single `x:reconcile --yes` run before `notifyOps` fires — below
+ * this, retiring a translation is this feature doing its job silently; at or above it, a human
+ * should know without reading the run's journal.
+ */
+export const NOTIFY_RETIRE_THRESHOLD = 3;
+
+/**
+ * Whether this run should page an operator about its retires, and the message to send if so — the
+ * ">= 3" decision `x-reconcile.ts` used to make inline (Task 4 review's Finding 6: a load-bearing
+ * constant with no test that can fail, in a file whose whole reason for existing is that a
+ * top-level script has no test coverage of its own). Returns `undefined` below the threshold, so
+ * the caller's own `if` reads as "is there something to send" rather than repeating the comparison.
+ */
+export function retireNotification(retiredCount: number, retiredItemIds: string[], handle: string): string | undefined {
+  if (retiredCount < NOTIFY_RETIRE_THRESHOLD) return undefined;
+  return `x:reconcile retired ${retiredCount} translation(s) already posted by hand on @${handle}: ${retiredItemIds.join(", ")}`;
+}

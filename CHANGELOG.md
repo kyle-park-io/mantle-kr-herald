@@ -49,6 +49,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed by anything committed: `~/.config/systemd/user/` still carries the old, non-templated
   pair until a human runs the install/removal steps by hand
   ([`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §6).
+- **`pnpm x:reconcile` now also asks each translation that never became an approved rendering "did
+  this go out by hand?", because that turned out to be the common shape, not the rare one.** Against
+  production on 2026-08-07, five of nine translations already scored under this account had in fact
+  been posted directly — copy-paste of an approved rendering (what the confirmed/candidate/external
+  bands above already caught) was not what happened here at all. A hand-post is a **rewrite, not a
+  paste**: the five true matches scored 0.308/0.365/0.379/0.423/0.484 against their live post, the
+  highest of the four unrelated pairs scored only 0.092 — a 0.216 separation, comfortably clear of
+  `CONFIRMED_AT`'s 0.95, which is calibrated for a copy-paste this account doesn't produce and so
+  caught none of the five. The new `TRANSLATION_MATCH_AT` (0.25) sits deliberately off-centre toward
+  the positives (0.058 below the lowest true positive, not centred at ~0.20) because the two errors
+  are not symmetric: missing a match leaves the item exactly where it already was, in 검수 대기, at
+  zero cost; a false match silently retires something a human still needed to see, and nothing
+  surfaces it again on its own. A match retires the translation to a new terminal status **`posted`**
+  (게시됨) — `postedUrl`/`postedAt` stamped, then a publish-history row keyed `x:<itemId>` (status
+  write first, history row second, so a failed history write is always retried on the next run
+  without re-scoring or reattributing the match). A `posted` translation cannot be approved, and
+  therefore cannot be converted, formatted, or sent — the lock that stops already-published copy
+  going out a second time through the pipeline. 되돌리기 in the dashboard disputes a match: back to
+  검수 대기, but `postedUrl` is deliberately left on the row, which is what stops the next unattended
+  `x:reconcile` tick from re-retiring the same item. The timer retires automatically under `--yes`;
+  a run that retires three or more in one pass sends a Telegram notice via `TELEGRAM_BOT_TOKEN` +
+  `TELEGRAM_CHAT_ID_OPS` (`notifyOps`, the same pair `deploy/herald-notify-failure.sh` uses), because
+  that is a success worth a human's attention, not a failure the `OnFailure=` hook would ever see.
+  X-only by design, matching this feature's own scope: candidates are drawn from `source: "x"`
+  translations and live threads on the one account this whole feature reads. See
+  `src/domain/publish/xReconcile.ts` (`TRANSLATION_MATCH_AT`, `bestThreadFor`), `src/app/
+  ReconcileXPublished.ts` (Phase B), and `src/app/RetireTranslation.ts`.
+- **`pnpm db:migrate` — the schema-apply step, for the first time separated from `serve`/`db:import`/
+  `db:export`.** Every earlier schema change added a whole new table, so a database nobody had
+  migrated always failed loudly on the first read (`relation ... does not exist`) from whichever of
+  those three commands touched it first. This branch's `translations.posted_url`/`posted_at` are
+  columns added to a table that already existed on every prior install, and columns don't announce
+  themselves the same way: `pnpm x:reconcile` run against the real production database failed with
+  `column "posted_url" does not exist` before this command existed to fix it. `db:migrate` runs
+  `applySchema` on its own, safe to re-run any time (every statement is `create table if not exists`
+  / `alter table ... add column if not exists`), with no `--yes` gate — unlike `db:import`/
+  `db:export`, it can only ever add schema that was always going to be there. `pnpm doctor`'s schema
+  check is now column-aware for the same reason: it used to probe one table's existence and call that
+  "applied", which is exactly the check that reported healthy against a database still missing the
+  two new columns. See `src/cli/db-migrate.ts`, `src/adapters/db/schema.ts` (`isSchemaApplied`,
+  `ALTERED_COLUMNS`), and `src/doctor/checks.ts`.
 
 ## [0.4.0] - 2026-08-06
 

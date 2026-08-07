@@ -12,9 +12,17 @@ import { assembleThreads } from "../domain/threadAssembler";
 import { parseSince } from "../shared/time/parseSince";
 import { postUrl } from "../domain/publish/xReconcile";
 import { reconcileXPublished } from "../app/ReconcileXPublished";
-import { candidateReasonText, externalSummaryLine, xReconcileStartupLine } from "./xReconcileReport";
+import {
+  candidateReasonText,
+  externalSummaryLine,
+  retireNotification,
+  sortedPostedNearMisses,
+  xReconcileStartupLine,
+} from "./xReconcileReport";
 import { RecordObservedDelivery } from "../app/RecordObservedDelivery";
 import { RecordPublish } from "../app/RecordPublish";
+import { RetireTranslation } from "../app/RetireTranslation";
+import { notifyOps } from "../shared/notifyOps";
 import type { SourceTweet } from "../domain/models";
 import type { SheetClient } from "../ports/SheetClient";
 
@@ -22,6 +30,12 @@ skipIfLocal("x:reconcile");
 
 // Same expression `metrics-record.ts:16` uses for the env fallback; `--handle` (not present there)
 // takes priority over it so an operator can point one run at a different account without an env edit.
+//
+// Note what this does NOT scope: `translations` below is filtered by `source === "x"` only, because a
+// `Translation` carries no handle to filter on. A run pointed at another account therefore still sees
+// every settled @0xMantleKR translation, and `reconcileXPublished`'s Phase A is what decides they are
+// not this run's business — reporting each in `plan.skipped` rather than acting on it or (as it did
+// before Task 4 review round 4) throwing before the plan is printed at all.
 const handle =
   argValue("--handle")?.trim().replace(/^@/, "") ||
   process.env.REFERENCE_X_HANDLE?.trim().replace(/^@/, "") ||
@@ -85,15 +99,22 @@ try {
   const threads = assembleThreads(tweets);
 
   const stores = createStores(db);
-  const [renderings, deliveredKeys, history] = await Promise.all([
+  const [renderings, deliveredKeys, history, allTranslations] = await Promise.all([
     stores.formattingStore.loadAll(),
     stores.deliveryLedger.loadKeys(),
     loadHistoryKeys(sheet),
+    stores.translationStore.loadAll(),
   ]);
+  // Lark-sourced translations never went anywhere near this account — the design scopes Lark out
+  // of this feature entirely (see the spec) — and nothing upstream of this filter does the
+  // narrowing: reconcileXPublished takes whatever `translations` it is handed and would happily
+  // score a Lark translation against an X thread if this file let one through.
+  const translations = allTranslations.filter((t) => t.source === "x");
 
   const plan = reconcileXPublished({
     threads,
     renderings,
+    translations,
     deliveredKeys,
     historyIds: history.itemIds,
     historyPostIds: history.postIds,
@@ -143,6 +164,25 @@ try {
     }
   }
 
+  console.log(
+    `\nposted (${plan.posted.length}) — a translation that already went out by hand; retirable as a history row:`,
+  );
+  for (const p of plan.posted) {
+    console.log(`  ${p.itemId} → post ${p.rootId} — score ${p.score.toFixed(3)} — ${p.url}`);
+  }
+  // Same argument as the `external` near-misses just above: a translation that scored close to
+  // TRANSLATION_MATCH_AT without clearing it is real information, not nothing. Computed by
+  // `reconcileXPublished` itself now, against the exact pool it used at the moment of scoring —
+  // see `ReconcilePlan`'s own doc comment on `postedNearMisses` for why this file no longer
+  // re-derives it (Task 4 review round 2, Concern 2).
+  const translationMisses = sortedPostedNearMisses(plan.postedNearMisses);
+  if (translationMisses.length > 0) {
+    console.log(`  ${translationMisses.length} near-miss(es) scored above 0 but below TRANSLATION_MATCH_AT (highest first):`);
+    for (const { itemId, rootId, score } of translationMisses) {
+      console.log(`    ${itemId} → root ${rootId} — score ${score.toFixed(3)}`);
+    }
+  }
+
   // One line per row, not just a count — same argument as `external` above. `skipped` used to hold
   // only already-recorded rows, but it now also holds every rootless thread (see the guard in
   // `reconcileXPublished`), which is neither already recorded nor recorded by hand: 85 of 196
@@ -155,15 +195,27 @@ try {
 
   if (!writeConfirmed) {
     console.log(
-      `\npreview only — nothing was written. Re-run with --yes to record ${plan.confirmed.length} confirmed and ${plan.external.length} external row(s).`,
+      `\npreview only — nothing was written. Re-run with --yes to record ${plan.confirmed.length} confirmed, ` +
+        `${plan.external.length} external, and retire ${plan.posted.length} posted row(s).`,
     );
   } else {
     const recorder = new RecordObservedDelivery(stores.deliveryLedger);
     const publisher = new RecordPublish(sheet);
+    // historyIds (column A) dropped — Task 4 review's Finding 3: it is redundant
+    // (RecordPublish.record already matches on itemId/type/channel/outletId and updates rather
+    // than duplicates) and could suppress a legitimate row (a Telegram send writes the same bare
+    // `x:<id>` into column A). historyPostIds (column D, the postId) is the guard that actually
+    // protects against two rows for one post.
+    const retirer = new RetireTranslation(stores.translationStore, publisher, history.postIds);
     let written = 0;
     let alreadyRecorded = 0;
     let replacedDropped = 0;
     let failed = 0;
+    let retired = 0;
+    let alreadyRetired = 0;
+    let historyWritten = 0;
+    let historyFailed = 0;
+    const retiredItemIds: string[] = [];
 
     console.log("\nwriting…");
     for (const { entry } of plan.confirmed) {
@@ -200,12 +252,65 @@ try {
       }
     }
 
+    for (const p of plan.posted) {
+      try {
+        // status and history are independent outcomes — see RetireTranslation's own doc comment
+        // (Task 4 review's Finding 1). Neither one gates the other, and both are reported: a
+        // translation can be freshly retired with its history row written in the same call, or
+        // already-retired from an earlier run yet only now getting its history row (a previous
+        // run's history write threw), or freshly retired while history fails right here.
+        const result = await retirer.run({ itemId: p.itemId, rootId: p.rootId, url: p.url, postedAt: p.postedAt });
+
+        if (result.status === "retired") {
+          retired++;
+          retiredItemIds.push(p.itemId);
+          console.log(`  ✓ ${p.itemId} retired — already posted by hand (post ${p.rootId})`);
+        } else {
+          alreadyRetired++;
+          console.log(`  · ${p.itemId} already retired`);
+        }
+
+        if (result.history === "written") {
+          historyWritten++;
+          console.log(`    ✓ history recorded (post ${p.rootId})`);
+        } else if (result.history === "failed") {
+          // Counted into `failed` below (Task 4 review's Finding 2) — not swallowed the way
+          // RetireTranslation itself swallows the underlying error. A hand-post whose history row
+          // never lands is a post `impressions:record` will never measure, and that must fail this
+          // run's exit code loudly and keep failing every tick until it is fixed, not read as a
+          // clean batch because the status half alone succeeded.
+          historyFailed++;
+          failed++;
+          console.log(`    ✗ history write failed for ${p.itemId} (post ${p.rootId}) — will retry next run`);
+        }
+        // "skipped" (already in historyPostIds) prints nothing further — the status line above
+        // already said what happened to this row.
+      } catch (err) {
+        // RetireTranslation.run only throws for a translation row that has vanished since the plan
+        // was built — genuinely exceptional, unlike a history write's own caught-and-reported failure.
+        failed++;
+        console.error(`  ✗ ${p.itemId}: ${(err as Error).message}`);
+      }
+    }
+
     console.log(
-      `\nwrote ${written}, replaced ${replacedDropped} dropped row(s), already recorded ${alreadyRecorded}, failed ${failed}.`,
+      `\nwrote ${written}, replaced ${replacedDropped} dropped row(s), already recorded ${alreadyRecorded}, ` +
+        `retired ${retired}, already retired ${alreadyRetired}, history written ${historyWritten}, ` +
+        `history failed ${historyFailed}, failed ${failed}.`,
     );
     // Only an actual write throwing counts as a failure — a plan full of candidates that a human
-    // still needs to look at is the normal, expected outcome of a run, not an error.
+    // still needs to look at is the normal, expected outcome of a run, not an error. A failed
+    // history write counts too (folded into `failed` above), on purpose: see the comment at that
+    // increment.
     if (failed > 0) process.exitCode = 1;
+
+    // A one-off, not an every-run alert: fires only when `retireNotification` (xReconcileReport.ts)
+    // says there's something to send — see that function's own doc comment for the threshold and
+    // why it lives somewhere testable rather than as a literal here. Fired after the write loop,
+    // not per-item, so one alert names the whole batch rather than a Telegram message per retired
+    // translation.
+    const notification = retireNotification(retired, retiredItemIds, handle);
+    if (notification !== undefined) await notifyOps(notification);
   }
 } finally {
   await db.close();

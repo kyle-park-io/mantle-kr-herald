@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, beforeEach, beforeAll, afterAll } from
 import { createTestDb } from "../support/testDb";
 import { createDeps } from "../../src/app/createDeps";
 import { handleApi, type ApiDeps } from "../../src/adapters/web/apiHandlers";
+import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
 import { VALID_PASSWORD_HASH } from "../support/authFixtures";
 
 /**
@@ -46,6 +47,79 @@ describe("createDeps", () => {
     const deps = createDeps({ db, routes: "local" });
     const result = await handleApi(authenticated(deps), "GET", "/api/translations", undefined);
     expect(result.status).toBe(200);
+  });
+
+  /**
+   * The whole point of 되돌리기 is that `postedUrl` survives it — that is what stops the next
+   * unattended `x:reconcile` tick from re-retiring an item a human just disputed (see
+   * `RetireTranslation`'s own doc comment). `tests/adapters/web/apiHandlers.test.ts`'s equivalent
+   * test only proves the ROUTE forwards to `deps.unretireTranslation` correctly: its fake
+   * `unretireTranslation` re-implements preservation by hand (`{ ...existing, status: "translated" }`),
+   * so it would stay green even if `createDeps.ts`'s real implementation stopped preserving
+   * `postedUrl` entirely. This test drives the real `createDeps`-built `unretireTranslation` — real
+   * `SaveTranslation`, real `PgTranslationStore` over PGlite — so a regression in that specific
+   * implementation choice (not just in the route wiring) actually fails a test.
+   */
+  it("되돌리기 (unretire) keeps postedUrl — the real write path, not a test double", async () => {
+    db = await createTestDb();
+    const deps = createDeps({ db, routes: "local" });
+    await deps.translationStore.upsert({
+      itemId: "x:1",
+      source: "x",
+      sourceText: "s",
+      koreanText: "k",
+      status: "posted",
+      translatedAt: "t",
+      postedUrl: "https://x.com/0xMantleKR/status/1",
+      postedAt: "2026-08-06T00:00:00.000Z",
+    });
+
+    const res = await handleApi(authenticated(deps), "POST", "/api/translations/x:1/unretire", undefined);
+
+    expect(res.status).toBe(200);
+    const row = (await deps.translationStore.loadAll()).find((t) => t.itemId === "x:1");
+    expect(row?.status).toBe("translated");
+    expect(row?.postedUrl).toBe("https://x.com/0xMantleKR/status/1");
+  });
+
+  /**
+   * Final review, Important 2. `loadPublishState` computes each ledger row's `synced` flag, and the
+   * dashboard turns `synced === false` into "재발행 필요" plus the "발행을 다시 눌러 갱신하세요" notice.
+   * A translation that was approved, published to `approved/`, and then retired by reconcile keeps a
+   * ledger row at status `approved` while the item itself reads `posted` — so the plain
+   * `e.status === t.status` comparison called it stale forever, and following the instruction it
+   * produced uploaded the item to `review/` and deleted the approved doc. This drives the real
+   * `createDeps`-built closure (real `PgPublishStore`/`PgTranslationStore` over PGlite) because the
+   * comparison lives in that closure and nowhere else — a fake would just re-implement it.
+   */
+  describe("loadPublishState and a retired item", () => {
+    const row = { itemId: "x:1", stage: "translation" as const, status: "approved", target: "google", fileName: "f.md", remoteId: "g-1", contentHash: "hash-of-the-published-bytes", uploadedAt: "2026-08-06T00:00:00.000Z" };
+    const item = { itemId: "x:1", source: "x" as const, sourceText: "s", koreanText: "k", status: "approved" as const, translatedAt: "t" };
+
+    it("reports a `posted` item's row as synced, not as needing republish", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      await new PgPublishStore(db).record(row);
+      await deps.translationStore.upsert({ ...item, status: "posted", postedUrl: "https://x.com/0xMantleKR/status/1", postedAt: "2026-08-06T00:00:00.000Z" });
+
+      const state = await deps.loadPublishState();
+      expect(state).toHaveLength(1);
+      expect(state[0].synced).toBe(true);
+    });
+
+    it("still reports a stale APPROVED item's row as needing republish", async () => {
+      // The scope check. `contentHash` above is a literal that cannot match the current render, so
+      // this row is genuinely stale — the case where pressing 발행 IS the fix, and which a blanket
+      // "always synced" would have swallowed along with the posted one.
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      await new PgPublishStore(db).record(row);
+      await deps.translationStore.upsert(item);
+
+      const state = await deps.loadPublishState();
+      expect(state).toHaveLength(1);
+      expect(state[0].synced).toBe(false);
+    });
   });
 
   it("registers convert-prepare locally", async () => {

@@ -303,6 +303,51 @@ describe("PublishTranslations", () => {
     expect(keys).not.toContain("x:1:approved:google");
   });
 
+  describe("a `posted` item is terminal for the Drive path", () => {
+    // Final review, Important 2. The two lines this class publishes from know exactly two statuses:
+    // `"approved"` means renderApproved + the approved/ folder, anything else means renderReview +
+    // review/. A third status therefore does not fall through to "leave it alone", it falls through
+    // to "review" — so an item reconcile retires from `approved` to `posted` gets DEMOTED.
+    it("does not re-upload it, and does not demote its approved doc to review/", async () => {
+      // The exact shape of `x:2080608995371597892`, one of the five items retiring on the first
+      // production run: approved, already published to approved/, then retired. Before the skip,
+      // this call re-rendered it as a review doc, uploaded that to review/, recorded the review row,
+      // and then the move-don't-copy sweep DELETED the approved doc — the only record of the copy
+      // that actually went out.
+      const g = new DeletingUploader("google");
+      const store = new InMemoryPublishStore();
+      await store.record({ itemId: "x:1", stage: "translation", status: "approved", target: "google", fileName: "app.md", remoteId: "google-app", contentHash: "h", uploadedAt: "t" });
+
+      const res = await new PublishTranslations(translationStore([tr("x:1", "posted")]), [g], store).run();
+
+      expect(g.reqs).toEqual([]); // nothing uploaded
+      expect(g.deleted).toEqual([]); // and nothing deleted — the approved doc survives
+      expect(res).toMatchObject({ uploaded: 0, updated: 0, failed: 0 });
+      // The ledger still points at the approved doc, at the status it was published under.
+      expect((await store.listEntries()).map(entryKey)).toEqual(["x:1:approved:google"]);
+    });
+
+    it("skips only the posted item, publishing the rest of the batch", async () => {
+      // `drive:publish` runs over every translation, so the skip must be per item, not a bail-out.
+      const g = new FakeUploader("google");
+      const store = new InMemoryPublishStore();
+
+      const res = await new PublishTranslations(translationStore([tr("x:1", "posted"), tr("x:2", "approved")]), [g], store).run();
+
+      expect(res.uploaded).toBe(1);
+      expect(g.reqs.map((r) => r.content.includes("x:2"))).toEqual([true]);
+      expect((await store.listEntries()).map((e) => e.itemId)).toEqual(["x:2"]);
+    });
+
+    it("refuses it on the single-item path too, which is the dashboard's button", async () => {
+      const g = new FakeUploader("google");
+      const store = new InMemoryPublishStore();
+      const res = await new PublishTranslations(translationStore([tr("x:1", "posted")]), [g], store).run({ itemId: "x:1" });
+      expect(res.uploaded).toBe(0);
+      expect(g.reqs).toEqual([]);
+    });
+  });
+
   it("does not delete when there is no other-status sibling", async () => {
     const g = new DeletingUploader("google");
     await new PublishTranslations(translationStore([tr("x:1", "approved")]), [g], new InMemoryPublishStore()).run();

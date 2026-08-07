@@ -278,6 +278,7 @@ describe("startServer", () => {
           return { itemId: "x:1", promoted: false };
         },
       } as unknown as ApiDeps["saveTranslation"],
+      unretireTranslation: async () => {},
       publishOne: async () => ({ uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }),
       storageMode: "cloud",
       ...fakeRenderingDeps(),
@@ -323,6 +324,7 @@ describe("startServer", () => {
         listTranslatedIds: async () => new Set(),
       },
       saveTranslation: { run: async () => ({ itemId: "x:1", promoted: false }) } as unknown as ApiDeps["saveTranslation"],
+      unretireTranslation: async () => {},
       publishOne: async () => ({ uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }),
       storageMode: "cloud",
       ...fakeRenderingDeps(),

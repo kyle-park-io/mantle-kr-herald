@@ -7,6 +7,9 @@ import { describe, it, expect } from "vitest";
 import {
   candidateReasonText,
   externalSummaryLine,
+  NOTIFY_RETIRE_THRESHOLD,
+  retireNotification,
+  sortedPostedNearMisses,
   xReconcileStartupLine,
   xTypesFor,
 } from "../../src/cli/xReconcileReport";
@@ -107,5 +110,55 @@ describe("candidateReasonText", () => {
     ]);
     expect(text).toContain("kol, announcement");
     expect(text).toContain("2 eligible x renderings");
+  });
+});
+
+describe("sortedPostedNearMisses", () => {
+  // The near-misses THEMSELVES are pinned in tests/app/reconcileXPublished.test.ts now
+  // (`reconcileXPublished` computes `plan.postedNearMisses` directly — see that function's own doc
+  // comment and Task 4 review round 2, Concern 2, for why this file stopped re-deriving them). This
+  // is display-only: sorting, not deciding.
+  it("sorts highest score first, without mutating the input array", () => {
+    const input = [
+      { itemId: "x:1", rootId: "100", score: 0.05 },
+      { itemId: "x:2", rootId: "200", score: 0.2 },
+      { itemId: "x:3", rootId: "300", score: 0.12 },
+    ];
+    const sorted = sortedPostedNearMisses(input);
+    expect(sorted.map((m) => m.itemId)).toEqual(["x:2", "x:3", "x:1"]);
+    expect(input.map((m) => m.itemId)).toEqual(["x:1", "x:2", "x:3"]); // input order untouched
+  });
+
+  it("returns an empty array for no near-misses", () => {
+    expect(sortedPostedNearMisses([])).toEqual([]);
+  });
+});
+
+describe("retireNotification", () => {
+  // Task 4 review's Finding 6: the ">= 3" threshold used to be an inline literal in x-reconcile.ts
+  // with no test that could fail. The spec's own number, pinned directly: if this ever changes, it
+  // should be a deliberate edit to this assertion, not a silent drift.
+  it("the threshold is 3", () => {
+    expect(NOTIFY_RETIRE_THRESHOLD).toBe(3);
+  });
+
+  // The rest of this block asserts against the exported constant rather than a hardcoded "3", so a
+  // future deliberate change to NOTIFY_RETIRE_THRESHOLD updates these expectations along with it.
+  it("fires at the threshold", () => {
+    const message = retireNotification(NOTIFY_RETIRE_THRESHOLD, ["x:1", "x:2", "x:3"], "0xMantleKR");
+    expect(message).toBeDefined();
+    expect(message).toContain(String(NOTIFY_RETIRE_THRESHOLD));
+    expect(message).toContain("@0xMantleKR");
+    expect(message).toContain("x:1, x:2, x:3");
+  });
+
+  it("does not fire one below the threshold", () => {
+    const message = retireNotification(NOTIFY_RETIRE_THRESHOLD - 1, ["x:1", "x:2"], "0xMantleKR");
+    expect(message).toBeUndefined();
+  });
+
+  it("fires above the threshold too, naming the real count", () => {
+    const message = retireNotification(NOTIFY_RETIRE_THRESHOLD + 2, ["x:1", "x:2", "x:3", "x:4", "x:5"], "0xMantleKR");
+    expect(message).toContain(String(NOTIFY_RETIRE_THRESHOLD + 2));
   });
 });

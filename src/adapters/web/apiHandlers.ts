@@ -86,6 +86,15 @@ export interface ApiResult {
 export interface ApiDeps {
   translationStore: TranslationStore;
   saveTranslation: SaveTranslation;
+  /**
+   * 되돌리기's write path — reverses `RetireTranslation`'s `status: "posted"` back to `translated`
+   * while leaving `postedUrl`/`postedAt` on the row (see `createDeps.ts`'s construction of this
+   * field, which reuses `SaveTranslation.run` and relies on its preservation of those two columns).
+   * That preservation is what stops the next unattended `x:reconcile` tick from re-retiring an item
+   * a human just disputed. A plain database write with no credential, so — unlike `sendToOutlet`
+   * below — `createDeps.ts` wires this for both route sets, not gated by the hosted/local split.
+   */
+  unretireTranslation: (itemId: string) => Promise<void>;
   publishOne: (id: string, target: string) => Promise<PublishResult>;
   storageMode: StorageMode;
   formattingStore: FormattingStore;
@@ -305,24 +314,54 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     const id = decodeURIComponent(segments[2]);
     const existing = await findById(deps.translationStore, id);
 
+    /**
+     * `게시됨` is terminal, and this is where that is enforced rather than asserted.
+     *
+     * Three routes below mutate a translation in ways a retired item must not undergo, and each one
+     * had exactly one guard: `TranslationDetail.tsx` disabling the button. A disabled button is not a
+     * rule — a stale tab, a double submit landing after a concurrent retire, or a plain `curl` with a
+     * valid session cookie all reach the handler.
+     *
+     * - **approve / save.** The design's stated defence against posting the same copy twice is "a
+     *   retired item cannot be approved, so it cannot be converted, formatted, or sent" — not a
+     *   delivery row. That sentence is only true if the server says so.
+     * - **publish.** `PublishTranslations` already skips a `posted` item (see its own comment: the
+     *   Drive layer has two statuses, so publishing a third one demotes an approved doc to `review/`
+     *   and deletes it). Answering 409 here means the button reports why instead of returning a
+     *   silent all-zeros result that looks like a no-op failure.
+     *
+     * `unretire` is deliberately NOT gated: it is the only route that can move an item off `posted`,
+     * so gating it would make the state unescapable. `unapprove` is unreachable for a `posted` item
+     * (it is not `approved`) and left alone rather than given a second, redundant spelling of this
+     * rule.
+     */
+    const retired = existing?.status === "posted";
+    const RETIRED_CONFLICT = {
+      status: 409 as const,
+      json: { error: "이미 X에 게시된 것으로 확인된 항목입니다. 되돌리기 후 다시 시도하세요." },
+    };
+
     if (method === "PUT" && segments.length === 3) {
       const koreanText = (body as { koreanText?: unknown })?.koreanText;
       if (typeof koreanText !== "string" || koreanText.trim() === "") {
         return { status: 400, json: { error: "koreanText required" } };
       }
       if (!existing) return { status: 404, json: { error: "not found" } };
+      if (retired) return RETIRED_CONFLICT;
       await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText, approve: false, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
 
     if (method === "POST" && segments.length === 4 && segments[3] === "approve") {
       if (!existing) return { status: 404, json: { error: "not found" } };
+      if (retired) return RETIRED_CONFLICT;
       await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: true, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
 
     if (method === "POST" && segments.length === 4 && segments[3] === "publish") {
       if (!existing) return { status: 404, json: { error: "not found" } };
+      if (retired) return RETIRED_CONFLICT;
       const target = (body as { target?: unknown })?.target;
       if (typeof target !== "string" || target === "") return { status: 400, json: { error: "target required" } };
       return { status: 200, json: await deps.publishOne(existing.itemId, target) };
@@ -333,6 +372,15 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
       await deps.saveTranslation.run({ itemId: existing.itemId, source: existing.source, sourceText: existing.sourceText, koreanText: existing.koreanText, approve: false, isReply: existing.isReply, refUrl: existing.refUrl });
       return { status: 200, json: await findById(deps.translationStore, id) };
     }
+
+    // 되돌리기: dispute a reconcile match. A distinct route from `unapprove` above — this is not "undo
+    // my own approval", it is "undo what an unattended reconcile pass decided" — even though both
+    // currently land on the same `translated` status.
+    if (method === "POST" && segments.length === 4 && segments[3] === "unretire") {
+      if (!existing) return { status: 404, json: { error: "not found" } };
+      await deps.unretireTranslation(existing.itemId);
+      return { status: 200, json: await findById(deps.translationStore, id) };
+    }
   }
 
   if (segments[1] === "renderings") {
@@ -340,8 +388,8 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
       const [renderings, variants, translations] = await Promise.all([
         deps.formattingStore.loadAll(),
         deps.conversionStore.loadAll(),
-        // For `postedAt`/`kind` only. The 2차 list is per *item*, like 1차, so it shows the same
-        // date prefix and 포스트/아티클 badge — which live on the source item, not the rendering.
+        // For `sourcePostedAt`/`kind` only. The 2차 list is per *item*, like 1차, so it shows the
+        // same date prefix and 포스트/아티클 badge — which live on the source item, not the rendering.
         deps.loadTranslations(),
       ]);
       const convertedByKey = new Map(variants.map((v) => [`${v.itemId}:${v.type}`, v.convertedText]));
@@ -349,7 +397,11 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
       const enriched = renderings.map((r) => ({
         ...r,
         convertedText: convertedByKey.get(`${r.itemId}:${r.type}`) ?? "",
-        postedAt: sourceById.get(r.itemId)?.postedAt,
+        // The wire key here stays `postedAt` — `Rendering.postedAt` (web/src/types.ts) has always
+        // meant "source post date" with no domain field of that name to collide with (unlike
+        // `ApiTranslation`, ChannelRendering carries no `postedAt` at all). Only the READ side needed
+        // renaming, to stop pulling from a field name that now means something else on `Translation`.
+        postedAt: sourceById.get(r.itemId)?.sourcePostedAt,
         kind: sourceById.get(r.itemId)?.kind,
       }));
       return { status: 200, json: enriched };

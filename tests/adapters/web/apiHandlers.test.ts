@@ -138,6 +138,16 @@ function makeDeps(
       },
     } as unknown as ApiDeps["markDelivery"],
     reconcilePublished: async () => ({ reconciled: 0, retired: 0, pending: 0 }),
+    // Mirrors what createDeps.ts's real implementation does — status flips to "translated", every
+    // other column (postedUrl/postedAt included) is carried through unchanged, exactly the shape
+    // SaveTranslation.run's own preservation of postedUrl/postedAt already guarantees in production
+    // (see tests/app/saveTranslation.test.ts). Route-level tests below check the wiring, not that
+    // guarantee itself.
+    unretireTranslation: async (itemId: string) => {
+      const ex = state.list.find((t) => t.itemId === itemId);
+      if (!ex) return;
+      await translationStore.upsert({ ...ex, status: "translated" });
+    },
     sendToOutlet: async (itemId: string, type: string, outletId: string, opts?: { resend?: boolean; pin?: boolean }) => {
       spy.sends.push({ itemId, type, outletId, opts });
       return board.send?.() ?? { sent: 1, failed: 0 };
@@ -227,6 +237,83 @@ describe("handleApi", () => {
     const res = await handleApi(d, "POST", "/api/translations/x%3A1/unapprove", undefined);
     expect(res.status).toBe(200);
     expect((res.json as Translation).status).toBe("translated");
+  });
+
+  /**
+   * 되돌리기: the dashboard's dispute button for a reconcile-retired item (Task 5). `postedUrl`
+   * surviving the round trip is not incidental — it is what stops the next `x:reconcile` tick from
+   * re-retiring the same item (`RetireTranslation.run` skips whenever `postedUrl` is already set).
+   */
+  it("POST /api/translations/:id/unretire moves it off posted and keeps postedUrl", async () => {
+    const d = makeDeps([
+      tr({ itemId: "x:1", status: "posted", postedUrl: "https://x.com/0xMantleKR/status/1", postedAt: "p" }),
+    ]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A1/unretire", undefined);
+    expect(res.status).toBe(200);
+    expect((res.json as Translation).status).toBe("translated");
+    expect((res.json as Translation).postedUrl).toBe("https://x.com/0xMantleKR/status/1");
+  });
+
+  /**
+   * Final review, Minor 6 + Important 2. The design's stated defence against posting the same copy
+   * twice is "a retired item cannot be approved, so it cannot be converted, formatted, or sent."
+   * That was enforced only by `TranslationDetail.tsx` disabling the buttons — a stale tab, a double
+   * submit landing after a concurrent retire, or a plain `curl` with a valid session cookie all
+   * reached the handler and went through. Publishing had a second cost on top: it demoted an already
+   * published approved doc to review/ and deleted it.
+   *
+   * Asserted per route rather than as one loop, because each one has to fail for its own reason and
+   * a shared loop would pass if the guard were attached to only the cheapest of them.
+   */
+  describe("a `posted` item is refused by every mutating route", () => {
+    const posted = () => makeDeps([tr({ itemId: "x:1", status: "posted", postedUrl: "https://x.com/0xMantleKR/status/1", postedAt: "p" })]);
+
+    it("POST approve answers 409 and does not promote it", async () => {
+      const d = posted();
+      const res = await handleApi(d, "POST", "/api/translations/x%3A1/approve", undefined);
+      expect(res.status).toBe(409);
+      // Not merely a rejected response — the row must be untouched, since `saveTranslation.run` here
+      // is the real write path and would have moved it to `approved`.
+      expect((await d.translationStore.loadAll())[0].status).toBe("posted");
+    });
+
+    it("PUT save answers 409 and does not rewrite the Korean text", async () => {
+      const d = posted();
+      const res = await handleApi(d, "PUT", "/api/translations/x%3A1", { koreanText: "몰래 고친 번역" });
+      expect(res.status).toBe(409);
+      const after = (await d.translationStore.loadAll())[0];
+      expect(after.status).toBe("posted");
+      expect(after.koreanText).not.toBe("몰래 고친 번역");
+    });
+
+    it("POST publish answers 409 rather than a silent all-zeros result", async () => {
+      // `PublishTranslations` already skips a posted item, so without this gate the route answered
+      // 200 with `uploaded: 0` — indistinguishable from a failed upload, and no reason given.
+      const called: string[] = [];
+      const d = { ...posted(), publishOne: async (id: string) => { called.push(id); return { uploaded: 0, updated: 0, failed: 0, failures: [], byDrive: {} }; } };
+      const res = await handleApi(d, "POST", "/api/translations/x%3A1/publish", { target: "local" });
+      expect(res.status).toBe(409);
+      expect(called).toEqual([]);
+    });
+
+    it("but 되돌리기 still works — it is the only way off `posted`", async () => {
+      // Gating unretire too would make the state unescapable, which is the one thing worse than the
+      // hole this describe block closes.
+      const d = posted();
+      const res = await handleApi(d, "POST", "/api/translations/x%3A1/unretire", undefined);
+      expect(res.status).toBe(200);
+    });
+
+    it("and an ordinary translated item is not touched by the gate", async () => {
+      const d = makeDeps([tr({ itemId: "x:1", status: "translated" })]);
+      expect((await handleApi(d, "POST", "/api/translations/x%3A1/approve", undefined)).status).toBe(200);
+    });
+  });
+
+  it("POST /api/translations/:id/unretire returns 404 for an unknown id", async () => {
+    const d = makeDeps([tr({ itemId: "x:1" })]);
+    const res = await handleApi(d, "POST", "/api/translations/x%3A9/unretire", undefined);
+    expect(res.status).toBe(404);
   });
 
   it("GET /api/status includes availableTargets", async () => {

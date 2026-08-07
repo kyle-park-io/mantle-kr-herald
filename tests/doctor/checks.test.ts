@@ -204,6 +204,9 @@ describe("describeSchemaProbeError", () => {
   it("names the remedy when the probe fails because the schema was never applied", () => {
     const err = describeSchemaProbeError(new Error('relation "deliveries" does not exist'));
     expect(err.message).toContain("Schema not applied");
+    expect(err.message).toContain("pnpm db:migrate");
+    // db:import --yes also applies the schema, and remains the right remedy when the goal is also
+    // to load output/ into a fresh database — still mentioned, just not leading (Task 4.5 review).
     expect(err.message).toContain("pnpm db:import");
   });
 
@@ -222,7 +225,7 @@ describe("databaseProbe", () => {
 
   it("fails against a database whose schema was never applied, naming the remedy — doctor cannot report ok here", async () => {
     db = await createUnmigratedTestDb();
-    await expect(databaseProbe(db)()).rejects.toThrow(/pnpm db:import/);
+    await expect(databaseProbe(db)()).rejects.toThrow(/pnpm db:migrate/);
   });
 
   it("succeeds against a migrated database", async () => {
@@ -234,7 +237,22 @@ describe("databaseProbe", () => {
     db = await createUnmigratedTestDb();
     const result = await runDbCheck({ url: "postgres://localhost/herald", env: "development" }, databaseProbe(db));
     expect(result.ok).toBe(false);
-    expect(result.detail).toContain("pnpm db:import");
+    expect(result.detail).toContain("pnpm db:migrate");
+  });
+
+  // Task 4.5: `pnpm x:reconcile` failed against a real production database with `column
+  // "posted_url" does not exist` even though `select 1 from deliveries limit 1` — the query this
+  // probe used to rely on exclusively — succeeds fine on such a database: `deliveries` has no
+  // altered columns of its own, so a table-only probe cannot see a missing one on `translations`.
+  // This is the same gap `isSchemaApplied` (`src/adapters/db/schema.ts`) closed for
+  // `db:import`/`db:export` — `doctor` must not report "ok" on the exact database that broke
+  // `x:reconcile`. The remedy is `pnpm db:migrate` specifically (Task 4.5 review, Minor: this is
+  // exactly the case that command was built for, lighter than pointing an operator at the heavier
+  // `db:import --yes` for a column-only gap).
+  it("fails when every table exists but an alter-table column is missing, even though the raw select succeeds", async () => {
+    db = await createTestDb();
+    await db.query("alter table translations drop column posted_url");
+    await expect(databaseProbe(db)()).rejects.toThrow(/pnpm db:migrate/);
   });
 });
 

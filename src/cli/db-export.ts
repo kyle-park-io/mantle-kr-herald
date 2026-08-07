@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { Db } from "../adapters/db/Db";
 import { createDb } from "../adapters/db/createDb";
-import { applySchema } from "../adapters/db/schema";
+import { applySchema, isSchemaApplied } from "../adapters/db/schema";
 import { loadDbConfig } from "../config";
 import { OUTPUT_DIR, REPO_ROOT } from "../paths";
 import { ALL_TYPES } from "../domain/conversion/models";
@@ -34,7 +34,6 @@ import {
   describeCounts,
   describePreview,
   previewCount,
-  isSchemaApplied,
   type PreviewCounts,
   type StoreKey,
 } from "./dbStores";
@@ -379,9 +378,9 @@ async function countLineageInDb(db: Db): Promise<number> {
  * Never applies the schema, and never lets a missing one surface as a crash: every `incoming`
  * (database-side) read below goes through `previewCount` (`dbStores.ts`), which reports 0 for a
  * table that does not exist yet instead of throwing or creating it — a preview must stay
- * side-effect-free, including against a mistyped `DATABASE_URL`. `isSchemaApplied` (`dbStores.ts`)
- * is the separate, explicit check the entry script below uses to print a "schema not applied yet"
- * line when that is why every `incoming` count reads 0.
+ * side-effect-free, including against a mistyped `DATABASE_URL`. `isSchemaApplied`
+ * (`src/adapters/db/schema.ts`) is the separate, explicit check the entry script below uses to
+ * print a "schema not applied yet" line when that is why every `incoming` count reads 0.
  */
 export async function previewExport(
   db: Db,

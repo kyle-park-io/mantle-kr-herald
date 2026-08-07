@@ -32,6 +32,37 @@ describe("PgTranslationStore", () => {
     expect(all[0]?.status).toBe("approved");
   });
 
+  it("round-trips postedUrl and postedAt", async () => {
+    db = await createTestDb();
+    const store = new PgTranslationStore(db);
+    await store.upsert(translation("x:1", {
+      status: "posted",
+      postedUrl: "https://x.com/0xMantleKR/status/999",
+      postedAt: "2026-07-31T05:39:41.000Z",
+    }));
+    const [row] = await store.loadAll();
+    expect(row?.status).toBe("posted");
+    expect(row?.postedUrl).toBe("https://x.com/0xMantleKR/status/999");
+    expect(row?.postedAt).toBe("2026-07-31T05:39:41.000Z");
+  });
+
+  it("clears postedUrl and postedAt on a plain update that omits them", async () => {
+    // upsert writes a whole row — an update that no longer carries postedUrl/postedAt must clear
+    // the column, the same as every other optional field here (see the ordinal test below for the
+    // one thing an update must NOT touch).
+    db = await createTestDb();
+    const store = new PgTranslationStore(db);
+    await store.upsert(translation("x:1", {
+      status: "posted",
+      postedUrl: "https://x.com/0xMantleKR/status/999",
+      postedAt: "2026-07-31T05:39:41.000Z",
+    }));
+    await store.upsert(translation("x:1", { status: "translated" }));
+    const [row] = await store.loadAll();
+    expect(row?.postedUrl).toBeUndefined();
+    expect(row?.postedAt).toBeUndefined();
+  });
+
   it("omits absent optional fields rather than returning null", async () => {
     db = await createTestDb();
     const store = new PgTranslationStore(db);

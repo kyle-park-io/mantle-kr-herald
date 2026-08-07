@@ -142,6 +142,16 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
       setError(String((e as Error).message ?? e));
     }
   };
+  const onUnretire = async (id: string) => {
+    setError(null);
+    try {
+      await api.unretire(id);
+      await refresh();
+      refreshStatus();
+    } catch (e) {
+      setError(String((e as Error).message ?? e));
+    }
+  };
 
   const isCloud = status?.storageMode === "cloud";
   const syncWarn = !!status && (status.sync.needsRepublish > 0 || status.sync.unpublished > 0);
@@ -332,6 +342,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                 onSave={onSave}
                 onApprove={onApprove}
                 onUnapprove={onUnapprove}
+                onUnretire={onUnretire}
                 onPublish={onPublishOne}
                 onDirtyChange={setDirty}
               />

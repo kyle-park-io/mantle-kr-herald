@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { Db } from "../adapters/db/Db";
 import { createDb } from "../adapters/db/createDb";
-import { applySchema } from "../adapters/db/schema";
+import { applySchema, isSchemaApplied } from "../adapters/db/schema";
 import { loadDbConfig, type DbConfig } from "../config";
 import { OUTPUT_DIR, REPO_ROOT } from "../paths";
 import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
@@ -36,7 +36,6 @@ import {
   describeCounts,
   describePreview,
   previewCount,
-  isSchemaApplied,
 } from "./dbStores";
 
 export type ImportReport = StoreCounts;
@@ -265,9 +264,9 @@ async function countCurrentLineageEntries(db: Db): Promise<number> {
  * below goes through `previewCount` (`dbStores.ts`), which reports 0 for a table that does not
  * exist yet instead of throwing (or creating it) — a preview must stay side-effect-free even when
  * it is reached flagless against production or a mistyped `DATABASE_URL`. `isSchemaApplied`
- * (`dbStores.ts`) is the separate, explicit check the entry script below uses to print a "schema
- * not applied yet" line when that is why every count reads 0, since a preview's own counts cannot
- * tell that case apart from a genuinely empty, migrated database.
+ * (`src/adapters/db/schema.ts`) is the separate, explicit check the entry script below uses to
+ * print a "schema not applied yet" line when that is why every count reads 0, since a preview's own
+ * counts cannot tell that case apart from a genuinely empty, migrated database.
  */
 export async function previewImport(
   db: Db,
