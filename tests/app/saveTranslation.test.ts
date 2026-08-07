@@ -38,7 +38,7 @@ describe("SaveTranslation", () => {
     const s = stores();
     const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
     const res = await uc.run({ itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕", approve: false });
-    expect(res).toEqual({ itemId: "x:1", promoted: false });
+    expect(res).toEqual({ itemId: "x:1", promoted: false, normalizedPhotoMarkers: 0 });
     expect(s.saved[0].status).toBe("translated");
     expect(s.saved[0].translatedAt).toBe("2026-05-05T00:00:00.000Z");
     expect(s.fewShots).toHaveLength(0);
@@ -60,7 +60,7 @@ describe("SaveTranslation", () => {
     const hugeSource = "x".repeat(2001); // one char over the promotion threshold
     const res = await uc.run({ itemId: "x:article", source: "x", sourceText: hugeSource, koreanText: "번역", approve: true });
 
-    expect(res).toEqual({ itemId: "x:article", promoted: false });
+    expect(res).toEqual({ itemId: "x:article", promoted: false, normalizedPhotoMarkers: 0 });
     // The translation itself still saves and approves normally.
     expect(s.saved[0].status).toBe("approved");
     expect(s.saved[0].approvedAt).toBe("2026-05-05T00:00:00.000Z");
@@ -88,6 +88,38 @@ describe("SaveTranslation", () => {
     });
     expect(s.saved[0].isReply).toBe(true);
     expect(s.saved[0].refUrl).toBe("https://x.com/a/status/1");
+  });
+
+  it("restores the [사진] label the agent dropped, and reports how many", async () => {
+    const s = stores();
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const res = await uc.run({
+      itemId: "x:1", source: "x", sourceText: "hi\n\n[사진](https://img/a.jpg)",
+      koreanText: "안녕\n\n![](https://img/a.jpg)", approve: false,
+    });
+
+    expect(s.saved[0].koreanText).toBe("안녕\n\n[사진](https://img/a.jpg)");
+    expect(res.normalizedPhotoMarkers).toBe(1);
+  });
+
+  it("reports zero when the translation already carries the label", async () => {
+    const s = stores();
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const res = await uc.run({
+      itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕\n\n[사진](https://img/a.jpg)", approve: false,
+    });
+    expect(res.normalizedPhotoMarkers).toBe(0);
+  });
+
+  it("promotes the normalized text into the few-shot corpus, not the agent's spelling", async () => {
+    // The corpus is inlined into every later worksheet, so promoting `![]` would teach the next
+    // batch to produce it — the drift would train itself in.
+    const s = stores();
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    await uc.run({
+      itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕\n\n![](https://img/a.jpg)", approve: true,
+    });
+    expect(s.fewShots[0].target).toBe("안녕\n\n[사진](https://img/a.jpg)");
   });
 
   it("does not clear postedUrl or postedAt when an edit is saved", async () => {

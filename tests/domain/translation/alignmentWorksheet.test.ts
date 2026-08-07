@@ -24,4 +24,13 @@ describe("assembleAlignmentWorksheet", () => {
     expect(ws).toContain("정렬");
     expect(ws).not.toContain("###");
   });
+
+  it("tells the alignment pass to preserve media marker lines too", () => {
+    // The align pass rewrites `현재 번역:` — which already carries the marker — so it can drop the
+    // label exactly the way the translate pass did. Its header lists what must survive a revision
+    // (`---`, cashtags, links); media markers belong on that list.
+    const out = assembleAlignmentWorksheet([]);
+    expect(out).toContain("[사진]");
+    expect(out).toContain("[영상]");
+  });
 });
