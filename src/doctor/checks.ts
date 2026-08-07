@@ -1,5 +1,5 @@
 import type { CheckResult } from "./report";
-import { describeDbTarget, type DbConfig } from "../config";
+import { tryDescribeDbTarget, INVALID_DB_URL, type DbConfig } from "../config";
 import type { Db } from "../adapters/db/Db";
 import { isSchemaApplied } from "../adapters/db/schema";
 
@@ -49,36 +49,13 @@ export function optionalCheck(name: string, run: () => void, absentDetail: strin
 }
 
 /**
- * `describeDbTarget`, with the one guarantee its callers actually need: it never throws, and its
- * failure never carries anything derived from `DATABASE_URL`. `loadDbConfig` does not validate
- * that the value parses as a URL at all, so `describeDbTarget`'s own `new URL(cfg.url)` can throw
- * for a malformed one — and a `URL` constructor's error message is not guaranteed, across engines,
- * not to echo the invalid input back (which could still contain `user:password@`). Every context
- * this is used from ends up in a shared journal or a report, so the guard belongs with the call,
- * not with each caller's memory of needing it: `runDbCheck` below and `watchStartupLine`
- * (`src/cli/watchStartup.ts`, whose line is the first thing every scheduled tick writes to
- * `journalctl --user -u herald-watch`) both go through this.
- */
-export function tryDescribeDbTarget(cfg: DbConfig): string | undefined {
-  try {
-    return describeDbTarget(cfg);
-  } catch {
-    return undefined;
-  }
-}
-
-/** What a caller prints in place of the target when `tryDescribeDbTarget` returns nothing. Fixed
- *  text, never the thrown error and never the value that caused it. */
-export const INVALID_DB_URL = "DATABASE_URL is not a valid URL";
-
-/**
  * Runs `probe` (a real connectivity check, e.g. `select 1`) against the configured database and
  * reports it — `ok`/`detail` rather than the `CheckResult` shape above, since this also backs
  * `status.ts`'s first line, which is not a check report. The caller wraps this into a `CheckResult`
  * for `doctor`.
  *
  * Never prints the password. `describeDbTarget` itself only ever returns host and database name,
- * and a malformed `DATABASE_URL` goes through `tryDescribeDbTarget` above, reported with a fixed,
+ * and a malformed `DATABASE_URL` goes through `tryDescribeDbTarget` (`src/config.ts`), reported with a fixed,
  * generic message rather than whatever the thrown error says. Only once a `target` string has been
  * safely built does the probe run, and only *that* branch's failure message (a driver error like
  * `ECONNREFUSED`, never derived from `cfg.url`) is shown as-is — this must never throw past the
