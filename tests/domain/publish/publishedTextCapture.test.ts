@@ -96,7 +96,31 @@ describe("capturePublishedTexts", () => {
     expect(out).toEqual([{ itemId: "x:1", rootId: "999", text: "새 글" }]);
   });
 
-  it("joins a multi-tweet thread the same way scoring does", () => {
+  it("separates a multi-tweet thread with the pipeline's own thread separator", () => {
+    // `XContentSource` joins collected tweets with `\n\n---\n\n`, so every draft in the system marks
+    // its tweet boundaries that way. Capturing with a bare `\n\n` — what `threadText` uses for
+    // scoring — loses them: a blank line is indistinguishable from a line break inside one tweet
+    // (XContentSource's own comment on the constant says exactly this). A reviewer comparing the
+    // published block to the draft above it then cannot see where one tweet ended.
+    const multi: AssembledThread = {
+      rootId: "999",
+      tweets: [
+        { ...thread("999", "첫 트윗").tweets[0] },
+        { ...thread("999", "둘째 트윗").tweets[0], id: "1000", isReply: true },
+      ],
+    };
+    const t = tr({ postedUrl: "https://x.com/0xMantleKR/status/999" });
+    const [captured] = capturePublishedTexts({ translations: [t], threads: [multi], posted: [], handle });
+    expect(captured.text).toBe("첫 트윗\n\n---\n\n둘째 트윗");
+  });
+
+  it("adds no separator to a single-tweet thread", () => {
+    const t = tr({ postedUrl: "https://x.com/0xMantleKR/status/999" });
+    const [captured] = capturePublishedTexts({ translations: [t], threads: [thread("999", "한 트윗뿐")], posted: [], handle });
+    expect(captured.text).toBe("한 트윗뿐");
+  });
+
+  it("keeps every tweet's own text intact", () => {
     const multi: AssembledThread = {
       rootId: "999",
       tweets: [
