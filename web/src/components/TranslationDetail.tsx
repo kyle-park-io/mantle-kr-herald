@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { datePrefix, itemUrl } from "../types";
+import { datePrefix, itemUrl, kstStamp } from "../types";
 import type { Translation, PublishStateRow } from "../types";
 import { StatusChip, KindBadge } from "./TranslationList";
 import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
@@ -115,14 +115,21 @@ export function TranslationDetail(props: {
             below is locked read-only for a posted item, but the live post itself must stay one click
             away, not merely asserted by the chip above. */}
         {posted && props.item.postedUrl && (
-          <a
-            href={props.item.postedUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-[12px] font-medium text-slate-ink underline-offset-2 hover:underline"
-          >
-            게시된 글 보기 ↗
-          </a>
+          <>
+            <a
+              href={props.item.postedUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[12px] font-medium text-slate-ink underline-offset-2 hover:underline"
+            >
+              게시된 글 보기 ↗
+            </a>
+            {/* When it went out, beside the link to it. A reviewer's first question about a row they
+                did not approve is "when did this happen?", and the answer is one field away. */}
+            {kstStamp(props.item.postedAt) && (
+              <span className="text-[12px] text-faint">{kstStamp(props.item.postedAt)}</span>
+            )}
+          </>
         )}
       </div>
 
@@ -145,6 +152,7 @@ export function TranslationDetail(props: {
           >
             게시된 글 보기 ↗
           </a>
+          {kstStamp(props.item.postedAt) && <span className="text-slate-ink/70">{kstStamp(props.item.postedAt)}</span>}
         </p>
       )}
 

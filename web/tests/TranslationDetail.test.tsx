@@ -112,6 +112,25 @@ describe("TranslationDetail — 게시됨 (posted)", () => {
     expect(link.href).toBe(POSTED_URL);
   });
 
+  it("shows when it went out, in KST, beside the link", () => {
+    // 05:39 UTC is 14:39 the same day in Seoul. A reviewer's first question about a row nobody
+    // approved is "when did this happen?" — and reading UTC as local would be nine hours wrong.
+    mount(translation({ status: "posted", postedUrl: POSTED_URL, postedAt: "2026-07-31T05:39:41.000Z" }));
+    expect(screen.getByText("2026-07-31 14:39 KST")).toBeTruthy();
+  });
+
+  it("renders no timestamp when postedAt is absent, rather than an empty slot", () => {
+    // A legacy row retired before postedAt existed, or a hand-edited one.
+    mount(translation({ status: "posted", postedUrl: POSTED_URL }));
+    expect(screen.queryByText(/KST/)).toBeNull();
+  });
+
+  it("shows the timestamp on the reverted-item note too", () => {
+    mount(translation({ status: "translated", postedUrl: POSTED_URL, postedAt: "2026-07-31T22:10:00.000Z" }));
+    // 22:10 UTC is already the next day in Seoul — the case a naive ISO slice gets wrong.
+    expect(screen.getByText("2026-08-01 07:10 KST")).toBeTruthy();
+  });
+
   it("offers 되돌리기 on a posted item and not on any other status", () => {
     mount(translation({ status: "posted", postedUrl: POSTED_URL }));
     expect(screen.getByRole("button", { name: "되돌리기" })).toBeTruthy();

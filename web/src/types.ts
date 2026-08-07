@@ -6,6 +6,37 @@ export const itemUrl = (itemId: string): string | null =>
 export const datePrefix = (iso?: string): string =>
   iso && iso.length >= 10 ? `[${iso.slice(2, 10).replace(/-/g, "")}]` : "";
 
+/**
+ * An ISO (UTC) instant → `2026-07-31 14:39 KST`, or `undefined` when there is nothing to show.
+ *
+ * Pinned to `Asia/Seoul`, NOT the viewer's zone — which is the one thing that makes the `KST` label
+ * honest. This board is shared with a team and its timestamps get read back against x.com, so one
+ * instant has to render identically for everyone looking at it.
+ *
+ * Deliberately different from `stamp` in `OutletCard.tsx`, which formats in the *viewer's* zone and
+ * carries no label. Two conventions in one app is not ideal, but unifying them changes an existing
+ * display, so that is its own decision rather than a side effect of adding this.
+ *
+ * Slicing the ISO string instead — the obvious shortcut — prints UTC as if it were Seoul: nine
+ * hours off, and a whole calendar day off for anything published after 15:00 UTC.
+ */
+export const kstStamp = (iso?: string): string | undefined => {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const at = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${at("year")}-${at("month")}-${at("day")} ${at("hour")}:${at("minute")} KST`;
+};
+
 // Mirrors ALL_TRANSLATION_STATUSES in src/domain/translation/models.ts — same reason as ALL_TYPES
 // below (the frontend cannot import the domain), and `tests/web/typeMirror.test.ts` fails if this
 // drifts. `posted` is the reconcile-retired state (Task 2): a translation reconcile matched against
@@ -41,6 +72,16 @@ export interface Translation {
   sourcePostedAt?: string;
   /** The live X post a reconcile match found this translation already published as, by hand. */
   postedUrl?: string;
+  /**
+   * When that live post actually went out — the root tweet's `createdAt`, carried straight through
+   * from `Translation.postedAt` in `src/domain/translation/models.ts`. Already on the wire
+   * (`attachKind` spreads the domain row); this declaration is what lets the dashboard read it.
+   *
+   * Not `sourcePostedAt` above, which is the *English* source post's date and drives the `[YYMMDD]`
+   * prefix. The two differ by however long the translation sat in review — which is exactly the
+   * interval a reviewer looking at a row nobody approved is trying to see.
+   */
+  postedAt?: string;
 }
 export interface PublishResult {
   uploaded: number;
