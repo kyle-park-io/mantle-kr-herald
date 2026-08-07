@@ -66,6 +66,8 @@ export interface Translation {
    * goes. Corrected by the final branch review.)
    */
   postedAt?: string;
+  /** The live post's body, as read off the account after a reconcile match — nothing normalises it. */
+  publishedText?: string;
 }
 
 export interface SharedContext {

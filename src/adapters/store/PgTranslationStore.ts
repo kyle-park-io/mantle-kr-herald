@@ -16,6 +16,7 @@ interface TranslationRow {
   ref_url: string | null;
   posted_url: string | null;
   posted_at: string | null;
+  published_text: string | null;
 }
 
 function toTranslation(row: TranslationRow): Translation {
@@ -31,6 +32,7 @@ function toTranslation(row: TranslationRow): Translation {
     refUrl: row.ref_url,
     postedUrl: row.posted_url,
     postedAt: row.posted_at,
+    publishedText: row.published_text,
   });
 }
 
@@ -50,7 +52,7 @@ export class PgTranslationStore implements TranslationStore {
   async loadAll(): Promise<Translation[]> {
     const rows = await this.db.query<TranslationRow>(
       `select item_id, source, source_text, korean_text, status, translated_at, approved_at, is_reply, ref_url,
-              posted_url, posted_at
+              posted_url, posted_at, published_text
        from translations
        order by ordinal`,
     );
@@ -61,8 +63,8 @@ export class PgTranslationStore implements TranslationStore {
     await this.db.query(
       `insert into translations
          (item_id, source, source_text, korean_text, status, translated_at, approved_at, is_reply, ref_url,
-          posted_url, posted_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          posted_url, posted_at, published_text)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        on conflict (item_id) do update set
          source = excluded.source,
          source_text = excluded.source_text,
@@ -73,7 +75,8 @@ export class PgTranslationStore implements TranslationStore {
          is_reply = excluded.is_reply,
          ref_url = excluded.ref_url,
          posted_url = excluded.posted_url,
-         posted_at = excluded.posted_at`,
+         posted_at = excluded.posted_at,
+         published_text = excluded.published_text`,
       [
         t.itemId,
         t.source,
@@ -86,6 +89,7 @@ export class PgTranslationStore implements TranslationStore {
         t.refUrl ?? null,
         t.postedUrl ?? null,
         t.postedAt ?? null,
+        t.publishedText ?? null,
       ],
     );
   }
