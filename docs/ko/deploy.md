@@ -38,11 +38,21 @@
 
 ### 재배포
 
+**언제 돌리나 — 대시보드에 보이는 것이 달라지는 머지를 한 직후입니다.** `web/` 변경, 검수 화면
+문구, API 라우트, 그리고 환경변수를 바꿨을 때(Vercel은 배포 시점의 값을 함수에 굽습니다).
+`bash deploy/herald-deploy.sh`는 **스케줄러만** 갱신하므로 이걸 대신해 주지 않고, git 푸시로도
+배포되지 않습니다 — 둘 다 필요한 머지가 흔합니다
+([team-runbook](team-runbook.md)의 "배포 체크아웃" 절 참고).
+
 ```bash
 pnpm deploy:check                                   # 통과해야 배포
 npx vercel deploy --prod
 pnpm deploy:smoke https://mantle-kr-herald.vercel.app
 ```
+
+`deploy:check`가 로컬 개발 DB 연결로 거부하면(`pnpm doctor --live` 실패) 프로덕션 문제가 아니라
+로컬 컨테이너가 내려간 것입니다 — `docker start herald-db`로 올리고 다시 돌리세요. 게이트를
+`--skip-tests`로 우회하지 마세요, 그 플래그는 테스트만 건너뜁니다.
 
 `deploy:smoke`는 배포본에 **실제로 로그인해서** 확인합니다. 기본은 아이디·비밀번호를 물어보지만,
 환경변수로 주면 묻지 않습니다 — CI나 스크립트에서 돌릴 때 쓰세요:
