@@ -115,10 +115,11 @@ describe("buildBoard", () => {
     expect(group?.addableOutletIds).toEqual(["tg-community", "tg-dev", "tg-blockchain", "tg-kol"]);
   });
 
-  it("leaves out a room that can be neither sent nor ticked", () => {
-    // x-article is `auto` but has its own pipeline: the send route refuses it and tells the
-    // operator to tick 전달함, which MarkDelivery then refuses because the room is auto. Offering
-    // it at all would produce a row with no way out of it.
+  it("rows the X channel's one room and offers nothing else", () => {
+    // The board used to filter this channel: X Articles were registered as a second `x` room, and
+    // rowing them produced a card with no exit — the send route refused them and MarkDelivery
+    // refused the tick. They are not a room any more, so there is nothing left to filter, and the
+    // empty `addableOutletIds` here means what it says rather than hiding something.
     const board = buildBoard("x:1", [r("x", "x", "트윗")], [], [], approvedSource);
     const group = board.groups[0]!;
     expect(group.rows.map((row) => row.outletId)).toEqual(["x-post"]);

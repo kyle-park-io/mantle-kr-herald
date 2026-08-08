@@ -256,10 +256,10 @@ describe("web type mirror", () => {
    * `droppedAt` is the *other* shape `deliveredToRoom` accepts — how `XArticleSentEntry` retires a
    * row (it carries no `status` field to widen; see the domain function's own docstring). `BoardRow`
    * has no `droppedAt` field to mirror: the board is built from `DeliveryEntry[]` alone
-   * (`buildBoard(..., deliveries: DeliveryEntry[])` in `src/adapters/web/board.ts`), and `x-article`
-   * — the one outlet that ledger covers — is never rowed on the board at all (`reachable()` in
-   * `board.ts` excludes it, since its own send/mark routes would both refuse it). So there is nothing
-   * for the web mirror to agree or disagree with here; this pins the domain side alone, on purpose.
+   * (`buildBoard(..., deliveries: DeliveryEntry[])` in `src/adapters/web/board.ts`), and the only
+   * thing that ledger covers is the X Articles surface — which is not a room and never appears on a
+   * board (`src/domain/publish/xArticleTarget.ts`). So there is nothing for the web mirror to agree
+   * or disagree with here; this pins the domain side alone, on purpose.
    */
   it("excludes a row retired via droppedAt too — a shape the web mirror never receives", () => {
     expect(deliveredToRoom({ status: "sent", droppedAt: "2026-01-01T00:00:00.000Z" })).toBe(false);

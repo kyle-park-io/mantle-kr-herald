@@ -6,6 +6,7 @@ import { createStores } from "./stores";
 import { assertLedgerMigrated } from "./assertLedgerMigrated";
 import { OUTPUT_DIR } from "../paths";
 import { ALL_OUTLETS, deliveredByChannelSender, outletById, outletsForChannel } from "../domain/outlet/models";
+import { X_ARTICLE_TARGET, isXArticleTarget } from "../domain/publish/xArticleTarget";
 import { SendChannels } from "../app/SendChannels";
 import { resolveChannelTargets, createSenders } from "./channelSenders";
 import { buildRecorder } from "./recorder";
@@ -17,13 +18,20 @@ const OUTLETS_USAGE = ALL_OUTLETS.map((o) => o.id).join("|");
 
 const targets = resolveChannelTargets(argValue("--target"));
 const outletIds = parseList(argValue("--outlets"));
-const unknownOutlets = (outletIds ?? []).filter((id) => !outletById(id));
+// `x-article` is not a room and has not been one since 2026-08-08, but it is still the id an
+// operator reaches for and the name of its own ledger file. Named explicitly so it reports where it
+// actually goes instead of "Unknown outlet" — a message that would read as "no such thing", when the
+// thing exists and simply ships from `send:x-article`.
+if ((outletIds ?? []).some(isXArticleTarget)) {
+  console.warn(`[send] ${X_ARTICLE_TARGET.id}: not a room — X Articles are posted from the translation by \`${X_ARTICLE_TARGET.sentBy}\`. Ignored here.`);
+}
+const unknownOutlets = (outletIds ?? []).filter((id) => !outletById(id) && !isXArticleTarget(id));
 // Validated before the senders are built, so a typo fails on the flag rather than on missing env.
 if (unknownOutlets.length > 0) {
   throw new Error(`Unknown outlet: ${unknownOutlets.join(", ")}. Usage: pnpm send:channels [--outlets <${OUTLETS_USAGE}>]`);
 }
-// A real id this CLI never delivers (a manual room, or x-article) would otherwise just report
-// "sent 0" with no reason given.
+// A real room this CLI never delivers (a manual one) would otherwise just report "sent 0" with no
+// reason given.
 const notSendable = (outletIds ?? []).filter((id) => {
   const o = outletById(id);
   return o !== undefined && !deliveredByChannelSender(o);

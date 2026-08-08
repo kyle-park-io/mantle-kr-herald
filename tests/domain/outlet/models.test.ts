@@ -1,13 +1,14 @@
 // tests/domain/outlet/models.test.ts
 import { describe, expect, it } from "vitest";
 import { ALL_OUTLETS, PRIMARY_OUTLET_BY_CHANNEL, deliveredByChannelSender, outletById, outletsForChannel } from "../../../src/domain/outlet/models";
+import { X_ARTICLE_TARGET, isXArticleTarget } from "../../../src/domain/publish/xArticleTarget";
 import { ALL_CHANNELS } from "../../../src/domain/formatting/models";
 import { ALL_TYPES } from "../../../src/domain/conversion/models";
 
 describe("outlet model", () => {
-  it("defines the nine rooms with unique ids", () => {
-    expect(ALL_OUTLETS).toHaveLength(9);
-    expect(new Set(ALL_OUTLETS.map((o) => o.id)).size).toBe(9);
+  it("defines the eight rooms with unique ids", () => {
+    expect(ALL_OUTLETS).toHaveLength(8);
+    expect(new Set(ALL_OUTLETS.map((o) => o.id)).size).toBe(8);
   });
 
   it("looks an outlet up by id and returns undefined for an unknown one", () => {
@@ -15,9 +16,11 @@ describe("outlet model", () => {
     expect(outletById("nope")).toBeUndefined();
   });
 
-  it("groups outlets by channel — telegram carries four rooms", () => {
+  it("groups outlets by channel — telegram carries four rooms, x carries one", () => {
     expect(outletsForChannel("telegram").map((o) => o.id)).toEqual(["tg-community", "tg-dev", "tg-blockchain", "tg-kol"]);
     expect(outletsForChannel("kakao").map((o) => o.id)).toEqual(["kakao-blockchain", "kakao-kol"]);
+    // One, not two. The X account's other surface is Articles, which is not a room — see below.
+    expect(outletsForChannel("x").map((o) => o.id)).toEqual(["x-post"]);
   });
 
   it("names a primary outlet for every channel, and each one exists", () => {
@@ -38,16 +41,22 @@ describe("outlet model", () => {
     }
   });
 
-  it("gives the article outlet no suggested types — the translation goes direct", () => {
-    expect(outletById("x-article")?.suggestedTypes).toEqual([]);
+  it("keeps the X Articles surface out of the room registry entirely", () => {
+    // It was registered here until 2026-08-08, which made it a room by every query the codebase can
+    // ask — and left `outletsForChannel("x")` answering with something no room-shaped code path
+    // could send to, tick, or finish. Its id still resolves through its own module, which is what
+    // the CLIs match on to say where an article actually goes.
+    expect(outletById(X_ARTICLE_TARGET.id)).toBeUndefined();
+    expect(ALL_OUTLETS.map((o) => o.id)).not.toContain(X_ARTICLE_TARGET.id);
+    expect(isXArticleTarget("x-article")).toBe(true);
+    expect(isXArticleTarget("x-post")).toBe(false);
   });
 
-  it("leaves the article outlet to its own pipeline — send:channels must not also post it", () => {
-    // Both x rooms are `auto`, so `delivery` alone cannot tell them apart: x-article is posted by
-    // `send:x-article` from the translation, and delivering it from send:channels too would put the
-    // same copy on the account twice.
+  it("delivers every auto room through its channel's sender", () => {
+    // With the article surface gone there is no auto room that `send:channels` must skip: `auto`
+    // now means exactly "a bot posts it from a rendering". A future room that is auto but shipped by
+    // some other pipeline would have to reopen this — and this list is what would fail first.
     expect(deliveredByChannelSender(outletById("x-post")!)).toBe(true);
-    expect(deliveredByChannelSender(outletById("x-article")!)).toBe(false);
     expect(ALL_OUTLETS.filter(deliveredByChannelSender).map((o) => o.id)).toEqual(["x-post", "tg-community", "tg-dev"]);
   });
 

@@ -263,7 +263,7 @@ describe("SendChannels", () => {
     const got: { photos?: string[]; segments: string[] }[] = [];
     const sender: ChannelSender = { name: "x", send: async (req) => { got.push({ photos: req.photos, segments: req.segments }); return { postId: "1" }; } };
     await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
-    expect(got).toHaveLength(1); // x-post only — x-article has its own pipeline
+    expect(got).toHaveLength(1); // x-post is the channel's only room
     expect(got[0].photos).toEqual(["https://pbs.twimg.com/media/a.jpg"]);
     expect(got[0].segments.join("")).not.toContain("![("); // marker stripped from delivered text
     expect(got[0].segments.join("")).toContain("본문");
@@ -406,15 +406,16 @@ describe("SendChannels", () => {
     expect([...(await ledger.loadKeys())]).toEqual(["x:1:announcement:tg-dev"]);
   });
 
-  it("sends an approved x rendering once — the article outlet has its own pipeline", async () => {
+  it("sends an approved x rendering once — Articles ship from the translation, not from here", async () => {
     const store = fakeStore([rendering({ itemId: "x:1", type: "x", channel: "x", text: "트윗" })]);
     let sends = 0;
     const sender: ChannelSender = { name: "typefully", send: async () => { sends++; return { postId: "1" }; } };
     const { ledger, added } = fakeLedger();
     const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
 
-    // x-post and x-article are both auto on the x channel, but x-article is delivered by
-    // `send:x-article` from the translation — sending it here too would post the same copy twice.
+    // One send, because the X channel has one room. The account's other surface, X Articles, is
+    // posted by `send:x-article` from the translation — putting the same copy out twice is what this
+    // pins against, and it is why that surface is not registered as a room.
     expect(sends).toBe(1);
     expect(res).toEqual(result({ sent: 1 }));
     expect(added.map((e) => e.outletId)).toEqual(["x-post"]);
