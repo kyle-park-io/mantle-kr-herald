@@ -11,8 +11,10 @@ import { FormatVariants } from "../../src/app/FormatVariants";
 import type { StageResult, WorksheetAgent } from "../../src/ports/WorksheetAgent";
 import type { ConversionStore } from "../../src/ports/ConversionStore";
 import { renderingKey, type FormattingStore } from "../../src/ports/FormattingStore";
+import type { TranslationStore } from "../../src/ports/TranslationStore";
 import type { ContentVariant } from "../../src/domain/conversion/models";
 import type { ChannelRendering } from "../../src/domain/formatting/models";
+import type { Translation } from "../../src/domain/translation/models";
 import { formatStatus, pipelineStages } from "../../src/status/pipeline";
 import { tickOutcome } from "../../src/cli/tickOutcome";
 import { preparedVariantsLine, NOTHING_TO_CONVERT_LINE } from "../../src/cli/convertPrepareLines";
@@ -20,6 +22,7 @@ import {
   ONLY_MISSING_FLAG,
   formattedRenderingsLine,
   formatWarningLine,
+  skippedPostedLine,
   NOTHING_TO_FORMAT_LINE,
 } from "../../src/cli/formatLines";
 
@@ -457,9 +460,20 @@ function contentVariant(over: Partial<ContentVariant> = {}): ContentVariant {
  * check is satisfied by the same rows the format stage later reads — the two stages agree because
  * they share a database, exactly as they do in production.
  */
-function memoryPipeline(opts: { variants: ContentVariant[]; renderings: ChannelRendering[]; saves?: ContentVariant[] }) {
+function memoryPipeline(opts: {
+  variants: ContentVariant[];
+  renderings: ChannelRendering[];
+  saves?: ContentVariant[];
+  /**
+   * The 1차 rows the format stage now consults, so a `posted` one can be observed to stop a card
+   * being built. Defaults to none — a variant with no translation row formats exactly as before,
+   * which keeps every case above this one about the stage it is actually testing.
+   */
+  translations?: Translation[];
+}) {
   const { variants, renderings } = opts;
   const saves = opts.saves ?? [];
+  const translations = opts.translations ?? [];
 
   const conversionStore: ConversionStore = {
     loadAll: async () => [...variants],
@@ -478,6 +492,11 @@ function memoryPipeline(opts: { variants: ContentVariant[]; renderings: ChannelR
       else renderings.push(r);
     },
     listRenderedKeys: async () => new Set(renderings.map(renderingKey)),
+  };
+  const translationStore: TranslationStore = {
+    loadAll: async () => [...translations],
+    upsert: async () => {},
+    listTranslatedIds: async () => new Set(translations.map((t) => t.itemId)),
   };
 
   const ran: string[] = [];
@@ -498,12 +517,17 @@ function memoryPipeline(opts: { variants: ContentVariant[]; renderings: ChannelR
     }
     if (script === "status") return { ok: true, stdout: statusStdout(variants.length) };
     if (script === "format") {
-      const { renderings: made, warnings } = await new FormatVariants(conversionStore, formattingStore, () => NOW).run(
-        {},
-        { onlyMissing: args.includes(ONLY_MISSING_FLAG) },
-      );
+      const { renderings: made, warnings, skippedPosted } = await new FormatVariants(
+        conversionStore,
+        formattingStore,
+        translationStore,
+        () => NOW,
+      ).run({}, { onlyMissing: args.includes(ONLY_MISSING_FLAG) });
+      // Composed exactly as `src/cli/format.ts` composes it, skipped line included — the point of
+      // this helper is that a rewording on either side cannot pass here and fail in production.
       const first = made.length > 0 ? formattedRenderingsLine(made.length) : NOTHING_TO_FORMAT_LINE;
-      return { ok: true, stdout: [first, ...warnings.map(formatWarningLine)].join("\n") };
+      const skipped = skippedPosted.length > 0 ? [skippedPostedLine(skippedPosted.length)] : [];
+      return { ok: true, stdout: [first, ...skipped, ...warnings.map(formatWarningLine)].join("\n") };
     }
     return { ok: true, stdout: "" };
   };
@@ -615,6 +639,34 @@ describe("ConvertTick — the format stage", () => {
 
     expect(report.ok).toBe(true);
     expect(renderings).toEqual([structuredClone(existing)]);
+  });
+
+  it("does not manufacture cards for an item that already went out, and does not fail over saying so", async () => {
+    // The bug this stage shipped with. `--only-missing` asks "which (item, type, channel) pairs have
+    // no rendering?" and a retired item's pairs answer "all of them" forever, so the tick rebuilt
+    // channel cards for finished work every 30 minutes — and a human deleting those cards got them
+    // back on the next fire, because the variants are still there. Three items were in this state in
+    // production on 2026-08-08.
+    //
+    // The second half of the name is the contract with `src/cli/formatLines.ts`: the stage now
+    // prints a `skipped n item(s)` line under its summary. It must not fail the parse (the summary
+    // line is still the first line and still matches), and it must not arrive as a tick note either
+    // — this is the permanent steady state for every retired item, not a warning anyone can act on.
+    const renderings: ChannelRendering[] = [];
+    const { run, agent } = memoryPipeline({
+      variants: [contentVariant({ itemId: "x:2080608995371597892" })],
+      renderings,
+      translations: [{
+        itemId: "x:2080608995371597892", source: "x", sourceText: "source", koreanText: "한국어",
+        status: "posted", translatedAt: "2026-08-01T00:00:00.000Z", postedUrl: "https://x.com/0xMantleKR/status/1",
+      }],
+    });
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(renderings).toEqual([]);
+    expect(report.notes).toBeUndefined();
   });
 
   it("carries FormatVariants' warnings out of the tick instead of swallowing them", async () => {

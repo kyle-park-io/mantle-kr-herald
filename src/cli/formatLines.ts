@@ -44,6 +44,28 @@ export function formattedRenderingsLine(count: number): string {
 export const NOTHING_TO_FORMAT_LINE = "formatted 0 rendering(s) — nothing is waiting to be formatted";
 
 /**
+ * How many selected items were left alone because they had already gone out — `FormatVariants`'
+ * `posted` gate, which applies to every caller including this CLI (see that class's own comment for
+ * why, and for what the other choice would have cost).
+ *
+ * Printed at all because without it this command answers a `pnpm format --ids <a posted item>` with
+ * `formatted 0 rendering(s) — nothing is waiting to be formatted`, which reads as "your selector
+ * matched no variant" and sends the operator looking for a selector bug. Only when the count is
+ * above zero, and never one line per item: under `--only-missing` this is the permanent steady
+ * state of every retired item in the database, and the scheduler prints this into a run log on
+ * every fire.
+ *
+ * Deliberately NOT prefixed with `WARNING_PREFIX`, and it is not a `⚠` in any other spelling
+ * either. `src/app/ConvertTick.ts` collects lines by that prefix into `TickReport.notes`, which
+ * `tickOutcome` prints ahead of the tick's outcome line — and "an item that is finished is still
+ * finished" is not something anyone can act on. The summary line above is still the first line the
+ * tick parses, so adding this one does not touch that contract.
+ */
+export function skippedPostedLine(count: number): string {
+  return `  skipped ${count} item(s) already posted — 되돌리기 first if one of them really needs re-rendering`;
+}
+
+/**
  * How a `FormatWarning` is printed under the summary line, and the prefix a reader (human or tick)
  * finds it by. Indented, because these belong to the line above them.
  */
