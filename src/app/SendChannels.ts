@@ -285,7 +285,12 @@ export class SendChannels {
             if (unattached > 0) {
               const why =
                 r.channel === "x"
-                  ? "no mp4 url was captured for it (run `pnpm x:video-backfill`, then re-render)"
+                  // `text:video-backfill` rather than `x:video-backfill` + a re-render: this
+                  // rendering's own text is what the send reads, and re-rendering it overwrites
+                  // text a human approved (and is skipped outright once the translation is
+                  // `posted`). `x:video-backfill` is still the first step when the collected
+                  // thread has no mp4 either, which is why it is named second.
+                  ? "no mp4 url in its marker (run `pnpm text:video-backfill`; if that reports the thread has no mp4, `pnpm x:video-backfill` first)"
                   : "Telegram video delivery is not implemented";
               console.warn(`[send] ${key}: ${unattached} video(s) in the rendering were not attached — ${why}`);
             }

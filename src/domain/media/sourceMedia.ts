@@ -93,3 +93,97 @@ export function normalizePhotoMarkers(text: string): { text: string; changed: nu
   });
   return { text: changed === 0 ? text : lines.join("\n"), changed };
 }
+
+/**
+ * Every `[영상]` marker line in a text, and how many of them carry no url yet.
+ *
+ * Separate from `fillVideoMarkers` below because a caller sometimes has to decide *whether* a text
+ * is worth reporting before it has anything to pair the markers with: `BackfillTextVideoUrls` must
+ * name a bare marker whose item has no collected thread at all, and there is no url list to hand
+ * `fillVideoMarkers` in that case.
+ */
+export function countVideoMarkers(text: string): { markers: number; bare: number } {
+  let markers = 0;
+  let bare = 0;
+  for (const line of text.split("\n")) {
+    const video = VIDEO_LINE.exec(line);
+    if (!video) continue;
+    markers++;
+    if (!video[1]) bare++;
+  }
+  return { markers, bare };
+}
+
+/**
+ * What `fillVideoMarkers` did, or the reason it refused. A refusal is a named outcome rather than a
+ * thrown error or a silent no-op: every one of them is a text a person may have to look at, and the
+ * caller reports them (see `videoBackfillReport`'s sibling, `textVideoBackfillReport`).
+ */
+export type VideoMarkerFill =
+  /** Rewritten. `filled` bare markers gained a url; every other line is byte-identical. */
+  | { status: "filled"; text: string; filled: number; markers: number }
+  /** Nothing to do — the text carries no marker, or every marker already has its url. */
+  | { status: "no-bare-markers"; markers: number }
+  /** The text's markers and the post's videos do not correspond one-to-one. */
+  | { status: "count-mismatch"; markers: number; bare: number; urls: number }
+  /** They correspond, but `missing` of the videos a bare marker pairs with have no mp4 stored. */
+  | { status: "url-missing"; markers: number; bare: number; missing: number };
+
+/**
+ * Fill each bare `[영상]` marker line in stored reviewed text with the mp4 url of the video it
+ * stands for.
+ *
+ * The same mechanical rewrite of already-reviewed text that `normalizePhotoMarkers` established
+ * above, and it exists for the reason stated all over this file: **nothing re-derives a stored text
+ * on read**. A translation or rendering saved before `XContentSource` captured `video_info` carries
+ * a url-less `[영상]` forever, however completely `x:video-backfill` has since filled the collected
+ * thread it came from. And a bare marker is not cosmetic — `SendChannels` uploads only
+ * `videos.filter((url) => url !== "")`, so the clip a human approved is simply not attached.
+ *
+ * Pairing is **by position across every marker in the text**, not across the bare ones only. In the
+ * text this was written for they are the same thing (all markers are bare), but they diverge the
+ * moment a post carried two videos and collection captured an mp4 for only one: the bare marker is
+ * then the *second* video, and pairing it with the first would staple the wrong clip onto the post
+ * — a swap nothing downstream can detect, because both urls are real mp4s. Same reasoning as
+ * `BackfillVideoUrls`' match-by-thumbnail rule, one layer up.
+ *
+ * Refuses rather than guesses, and refuses whole texts rather than filling the unambiguous prefix.
+ * A half-filled text reads as finished, so the wrong pairing it may contain would never be looked
+ * at again; an untouched one still shows up in the next run's report. `urls` shorter than the marker
+ * count is the obvious mismatch, but longer is just as ambiguous — a text carrying one marker for a
+ * two-video post names neither clip.
+ *
+ * `urls` is positional and `""` means "this video has no mp4 stored" — exactly what
+ * `extractMedia().videos` yields, which is where callers get it from.
+ */
+export function fillVideoMarkers(text: string, urls: readonly string[]): VideoMarkerFill {
+  const { markers, bare } = countVideoMarkers(text);
+  if (bare === 0) return { status: "no-bare-markers", markers };
+  if (markers !== urls.length) return { status: "count-mismatch", markers, bare, urls: urls.length };
+
+  // Counted before anything is rewritten: a text whose second bare marker turns out to be unfillable
+  // must not come back with its first one already filled.
+  let missing = 0;
+  let slot = 0;
+  for (const line of text.split("\n")) {
+    const video = VIDEO_LINE.exec(line);
+    if (!video) continue;
+    // Only a slot this call would actually write. A marker that already carries a url keeps it
+    // whatever the collected thread now says, so an empty url there is not this function's problem.
+    if (!video[1] && urls[slot] === "") missing++;
+    slot++;
+  }
+  if (missing > 0) return { status: "url-missing", markers, bare, missing };
+
+  let filled = 0;
+  slot = 0;
+  const lines = text.split("\n").map((line) => {
+    const video = VIDEO_LINE.exec(line);
+    if (!video) return line;
+    const url = urls[slot++];
+    if (video[1]) return line;
+    filled++;
+    return `[영상] ${url}`;
+  });
+  return { status: "filled", text: lines.join("\n"), filled, markers };
+}
