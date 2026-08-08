@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The dashboard can finally show the scheduler's translation floor — because the scheduler now
+  reports it.** `pnpm status` reads that floor by asking systemd (`systemctl --user show
+  herald-watch.service`); the hosted dashboard runs as a Vercel function, where there is no systemd
+  and no scheduler, so its 수집 hover card could only say the floor cannot be read from here. Honest,
+  and useless to the people who mostly use that screen. Copying the value into a Vercel env var was
+  rejected outright: a content decision stored twice drifts silently, which is the hazard this whole
+  line of work exists to remove. So the unit stays the single source of truth and the watch tick
+  *reports* what it actually ran with, into one upserted row (`translate_floor_reports`: `id`,
+  `floor`, `reported_at`) that the dashboard reads from the Postgres it already reads everything else
+  from. Applied by `pnpm db:migrate`, which `deploy/herald-deploy.sh` already runs on every deploy —
+  no separate migration step.
+  - **A fourth reach state, `reported`, never folded into `measured`.** `measured` was verified
+    against the running manager a moment ago; `reported` is an observation that could be three weeks
+    old. The card says `번역 대상 20건 · 하한 아래 114건 (스케줄러 기록)` and prints the report's age
+    beside it — `1시간 전` and `21일 전` do not look the same, and past six hours (three missed fires
+    of the every-two-hours timer) it says the scheduler may have stopped.
+  - **Precedence: a live `systemctl` answer always wins.** It is current by construction; the stored
+    report is what a reader with no systemd falls back to. A machine that has both and finds them
+    disagreeing shows the gap rather than preferring the fresher number — the gap means either the
+    unit was edited and no tick has run since, or the scheduler has stopped, and silently resolving
+    it is how the second one goes unnoticed. A unit whose own value is unparseable keeps its
+    `unknown`: every tick exits at startup on it, so any report is from a scheduler that is now dead.
+  - **The write can never fail a tick.** Same rule `SendChannels` applies after a post has gone out:
+    a bookkeeping failure is warned into the journal, not reported as a failure of the work. A
+    healthy pipeline does not go red — and page a human via `OnFailure=` — over a one-row upsert.
+  - **`floor` is nullable and that matters.** A row with no floor means the tick genuinely ran with
+    none (the whole backlog, oldest first — the alarming state); no row at all means nothing has ever
+    reported. `pnpm status` gained the same states on its Collected line.
+
 - **A post's video now travels through the pipeline as a playable mp4, and previews in 검수.** The
   `[영상]` marker has been url-less since it was introduced, on the understanding that capturing the
   mp4 was a fast-follow needing a collect-schema change. It needed no new source at all:

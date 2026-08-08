@@ -422,4 +422,79 @@ describe("App's 수집 breakdown card", () => {
     expect(el.textContent).toContain("수집 3건");
     expect(el.textContent).not.toContain("합계");
   });
+
+  /**
+   * What the hosted dashboard shows once a scheduler tick has reported. The floor is still
+   * unreadable from a Vercel function — nothing about that changed — but the scheduler now writes
+   * down what it ran with, so the card has a real answer instead of "cannot be seen from here".
+   *
+   * The ages below are computed from the *real* clock rather than a stubbed one: the card renders
+   * with `new Date()`, and a fixed fixture instant would silently start reading "3주 전" the week
+   * after it was written. What is asserted is the distance, which is the thing the copy is about.
+   */
+  const agoIso = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+  it("shows a reported floor as the scheduler's own record, with how long ago it was written", async () => {
+    const el = await card({
+      intake: INTAKE,
+      total: 134,
+      reach: {
+        kind: "reported",
+        inScope: 20,
+        belowFloor: 114,
+        reportedFloor: "2026-07-27T14:35:25.000Z",
+        reportedAt: agoIso(60 * 60 * 1000),
+      },
+    });
+    expect(el.textContent).toContain("번역 대상 20건");
+    expect(el.textContent).toContain("하한 아래 114건");
+    // The provenance, on the headline, so this can never be mistaken for a floor read here.
+    expect(el.textContent).toContain("스케줄러 기록");
+    // The age, which is the whole obligation of this state.
+    expect(el.textContent).toContain("1시간 전");
+    // A recent report is not an alarm — the scheduler is doing exactly what it should.
+    expect(el.textContent).not.toContain("⚠");
+    // The floor itself still renders in KST with the raw ISO one hover away, same as `measured`.
+    expect(el.textContent).toContain("2026-07-27 23:35 KST");
+  });
+
+  it("marks a report old enough to mean the scheduler stopped", async () => {
+    // Same number, three weeks later, and it must not read the same: a floor nobody has re-reported
+    // since is evidence about the scheduler, not reassurance about the queue.
+    const el = await card({
+      intake: INTAKE,
+      total: 134,
+      reach: {
+        kind: "reported",
+        inScope: 20,
+        belowFloor: 114,
+        reportedFloor: "2026-07-27T14:35:25.000Z",
+        reportedAt: agoIso(21 * 24 * 60 * 60 * 1000),
+      },
+    });
+    expect(el.textContent).toContain("21일 전");
+    expect(el.textContent).toContain("⚠");
+    expect(el.textContent).toContain("멈췄");
+  });
+
+  it("shows the gap when the unit and the last tick disagree, without dropping either", async () => {
+    // On a machine that CAN ask systemd. The headline stays the systemd answer — it is current by
+    // construction — and the report rides underneath it as something to look at.
+    const el = await card({
+      intake: INTAKE,
+      total: 134,
+      reach: {
+        kind: "measured",
+        inScope: 20,
+        belowFloor: 114,
+        floor: "2026-07-27T14:35:25.000Z",
+        reportedFloor: "2026-06-01T00:00:00.000Z",
+        reportedAt: agoIso(3 * 60 * 60 * 1000),
+      },
+    });
+    expect(el.textContent).toContain("번역 대상 20건");
+    expect(el.textContent).toContain("2026-06-01 09:00 KST");
+    expect(el.textContent).toContain("다릅니다");
+    expect(el.textContent).toContain("⚠");
+  });
 });

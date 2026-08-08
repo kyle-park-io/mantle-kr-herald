@@ -8,6 +8,7 @@ import { syncSummary, formatSyncSummary } from "../status/sync";
 import { translateFloorStatus, collectedScope } from "../status/translateFloor";
 import { xThreadIntake } from "../adapters/content/XContentSource";
 import { realSystemdShow } from "./systemdShow";
+import { PgTranslateFloorReport } from "../adapters/store/PgTranslateFloorReport";
 
 const cfg = loadDbConfig();
 console.log(`database: ${cfg.env} · ${describeDbTarget(cfg)}`);
@@ -42,13 +43,20 @@ try {
   // 2026-06-01 ~ 07-22 stretch of them permanently out of the scheduler's reach.
   const floor = translateFloorStatus({ unitShow: realSystemdShow(), shellValue: process.env.HERALD_TRANSLATE_SINCE });
 
+  // What the scheduler last wrote down about the floor it ran with. On the machine that owns the
+  // unit this is almost always the same answer `realSystemdShow()` just gave — and that is the
+  // point: when it is NOT, `collectedReach` prints the gap, which means either the unit was edited
+  // and no tick has run since, or the scheduler has stopped running. Both are things this command's
+  // reader wants to know and neither is visible from the systemd probe alone.
+  const floorReport = await new PgTranslateFloorReport(db).read();
+
   // "Published (drive)" counts ledger rows — one per (itemId, status, target) upload — and names
   // the items behind them, because one item published to google and lark is two rows.
   console.log(
     formatStatus(
       pipelineStages(
         { collected: collected.length, translations, variants, renderings, published: entries },
-        collectedScope(collected, floor, xThreadIntake(threads)),
+        collectedScope(collected, floor, xThreadIntake(threads), floorReport),
       ),
       floor,
     ),

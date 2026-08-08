@@ -4,6 +4,8 @@ import { createTestDb } from "../support/testDb";
 import { createDeps } from "../../src/app/createDeps";
 import { handleApi, type ApiDeps } from "../../src/adapters/web/apiHandlers";
 import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
+import { PgTranslateFloorReport } from "../../src/adapters/store/PgTranslateFloorReport";
+import type { Db } from "../../src/adapters/db/Db";
 import { VALID_PASSWORD_HASH } from "../support/authFixtures";
 
 /**
@@ -196,6 +198,69 @@ describe("createDeps", () => {
       const deps = createDeps({ db, routes: "hosted" });
       expect(deps.sendToOutlet).toBeDefined();
       expect((await deps.loadStatus()).sendsEnabled).toBe(true);
+    });
+  });
+
+  /**
+   * The 수집 card's floor half on the deployment that has no systemd to ask. `routes: "hosted"` skips
+   * the `systemctl` probe entirely (spawning one in a Vercel function costs a process to learn
+   * nothing), so everything this screen can say about the floor comes from what the scheduler wrote
+   * down.
+   */
+  describe("the scheduler's reported translation floor", () => {
+    it("reports the floor the scheduler recorded, on a deployment that cannot ask systemd", async () => {
+      db = await createTestDb();
+      await new PgTranslateFloorReport(db).write({
+        floor: "2026-07-27T14:35:25.000Z",
+        at: "2026-08-08T04:17:09.000Z",
+      });
+
+      const reach = (await createDeps({ db, routes: "hosted" }).loadStatus()).funnel.collected.breakdown.reach;
+
+      expect(reach.kind).toBe("reported");
+      expect(reach.reportedFloor).toBe("2026-07-27T14:35:25.000Z");
+      expect(reach.reportedAt).toBe("2026-08-08T04:17:09.000Z");
+    });
+
+    it("still says the floor cannot be seen from here when nothing has reported", async () => {
+      // The state this screen was stuck in before reports existed, and still the right answer for a
+      // database no scheduler has ever ticked against.
+      db = await createTestDb();
+      const reach = (await createDeps({ db, routes: "hosted" }).loadStatus()).funnel.collected.breakdown.reach;
+      expect(reach.kind).toBe("unknown");
+    });
+
+    /**
+     * The deploy-ordering window this degradation exists for. The hosted entry point does not call
+     * `applySchema` (only `serve.ts` does), and Vercel ships on merge while `pnpm db:migrate` runs
+     * when someone runs `deploy/herald-deploy.sh` — so new code can meet a Neon that has no
+     * `translate_floor_reports` yet. An uncaught `42P01` there would 500 the whole status payload and
+     * leave the dashboard with no header at all, which is far worse than one hover card falling back
+     * to the honest "cannot be seen from here".
+     */
+    it("degrades to `unknown` rather than 500ing the whole status payload when the table is missing", async () => {
+      db = await createTestDb();
+      // The refusal Postgres actually gives for a table that is not there, injected rather than
+      // produced by a real `drop table`: the shared PGlite instance behind `createTestDb` truncates
+      // every name in `TABLE_NAMES` on release, so a genuinely dropped table would fail the teardown
+      // instead of this assertion.
+      const missingTable: Db = {
+        query: async (sql, params) => {
+          if (sql.includes("translate_floor_reports")) {
+            throw new Error('relation "translate_floor_reports" does not exist');
+          }
+          return db!.query(sql, params);
+        },
+        tx: (fn) => db!.tx(fn),
+      };
+
+      const status = await createDeps({ db: missingTable, routes: "hosted" }).loadStatus();
+
+      expect(status.funnel.collected.breakdown.reach.kind).toBe("unknown");
+      // The rest of the payload is unaffected — which is the point: the funnel a reviewer reads is
+      // derived from tables that are all still there.
+      expect(status.funnel.translated).toBeDefined();
+      expect(status.sync).toBeDefined();
     });
   });
 });

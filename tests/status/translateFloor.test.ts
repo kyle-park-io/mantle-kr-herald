@@ -201,6 +201,45 @@ describe("collectedScope", () => {
       expect(collectedScope(items, translateFloorStatus({ unitShow: show, shellValue: undefined })).inScope).toBeUndefined();
     }
   });
+
+  it("measures the scheduler's reported floor with the same comparison, over the same items", () => {
+    // The hosted dashboard's numbers come from here. A looser comparison (parsing to Date, tolerating
+    // a blank createdAt) would report a scope the scheduler does not have — the same failure the
+    // systemd-side count is written to avoid, one source of truth over.
+    const scope = collectedScope(items, translateFloorStatus({ unitShow: NOT_INSTALLED }), undefined, {
+      floor: "2026-07-27T14:35:25.000Z",
+      at: "2026-08-08T04:17:09.000Z",
+    });
+    expect(scope.reported).toEqual({ floor: "2026-07-27T14:35:25.000Z", at: "2026-08-08T04:17:09.000Z", inScope: 2 });
+    // The systemd-side count stays absent: nothing on this machine read a floor, and the report is
+    // not a substitute for having done so.
+    expect(scope.inScope).toBeUndefined();
+  });
+
+  it("counts a reported no-floor tick as having the whole total in scope", () => {
+    // Because that is what it means — the tick ran `translate:prepare` with no `--since` at all, so
+    // every collected item was selectable, oldest first.
+    const scope = collectedScope(items, translateFloorStatus({ unitShow: NOT_INSTALLED }), undefined, {
+      at: "2026-08-08T04:17:09.000Z",
+    });
+    expect(scope.reported).toEqual({ at: "2026-08-08T04:17:09.000Z", inScope: 4 });
+  });
+
+  it("keeps the report beside a floor systemd DID answer, so the two can be compared", () => {
+    // Not dropped just because a better source answered: `collectedReach` needs both in hand to say
+    // "the unit now says X and the last tick ran with Y". The two counts genuinely differ here —
+    // 2 of 4 at or after the unit's floor, all 4 at or after the older one the last tick used.
+    const scope = collectedScope(items, translateFloorStatus({ unitShow: ARMED }), undefined, {
+      floor: "2026-06-01T00:00:00.000Z",
+      at: "2026-08-08T04:17:09.000Z",
+    });
+    expect(scope.inScope).toBe(2);
+    expect(scope.reported?.inScope).toBe(4);
+  });
+
+  it("has no report when nothing has ever reported one", () => {
+    expect(collectedScope(items, translateFloorStatus({ unitShow: ARMED })).reported).toBeUndefined();
+  });
 });
 
 describe("collectedScopeNote", () => {
@@ -235,6 +274,54 @@ describe("collectedScopeNote", () => {
     for (const show of [ARMED, NO_FLOOR, NOT_INSTALLED, undefined, invalid, "garbage"]) {
       expect(note(show).length).toBeGreaterThan(0);
     }
+  });
+
+  it("names the report and its instant when the scope came from one, not from systemd", () => {
+    // The line must not read like the `in scope 1 · below floor 2` above it: that one was checked
+    // against the running manager, this one is repeating what a tick wrote down. The instant is part
+    // of the claim.
+    const reported = collectedScopeNote(
+      collectedScope(items, translateFloorStatus({ unitShow: NOT_INSTALLED }), undefined, {
+        floor: "2026-07-27T14:35:25.000Z",
+        at: "2026-08-08T04:17:09.000Z",
+      }),
+    );
+    expect(reported).toBe("in scope 1 · below floor 2 · as the scheduler reported at 2026-08-08T04:17:09.000Z");
+    expect(reported).not.toBe(note(ARMED));
+  });
+
+  it("keeps a reported NO floor alarming on the CLI line too", () => {
+    const reported = collectedScopeNote(
+      collectedScope(items, translateFloorStatus({ unitShow: NOT_INSTALLED }), undefined, {
+        at: "2026-08-08T04:17:09.000Z",
+      }),
+    );
+    expect(reported).toContain("⚠");
+    expect(reported).toContain("in scope 3");
+    expect(reported).toContain("2026-08-08T04:17:09.000Z");
+  });
+
+  it("prints the gap when the unit and the last tick name different floors", () => {
+    const disagreeing = collectedScopeNote(
+      collectedScope(items, translateFloorStatus({ unitShow: ARMED }), undefined, {
+        floor: "2026-06-01T00:00:00.000Z",
+        at: "2026-08-08T04:17:09.000Z",
+      }),
+    );
+    // The systemd numbers still lead the line — precedence — and the gap rides behind them.
+    expect(disagreeing).toContain("in scope 1 · below floor 2");
+    expect(disagreeing).toContain("⚠ last tick ran with 2026-06-01T00:00:00.000Z");
+
+    // An agreeing report changes the line not at all, so the ordinary case stays exactly as short
+    // as it was.
+    expect(
+      collectedScopeNote(
+        collectedScope(items, translateFloorStatus({ unitShow: ARMED }), undefined, {
+          floor: "2026-07-27T14:35:25.000Z",
+          at: "2026-08-08T04:17:09.000Z",
+        }),
+      ),
+    ).toBe(note(ARMED));
   });
 });
 
@@ -442,6 +529,145 @@ describe("collectedBreakdown", () => {
       "systemctl: not found",
       'HERALD_TRANSLATE_SINCE is not a date this can parse: "soon"',
     ]);
+  });
+
+  /**
+   * The fourth state, and the reason this whole change exists. The hosted dashboard is a Vercel
+   * function: `readTranslateFloor` there never asks systemd at all, so its floor is permanently
+   * `unreadable` and its card said "cannot be read from here" forever. The scheduler's own report is
+   * what it falls back to instead — real numbers, measured against the floor a real tick really ran
+   * with, and stamped with when.
+   */
+  it("falls back to the scheduler's own report where nothing could be read here", () => {
+    const reach = collectedBreakdown({
+      floor: { kind: "unreadable", detail: `could not ask systemd about ${WATCH_UNIT}` },
+      total: 134,
+      reported: { floor: "2026-07-27T14:35:25.000Z", at: "2026-08-08T04:17:09.000Z", inScope: 20 },
+    }).reach;
+    expect(reach).toEqual({
+      kind: "reported",
+      inScope: 20,
+      belowFloor: 114,
+      reportedFloor: "2026-07-27T14:35:25.000Z",
+      reportedAt: "2026-08-08T04:17:09.000Z",
+    });
+    // `floor` stays empty on purpose: nothing on this machine read a floor, and a reader that cannot
+    // tell "systemd told me" from "the scheduler wrote it down" is what `reported` exists to prevent.
+    expect(reach.floor).toBeUndefined();
+  });
+
+  it("never calls a reported floor `measured` — one was checked and the other is an observation", () => {
+    // The single most important property of the new state. `measured` is verified against the
+    // running manager a moment ago; `reported` could be three weeks old. Collapsing them turns a
+    // dead scheduler into a confident answer, which is the exact mistake the module was written for.
+    const reported = collectedBreakdown({
+      floor: { kind: "not-installed" },
+      total: 134,
+      reported: { floor: "2026-07-27T14:35:25.000Z", at: "2026-08-08T04:17:09.000Z", inScope: 20 },
+    }).reach;
+    expect(reported.kind).toBe("reported");
+    expect(reported.kind).not.toBe("measured");
+  });
+
+  it("carries a report that says the tick ran with NO floor, distinct from no report at all", () => {
+    // Two different facts, and the alarming one has to survive the fallback: a tick that ran with no
+    // floor is draining the whole backlog oldest first. A missing report is an absence of
+    // information. `reportedAt` set with `reportedFloor` absent is the first; `unknown` is the second.
+    const noFloorReported = collectedBreakdown({
+      floor: { kind: "not-installed" },
+      total: 134,
+      reported: { at: "2026-08-08T04:17:09.000Z", inScope: 134 },
+    }).reach;
+    expect(noFloorReported).toEqual({
+      kind: "reported",
+      inScope: 134,
+      belowFloor: 0,
+      reportedFloor: undefined,
+      reportedAt: "2026-08-08T04:17:09.000Z",
+    });
+    expect(collectedBreakdown({ floor: { kind: "not-installed" }, total: 134 }).reach.kind).toBe("unknown");
+  });
+
+  /**
+   * Precedence, stated as a test. A live `systemctl show` asks the running manager what the NEXT
+   * tick will fire with; a report is what the LAST one already did. Where both exist the first wins,
+   * because it is current by construction.
+   */
+  it("prefers what systemd says here over a stored report, whichever direction they differ in", () => {
+    const configured: TranslateFloorStatus = { kind: "configured", floor: "2026-07-27T14:35:25.000Z" };
+    const reach = collectedBreakdown({
+      floor: configured,
+      total: 134,
+      inScope: 20,
+      reported: { floor: "2026-06-01T00:00:00.000Z", at: "2026-08-08T04:17:09.000Z", inScope: 90 },
+    }).reach;
+    expect(reach.kind).toBe("measured");
+    // The numbers are systemd's, not the report's — 20/114, never 90/44.
+    expect([reach.inScope, reach.belowFloor]).toEqual([20, 114]);
+    expect(reach.floor).toBe("2026-07-27T14:35:25.000Z");
+  });
+
+  it("shows a disagreement rather than resolving it away", () => {
+    // The gap has exactly two explanations and both need a human: the unit was edited and no tick
+    // has run since, or the scheduler has stopped. Preferring the fresher number silently is how the
+    // second one goes unnoticed for as long as nobody happens to read a journal.
+    const reach = collectedBreakdown({
+      floor: { kind: "configured", floor: "2026-07-27T14:35:25.000Z" },
+      total: 134,
+      inScope: 20,
+      reported: { floor: "2026-06-01T00:00:00.000Z", at: "2026-08-08T04:17:09.000Z", inScope: 90 },
+    }).reach;
+    expect(reach.reportedFloor).toBe("2026-06-01T00:00:00.000Z");
+    expect(reach.reportedAt).toBe("2026-08-08T04:17:09.000Z");
+
+    // Agreement is nothing to report: the same floor from both sources leaves the reach exactly as
+    // it was before reports existed, so the ordinary case gains no noise.
+    const agreeing = collectedBreakdown({
+      floor: { kind: "configured", floor: "2026-07-27T14:35:25.000Z" },
+      total: 134,
+      inScope: 20,
+      reported: { floor: "2026-07-27T14:35:25.000Z", at: "2026-08-08T04:17:09.000Z", inScope: 20 },
+    }).reach;
+    expect(agreeing.reportedAt).toBeUndefined();
+    expect(agreeing.reportedFloor).toBeUndefined();
+  });
+
+  it("reports a `none` unit as no-floor even with a report in hand, and flags the gap", () => {
+    // `none` is systemd answering, not systemd failing — so it keeps its alarm and its precedence.
+    // A report naming a floor while the unit sets none is still a disagreement worth showing: it
+    // means the floor was removed and the last tick predates the removal.
+    const reach = collectedBreakdown({
+      floor: { kind: "none" },
+      total: 134,
+      reported: { floor: "2026-07-27T14:35:25.000Z", at: "2026-08-08T04:17:09.000Z", inScope: 20 },
+    }).reach;
+    expect(reach.kind).toBe("no-floor");
+    expect(reach.inScope).toBe(134);
+    expect(reach.reportedFloor).toBe("2026-07-27T14:35:25.000Z");
+
+    // And a unit with no floor whose last tick also ran with none is agreement, not a gap.
+    const agreeing = collectedBreakdown({
+      floor: { kind: "none" },
+      total: 134,
+      reported: { at: "2026-08-08T04:17:09.000Z", inScope: 134 },
+    }).reach;
+    expect(agreeing).toEqual({ kind: "no-floor", inScope: 134 });
+  });
+
+  /**
+   * `invalid` is systemd answering too — with a value `parseTranslateSince` refuses, which makes
+   * `watch.ts` throw before any stage runs, so *every* tick exits at startup. Any report in the
+   * database is therefore from before the bad edit, i.e. from a scheduler that is now dead. Falling
+   * back to it would paint a confident floor over exactly the failure an operator has to see.
+   */
+  it("does not fall back to a report when the unit's own value is unusable", () => {
+    const reach = collectedBreakdown({
+      floor: { kind: "invalid", detail: 'HERALD_TRANSLATE_SINCE is not a date this can parse: "soon"' },
+      total: 134,
+      reported: { floor: "2026-07-27T14:35:25.000Z", at: "2026-08-08T04:17:09.000Z", inScope: 20 },
+    }).reach;
+    expect(reach.kind).toBe("unknown");
+    expect(reach.detail).toContain("soon");
   });
 
   it("is what `pnpm status`'s own line is formatted from, term for term", () => {

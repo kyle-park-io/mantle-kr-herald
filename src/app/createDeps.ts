@@ -4,6 +4,7 @@ import type { Db } from "../adapters/db/Db";
 import type { ApiDeps, StatusView, PublishStateRow, IntegrationStatus } from "../adapters/web/apiHandlers";
 import { createStores } from "../cli/stores";
 import { PgAttemptLimiter, ipRowId } from "../adapters/store/PgAttemptLimiter";
+import { PgTranslateFloorReport } from "../adapters/store/PgTranslateFloorReport";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
@@ -46,7 +47,12 @@ import { createUploaders, resolveTargets } from "../cli/uploaders";
 import { paths } from "../paths";
 import { syncSummary } from "../status/sync";
 import { funnelCounts } from "../status/pipeline";
-import { collectedScope, translateFloorStatus, type TranslateFloorStatus } from "../status/translateFloor";
+import {
+  collectedScope,
+  translateFloorStatus,
+  type TranslateFloorReport,
+  type TranslateFloorStatus,
+} from "../status/translateFloor";
 import { xThreadIntake } from "../adapters/content/XContentSource";
 import { realSystemdShow } from "../cli/systemdShow";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
@@ -120,10 +126,14 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * Asked of systemd at most once per process, and on a hosted deployment not asked at all.
    * `routes === "hosted"` is a Vercel function: no systemd, no timer, no unit. Spawning `systemctl`
    * per `/api/status` there would cost a process to learn nothing, so the probe is skipped and the
-   * floor reports the state it genuinely is in — `unreadable`, which the dashboard renders as "this
-   * screen cannot see the scheduler". Deliberately NOT `none`: "the unit sets no floor" and "this
-   * deployment cannot ask" are opposite facts (see `TranslateFloorKind`), and reporting the first
-   * where the second is true would raise a false alarm on every hosted page load.
+   * floor reports the state it genuinely is in — `unreadable`. Deliberately NOT `none`: "the unit
+   * sets no floor" and "this deployment cannot ask" are opposite facts (see `TranslateFloorKind`),
+   * and reporting the first where the second is true would raise a false alarm on every hosted page
+   * load.
+   *
+   * What the hosted deployment shows instead of nothing is `readFloorReport` below — the floor the
+   * scheduler itself wrote down. This probe still takes precedence wherever it can answer; see
+   * `collectedReach` in `translateFloor.ts` for the rule and why it is that way round.
    *
    * Memoised for `"local"` because `loadStatus` runs per request while `systemctl show` costs a
    * spawn, and the answer only changes on a `daemon-reload`. The always-fresh reader is `pnpm
@@ -139,6 +149,50 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       unitShow: routes === "hosted" ? undefined : realSystemdShow(),
     });
     return translateFloor;
+  };
+
+  /**
+   * The floor the *scheduler* last reported running with, out of the same Postgres this deployment
+   * reads everything else from (`PgTranslateFloorReport`). This is what lets the hosted dashboard
+   * say something true about the floor at all: the systemd probe above cannot run there, and the
+   * value is deliberately not duplicated into a Vercel env var — one content decision with two homes
+   * drifts silently, which is the hazard this whole area exists to remove.
+   *
+   * Read per request and never memoised, unlike the systemd probe. Its whole value is its freshness:
+   * a card that shows how old the report is, over a value cached at process start, would age its own
+   * answer by however long this function instance happens to live and report a scheduler as stale
+   * that is running fine. One indexed single-row lookup beside the five the funnel already does.
+   *
+   * `undefined` when nothing has ever been reported (a database predating the scheduler's first
+   * tick, or a local install with no scheduler at all), which reads as the same `unknown` the card
+   * showed before this existed.
+   */
+  const floorReports = new PgTranslateFloorReport(db);
+
+  /**
+   * The read above, degraded to `undefined` rather than allowed to take `/api/status` down with it.
+   *
+   * This is not general nervousness about a query — it closes one specific, real window. The hosted
+   * deployment is the only reader here that does NOT apply the schema at startup (`serve.ts` calls
+   * `applySchema`; the Vercel entry point cannot), and the two deploys are separate events: Vercel
+   * ships new code on merge, while `deploy/herald-deploy.sh` runs `pnpm db:migrate` when someone runs
+   * it. So there is a stretch where a function instance holding this code talks to a Neon that has
+   * no `translate_floor_reports` yet — and an uncaught `42P01` there does not degrade one hover card,
+   * it 500s the whole status payload and the dashboard renders no header at all.
+   *
+   * Degrading is safe precisely because the fallback is honest: with no report the reach is
+   * `unknown`, which is the exact state this screen showed before reports existed — "cannot be seen
+   * from here", never a claim about the floor. And it is not how a missing table stays hidden:
+   * `isSchemaApplied` checks every table in `TABLE_NAMES`, so `pnpm doctor` reports it, loudly, at
+   * the layer whose job that is.
+   */
+  const readFloorReport = async (): Promise<TranslateFloorReport | undefined> => {
+    try {
+      return await floorReports.read();
+    } catch (err) {
+      console.warn(`[status] could not read the scheduler's translate floor report: ${(err as Error).message}`);
+      return undefined;
+    }
   };
 
   // Refuses to build a dependency set without a secret to sign/verify sessions with — see
@@ -265,6 +319,11 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     // the Lark term. `pnpm status` reads them in this same order, for this same reason — hence one
     // sequential round trip here rather than a sixth entry in the `Promise.all` above.
     const threads = await stores.collectionRepository.loadAll();
+    // Not in the `Promise.all` above either, but for a different reason than `threads`: this one is
+    // a plain single-row read with no ordering constraint at all. It sits here so the two reads
+    // whose ORDER is load-bearing stay visibly adjacent and nothing later mistakes this for part of
+    // that pairing.
+    const floorReport = await readFloorReport();
     const sync = syncSummary({ translations, entries, render: renderFor });
     return {
       storageMode,
@@ -279,7 +338,7 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
           renderings,
           published: entries,
         },
-        collectedScope(collected, readTranslateFloor(), xThreadIntake(threads)),
+        collectedScope(collected, readTranslateFloor(), xThreadIntake(threads), floorReport),
       ),
       sync,
       availableTargets: usableTargets,

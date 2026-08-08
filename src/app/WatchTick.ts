@@ -1,6 +1,10 @@
 import { agentStage, type StageResult, type StageRunner, type WorksheetAgent } from "../ports/WorksheetAgent";
 import type { TickReport } from "./TickReport";
 import { DEFAULT_WATCH_BATCH } from "../cli/watchBatch";
+// Type-only: this class does no I/O and opens no database. The shape is declared beside the readers
+// that render it (`src/status/translateFloor.ts`) so the writer and every reader agree on what a
+// report *is* without this file learning anything about how one is stored.
+import type { TranslateFloorReport } from "../status/translateFloor";
 
 // Declared in ./TickReport since `ConvertTick` reports the same shape and `src/cli/tickOutcome.ts`
 // formats both. Re-exported here because this is where every existing caller imports it from, and a
@@ -127,6 +131,22 @@ export type WatchTickOptions = {
    * environment, so the CLI is where that happens.
    */
   batch?: number;
+
+  /**
+   * Records the floor this tick ran with, so a reader with no systemd can see it — the hosted
+   * dashboard, which is a Vercel function and will never have one. Omitted in a hand-run and in
+   * every test that is not about this; `src/cli/watch.ts` supplies the real one.
+   *
+   * The scheduler *reporting* rather than the value being copied somewhere: `herald-watch.service`'s
+   * `HERALD_TRANSLATE_SINCE=` stays the single source of truth, and this writes down what was
+   * actually used, stamped with when. See `PgTranslateFloorReport` and `translateFloor.ts`'s
+   * `TranslateFloorReport`.
+   */
+  reportFloor?: (report: TranslateFloorReport) => Promise<void>;
+
+  /** The clock, injectable so the reported instant is assertable — the same seam `SendChannels`
+   *  keeps for its ledger timestamps. */
+  now?: () => Date;
 };
 
 export class WatchTick {
@@ -134,16 +154,29 @@ export class WatchTick {
   private readonly agent: WorksheetAgent;
   private readonly translateSince?: string;
   private readonly batch: number;
+  private readonly reportFloor?: (report: TranslateFloorReport) => Promise<void>;
+  private readonly now: () => Date;
 
   constructor(run: StageRunner, agent: WorksheetAgent, options: WatchTickOptions = {}) {
     this.runStage = run;
     this.agent = agent;
     this.translateSince = options.translateSince;
     this.batch = options.batch ?? DEFAULT_WATCH_BATCH;
+    this.reportFloor = options.reportFloor;
+    this.now = options.now ?? (() => new Date());
   }
 
   async run(): Promise<TickReport> {
     const stagesRun: string[] = [];
+
+    // Before any stage, and never counted as one. The floor is an *input* to this tick — `watch.ts`
+    // parses it before anything else runs — so the honest instant to stamp it with is now, not
+    // whenever the pipeline happens to finish: a tick spends minutes inside `claude -p`, and
+    // reporting at the end would make the age a reader reads as "how long since the scheduler last
+    // ran" include the run itself. Reporting here also means a tick that dies at `collect` still
+    // says the scheduler is alive and what floor it carries, which is exactly what a reader with no
+    // systemd needs to know.
+    await this.recordFloor();
 
     const collect = await this.runStage(COLLECT_STAGE, []);
     stagesRun.push(COLLECT_STAGE);
@@ -315,6 +348,29 @@ export class WatchTick {
     }
 
     return { ok: true, stagesRun };
+  }
+
+  /**
+   * Writes down the floor this tick runs with — best effort, and it can never fail the tick.
+   *
+   * The same rule `SendChannels` applies to everything it does after a post has already gone out: a
+   * bookkeeping write that fails must not be reported as a failure of the thing it was bookkeeping
+   * for. Here the thing is the whole pipeline. A `herald-watch.service` that translated, aligned and
+   * saved everything correctly must not go red — and fire `OnFailure=`, and page a human via
+   * `deploy/herald-notify-failure.sh` — because a one-row upsert into an operational table did not
+   * land. The cost of losing it is that one reader's card shows an older `reportedAt` for two hours,
+   * which is precisely the staleness that state is designed to display.
+   *
+   * Warned, not swallowed: it reaches `journalctl --user -u herald-watch` so a report that has been
+   * failing for days is findable, without it ever being the reason a tick is marked failed.
+   */
+  private async recordFloor(): Promise<void> {
+    if (!this.reportFloor) return;
+    try {
+      await this.reportFloor({ floor: this.translateSince, at: this.now().toISOString() });
+    } catch (err) {
+      console.warn(`[watch] could not record the translate floor for the dashboard: ${(err as Error).message}`);
+    }
   }
 
   /**
