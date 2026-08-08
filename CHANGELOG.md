@@ -39,6 +39,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`pnpm status` states the translation floor, and qualifies the Collected total with it.** That
+  total counts every collected item back to the first collect, but the watch scheduler runs
+  `translate:prepare --since $HERALD_TRANSLATE_SINCE` — so on 2026-08-08 a Collected total was read
+  as a backlog and reported to a human as one, when the floor put most of it permanently out of the
+  scheduler's reach. The floor's only real home is `Environment=` on `herald-watch.service`: `.env`
+  carries the key blank and nothing else in the repo carries the value, so there was no read-only
+  way to ask what production selects with. The stage line now reads
+  `Collected (X + Lark)  135   (in scope 20 · below floor 115)`, with the floor itself printed under
+  the table.
+  - **Asked of systemd, not of the shell.** `systemctl --user show herald-watch.service` reports
+    what the *manager* loaded, so a unit file edited without `daemon-reload` is described by what
+    will really run rather than by what someone meant. `process.env.HERALD_TRANSLATE_SINCE` is
+    empty in a hand-run and arbitrary in a shell that exported it; when it disagrees with the unit
+    it gets its own ⚠ line saying so, and it is never used as the answer.
+  - **Five states, because "no floor" and "no answer" are opposite facts.** `systemctl show` exits 0
+    for a unit it has never heard of and prints a bare `Environment=` for it — identical to a loaded
+    unit that sets nothing — so `LoadState` is read alongside. A loaded unit with no floor is the
+    alarming one (⚠ the whole backlog is in scope, oldest first); a missing unit is just a dev
+    machine. A `systemctl` that is absent, non-zero, slow, or unrecognisable degrades to
+    "cannot determine" and never throws: this is a read-only diagnostic, and it also runs as a stage
+    inside every watch tick.
+  - **The floor and the scope are required arguments** of `pipelineStages`/`formatStatus`, not
+    optional ones. The bare total is the shape that caused the misreading, so the table cannot be
+    rendered without saying how much of it is in reach.
+
 - **The dashboard sends no referrer, without which every video preview 403s.** `video.twimg.com`
   enforces a Referer allowlist: the same mp4 that returns 200 with no Referer returns 403 with the
   dashboard's own origin, and a `<video>` that gets a 403 fails with `MEDIA_ERR_SRC_NOT_SUPPORTED`.

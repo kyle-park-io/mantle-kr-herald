@@ -1,3 +1,10 @@
+import {
+  collectedScopeNote,
+  formatTranslateFloor,
+  type CollectedScope,
+  type TranslateFloorStatus,
+} from "./translateFloor";
+
 export interface StatusInput {
   collected: number;
   translations: { status: string }[];
@@ -47,9 +54,16 @@ export const itemCount = (rows: { itemId: string }[]): number => new Set(rows.ma
 const fannedOutNote = (rows: { itemId: string; status: string }[]) =>
   `${itemCount(rows)} items · approved ${approved(rows)}`;
 
-export function pipelineStages(input: StatusInput): StageCount[] {
+/**
+ * `scope` is not optional, and that is the fix. Every collected item the scheduler will never look
+ * at is still counted in this stage's total, so a bare `Collected (X + Lark)  108` reads as a
+ * backlog of 108 — it was read that way, and reported to a human that way, on 2026-08-08. Requiring
+ * the scope means the table cannot be rendered without stating how much of that total the
+ * translation floor actually leaves in reach (`./translateFloor`).
+ */
+export function pipelineStages(input: StatusInput, scope: CollectedScope): StageCount[] {
   return [
-    { label: "Collected (X + Lark)", total: input.collected },
+    { label: "Collected (X + Lark)", total: input.collected, note: collectedScopeNote(scope) },
     { label: "Translated", total: input.translations.length, note: translatedNote(input.translations) },
     { label: "Converted (variants)", total: input.variants.length, note: fannedOutNote(input.variants) },
     { label: "Rendered (channels)", total: input.renderings.length, note: fannedOutNote(input.renderings) },
@@ -118,11 +132,17 @@ const HISTORY_POINTER = [
   "  `pnpm lineage --activity` rolls up the append-only lineage by date: what happened, and when",
 ];
 
-export function formatStatus(stages: StageCount[]): string {
+/**
+ * `floor` is required for the same reason `pipelineStages`'s scope is: the floor's only real home is
+ * a systemd unit, so before this line existed there was no read-only way to ask what the scheduler
+ * would actually select with — which is exactly why the Collected total was so easy to misread.
+ * Printed here rather than left to the caller so it travels with the table it qualifies.
+ */
+export function formatStatus(stages: StageCount[], floor: TranslateFloorStatus): string {
   const labelW = stages.reduce((w, s) => Math.max(w, s.label.length), 0);
   const numW = stages.reduce((w, s) => Math.max(w, String(s.total).length), 0);
   const lines = stages.map(
     (s) => `  ${s.label.padEnd(labelW)}  ${String(s.total).padStart(numW)}${s.note ? `   (${s.note})` : ""}`,
   );
-  return ["Pipeline status", "", ...lines, "", ...HISTORY_POINTER].join("\n");
+  return ["Pipeline status", "", ...lines, "", ...formatTranslateFloor(floor), "", ...HISTORY_POINTER].join("\n");
 }
