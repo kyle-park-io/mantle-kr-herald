@@ -39,6 +39,9 @@ describe("TypefullySender", () => {
 
 function routingFetch() {
   const calls: { url: string; method: string; jsonBody?: any; isBinary?: boolean }[] = [];
+  // One id per media/upload call, so a send carrying two files can be told apart from one that
+  // uploaded the same file twice.
+  let uploads = 0;
   const fn = (async (url: string, init?: any) => {
     const u = String(url);
     const method = init?.method ?? "GET";
@@ -48,9 +51,10 @@ function routingFetch() {
       ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body),
          arrayBuffer: async () => new ArrayBuffer(4), headers: { get: () => ct } }) as unknown as Response;
     if (u.includes("pbs.twimg.com")) return reply({}, "image/jpeg");          // photo download
-    if (u.endsWith("/media/upload")) return reply({ media_id: "M1", upload_url: "https://s3.example/put" });
+    if (u.includes("video.twimg.com")) return reply({}, "video/mp4");         // mp4 download
+    if (u.endsWith("/media/upload")) return reply({ media_id: `M${++uploads}`, upload_url: "https://s3.example/put" });
     if (u === "https://s3.example/put") return reply({});                     // S3 PUT
-    if (u.includes("/media/M1")) return reply({ status: "ready" });           // poll
+    if (/\/media\/M\d+$/.test(u)) return reply({ status: "ready" });          // poll
     return reply({ id: 77, share_url: "https://typefully.com/t/abc" });       // draft
   }) as unknown as typeof fetch;
   return { fn, calls };
@@ -136,5 +140,52 @@ describe("TypefullySender — retry behaviour", () => {
     await expect(
       sender.send({ itemId: "x:1", type: "announcement", channel: "x", segments: ["hi"] }),
     ).rejects.toThrow(/draft WAS created/);
+  });
+});
+
+/**
+ * The mp4 `XContentSource` captures. Verified live against the real account on 2026-08-08:
+ * `media/upload` with an `.mp4` file_name → 201, the presigned S3 PUT → 200, and the status poll
+ * → `ready` with `mime: "video/mp4"`. Nothing in `TypefullyMedia` had to change for it, which is
+ * why there is one uploader here and not two.
+ */
+const MP4 = "https://video.twimg.com/ext_tw_video/1/pu/vid/avc1/1280x720/vPz8ankm0777GHP_.mp4";
+
+describe("TypefullySender video", () => {
+  it("uploads the video and attaches its media_id to the lead post", async () => {
+    const { fn, calls } = routingFetch();
+    const res = await new TypefullySender("KEY", "42", fn, noSleep, now).send({
+      itemId: "x:1", type: "x", channel: "x", segments: ["hello", "second"], video: MP4,
+    });
+    // Same four media calls a photo makes, in the same order, before the draft POST — a failure
+    // partway leaves nothing half-sent.
+    expect(calls.map((c) => c.method)).toEqual(["GET", "POST", "PUT", "GET", "POST"]);
+    expect(calls[0].url).toBe(MP4);
+    // The file name Typefully is told is the mp4's, not "media.jpg" — it types the upload.
+    expect(calls[1].jsonBody.file_name).toBe("vPz8ankm0777GHP_.mp4");
+    const draft = calls.find((c) => c.url.includes("/drafts"))!.jsonBody;
+    expect(draft.platforms.x.posts[0]).toEqual({ text: "hello", media_ids: ["M1"] });
+    expect(draft.platforms.x.posts[1]).toEqual({ text: "second" });
+    expect(res).toEqual({ postId: "77", url: "https://typefully.com/t/abc" });
+  });
+
+  it("throws before creating a draft when the video upload fails", async () => {
+    const fn = (async (url: string) => {
+      const u = String(url);
+      if (u.includes("video.twimg.com")) return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(4), headers: { get: () => "video/mp4" } } as unknown as Response;
+      if (u.endsWith("/media/upload")) return { ok: false, status: 500, text: async () => "boom" } as Response;
+      throw new Error(`unexpected call to ${u}`); // a draft POST here fails the test
+    }) as unknown as typeof fetch;
+    await expect(
+      new TypefullySender("KEY", "42", fn, noSleep).send({ itemId: "x:1", type: "x", channel: "x", segments: ["a"], video: MP4 }),
+    ).rejects.toThrow(/media/i);
+  });
+
+  it("uploads the video exactly once per send", async () => {
+    const { fn, calls } = routingFetch();
+    await new TypefullySender("KEY", "42", fn, noSleep, now).send({ itemId: "x:1", type: "x", channel: "x", segments: ["a"], video: MP4 });
+    // `media/upload` is capped at 20/hour (x-ratelimit-user-limit, read live 2026-08-08); one send
+    // must never spend more of it than the post carries files.
+    expect(calls.filter((c) => c.url.endsWith("/media/upload"))).toHaveLength(1);
   });
 });

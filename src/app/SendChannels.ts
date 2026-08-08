@@ -241,14 +241,54 @@ export class SendChannels {
         }
 
         const { photos, videos } = extractMedia(text);
+        // Only a marker that carries a url can be uploaded. A bare `[영상]` is a thread collected
+        // before `XContentSource` captured `video_info`, and nothing re-derives stored text on read,
+        // so those markers exist in the store forever — they are neither an error nor an upload.
+        const attachable = videos.filter((url) => url !== "");
+        // Set for X only. `TypefullySender` uploads it; `TelegramBotSender` has no video path at all
+        // and would drop the field silently, which is what the per-room warning below exists to say.
+        const video = r.channel === "x" ? attachable[0] : undefined;
+
+        // X refuses both of these shapes outright: a post carries at most one video, and a video
+        // never shares a post with photos. Neither has ever been collected — across all of
+        // production `x_threads` on 2026-08-08, 90 tweets were photo-only, 35 video-only, and zero
+        // were photo+video or carried two videos — so this guards a shape the pipeline has never
+        // produced, not one it routinely does.
+        //
+        // Refuse, not drop. Dropping the video would put a live post in the room missing content a
+        // human reviewed and approved, and the `sent` ledger row that follows a successful send can
+        // never be unmarked — the loss would be permanent and invisible. Refusing costs one retry
+        // and nothing else: a failed send is NOT ledgered, so the next run tries again as soon as a
+        // human has split the rendering. Same shape and same reasoning as the over-limit fail-fast
+        // above — an unsendable rendering that a rerun cannot fix is a person's job, not a retry's.
+        if (video !== undefined && (photos.length > 0 || attachable.length > 1)) {
+          const reason =
+            photos.length > 0
+              ? "X refuses a post carrying both photos and a video — split the rendering"
+              : `X refuses a post carrying ${attachable.length} videos — split the rendering`;
+          console.warn(`[send] ${r.itemId}:${r.type} skipped for ${rooms.map((o) => o.id).join(", ")}: ${reason}`);
+          failures.push({ key: `${r.itemId}:${r.type}`, error: reason });
+          failed += 1;
+          continue;
+        }
 
         for (const outlet of rooms) {
           const key = keyFor(outlet);
           const chatId = outlet.chatIdEnv ? this.chatIds[outlet.id] : undefined;
           try {
             const segments = emitResult.segments.map((s) => s.text);
-            const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments, photos, chatId, pin: input.pin });
-            if (videos.length > 0) console.warn(`[send] ${key}: ${videos.length} video(s) present in the rendering, not attached this cycle`);
+            const res = await sender.send({ itemId: r.itemId, type: r.type, channel: r.channel, segments, photos, video, chatId, pin: input.pin });
+            // What this room did NOT receive, and why — two different reasons that need two
+            // different remedies, so the message names the one that applies rather than the old
+            // blanket "not attached this cycle" (which claimed X could not attach video at all).
+            const unattached = videos.length - (video ? 1 : 0);
+            if (unattached > 0) {
+              const why =
+                r.channel === "x"
+                  ? "no mp4 url was captured for it (run `pnpm x:video-backfill`, then re-render)"
+                  : "Telegram video delivery is not implemented";
+              console.warn(`[send] ${key}: ${unattached} video(s) in the rendering were not attached — ${why}`);
+            }
             const sentAt = this.now();
             // The send already happened — a ledger-write failure from here on must NOT be
             // reported as a "failed" send (that would make the next run re-send it live).
