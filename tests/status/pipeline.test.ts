@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { pipelineStages, formatStatus, funnelCounts } from "../../src/status/pipeline";
+import { collectedBreakdown } from "../../src/status/translateFloor";
 import type { CollectedScope, TranslateFloorStatus } from "../../src/status/translateFloor";
 
 /** What a machine with no scheduler installed reports — used wherever a test is about a stage other
@@ -138,31 +139,82 @@ describe("pipelineStages", () => {
 });
 
 describe("funnelCounts", () => {
+  const input = {
+    collected: 134,
+    translations: [{ status: "translated" }, { status: "posted" }],
+    variants: [
+      { itemId: "x:1", status: "approved" },
+      { itemId: "x:1", status: "converted" },
+      { itemId: "x:2", status: "approved" },
+    ],
+    renderings: [
+      { itemId: "x:1", status: "approved" },
+      { itemId: "x:1", status: "rendered" },
+    ],
+    published: [{ itemId: "x:1" }, { itemId: "x:1" }, { itemId: "x:9" }],
+  };
+  /** Production on 2026-08-08 — the scope `pnpm status` reported on the day the header was found
+   *  still showing a bare 134. */
+  const PRODUCTION: CollectedScope = {
+    floor: { kind: "configured", floor: "2026-07-27T14:35:25.000Z" },
+    total: 134,
+    inScope: 20,
+    intake: { threads: 223, repliesDropped: 92 },
+  };
+
   it("gives every stage both counts, so the dashboard cannot drift from `pnpm status`", () => {
     // The same input the CLI renders. Both readers derive from this one function precisely because
     // the previous split let the CLI learn about `posted` while the dashboard header did not.
-    const counts = funnelCounts({
-      collected: 134,
-      translations: [{ status: "translated" }, { status: "posted" }],
-      variants: [
-        { itemId: "x:1", status: "approved" },
-        { itemId: "x:1", status: "converted" },
-        { itemId: "x:2", status: "approved" },
-      ],
-      renderings: [
-        { itemId: "x:1", status: "approved" },
-        { itemId: "x:1", status: "rendered" },
-      ],
-      published: [{ itemId: "x:1" }, { itemId: "x:1" }, { itemId: "x:9" }],
-    });
+    const counts = funnelCounts(input, PRODUCTION);
     expect(counts).toEqual({
-      // One row per item at these two stages — the stores key on itemId alone.
-      collected: { items: 134, rows: 134 },
+      // One row per item at these two stages — the stores key on itemId alone. The breakdown rides
+      // on this stage rather than beside the funnel, so nothing can read the number without also
+      // being handed what qualifies it.
+      collected: { items: 134, rows: 134, breakdown: collectedBreakdown(PRODUCTION) },
       translated: { items: 2, rows: 2 },
       // Past here a row is a (type) or (type, channel) or (status, target) fan-out of an item.
       converted: { items: 2, rows: 3 },
       rendered: { items: 1, rows: 2 },
       published: { items: 2, rows: 3 },
+    });
+  });
+
+  /**
+   * The regression this change exists for. `pipelineStages` learned the floor and the intake funnel
+   * and `funnelCounts` did not, so `pnpm status` printed
+   * `134 (223 X threads - 92 replies dropped + 3 Lark · in scope 20 · below floor 114)` while the
+   * dashboard header showed `수집 134` and nothing else. Both readers now take the same `scope`, and
+   * this asserts they answer with the same numbers from it — not that two computations agree, but
+   * that there is one.
+   */
+  it("qualifies the collected total with the very numbers the CLI's Collected line prints", () => {
+    const { breakdown } = funnelCounts(input, PRODUCTION).collected;
+    const note = pipelineStages(input, PRODUCTION).find((s) => s.label === "Collected (X + Lark)")?.note;
+
+    expect(note).toBe("223 X threads - 92 replies dropped + 3 Lark · in scope 20 · below floor 114");
+    expect(breakdown.intake?.map((t) => `${t.op ?? ""}${t.count}`)).toEqual(["223", "-92", "+3"]);
+    expect(breakdown.total).toBe(134);
+    expect(breakdown.reach).toEqual({
+      kind: "measured",
+      inScope: 20,
+      belowFloor: 114,
+      floor: "2026-07-27T14:35:25.000Z",
+    });
+  });
+
+  it("still qualifies the total where no floor could be read at all", () => {
+    // What the hosted dashboard gets on every request: a Vercel function has no systemd to ask. The
+    // intake half is derived from the database and survives; the floor half reports that it could
+    // not be read — which is not the same as reporting that there is none.
+    const { breakdown } = funnelCounts(input, {
+      floor: { kind: "unreadable", detail: "could not ask systemd about herald-watch.service" },
+      total: 134,
+      intake: { threads: 223, repliesDropped: 92 },
+    }).collected;
+    expect(breakdown.intake).toHaveLength(3);
+    expect(breakdown.reach).toEqual({
+      kind: "unknown",
+      detail: "could not ask systemd about herald-watch.service",
     });
   });
 });

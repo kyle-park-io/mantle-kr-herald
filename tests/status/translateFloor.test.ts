@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import {
   translateFloorStatus,
   collectedScope,
+  collectedBreakdown,
   collectedScopeNote,
   formatTranslateFloor,
   WATCH_UNIT,
@@ -341,6 +342,135 @@ describe("collectedScopeNote — the intake funnel", () => {
       for (const intake of intakes) {
         const inScope = floor.kind === "configured" ? 20 : undefined;
         expect(collectedScopeNote({ floor, total: 134, inScope, intake }).length).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+/**
+ * The value both readers start from. `pnpm status` renders it as one line of text; the dashboard's
+ * hover card renders it as a card, in Korean. The point of the split is that the *arithmetic* — the
+ * terms, their signs, which of them are omitted, and the three-way reduction of the floor — happens
+ * exactly once, here, because the last time a Collected-line change landed it reached the CLI only
+ * and the header went on showing a bare 134.
+ */
+describe("collectedBreakdown", () => {
+  const CONFIGURED: TranslateFloorStatus = { kind: "configured", floor: "2026-07-27T14:35:25.000Z" };
+  /** Production on 2026-08-08, the same measurement the note's own suite above is written from. */
+  const PRODUCTION: CollectedScope = {
+    floor: CONFIGURED,
+    total: 134,
+    inScope: 20,
+    intake: { threads: 223, repliesDropped: 92 },
+  };
+
+  it("states the funnel as terms with their own signs, not as one reader's sentence", () => {
+    expect(collectedBreakdown(PRODUCTION).intake).toEqual([
+      { kind: "threads", count: 223 },
+      { kind: "replies-dropped", op: "-", count: 92 },
+      { kind: "lark", op: "+", count: 3 },
+    ]);
+  });
+
+  it("derives the Lark term, so whatever renders it lands on the total", () => {
+    // Derived (`total - (threads - repliesDropped)`), never counted: derived, the terms reconcile by
+    // construction and no reader can draw a funnel that fails to reach its own total. This is the
+    // property that has to survive being sent over a wire and drawn by different code.
+    const { intake, total } = collectedBreakdown(PRODUCTION);
+    const sum = intake!.reduce((n, t) => n + (t.op === "-" ? -t.count : t.count), 0);
+    expect(sum).toBe(total);
+  });
+
+  it("omits a zero term rather than sending one nobody should draw", () => {
+    // The omission rule lives here for the same reason the derivation does — a card that dropped a
+    // different set of terms than the CLI line would be a second funnel.
+    expect(collectedBreakdown({ ...PRODUCTION, total: 226, intake: { threads: 223, repliesDropped: 0 } }).intake)
+      .toEqual([
+        { kind: "threads", count: 223 },
+        { kind: "lark", op: "+", count: 3 },
+      ]);
+    expect(collectedBreakdown({ ...PRODUCTION, total: 131 }).intake).toEqual([
+      { kind: "threads", count: 223 },
+      { kind: "replies-dropped", op: "-", count: 92 },
+    ]);
+  });
+
+  it("has no funnel when there is none to draw honestly, and still reports the scope", () => {
+    // Nothing from X, and two reads of the database that disagree — the two cases the CLI prints no
+    // funnel for. A reader that received terms here would draw a funnel the CLI refuses to.
+    const noX = collectedBreakdown({ ...PRODUCTION, total: 3, inScope: 1, intake: { threads: 0, repliesDropped: 0 } });
+    expect(noX.intake).toBeUndefined();
+    expect(noX.reach).toEqual({ kind: "measured", inScope: 1, belowFloor: 2, floor: CONFIGURED.floor });
+
+    expect(collectedBreakdown({ ...PRODUCTION, total: 100 }).intake).toBeUndefined();
+  });
+
+  it("measures the reach when a floor was read, naming the floor it measured against", () => {
+    expect(collectedBreakdown(PRODUCTION).reach).toEqual({
+      kind: "measured",
+      inScope: 20,
+      belowFloor: 114,
+      floor: "2026-07-27T14:35:25.000Z",
+    });
+  });
+
+  it("keeps `no floor set` and `could not be read` apart, because they are opposite facts", () => {
+    // The distinction the whole module exists for. `no-floor` means the scheduler is draining the
+    // entire backlog oldest first — something to act on. `unknown` means nothing was learned either
+    // way, which is what the hosted dashboard will show forever. A UI that renders them alike is
+    // reporting a number as though it had been checked.
+    expect(collectedBreakdown({ floor: { kind: "none" }, total: 134 }).reach).toEqual({
+      kind: "no-floor",
+      inScope: 134,
+    });
+    expect(collectedBreakdown({ floor: { kind: "not-installed" }, total: 134 }).reach).toEqual({ kind: "unknown" });
+  });
+
+  it("folds every unaskable state into `unknown`, carrying the refusal's own words", () => {
+    // `not-installed`, `unreadable` and `invalid` all mean the same thing to someone reading a
+    // total: nothing here could read the floor. `detail` is what keeps the parse error from being
+    // lost in that fold — it is the only thing that says which of the three this was.
+    const floors: TranslateFloorStatus[] = [
+      { kind: "not-installed" },
+      { kind: "unreadable", detail: "systemctl: not found" },
+      { kind: "invalid", detail: 'HERALD_TRANSLATE_SINCE is not a date this can parse: "soon"' },
+    ];
+    const reaches = floors.map((floor) => collectedBreakdown({ floor, total: 134 }).reach);
+    expect(reaches.map((r) => r.kind)).toEqual(["unknown", "unknown", "unknown"]);
+    expect(reaches.map((r) => r.detail)).toEqual([
+      undefined,
+      "systemctl: not found",
+      'HERALD_TRANSLATE_SINCE is not a date this can parse: "soon"',
+    ]);
+  });
+
+  it("is what `pnpm status`'s own line is formatted from, term for term", () => {
+    // Not a comparison of two computations — a demonstration that there is only one. Anything the
+    // card can draw is on the CLI line, with the same operator and the same number, because the
+    // line is rendered from this exact value.
+    const { intake, reach } = collectedBreakdown(PRODUCTION);
+    const note = collectedScopeNote(PRODUCTION);
+    for (const term of intake ?? []) expect(note).toContain(`${term.op ? `${term.op} ` : ""}${term.count} `);
+    expect(note).toContain(`in scope ${reach.inScope}`);
+    expect(note).toContain(`below floor ${reach.belowFloor}`);
+  });
+
+  it("reports a total for every floor state and every intake, the way the note does", () => {
+    // A card with no numbers is the bare total again, one hover deeper.
+    const intakes = [undefined, { threads: 0, repliesDropped: 0 }, { threads: 223, repliesDropped: 92 }];
+    const floors: TranslateFloorStatus[] = [
+      CONFIGURED,
+      { kind: "none" },
+      { kind: "not-installed" },
+      { kind: "unreadable", detail: "systemctl: not found" },
+      { kind: "invalid", detail: 'HERALD_TRANSLATE_SINCE is not a date this can parse: "soon"' },
+    ];
+    for (const floor of floors) {
+      for (const intake of intakes) {
+        const inScope = floor.kind === "configured" ? 20 : undefined;
+        const breakdown = collectedBreakdown({ floor, total: 134, inScope, intake });
+        expect(breakdown.total).toBe(134);
+        expect(breakdown.reach.kind).toBeTruthy();
       }
     }
   });

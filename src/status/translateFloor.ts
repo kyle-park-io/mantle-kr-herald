@@ -190,6 +190,106 @@ export function collectedScope(
 }
 
 /**
+ * One term of the intake funnel, as arithmetic rather than as words: `kind` names which number it
+ * is, `op` says how it enters the sum, and each reader supplies its own label. `pnpm status` prints
+ * `223 X threads - 92 replies dropped + 3 Lark`; the dashboard's hover card prints those same three
+ * terms in Korean.
+ *
+ * Sharing the finished *string* would have put English on a Korean screen; sharing nothing would
+ * have put the arithmetic — which terms appear, in which order, with which sign — in two places free
+ * to disagree. This is the seam between the two: the sum is decided once, the wording twice.
+ */
+export interface IntakeTerm {
+  kind: "threads" | "replies-dropped" | "lark";
+  /** How this term enters the sum. Absent on the first term, which starts it. */
+  op?: "-" | "+";
+  count: number;
+}
+
+/**
+ * How much of the collected total the scheduler can still reach — `TranslateFloorKind`'s five states
+ * reduced to the three a reader has to tell apart, which is exactly the three branches `floorNote`
+ * has always printed:
+ *
+ * - `measured` — a floor is set and both sides of it were counted.
+ * - `no-floor` — the unit is loaded and sets none. **The alarming one**, and emphatically not the
+ *                same as `unknown`: it means the scheduler is draining the whole collected backlog
+ *                oldest first.
+ * - `unknown`  — nothing here could read the floor (`not-installed`, `unreadable`, `invalid`). The
+ *                hosted dashboard is always this and always will be: a Vercel function has no
+ *                systemd to ask. It says nothing whatever about whether a floor is set.
+ *
+ * The reduction lives here rather than in each reader because the distinction it has to preserve is
+ * the whole point of the module: `no-floor` and `unknown` are opposite facts, and a UI that
+ * collapses them any further is back to reporting a number as though it had been checked.
+ *
+ * `detail` carries the refusal's own words so `invalid`'s parse error is not lost in the collapse.
+ */
+export interface CollectedReach {
+  kind: "measured" | "no-floor" | "unknown";
+  /** Items the scheduler can select. Set for `measured`, and for `no-floor` where it is all of them. */
+  inScope?: number;
+  /** Items below the floor, which are never selected. Only `measured`. */
+  belowFloor?: number;
+  /** The floor itself, normalised ISO. Only `measured`, and only when a `configured` floor produced
+   *  it — a hand-built scope can state an `inScope` without naming what it was measured against. */
+  floor?: string;
+  /** Why nothing could be read, in the words of whatever refused. Only `unknown`, and not always. */
+  detail?: string;
+}
+
+/**
+ * Everything behind a Collected total, computed once for both readers: `pnpm status` renders it as
+ * one line of text (`collectedScopeNote` below), the dashboard renders it as a hover card
+ * (`web/src/collectedBreakdown.ts`). The CLI's line is literally formatted from this value, so "the
+ * header says something `pnpm status` does not" stops being a state the two can be in — which is
+ * the split that already happened once, when the CLI learned about the terminal `posted` status and
+ * the header did not.
+ */
+export interface CollectedBreakdown {
+  /** The funnel's terms, in print order. Absent where there is no honest funnel to draw — see
+   *  `intakeTerms`. */
+  intake?: IntakeTerm[];
+  /** The collected total the terms above add up to. */
+  total: number;
+  reach: CollectedReach;
+}
+
+/** The scope, reduced to what a reader is actually told. Both readers start here. */
+export function collectedBreakdown(scope: CollectedScope): CollectedBreakdown {
+  return {
+    intake: scope.intake && intakeTerms(scope.intake, scope.total),
+    total: scope.total,
+    reach: collectedReach(scope),
+  };
+}
+
+function collectedReach(scope: CollectedScope): CollectedReach {
+  // `inScope !== undefined` rather than `floor.kind === "configured"`, carried over unchanged from
+  // the note this replaced: a caller that measured a scope has one to report, whatever the floor's
+  // provenance, and changing the predicate here would change `pnpm status`'s output.
+  if (scope.inScope !== undefined) {
+    return {
+      kind: "measured",
+      inScope: scope.inScope,
+      belowFloor: scope.total - scope.inScope,
+      floor: scope.floor.floor,
+    };
+  }
+  if (scope.floor.kind === "none") return { kind: "no-floor", inScope: scope.total };
+  return { kind: "unknown", detail: scope.floor.detail };
+}
+
+/** The English label per term, for the one-line CLI form below. The dashboard keeps its own, in
+ *  Korean (`web/src/collectedBreakdown.ts`) — which is why the shared value carries a `kind` and not
+ *  a label. */
+const INTAKE_TERM_LABEL: Record<IntakeTerm["kind"], string> = {
+  threads: "X threads",
+  "replies-dropped": "replies dropped",
+  lark: "Lark",
+};
+
+/**
  * The note beside the Collected total, and the reason this module reaches into the pipeline table at
  * all. A bare `Collected (X + Lark)  108` was read as a backlog of 108 and reported to a human as
  * one, when the floor put the older two thirds of it permanently out of the scheduler's reach.
@@ -198,23 +298,32 @@ export function collectedScope(
  *
  * The intake funnel goes in front of that, never in place of it: same line, left to right, from what
  * collection found to what the scheduler can still reach.
+ *
+ * Formatted from `collectedBreakdown` rather than computing its own numbers, so this line and the
+ * dashboard card cannot report different arithmetic for the same scope.
  */
 export function collectedScopeNote(scope: CollectedScope): string {
-  const funnel = scope.intake && intakeFunnel(scope.intake, scope.total);
-  return funnel ? `${funnel} · ${floorNote(scope)}` : floorNote(scope);
+  const { intake, reach } = collectedBreakdown(scope);
+  const funnel = intake
+    ?.map((t) => `${t.op ? `${t.op} ` : ""}${t.count} ${INTAKE_TERM_LABEL[t.kind]}`)
+    .join(" ");
+  return funnel ? `${funnel} · ${floorNote(reach)}` : floorNote(reach);
 }
 
-function floorNote(scope: CollectedScope): string {
-  if (scope.inScope !== undefined) {
-    return `in scope ${scope.inScope} · below floor ${scope.total - scope.inScope}`;
+function floorNote(reach: CollectedReach): string {
+  switch (reach.kind) {
+    case "measured":
+      return `in scope ${reach.inScope} · below floor ${reach.belowFloor}`;
+    case "no-floor":
+      return `in scope ${reach.inScope} · no floor set`;
+    case "unknown":
+      return "scope unknown · no floor could be read";
   }
-  if (scope.floor.kind === "none") return `in scope ${scope.total} · no floor set`;
-  return "scope unknown · no floor could be read";
 }
 
 /**
- * How the collected total was arrived at: `223 X threads - 92 replies dropped + 3 Lark`, printed as
- * arithmetic that ends on the number beside it.
+ * How the collected total was arrived at: `223 X threads - 92 replies dropped + 3 Lark`, as terms
+ * of a sum that ends on the number beside it.
  *
  * **Why the Lark term is here at all.** `threads - repliesDropped` is the X item count, 131 — but
  * the headline says 134, because three Lark items are in the total and are not threads. Left
@@ -236,18 +345,22 @@ function floorNote(scope: CollectedScope): string {
  *
  * Zero terms are omitted rather than printed. `- 0 replies dropped` sends a reader looking for
  * something that did not happen, and dropping a zero term changes no arithmetic.
+ *
+ * The omission rules live here, once, for the same reason the derivation does: a card that dropped
+ * a different set of terms than the CLI line would be a second funnel, and the two would eventually
+ * disagree about a total they are both supposed to reach.
  */
-function intakeFunnel(intake: XThreadIntake, total: number): string | undefined {
+function intakeTerms(intake: XThreadIntake, total: number): IntakeTerm[] | undefined {
   // Nothing came from X: `0 X threads + 3 Lark` is not a funnel, it is noise in front of the number
   // that matters. A deployment with no X collection reads exactly as it did before.
   if (intake.threads === 0) return undefined;
   const xItems = intake.threads - intake.repliesDropped;
   const rest = total - xItems;
   if (xItems < 0 || rest < 0) return undefined;
-  const terms = [`${intake.threads} X threads`];
-  if (intake.repliesDropped > 0) terms.push(`- ${intake.repliesDropped} replies dropped`);
-  if (rest > 0) terms.push(`+ ${rest} Lark`);
-  return terms.join(" ");
+  const terms: IntakeTerm[] = [{ kind: "threads", count: intake.threads }];
+  if (intake.repliesDropped > 0) terms.push({ kind: "replies-dropped", op: "-", count: intake.repliesDropped });
+  if (rest > 0) terms.push({ kind: "lark", op: "+", count: rest });
+  return terms;
 }
 
 /**

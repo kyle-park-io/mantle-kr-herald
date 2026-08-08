@@ -46,6 +46,9 @@ import { createUploaders, resolveTargets } from "../cli/uploaders";
 import { paths } from "../paths";
 import { syncSummary } from "../status/sync";
 import { funnelCounts } from "../status/pipeline";
+import { collectedScope, translateFloorStatus, type TranslateFloorStatus } from "../status/translateFloor";
+import { xThreadIntake } from "../adapters/content/XContentSource";
+import { realSystemdShow } from "../cli/systemdShow";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { contentHash, isStale } from "../domain/publish/syncLedger";
 import type { Translation } from "../domain/translation/models";
@@ -109,6 +112,34 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   // the second half, the button's only disabled condition is "no type ticked": the operator picks
   // one, clicks, and reads the API's bare `not found`.
   const conversionEnabled = routes === "local";
+
+  /**
+   * The floor `translate:prepare` will actually select with — what qualifies the Collected total in
+   * `loadStatus` below.
+   *
+   * Asked of systemd at most once per process, and on a hosted deployment not asked at all.
+   * `routes === "hosted"` is a Vercel function: no systemd, no timer, no unit. Spawning `systemctl`
+   * per `/api/status` there would cost a process to learn nothing, so the probe is skipped and the
+   * floor reports the state it genuinely is in — `unreadable`, which the dashboard renders as "this
+   * screen cannot see the scheduler". Deliberately NOT `none`: "the unit sets no floor" and "this
+   * deployment cannot ask" are opposite facts (see `TranslateFloorKind`), and reporting the first
+   * where the second is true would raise a false alarm on every hosted page load.
+   *
+   * Memoised for `"local"` because `loadStatus` runs per request while `systemctl show` costs a
+   * spawn, and the answer only changes on a `daemon-reload`. The always-fresh reader is `pnpm
+   * status`, which asks once and exits.
+   *
+   * The invoking shell's own `HERALD_TRANSLATE_SINCE` is deliberately not passed: it is never the
+   * floor (see `translateFloorStatus`), and the "your shell disagrees" warning it drives is a CLI
+   * line with no home on this screen.
+   */
+  let translateFloor: TranslateFloorStatus | undefined;
+  const readTranslateFloor = (): TranslateFloorStatus => {
+    translateFloor ??= translateFloorStatus({
+      unitShow: routes === "hosted" ? undefined : realSystemdShow(),
+    });
+    return translateFloor;
+  };
 
   // Refuses to build a dependency set without a secret to sign/verify sessions with — see
   // `loadSessionConfig()`'s own doc comment for why this is a hard refusal, not an optional one.
@@ -227,16 +258,29 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       formattingStore.loadAll(),
       publishStore.listEntries(),
     ]);
+    // The rows behind the X half of the Collected total, read AFTER the items above and never
+    // beside them: the Lark term is derived as `total - (threads - repliesDropped)`, so a `collect`
+    // landing between the two reads must be able to make the thread count outrun the item count
+    // (which reports no funnel at all) rather than the other way round, which would silently inflate
+    // the Lark term. `pnpm status` reads them in this same order, for this same reason — hence one
+    // sequential round trip here rather than a sixth entry in the `Promise.all` above.
+    const threads = await stores.collectionRepository.loadAll();
     const sync = syncSummary({ translations, entries, render: renderFor });
     return {
       storageMode,
-      funnel: funnelCounts({
-        collected: collected.length,
-        translations,
-        variants,
-        renderings,
-        published: entries,
-      }),
+      // `collected` is passed as items, not as a count: the scope's whole job is to say how many of
+      // them sit at or after the scheduler's floor, which needs their `createdAt`. Same call the CLI
+      // makes, so the header's hover card and `pnpm status`'s Collected line report one computation.
+      funnel: funnelCounts(
+        {
+          collected: collected.length,
+          translations,
+          variants,
+          renderings,
+          published: entries,
+        },
+        collectedScope(collected, readTranslateFloor(), xThreadIntake(threads)),
+      ),
       sync,
       availableTargets: usableTargets,
       integrations,
