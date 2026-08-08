@@ -3,6 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Required for the video preview, not a privacy preference. `video.twimg.com` enforces a Referer
+      allowlist: the same mp4 that returns 200 with no Referer returns 403 with this dashboard's
+      origin (verified against three stored clips), so a `<video>` pointed at it fails with
+      MEDIA_ERR_SRC_NOT_SUPPORTED and the reviewer gets "영상을 불러오지 못했습니다" every time.
+      `pbs.twimg.com` does not enforce it, which is why photo previews have always worked.
+
+      It has to live at the document level: `referrerpolicy` is defined for img/iframe/link/script/a
+      but NOT for media elements — `"referrerPolicy" in document.createElement("video")` is false,
+      and setting the attribute anyway changes nothing. Scoping the policy to one element is
+      therefore not on the table; this is the narrowest thing that works.
+
+      Safe for everything else here: API calls are same-origin, and every outbound link already
+      carries rel="noreferrer".
+    -->
+    <meta name="referrer" content="no-referrer" />
     <title>Mantle KR — Review</title>
   </head>
   <body>

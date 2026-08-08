@@ -7,7 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A post's video now travels through the pipeline as a playable mp4, and previews in 검수.** The
+  `[영상]` marker has been url-less since it was introduced, on the understanding that capturing the
+  mp4 was a fast-follow needing a collect-schema change. It needed no new source at all:
+  twitterapi.io has been returning the full variant ladder in `extendedEntities.media[].video_info`
+  the whole time, and `toMedia` was reading only `media_url_https` — which for a video is the
+  **thumbnail**, not the clip. `MediaItem` gains `videoUrl` (highest-bitrate `video/mp4`; the
+  `application/x-mpegURL` playlist is never selected, since nothing we deliver to can play it), and
+  `XContentSource` writes `[영상] <url>`. The marker stays paren-free — `[영상](url)` is a markdown
+  link that `linksToPlain` would rewrite — and `sourceMedia`'s `VIDEO_LINE` already accepted the
+  bare-url form, so the send path reads it back with no parser change.
+  - **`url` still means the thumbnail.** It is a real asset (a poster frame) and the photo path
+    depends on `url` being an image, so the mp4 sits beside it rather than replacing it.
+  - **The dashboard previews the clip on hover**, the same shape the photo marker established:
+    label as the hover target, `원본 보기 ↗` outside it. Muted and `playsInline` so a pointer
+    crossing a marker can never put audio into a shared office, and the `<video>` is not mounted
+    until the pointer actually arrives — a 2차 card can carry a dozen markers, and `preload="none"`
+    does not help because `autoplay` overrides it the moment the element exists.
+  - **A url-less `[영상]` renders exactly as it does today.** Every translation and rendering saved
+    before this change keeps the bare marker forever, so it stays plain text rather than becoming a
+    preview-less video segment — which also means no caller can hand a `<video>` an empty `src`.
+    `MediaEditNotice` now says which of the two the reviewer is actually looking at.
+- **`pnpm x:video-backfill [--yes]`** fills `videoUrl` on video media collected before the schema
+  change, by tweet id. A re-collect covers most of it (34 of 35 media in production-shaped local
+  data), but it cannot reach a thread that has dropped out of X's search listing: the one straggler
+  entered the store via `gapFillMissingRoots` and is absent from `advanced_search` **and** from its
+  own replies' results, while `GET /twitter/tweets?tweet_ids=` returns it in full. Previews by
+  default, patches only `videoUrl`, and matches media by thumbnail url rather than array position.
+
 ### Fixed
+
+- **The dashboard sends no referrer, without which every video preview 403s.** `video.twimg.com`
+  enforces a Referer allowlist: the same mp4 that returns 200 with no Referer returns 403 with the
+  dashboard's own origin, and a `<video>` that gets a 403 fails with `MEDIA_ERR_SRC_NOT_SUPPORTED`.
+  `pbs.twimg.com` does not enforce it, which is why photo previews have always worked and why
+  nothing connected the two. The policy has to be document-level — `referrerpolicy` is defined for
+  img/iframe/link/script/a but not for media elements, so it cannot be scoped to the one element
+  that needs it. A test pins the meta tag, because deleting it turns nothing else red.
 
 - **A format run no longer builds channel cards for an item that has already been published.**
   `selectVariants` filters on `types`/`ids`/`channels` and never looked at the source translation's

@@ -36,6 +36,9 @@ describe("assembleSharedContext", () => {
     const out = assembleSharedContext(ctx);
     expect(out).toContain("[사진]");
     expect(out).toContain("[영상]");
+    // The video marker now carries the mp4 url after a space, so an instruction describing a bare
+    // `[영상]` would be telling the agent to preserve a line that no longer exists.
+    expect(out).toContain("[영상] 주소");
   });
 });
 

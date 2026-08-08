@@ -32,5 +32,7 @@ describe("assembleAlignmentWorksheet", () => {
     const out = assembleAlignmentWorksheet([]);
     expect(out).toContain("[사진]");
     expect(out).toContain("[영상]");
+    // Same reason as the translate prompt: the marker carries the mp4 url now.
+    expect(out).toContain("[영상] 주소");
   });
 });

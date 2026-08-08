@@ -2,8 +2,26 @@ import { z } from "zod";
 import type { ArticleBlock, ArticleBody, MediaItem, SourceTweet, TweetMetrics, UserProfile } from "../../domain/models";
 import { expandUrls } from "./expandUrls";
 
+/**
+ * One entry of `video_info.variants`. Every field is nullish: a variant is only usable when it
+ * states both an mp4 `content_type` and a `url`, and anything short of that is skipped rather than
+ * failing the whole tweet — same tolerance the rest of this file applies.
+ */
+const VideoVariantRaw = z
+  .object({
+    bitrate: z.number().nullish(),
+    content_type: z.string().nullish(),
+    url: z.string().nullish(),
+  })
+  .passthrough();
+
 const MediaRaw = z
-  .object({ type: z.string().optional(), media_url_https: z.string().optional() })
+  .object({
+    type: z.string().optional(),
+    // The thumbnail, even on a video — the playable file is in video_info (see toVideoUrl).
+    media_url_https: z.string().optional(),
+    video_info: z.object({ variants: z.array(VideoVariantRaw).nullish() }).passthrough().nullish(),
+  })
   .passthrough();
 
 /** Passthrough so an unrecognised key survives collection, matching ArticleBlockRaw's rationale. */
@@ -96,6 +114,27 @@ const TweetListResponse = z.object({
   next_cursor: z.string().nullish(),
 });
 
+/**
+ * The best playable mp4 among a media entry's variants, or undefined when there is none.
+ *
+ * `video/mp4` only: the ladder always also carries an `application/x-mpegURL` playlist, which no
+ * destination we send to can play (Telegram wants a file, Typefully wants an upload) — picking it
+ * would hand the send path a url that always fails. Highest bitrate wins because the mp4 is the
+ * deliverable itself, not a preview.
+ *
+ * A variant without `bitrate` sorts last rather than being skipped: an animated_gif's single mp4
+ * arrives that way, and dropping it would lose the only file the post has.
+ */
+function toVideoUrl(m: z.infer<typeof MediaRaw>): string | undefined {
+  let best: { url: string; bitrate: number } | undefined;
+  for (const v of m.video_info?.variants ?? []) {
+    if (v.content_type !== "video/mp4" || !v.url) continue;
+    const bitrate = typeof v.bitrate === "number" ? v.bitrate : -1;
+    if (!best || bitrate > best.bitrate) best = { url: v.url, bitrate };
+  }
+  return best?.url;
+}
+
 function toMedia(raw: z.infer<typeof TweetRaw>): MediaItem[] | undefined {
   const media = raw.extendedEntities?.media;
   if (!media || media.length === 0) return undefined;
@@ -103,7 +142,11 @@ function toMedia(raw: z.infer<typeof TweetRaw>): MediaItem[] | undefined {
   for (const m of media) {
     if (!m.media_url_https) continue;
     const type = m.type === "video" || m.type === "animated_gif" ? m.type : "photo";
-    items.push({ type, url: m.media_url_https });
+    const videoUrl = toVideoUrl(m);
+    // Spread rather than a plain `videoUrl:` key so a photo's item is the exact object it has
+    // always been — the stored json keeps its shape, and a reader testing `"videoUrl" in m` is not
+    // answered "yes, undefined".
+    items.push({ type, url: m.media_url_https, ...(videoUrl ? { videoUrl } : {}) });
   }
   return items.length ? items : undefined;
 }

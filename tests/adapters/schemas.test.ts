@@ -94,6 +94,111 @@ describe("normalizeTweet", () => {
   });
 });
 
+/**
+ * The mp4 lives in `extendedEntities.media[].video_info.variants`, alongside an HLS playlist and
+ * several bitrate ladders; `media_url_https` on the same entry is the *thumbnail*. These fixtures
+ * are trimmed from the real payload of tweet 2076703861872660873 (verified live 2026-08-08:
+ * the mp4 urls answer 200 `video/mp4` with `access-control-allow-origin: *`, no auth, no referer).
+ */
+const VIDEO_THUMB = "https://pbs.twimg.com/amplify_video_thumb/2076703853182074880/img/QcSbOAZluJllwyue.jpg";
+const MP4_320 = "https://video.twimg.com/amplify_video/2076703853182074880/vid/avc1/320x320/lo.mp4?tag=14";
+const MP4_540 = "https://video.twimg.com/amplify_video/2076703853182074880/vid/avc1/540x540/mid.mp4?tag=14";
+const MP4_720 = "https://video.twimg.com/amplify_video/2076703853182074880/vid/avc1/720x720/hi.mp4?tag=14";
+const HLS = "https://video.twimg.com/amplify_video/2076703853182074880/pl/playlist.m3u8";
+
+const videoTweet = (mediaOverride: Record<string, unknown>) => ({
+  id: "2076703861872660873",
+  url: "https://x.com/Mantle_Official/status/2076703861872660873",
+  text: "clip",
+  createdAt: "Mon Jun 29 05:58:17 +0000 2026",
+  author: { userName: "Mantle_Official" },
+  extendedEntities: { media: [{ type: "video", media_url_https: VIDEO_THUMB, ...mediaOverride }] },
+});
+
+describe("normalizeTweet video capture", () => {
+  it("keeps the highest-bitrate mp4 as videoUrl and the thumbnail as url", () => {
+    const t = normalizeTweet(
+      videoTweet({
+        video_info: {
+          aspect_ratio: [1, 1],
+          duration_millis: 5038,
+          variants: [
+            { content_type: "application/x-mpegURL", url: HLS },
+            { bitrate: 432000, content_type: "video/mp4", url: MP4_320 },
+            { bitrate: 1280000, content_type: "video/mp4", url: MP4_720 },
+            { bitrate: 832000, content_type: "video/mp4", url: MP4_540 },
+          ],
+        },
+      }),
+    );
+    // `url` still means the poster image: the photo path renders it, and losing it would trade a
+    // preview for a link.
+    expect(t.media).toEqual([{ type: "video", url: VIDEO_THUMB, videoUrl: MP4_720 }]);
+  });
+
+  it("never selects the HLS playlist, even when it is the only variant", () => {
+    const t = normalizeTweet(
+      videoTweet({ video_info: { variants: [{ content_type: "application/x-mpegURL", url: HLS }] } }),
+    );
+    expect(t.media).toStrictEqual([{ type: "video", url: VIDEO_THUMB }]);
+  });
+
+  it("takes a bitrate-less mp4 when it is the only one, and ranks it below any bitrated mp4", () => {
+    // An animated_gif's single variant arrives without `bitrate` in the wild. It is a legitimate
+    // playable mp4, so it must be selected — just never in preference to one that states a bitrate.
+    const only = normalizeTweet(
+      videoTweet({ type: "animated_gif", video_info: { variants: [{ content_type: "video/mp4", url: MP4_320 }] } }),
+    );
+    expect(only.media).toEqual([{ type: "animated_gif", url: VIDEO_THUMB, videoUrl: MP4_320 }]);
+
+    const alongside = normalizeTweet(
+      videoTweet({
+        video_info: {
+          variants: [
+            { content_type: "video/mp4", url: MP4_320 },
+            { bitrate: 832000, content_type: "video/mp4", url: MP4_540 },
+          ],
+        },
+      }),
+    );
+    expect(alongside.media?.[0].videoUrl).toBe(MP4_540);
+  });
+
+  it("keeps the first of two mp4s that tie on bitrate rather than throwing", () => {
+    const t = normalizeTweet(
+      videoTweet({
+        video_info: {
+          variants: [
+            { bitrate: 832000, content_type: "video/mp4", url: MP4_540 },
+            { bitrate: 832000, content_type: "video/mp4", url: MP4_720 },
+          ],
+        },
+      }),
+    );
+    expect(t.media?.[0].videoUrl).toBe(MP4_540);
+  });
+
+  it("leaves videoUrl absent when there is no mp4 to point at, without throwing", () => {
+    const shapes: Record<string, unknown>[] = [
+      {}, // no video_info at all — what a photo entry looks like
+      { video_info: { variants: [] } },
+      { video_info: { variants: null } },
+      { video_info: null },
+      { video_info: { variants: [{ bitrate: 832000, content_type: "video/mp4" }] } }, // no url
+      { video_info: { variants: [{ bitrate: 832000, content_type: "video/webm", url: MP4_540 }] } },
+      { video_info: { variants: [{ url: MP4_540 }] } }, // no content_type: not provably an mp4
+    ];
+    for (const shape of shapes) {
+      expect(normalizeTweet(videoTweet(shape)).media).toStrictEqual([{ type: "video", url: VIDEO_THUMB }]);
+    }
+  });
+
+  it("leaves a photo entry exactly as it was — no videoUrl key at all", () => {
+    const t = normalizeTweet(rawTweet);
+    expect(t.media).toStrictEqual([{ type: "photo", url: "https://pbs.twimg.com/media/x.jpg" }]);
+  });
+});
+
 describe("parseTweetList", () => {
   it("extracts tweets, hasNextPage, nextCursor with defaults", () => {
     const parsed = parseTweetList({ tweets: [rawTweet], has_next_page: true, next_cursor: "c1" });

@@ -35,10 +35,16 @@ function isCommenterReply(t: SourceTweet): boolean {
 
 /** Surface a post's media as canonical markers, each on its own line, so it is visible through the
  *  pipeline and delivered from the reviewed text (see domain/media/sourceMedia). Photos use the
- *  labelled `[사진](url)` form, matching `[영상]`; a video/gif uses a paren-free [영상] marker (mp4 upload is a follow-up). */
+ *  labelled `[사진](url)` form; a video/gif uses `[영상] <mp4 url>` — paren-free, because
+ *  `[영상](url)` is a markdown link that `linksToPlain`'s MD_LINK would rewrite. The url is dropped
+ *  when collection captured none (a pre-`videoUrl` row, or a payload with no mp4 variant), leaving
+ *  the bare `[영상]` that every reader still accepts. The thumbnail is never emitted: it is a still
+ *  image, and a reviewer seeing it in the video slot would think the clip was carried. */
 function mediaMarkers(media: MediaItem[] | undefined): string {
   if (!media || media.length === 0) return "";
-  const lines = media.map((m) => (m.type === "photo" ? `[사진](${m.url})` : "[영상]"));
+  const lines = media.map((m) =>
+    m.type === "photo" ? `[사진](${m.url})` : m.videoUrl ? `[영상] ${m.videoUrl}` : "[영상]",
+  );
   return `\n\n${lines.join("\n")}`;
 }
 
