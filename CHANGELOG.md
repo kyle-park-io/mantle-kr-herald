@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm text:video-backfill [--yes]` — the other half of `x:video-backfill`, for the `[영상]`
+  markers already frozen into reviewed text.** `x:video-backfill` fills `videoUrl` on the *collected*
+  `x_threads` rows, and that is where it stops: **nothing re-derives stored text on read**, so every
+  translation and rendering saved before the mp4 capture existed keeps its url-less `[영상]` no matter
+  how completely the collected side has since been filled. Measured against production on 2026-08-08:
+  8 translation rows and 4 rendering rows still carried one, every one of them against an item whose
+  thread now has its urls. That is not cosmetic — `SendChannels` uploads only
+  `videos.filter((url) => url !== "")`, so a rendering with a bare marker goes out without the clip a
+  human approved. The fill pairs the Nth marker in a text with the Nth video of the item, and gets
+  that order by running the collected thread back through `flattenXThreads` — the very function that
+  wrote the markers — rather than walking `thread.tweets[].media`: nested commenter replies and X
+  Article bodies produce no markers, so a media walk would shift every pairing after them by one and
+  staple the wrong clip onto the post, with nothing downstream able to notice. Where the counts do
+  not line up one-to-one, where the thread's own video still has no mp4, or where no collected thread
+  stands behind the item at all, **the text is skipped whole and reported with its reason** — a
+  half-filled text reads as finished, so a wrong pairing inside one would never be looked at again.
+  Writes exactly three columns (`translations.source_text`, `translations.korean_text`,
+  `renderings.text`) through the stores that already own those tables, and **never
+  `published_text`**, which is the record of what the account actually posted. Previews by default
+  like `x:reconcile`/`x:link`/`x:video-backfill`, and the plan splits translations from renderings
+  because they are two different decisions: a `posted` translation gaining a url changes only what
+  the review screens display, while a `rendered` rendering gaining one changes what the next send
+  attaches. Makes no API call at all, so it needs no `TWITTERAPI_IO_KEY`.
 - **The dashboard can finally show the scheduler's translation floor — because the scheduler now
   reports it.** `pnpm status` reads that floor by asking systemd (`systemctl --user show
   herald-watch.service`); the hosted dashboard runs as a Vercel function, where there is no systemd
