@@ -6,6 +6,7 @@ import { pipelineStages, formatStatus } from "../status/pipeline";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { syncSummary, formatSyncSummary } from "../status/sync";
 import { translateFloorStatus, collectedScope } from "../status/translateFloor";
+import { xThreadIntake } from "../adapters/content/XContentSource";
 import { realSystemdShow } from "./systemdShow";
 
 const cfg = loadDbConfig();
@@ -20,6 +21,15 @@ try {
   // needs their `createdAt`. `collectedScope` and the stage total therefore come from this one
   // array, so the note can never describe a different set than the number it sits beside.
   const collected = await stores.contentSource.loadPending(new Set());
+  // The rows behind the X half of that total, read here because by the time an item exists the
+  // dropped threads are gone: ~41% of everything ever collected is a reply Mantle made to someone
+  // else, filtered out before any item is built (`isCommenterReply`). Without this the total
+  // answered "is 134 even right?" with a database query, which is the signal it belonged on screen.
+  //
+  // Two reads of the same database, back to back and deliberately in this order: a `collect` landing
+  // between them can only make the thread count outrun the item count, which `intakeFunnel` reports
+  // by printing no funnel at all. The other order would silently inflate the Lark term instead.
+  const threads = await stores.collectionRepository.loadAll();
   const translations = await stores.translationStore.loadAll();
   const variants = await stores.conversionStore.loadAll();
   const renderings = await stores.formattingStore.loadAll();
@@ -38,7 +48,7 @@ try {
     formatStatus(
       pipelineStages(
         { collected: collected.length, translations, variants, renderings, published: entries },
-        collectedScope(collected, floor),
+        collectedScope(collected, floor, xThreadIntake(threads)),
       ),
       floor,
     ),

@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { XContentSource } from "../../../src/adapters/content/XContentSource";
+import { XContentSource, flattenXThreads, xThreadIntake } from "../../../src/adapters/content/XContentSource";
 import { extractMedia, stripMedia } from "../../../src/domain/media/sourceMedia";
+import type { CollectedThread, SourceTweet } from "../../../src/domain/models";
 
 const MP4 = "https://video.twimg.com/amplify_video/2076703853182074880/vid/avc1/720x720/hi.mp4?tag=14";
 
@@ -80,6 +81,78 @@ describe("XContentSource isReply", () => {
     ] }]);
     const [item] = await new XContentSource(path).loadPending(new Set());
     expect(item.text).toBe("Continuing the thread above.");
+  });
+});
+
+describe("xThreadIntake", () => {
+  // Typed, unlike the `tweet` helper above: these threads are handed straight to a function rather
+  // than written out as JSON, so the compiler can hold them to `SourceTweet`.
+  const t = (o: Partial<SourceTweet> = {}): SourceTweet => ({
+    id: "1", conversationId: "1", text: "24/7 access to markets", createdAt: "2026-08-01T00:00:00Z",
+    url: "https://x.com/Mantle_Official/status/1", authorUserName: "Mantle_Official",
+    isReply: false, isQuote: false, ...o,
+  });
+  const thread = (
+    status: CollectedThread["status"],
+    ...tweets: SourceTweet[]
+  ): Pick<CollectedThread, "rootId" | "tweets" | "status"> => ({ rootId: tweets[0]?.id ?? "0", tweets, status });
+
+  it("counts the threads collection handed the pipeline and the ones the reply filter dropped", () => {
+    const intake = xThreadIntake([
+      thread("active", t({ id: "1" })),
+      thread("active", t({ id: "2", text: "@elfa_ai 🥳🥳", isReply: true })),
+      thread("active", t({ id: "3", text: "@Agnidex 💚", isReply: true })),
+    ]);
+    expect(intake).toEqual({ threads: 3, repliesDropped: 2 });
+  });
+
+  it("ignores deleted threads, which no rule dropped — they never enter the funnel at all", () => {
+    // Counting them would put a number in front of the Collected total that nothing downstream
+    // could ever produce, which is the misreading this line exists to end rather than restart.
+    const intake = xThreadIntake([
+      thread("active", t({ id: "1" })),
+      thread("deleted", t({ id: "2" })),
+      thread("deleted", t({ id: "3", text: "@someone thanks", isReply: true })),
+    ]);
+    expect(intake).toEqual({ threads: 1, repliesDropped: 0 });
+  });
+
+  it("drops on the FIRST tweet only — a nested commenter reply still leaves an item", () => {
+    // `flattenXThreads` removes a nested reply from the 원문 but keeps the thread. Counting it as a
+    // dropped thread would report a toll the pipeline never took.
+    const intake = xThreadIntake([
+      thread("active", t({ id: "1" }), t({ id: "2", text: "@churchi 🫡", isReply: true })),
+    ]);
+    expect(intake).toEqual({ threads: 1, repliesDropped: 0 });
+  });
+
+  it("counts a thread with no tweets at all as considered and not dropped", () => {
+    // `flattenXThreads` still emits an item for it (with `createdAt: ""`), so the funnel has to too.
+    expect(xThreadIntake([thread("active")])).toEqual({ threads: 1, repliesDropped: 0 });
+  });
+
+  it("is all zeros with nothing collected", () => {
+    expect(xThreadIntake([])).toEqual({ threads: 0, repliesDropped: 0 });
+  });
+
+  it("agrees with flattenXThreads over the same rows: threads - repliesDropped is the item count", () => {
+    // The invariant the whole line rests on. `pnpm status` prints `threads - dropped` as the X half
+    // of its total, so if this identity ever broke the funnel would report a number no code path
+    // agrees with — which is exactly why the predicate is shared rather than copied.
+    const threads = [
+      thread("active", t({ id: "1" })),                                         // ordinary post
+      thread("active", t({ id: "2", text: "@elfa_ai 🥳🥳", isReply: true })),    // dropped whole
+      thread("active", t({ id: "3", text: "@Fluxion_network is now live on Mantle.", isReply: false })), // kept: not a reply
+      thread("active", t({ id: "4", text: "Continuing the thread above.", isReply: true })),             // kept: no leading @
+      thread("active", t({ id: "5" }), t({ id: "6", text: "@churchi 🫡", isReply: true })),               // kept, nested reply removed
+      thread("deleted", t({ id: "7" })),                                        // not in the funnel
+      thread("active"),                                                         // no tweets
+    ];
+    const intake = xThreadIntake(threads);
+    expect(intake).toEqual({ threads: 6, repliesDropped: 1 });
+    // The set is empty because that is what `pnpm status` passes: it asks for everything collected,
+    // not for what is still untranslated.
+    expect(intake.threads - intake.repliesDropped).toBe(flattenXThreads(threads, new Set()).length);
   });
 });
 
