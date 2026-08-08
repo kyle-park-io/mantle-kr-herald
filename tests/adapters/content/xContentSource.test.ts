@@ -3,6 +3,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { XContentSource } from "../../../src/adapters/content/XContentSource";
+import { extractMedia, stripMedia } from "../../../src/domain/media/sourceMedia";
+
+const MP4 = "https://video.twimg.com/amplify_video/2076703853182074880/vid/avc1/720x720/hi.mp4?tag=14";
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "xsrc-")); });
@@ -98,9 +101,51 @@ describe("XContentSource media markers", () => {
     expect(item.text).not.toContain("amplify_video_thumb");
   });
 
+  it("puts the mp4 in the [영상] marker when collection captured one", async () => {
+    const p = await writeThreads([{ rootId: "303", status: "active", tweets: [
+      tweet({ id: "303", text: "영상 트윗", media: [{
+        type: "video",
+        url: "https://pbs.twimg.com/amplify_video_thumb/x.jpg",
+        videoUrl: MP4,
+      }] }),
+    ] }]);
+    const [item] = await new XContentSource(p).loadPending(new Set());
+    expect(item.text).toBe(`영상 트윗\n\n[영상] ${MP4}`);
+    // Paren-free is the whole contract: `[영상](url)` is a markdown link, and `linksToPlain`'s
+    // MD_LINK would rewrite it into the delivered text.
+    expect(item.text).not.toContain("[영상](");
+    // The thumbnail is not the playable file, and putting it here would deliver a still image.
+    expect(item.text).not.toContain("amplify_video_thumb");
+  });
+
+  it("uses the same marker for an animated_gif", async () => {
+    const p = await writeThreads([{ rootId: "304", status: "active", tweets: [
+      tweet({ id: "304", text: "gif", media: [{ type: "animated_gif", url: "https://pbs.twimg.com/t.jpg", videoUrl: MP4 }] }),
+    ] }]);
+    const [item] = await new XContentSource(p).loadPending(new Set());
+    expect(item.text).toBe(`gif\n\n[영상] ${MP4}`);
+  });
+
   it("appends nothing to a text-only post", async () => {
     const p = await writeThreads([{ rootId: "302", status: "active", tweets: [tweet({ id: "302", text: "본문만" })] }]);
     const [item] = await new XContentSource(p).loadPending(new Set());
     expect(item.text).toBe("본문만");
+  });
+});
+
+describe("XContentSource → extractMedia round trip", () => {
+  it("hands the send path the mp4 a collected tweet carried", async () => {
+    // The reviewed text is the pipeline's only source of truth for media, so the marker written
+    // here has to survive being read back — including the `?tag=14` query the mp4 urls carry.
+    const p = await writeThreads([{ rootId: "305", status: "active", tweets: [
+      tweet({ id: "305", text: "영상 트윗", media: [{ type: "video", url: "https://pbs.twimg.com/t.jpg", videoUrl: MP4 }] }),
+    ] }]);
+    const [item] = await new XContentSource(p).loadPending(new Set());
+    const extracted = extractMedia(item.text);
+    expect(extracted.videos).toEqual([MP4]);
+    expect(extracted.photos).toEqual([]);
+    // The marker line goes, and so does the blank line it sat behind — exactly as for a bare [영상].
+    expect(extracted.text).toBe("영상 트윗");
+    expect(stripMedia(item.text)).toBe(stripMedia("영상 트윗\n\n[영상]"));
   });
 });

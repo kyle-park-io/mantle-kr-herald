@@ -11,15 +11,27 @@
 const PHOTO_LINE = /^(?:\[사진\]|!\[\])\(([^)]+)\)[ \t]*$/;
 const VIDEO_LINE = /^\[영상\](?:[ \t]+(\S+))?[ \t]*$/;
 
+/**
+ * A media segment always carries a url, so a renderer never has to ask whether there is anything to
+ * show. A `[영상]` with no url is therefore NOT a video segment — see `splitMediaMarkers`.
+ */
 export type MediaSegment =
   | { kind: "text"; text: string }
-  | { kind: "photo"; text: string; url: string };
+  | { kind: "photo"; text: string; url: string }
+  | { kind: "video"; text: string; url: string };
 
 /**
- * Split stored text into runs of ordinary text and the photo markers between them.
+ * Split stored text into runs of ordinary text and the media markers between them.
  *
  * Segments are line-aligned, so rejoining them with a single newline reproduces the input exactly —
  * that invariant is what lets the renderer show the reviewed text unchanged.
+ *
+ * A url-less `[영상]` stays inside a text segment rather than becoming a preview-less video segment.
+ * There will always be some: `XContentSource` only started writing the mp4 url into the marker after
+ * this cycle's collect change, nothing re-derives stored text on read, and every translation and
+ * rendering saved before it keeps the bare marker forever. Leaving it as text is what guarantees a
+ * reviewer opening one of those sees precisely what they saw yesterday — and it means no caller can
+ * ever hand a `<video>` an empty `src`, which browsers resolve against the current page and load.
  */
 export function splitMediaMarkers(text: string): MediaSegment[] {
   const segments: MediaSegment[] = [];
@@ -35,19 +47,44 @@ export function splitMediaMarkers(text: string): MediaSegment[] {
       segments.push({ kind: "photo", text: line, url: photo[1] });
       continue;
     }
+    const video = VIDEO_LINE.exec(line);
+    if (video?.[1]) {
+      flush();
+      segments.push({ kind: "video", text: line, url: video[1] });
+      continue;
+    }
     buffer.push(line);
   }
   flush();
   return segments;
 }
 
-/** How much media the text carries, by kind. Only photos can be previewed. */
-export function countMediaMarkers(text: string): { photos: number; videos: number } {
+/**
+ * How much media the text carries, by kind — plus how much of it can be previewed at all.
+ *
+ * A photo marker always carries its url. A video marker only carries one if it was written after the
+ * collect schema started capturing the playable mp4, so `videos` and `videosWithUrl` differ on any
+ * text saved before then; both spellings still count as videos, because the reviewer is being told
+ * what the post contains, not what the renderer can do with it.
+ */
+export function countMediaMarkers(text: string): {
+  photos: number;
+  videos: number;
+  videosWithUrl: number;
+} {
   let photos = 0;
   let videos = 0;
+  let videosWithUrl = 0;
   for (const line of text.split("\n")) {
-    if (PHOTO_LINE.test(line)) photos += 1;
-    else if (VIDEO_LINE.test(line)) videos += 1;
+    if (PHOTO_LINE.test(line)) {
+      photos += 1;
+      continue;
+    }
+    const video = VIDEO_LINE.exec(line);
+    if (video) {
+      videos += 1;
+      if (video[1]) videosWithUrl += 1;
+    }
   }
-  return { photos, videos };
+  return { photos, videos, videosWithUrl };
 }

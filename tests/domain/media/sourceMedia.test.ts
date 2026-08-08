@@ -14,8 +14,20 @@ describe("extractMedia", () => {
     expect(r.text).toBe("본문");
   });
 
-  it("records a video marker (empty url this cycle) and removes it", () => {
+  it("records a url-less video marker as \"\" and removes it", () => {
     expect(extractMedia("영상 트윗\n\n[영상]")).toEqual({ text: "영상 트윗", photos: [], videos: [""] });
+  });
+
+  it("reads the mp4 back out of a `[영상] url` marker, query string and all", () => {
+    const mp4 = "https://video.twimg.com/amplify_video/2076703853182074880/vid/avc1/720x720/hi.mp4?tag=14";
+    expect(extractMedia(`영상 트윗\n\n[영상] ${mp4}`)).toEqual({ text: "영상 트윗", photos: [], videos: [mp4] });
+  });
+
+  it("keeps document order across a url-carrying and a url-less video marker", () => {
+    const mp4 = "https://video.twimg.com/amplify_video/1/vid/avc1/720x720/a.mp4";
+    const r = extractMedia(`본문\n\n[영상] ${mp4}\n[영상]`);
+    expect(r.videos).toEqual([mp4, ""]);
+    expect(r.text).toBe("본문");
   });
 
   it("handles a photo and a video together", () => {

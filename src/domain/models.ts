@@ -2,7 +2,15 @@ export type CollectionStatus = "active" | "deleted";
 
 export interface MediaItem {
   type: "photo" | "video" | "animated_gif";
+  /** Always an image: the photo itself, or a video's poster frame (`media_url_https`). */
   url: string;
+  /**
+   * A video/animated_gif's playable mp4 (`video_info.variants`, highest bitrate). Absent on a photo,
+   * and on a video whose payload carried no mp4 — HLS alone is never a substitute, nothing here can
+   * play it. Kept beside `url` rather than replacing it because the poster frame is what the review
+   * screens can preview, and the photo path depends on `url` being an image.
+   */
+  videoUrl?: string;
 }
 
 export interface TweetMetrics {

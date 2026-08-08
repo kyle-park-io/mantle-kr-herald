@@ -20,8 +20,11 @@
  * that it had to dodge `MD_LINK`; given that ordering, it never did.)
  */
 const PHOTO_LINE = /^(?:\[사진\]|!\[\])\(([^)]+)\)[ \t]*$/;
-/** A video marker alone on its line: `[영상]`, optionally followed by a bare url (the follow-up puts
- *  the mp4 there; this cycle it has none). Paren-free so linksToPlain's MD_LINK never rewrites it. */
+/** A video marker alone on its line: `[영상]`, optionally followed by a bare url — the playable mp4
+ *  `XContentSource` now captures from `video_info` (see adapters/twitterapi/schemas.ts). The url
+ *  stays optional because a thread collected before that capture existed carries the bare marker,
+ *  and nothing re-derives stored text on read. Paren-free so linksToPlain's MD_LINK never
+ *  rewrites it — a `[영상](url)` form would be a markdown link, not a marker. */
 const VIDEO_LINE = /^\[영상\](?:[ \t]+(\S+))?[ \t]*$/;
 
 export interface ExtractedMedia {
@@ -29,7 +32,8 @@ export interface ExtractedMedia {
   text: string;
   /** Photo urls, in document order. */
   photos: string[];
-  /** One entry per `[영상]` marker — its url, or "" when it has none (this cycle: always ""). */
+  /** One entry per `[영상]` marker — its mp4 url, or "" for a marker collected before the url was
+   *  captured. Positional either way, so a caller can still count the videos a post carries. */
   videos: string[];
 }
 

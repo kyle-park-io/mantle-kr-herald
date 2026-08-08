@@ -20,7 +20,7 @@ export function assembleAlignmentWorksheet(blocks: AlignmentBlock[]): string {
     "선례가 다루지 않는 부분은 그대로 두고, `---` 스레드 구분자·캐시태그/해시태그/멘션·링크는 보존하세요.",
     // Same contract the translate pass gets (see promptAssembler.ts); this pass rewrites the very
     // text that carries the marker, so it can lose the label just as easily.
-    "`[사진](주소)`·`[영상]` 미디어 마커 줄도 한 글자도 바꾸지 말고 그대로 두세요.",
+    "`[사진](주소)`·`[영상] 주소` 미디어 마커 줄도 한 글자도 바꾸지 말고 그대로 두세요 — `[영상](주소)`로 바꾸면 안 됩니다.",
     "재번역이 아니라 선례에 맞춘 교정입니다.",
     "",
     "---",

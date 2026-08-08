@@ -44,14 +44,17 @@ export function assembleSharedContext(ctx: SharedContext): string {
     "---",
     "아래 각 아이템의 `원문:`을 위 규칙에 따라 번역해 `번역:` 아래에 채워 주세요.",
     "",
-    // Not a style preference — a data contract. `[사진](url)`/`[영상]` are how the pipeline carries a
-    // post's media through translation (see domain/media/sourceMedia.ts), and the label is what lets
-    // a reviewer see what a line is without reading a CDN url. Measured 2026-08-07: without this
-    // line, 8 of 8 photo-carrying items in one batch came back with `[사진](url)` rewritten to
-    // markdown's `![](url)`. `SaveTranslation` puts the label back regardless; this just stops the
-    // rewrite happening, and costs one line of prompt.
-    "**미디어 마커는 그대로 두세요.** `[사진](주소)`·`[영상]`으로 시작하는 줄은 번역·변형·삭제하지 말고 " +
-      "한 글자도 바꾸지 말고 그 줄 그대로 옮겨 주세요. 마크다운 이미지 문법(`![](주소)`)으로 바꾸지 마세요.",
+    // Not a style preference — a data contract. `[사진](url)`/`[영상] mp4url` are how the pipeline
+    // carries a post's media through translation (see domain/media/sourceMedia.ts), and the label is
+    // what lets a reviewer see what a line is without reading a CDN url. Measured 2026-08-07:
+    // without this line, 8 of 8 photo-carrying items in one batch came back with `[사진](url)`
+    // rewritten to markdown's `![](url)`. `SaveTranslation` puts the label back regardless; this
+    // just stops the rewrite happening, and costs one line of prompt. The video marker now carries a
+    // url the same agent could "tidy" into `[영상](url)` — a markdown link `linksToPlain` would
+    // rewrite, and nothing restores that one — so the paren form is refused by name.
+    "**미디어 마커는 그대로 두세요.** `[사진](주소)`·`[영상] 주소`(주소가 없는 `[영상]`도 있습니다)로 " +
+      "시작하는 줄은 번역·변형·삭제하지 말고 한 글자도 바꾸지 말고 그 줄 그대로 옮겨 주세요. 마크다운 " +
+      "이미지 문법(`![](주소)`)이나 링크 문법(`[영상](주소)`)으로 바꾸지 마세요.",
     "",
   ].join("\n");
 }

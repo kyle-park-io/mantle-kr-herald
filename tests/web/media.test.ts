@@ -5,6 +5,11 @@ import { countMediaMarkers, splitMediaMarkers } from "../../web/src/media";
 
 const URL = "https://pbs.twimg.com/media/HOUihv6bgAA52e_.jpg";
 const PHOTO = `![](${URL})`;
+// A real marker as `XContentSource` now writes it — query string and all, which is part of the url
+// twitterapi.io hands back and part of what has to survive the round trip.
+const VIDEO_URL =
+  "https://video.twimg.com/amplify_video/2076703853182074880/vid/avc1/720x720/vPz8ankm0777GHP_.mp4?tag=14";
+const VIDEO = `[영상] ${VIDEO_URL}`;
 
 describe("splitMediaMarkers", () => {
   it("returns a single text segment when there is no marker", () => {
@@ -27,12 +32,29 @@ describe("splitMediaMarkers", () => {
     ]);
   });
 
+  it("splits a video marker carrying a url out of the text around it", () => {
+    expect(splitMediaMarkers(`본문\n\n${VIDEO}`)).toEqual([
+      { kind: "text", text: "본문\n" },
+      { kind: "video", text: VIDEO, url: VIDEO_URL },
+    ]);
+  });
+
+  it("keeps the mp4's query string in the captured url", () => {
+    // `?tag=14` is not decoration — it is part of the address that answers 200 with video/mp4.
+    const [segment] = splitMediaMarkers(VIDEO);
+    expect(segment.kind === "video" && segment.url).toBe(VIDEO_URL);
+  });
+
   it("rejoining the segments with a newline reproduces the input exactly", () => {
-    const text = `첫 줄\n\n${PHOTO}\n\n마지막 줄\n\n[영상]`;
+    // Mixes prose with all three marker kinds — photo, video-with-url, legacy url-less video — so the
+    // line-alignment invariant is pinned across every branch of the split, not just the photo one.
+    const text = `첫 줄\n\n${PHOTO}\n\n가운데 줄\n\n${VIDEO}\n\n마지막 줄\n\n[영상]`;
     expect(splitMediaMarkers(text).map((s) => s.text).join("\n")).toBe(text);
   });
 
-  it("leaves a video marker as plain text — it carries no url to preview", () => {
+  it("leaves a url-less video marker as plain text — there is nothing to preview", () => {
+    // Legacy text, and there will always be some: nothing re-derives stored text on read. Keeping it
+    // a text segment is what makes it render exactly as it does today.
     expect(splitMediaMarkers("[영상]")).toEqual([{ kind: "text", text: "[영상]" }]);
   });
 
@@ -40,18 +62,47 @@ describe("splitMediaMarkers", () => {
     const inline = `문장 안의 ${PHOTO} 이미지`;
     expect(splitMediaMarkers(inline)).toEqual([{ kind: "text", text: inline }]);
   });
+
+  it("ignores a video marker that is not alone on its line", () => {
+    const inline = `문장 안의 ${VIDEO} 영상`;
+    expect(splitMediaMarkers(inline)).toEqual([{ kind: "text", text: inline }]);
+  });
+
+  it("does not read prose after `[영상]` as a url — the send path would not either", () => {
+    // The pattern stays as tight as `sourceMedia.ts`: one non-whitespace run and nothing after it.
+    // Previewing something the send path does not treat as media is worse than not previewing.
+    const line = "[영상] 어제 올린 영상";
+    expect(splitMediaMarkers(line)).toEqual([{ kind: "text", text: line }]);
+    expect(countMediaMarkers(line)).toEqual({ photos: 0, videos: 0, videosWithUrl: 0 });
+  });
 });
 
 describe("countMediaMarkers", () => {
-  it("counts photos and videos separately", () => {
-    expect(countMediaMarkers(`${PHOTO}\n\n[영상]\n\n[영상] https://video.mp4`)).toEqual({
+  it("counts both spellings of the video marker as videos", () => {
+    expect(countMediaMarkers(`${PHOTO}\n\n[영상]\n\n${VIDEO}`)).toEqual({
       photos: 1,
       videos: 2,
+      videosWithUrl: 1,
     });
   });
 
+  it("reports how many videos can actually be previewed", () => {
+    // What the edit-box notice needs: a copy carrying only legacy markers still has no preview,
+    // and one carrying both kinds must not be described as if every video had one.
+    expect(countMediaMarkers("[영상]\n\n[영상]")).toEqual({
+      photos: 0,
+      videos: 2,
+      videosWithUrl: 0,
+    });
+    expect(countMediaMarkers(VIDEO)).toEqual({ photos: 0, videos: 1, videosWithUrl: 1 });
+  });
+
   it("counts nothing for text with no marker", () => {
-    expect(countMediaMarkers("[결과 확인]\n평범한 본문")).toEqual({ photos: 0, videos: 0 });
+    expect(countMediaMarkers("[결과 확인]\n평범한 본문")).toEqual({
+      photos: 0,
+      videos: 0,
+      videosWithUrl: 0,
+    });
   });
 });
 
