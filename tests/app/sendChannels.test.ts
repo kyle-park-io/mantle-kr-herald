@@ -281,11 +281,14 @@ describe("SendChannels", () => {
   it("a [영상]-only rendering sends text-only (photos: []) and does not throw", async () => {
     const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: "영상 트윗\n\n[영상]" })]);
     const { ledger } = fakeLedger();
-    const got: (string[] | undefined)[] = [];
-    const sender: ChannelSender = { name: "x", send: async (req) => { got.push(req.photos); return { postId: "1" }; } };
+    const got: { photos?: string[]; video?: string }[] = [];
+    const sender: ChannelSender = { name: "x", send: async (req) => { got.push({ photos: req.photos, video: req.video }); return { postId: "1" }; } };
     const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
     expect(res.sent).toBe(1);
-    expect(got[0]).toEqual([]);
+    expect(got[0].photos).toEqual([]);
+    // A marker with no url is not an upload: there is nothing to upload. See the video-attachment
+    // describe below for why those markers exist and always will.
+    expect(got[0].video).toBeUndefined();
   });
 
   it("fail-fasts an over-280 x rendering at the default (standard) limit", async () => {
@@ -874,5 +877,137 @@ describe("SendChannels — pinning", () => {
       outletsForChannel, TG_CHAT_IDS, fakeOverrides(),
     ).run({ targets: ["telegram"], outletIds: ["tg-community"] });
     expect(result.warnings).toEqual([]);
+  });
+});
+
+/**
+ * `[영상] <url>` carries a playable mp4 since the video-capture change; before it, the marker went
+ * in bare. Both spellings are in the store forever — nothing re-derives stored text on read — so
+ * every test here states which one it is about.
+ */
+const MP4 = "https://video.twimg.com/ext_tw_video/1/pu/vid/avc1/1280x720/vPz8ankm0777GHP_.mp4";
+const PHOTO = "https://pbs.twimg.com/media/a.jpg";
+
+describe("SendChannels — video attachment", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** Records what each room's send was actually asked to carry. */
+  function capturingSender(name: "telegram" | "x") {
+    const got: { photos?: string[]; video?: string; segments: string[] }[] = [];
+    const sender: ChannelSender = {
+      name,
+      send: async (req) => { got.push({ photos: req.photos, video: req.video, segments: req.segments }); return { postId: "1" }; },
+    };
+    return { sender, got };
+  }
+
+  it("attaches the mp4 from `[영상] <url>` to the X send", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: `영상 트윗\n\n[영상] ${MP4}` })]);
+    const { ledger, added } = fakeLedger();
+    const { sender, got } = capturingSender("x");
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
+
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(got).toHaveLength(1);
+    expect(got[0].video).toBe(MP4);
+    expect(got[0].photos).toEqual([]);
+    expect(got[0].segments.join("")).not.toContain("[영상]"); // marker stripped from delivered text
+    expect(got[0].segments.join("")).toContain("영상 트윗");
+    expect(added).toHaveLength(1); // a delivered video is an ordinary send: ledgered like any other
+  });
+
+  it("attaches the captured mp4 and still reports a sibling marker that has none", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: `본문\n\n[영상] ${MP4}\n\n[영상]` })]);
+    const { ledger } = fakeLedger();
+    const { sender, got } = capturingSender("x");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
+
+    // Only one of the two markers is attachable, so the "more than one video" guard does not fire:
+    // there is no choice to make about which mp4 goes on the post.
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(got[0].video).toBe(MP4);
+    expect(warn.mock.calls.map((c) => String(c[0])).some((m) => m.includes("1 video") && m.includes("x:video-backfill"))).toBe(true);
+  });
+
+  it("sends a bare `[영상]` exactly as before: no upload, no failure, and a warning that says why", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: "영상 트윗\n\n[영상]" })]);
+    const { ledger, added } = fakeLedger();
+    const { sender, got } = capturingSender("x");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
+
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(got[0].video).toBeUndefined();
+    expect(added).toHaveLength(1);
+    expect(warn.mock.calls.map((c) => String(c[0])).some((m) => m.includes("x:1:announcement:x-post") && m.includes("1 video"))).toBe(true);
+  });
+
+  it("refuses an X rendering carrying both photos and a video, and does not ledger it", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: `본문\n\n[사진](${PHOTO})\n\n[영상] ${MP4}` })]);
+    const { ledger, added } = fakeLedger();
+    const { sender, got } = capturingSender("x");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
+
+    expect(got).toEqual([]); // refused before the sender is reached — nothing was posted
+    expect(added).toEqual([]); // not ledgered, so a rerun retries once a human has split it
+    expect(res.sent).toBe(0);
+    expect(res.failed).toBe(1);
+    expect(res.failures).toEqual([{ key: "x:1:announcement", error: expect.stringContaining("photos and a video") }]);
+  });
+
+  it("refuses an X rendering carrying two playable videos", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: `본문\n\n[영상] ${MP4}\n\n[영상] ${MP4}?2` })]);
+    const { ledger, added } = fakeLedger();
+    const { sender, got } = capturingSender("x");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
+
+    expect(got).toEqual([]);
+    expect(added).toEqual([]);
+    expect(res.failed).toBe(1);
+    expect(res.failures).toEqual([{ key: "x:1:announcement", error: expect.stringContaining("2 videos") }]);
+  });
+
+  it("does not refuse photos alongside a bare `[영상]`: nothing attachable, nothing X would reject", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: `본문\n\n[사진](${PHOTO})\n\n[영상]` })]);
+    const { ledger } = fakeLedger();
+    const { sender, got } = capturingSender("x");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
+
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(got[0].photos).toEqual([PHOTO]);
+    expect(got[0].video).toBeUndefined();
+  });
+
+  it("leaves Telegram untouched: no video on the request, no refusal, and a warning naming Telegram", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", text: `본문\n\n[사진](${PHOTO})\n\n[영상] ${MP4}` })]);
+    const { ledger, added } = fakeLedger();
+    const { sender, got } = capturingSender("telegram");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await new SendChannels(store, { telegram: sender, x: undefined }, ledger, fakeTranslations(), undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });
+
+    // Photos + a video is exactly what the X guard refuses; Telegram has no such rule and its
+    // behaviour is unchanged — both rooms receive the photo post as they always did.
+    expect(res).toEqual(result({ sent: 2 }));
+    expect(added).toHaveLength(2);
+    expect(got.map((g) => g.video)).toEqual([undefined, undefined]);
+    expect(got.map((g) => g.photos)).toEqual([[PHOTO], [PHOTO]]);
+    const messages = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("video"));
+    expect(messages).toHaveLength(2); // one per room
+    expect(messages[0]).toContain("Telegram");
+    expect(messages[0]).not.toContain("x:video-backfill"); // that remedy is about the X path
+  });
+
+  it("leaves a video-free X send byte-identical: video absent from the request", async () => {
+    const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: `본문\n\n[사진](${PHOTO})` })]);
+    const { ledger } = fakeLedger();
+    const seen: unknown[] = [];
+    const sender: ChannelSender = { name: "x", send: async (req) => { seen.push(req.video); return { postId: "1" }; } };
+    const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(seen).toEqual([undefined]);
   });
 });

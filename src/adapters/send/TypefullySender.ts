@@ -22,15 +22,27 @@ export class TypefullySender implements ChannelSender {
     return { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" };
   }
 
-  private async uploadPhotos(photos: string[]): Promise<string[]> {
+  private async uploadMedia(urls: string[]): Promise<string[]> {
     const media = new TypefullyMedia(this.apiKey, this.socialSetId, this.fetchFn, this.sleep);
     const ids: string[] = [];
-    for (const url of photos) ids.push(await media.upload(url));
+    for (const url of urls) ids.push(await media.upload(url));
     return ids;
   }
 
   async send(req: SendRequest): Promise<SendResult> {
-    const mediaIds = req.photos?.length ? await this.uploadPhotos(req.photos) : [];
+    // Photos and the video go through one list because Typefully takes one `media_ids` array, and
+    // through one uploader because `media/upload` + presigned PUT never looks at the bytes: only
+    // `file_name` types the file, and the mp4 url already ends in `.mp4`. Verified live against the
+    // real account on 2026-08-08 — upload 201, S3 PUT 200, status `ready`, `mime: "video/mp4"` —
+    // so a second video-specific uploader would be a copy of this one with nothing changed.
+    //
+    // They never actually coexist: X refuses a post carrying both, and `SendChannels` refuses such
+    // a rendering before it reaches any sender. Concatenating rather than branching means this
+    // adapter does not need to know that rule twice.
+    const urls = [...(req.photos ?? []), ...(req.video ? [req.video] : [])];
+    // Every upload finishes before the draft POST below, like `SendXArticle`: a media failure then
+    // throws with nothing half-sent, and the retry starts from a clean slate.
+    const mediaIds = urls.length ? await this.uploadMedia(urls) : [];
     const posts = req.segments.map((text, i) =>
       i === 0 && mediaIds.length ? { text, media_ids: mediaIds } : { text },
     );

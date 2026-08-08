@@ -36,6 +36,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entered the store via `gapFillMissingRoots` and is absent from `advanced_search` **and** from its
   own replies' results, while `GET /twitter/tweets?tweet_ids=` returns it in full. Previews by
   default, patches only `videoUrl`, and matches media by thumbnail url rather than array position.
+- **An X send now attaches the post's video.** `SendChannels` has been pulling the mp4 url out of
+  the reviewed text and throwing it away with a warning since the marker existed — deferred twice
+  because the url was not captured and Typefully's video support was unverified. Both blockers are
+  gone: a live probe on 2026-08-08 confirmed `media/upload` takes an `.mp4` file name (201), the
+  presigned S3 PUT takes the bytes (200), the status poll reports `ready` with `mime: "video/mp4"`,
+  and a draft accepts the resulting `media_id` — at zero cost to the 15/month publishing quota. So
+  `TypefullyMedia` is unchanged and there is one uploader, not two; `SendRequest` gains a singular
+  `video`, and `TypefullySender` concatenates it onto the photo `media_ids`.
+  - **`video` is a `string`, not a `string[]`**, because X's rule is singular: one video per post,
+    never beside photos. No sender can build the shape X rejects, so that rule is enforced in one
+    place — `SendChannels`, before any upload.
+  - **A rendering carrying photos + a video, or two playable videos, is refused rather than
+    trimmed.** Both are shapes X rejects, and neither has ever been collected (production
+    `x_threads` on 2026-08-08: 90 photo-only tweets, 35 video-only, 0 mixed, 0 with two videos).
+    Dropping the video would put a live post in the room missing content a human approved, and the
+    `sent` ledger row that follows can never be unmarked; refusing costs one retry, because a
+    failed send is not ledgered. Same reasoning as the existing over-limit fail-fast.
+  - **A url-less `[영상]` is unchanged: not an upload, not an error.** Those markers are in the
+    store forever. The warning that explains them now names the remedy (`pnpm x:video-backfill`)
+    instead of claiming X cannot attach video, and says "Telegram video delivery is not
+    implemented" on the channel where that is still the true reason.
 
 ### Fixed
 
