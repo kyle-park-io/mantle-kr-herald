@@ -202,13 +202,73 @@ export interface StageTally {
   rows: number;
 }
 
+/**
+ * Mirrors `IntakeTerm` in `src/status/translateFloor.ts` — one term of the intake funnel, as
+ * arithmetic rather than as words. The label is NOT on the wire on purpose: `pnpm status` prints
+ * `223 X threads - 92 replies dropped + 3 Lark` and this screen prints the same three terms in
+ * Korean (`INTAKE_TERM_LABEL` in `./collectedBreakdown`), so what travels is the sum and not one
+ * reader's wording of it.
+ */
+export interface IntakeTerm {
+  kind: "threads" | "replies-dropped" | "lark";
+  /** How this term enters the sum. Absent on the first term, which starts it. */
+  op?: "-" | "+";
+  count: number;
+}
+
+/**
+ * Mirrors `CollectedReach` in `src/status/translateFloor.ts` — how much of 수집 the scheduler can
+ * still reach, in the three states a reader has to tell apart.
+ *
+ * `no-floor` and `unknown` are opposite facts and must never render alike: the first means the
+ * scheduler is draining the whole backlog oldest first (something to act on), the second means this
+ * screen could not ask (nothing is known either way). The hosted dashboard is always `unknown` —
+ * a Vercel function has no systemd — so the copy for it has to read as "cannot be seen from here",
+ * never as "there is none".
+ */
+export interface CollectedReach {
+  kind: "measured" | "no-floor" | "unknown";
+  /** Items the scheduler can select. Set for `measured`, and for `no-floor` where it is all of them. */
+  inScope?: number;
+  /** Items below the floor, which are never selected. Only `measured`. */
+  belowFloor?: number;
+  /** The floor itself, normalised ISO. Only `measured`. */
+  floor?: string;
+  /** Why nothing could be read, in the words of whatever refused. Only `unknown`, and not always. */
+  detail?: string;
+}
+
+/** Mirrors `CollectedBreakdown` — the whole story behind the 수집 total, computed server-side by the
+ *  same function `pnpm status`'s Collected line is formatted from. */
+export interface CollectedBreakdown {
+  /** The funnel's terms, in print order. Absent when there is no honest funnel to draw (no X
+   *  threads, or two reads of the database that disagree). */
+  intake?: IntakeTerm[];
+  total: number;
+  reach: CollectedReach;
+}
+
+/** Mirrors `CollectedTally` — the 수집 stage carries its breakdown, so the header cannot show the
+ *  number without also holding what explains it. */
+export interface CollectedTally extends StageTally {
+  breakdown: CollectedBreakdown;
+}
+
 export interface FunnelCounts {
-  collected: StageTally;
+  collected: CollectedTally;
   translated: StageTally;
   converted: StageTally;
   rendered: StageTally;
   published: StageTally;
 }
+
+/** Mirrors `WATCH_UNIT` in `src/status/translateFloor.ts` — the unit the floor's only real home is.
+ *  Named in the hover card so an operator reading "하한 없음" knows which unit to go and look at;
+ *  `tests/web/typeMirror.test.ts` keeps the two spellings identical. */
+export const WATCH_UNIT = "herald-watch.service";
+
+/** Mirrors `FLOOR_VAR` — the variable that unit sets. Same reason, same pin. */
+export const FLOOR_VAR = "HERALD_TRANSLATE_SINCE";
 
 export interface AppStatus {
   storageMode: StorageMode;

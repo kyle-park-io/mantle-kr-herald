@@ -13,7 +13,9 @@ export const TEST_IP_CONFIG: ClientIpConfig = { trustProxy: false, trustedHopsFr
  * pipeline does, and five hand-written literals is five places to forget.
  */
 export const EMPTY_FUNNEL: FunnelCounts = {
-  collected: { items: 0, rows: 0 },
+  // `unknown` rather than `no-floor`: a fake has no systemd to ask, and saying "the unit sets no
+  // floor" would be a fake asserting something alarming about a scheduler that does not exist here.
+  collected: { items: 0, rows: 0, breakdown: { total: 0, reach: { kind: "unknown" } } },
   translated: { items: 0, rows: 0 },
   converted: { items: 0, rows: 0 },
   rendered: { items: 0, rows: 0 },

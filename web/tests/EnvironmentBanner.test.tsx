@@ -8,7 +8,7 @@ const baseStatus: AppStatus = {
   storageMode: "local",
   availableTargets: ["local"],
   funnel: {
-    collected: { items: 0, rows: 0 },
+    collected: { items: 0, rows: 0, breakdown: { total: 0, reach: { kind: "unknown" } } },
     translated: { items: 0, rows: 0 },
     converted: { items: 0, rows: 0 },
     rendered: { items: 0, rows: 0 },

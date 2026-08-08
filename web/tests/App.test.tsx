@@ -26,6 +26,15 @@ vi.mock("../src/components/RenderingsView", async () => {
 
 import { App } from "../src/App";
 
+/**
+ * The 수집 stage as a stubbed `/api/status` sends it. `unknown` because a fake has no systemd to
+ * ask — which is also the state the hosted dashboard is in permanently, and deliberately not
+ * `no-floor`, which would have a stub asserting something alarming about a scheduler that is not
+ * there. Named once because the header reads `funnel.collected.breakdown` directly: a fixture
+ * without one cannot render the header at all.
+ */
+const NO_SCHEDULER_COLLECTED = { items: 0, rows: 0, breakdown: { total: 0, reach: { kind: "unknown" } } };
+
 function stubFetch() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -35,7 +44,7 @@ function stubFetch() {
         JSON.stringify({
           storageMode: "local",
           funnel: {
-            collected: { items: 0, rows: 0 },
+            collected: NO_SCHEDULER_COLLECTED,
             translated: { items: 0, rows: 0 },
             converted: { items: 0, rows: 0 },
             rendered: { items: 0, rows: 0 },
@@ -130,7 +139,7 @@ describe("App's data refetch on authEpoch", () => {
           JSON.stringify({
             storageMode: "local",
             funnel: {
-            collected: { items: 0, rows: 0 },
+            collected: NO_SCHEDULER_COLLECTED,
             translated: { items: 0, rows: 0 },
             converted: { items: 0, rows: 0 },
             rendered: { items: 0, rows: 0 },
@@ -173,7 +182,7 @@ describe("App's data refetch on authEpoch", () => {
           JSON.stringify({
             storageMode: "local",
             funnel: {
-            collected: { items: 0, rows: 0 },
+            collected: NO_SCHEDULER_COLLECTED,
             translated: { items: 0, rows: 0 },
             converted: { items: 0, rows: 0 },
             rendered: { items: 0, rows: 0 },
@@ -215,7 +224,19 @@ describe("App's data refetch on authEpoch", () => {
  * no rendering to their name.
  */
 describe("App's header funnel", () => {
-  it("names items and rows separately, and draws no arrow between stages", async () => {
+  /** Production on 2026-08-08: 223 collected threads, 92 of them reply-rooted and dropped before
+   *  becoming items, 3 Lark items, and 20 of the resulting 134 at or after the scheduler's floor. */
+  const PRODUCTION_BREAKDOWN = {
+    intake: [
+      { kind: "threads", count: 223 },
+      { kind: "replies-dropped", op: "-", count: 92 },
+      { kind: "lark", op: "+", count: 3 },
+    ],
+    total: 134,
+    reach: { kind: "measured", inScope: 20, belowFloor: 114, floor: "2026-07-27T14:35:25.000Z" },
+  };
+
+  const renderHeader = (breakdown: unknown) => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -227,7 +248,7 @@ describe("App's header funnel", () => {
             JSON.stringify({
               storageMode: "cloud",
               funnel: {
-                collected: { items: 134, rows: 134 },
+                collected: { items: 134, rows: 134, breakdown },
                 translated: { items: 23, rows: 23 },
                 converted: { items: 3, rows: 10 },
                 rendered: { items: 3, rows: 13 },
@@ -246,9 +267,28 @@ describe("App's header funnel", () => {
       }),
     );
     render(<App onSignOut={() => {}} authEpoch={0} />);
+  };
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * A stage's own text is its own direct spans. `:scope >` rather than every descendant span,
+   * because 수집 now carries a hover card *inside* it — and the point of this assertion is that the
+   * strip a reviewer actually reads did not change. Scoping to direct children is what the original
+   * "the separator is a sibling, not a child" comment in `App.tsx` was reaching for; anything deeper
+   * would make this test fail the moment the card gained a `<span>`, which is not what it is about.
+   */
+  const stage = (key: string) =>
+    [...screen.getByTestId(`funnel-${key}`).querySelectorAll(":scope > span")]
+      .map((s) => s.textContent)
+      .join(" ");
+
+  it("names items and rows separately, and draws no arrow between stages", async () => {
+    renderHeader(PRODUCTION_BREAKDOWN);
     const funnel = await screen.findByTestId("funnel");
-    const stage = (key: string) =>
-      [...screen.getByTestId(`funnel-${key}`).querySelectorAll("span")].map((s) => s.textContent).join(" ");
 
     // Items lead — the only count comparable with the stage before. Rows follow, named as rows, and
     // only where the two differ: at 수집 and 번역 one row *is* one item, so a `건` there would be noise.
@@ -259,5 +299,127 @@ describe("App's header funnel", () => {
     expect(stage("published")).toBe("발행 9 16건");
     // No arrow: this pipeline branches, and a funnel is the wrong picture of it.
     expect(funnel.textContent).not.toContain("→");
+  });
+});
+
+/**
+ * `수집 134` was reported to a human as a backlog of 134 on 2026-08-08. `pnpm status` now answers
+ * that with `223 X threads - 92 replies dropped + 3 Lark · in scope 20 · below floor 114`; the
+ * header did not, and this card is where it does. It stays a card rather than four more terms on the
+ * strip because the strip has no room for them, and because this dashboard already answers "the
+ * number has a story" with a hover popover.
+ *
+ * The card is in the DOM whether or not the pointer is over it — it is CSS (`group-hover`) that
+ * reveals it, exactly like the storage-mode popover beside it, and jsdom evaluates no CSS. So these
+ * assert what the card *says*, which is the part that can be wrong.
+ */
+describe("App's 수집 breakdown card", () => {
+  const statusWith = (breakdown: unknown) =>
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/translations")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.endsWith("/api/publish/state")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.endsWith("/api/status")) {
+        return new Response(
+          JSON.stringify({
+            storageMode: "cloud",
+            funnel: {
+              collected: { items: 134, rows: 134, breakdown },
+              translated: { items: 23, rows: 23 },
+              converted: { items: 3, rows: 10 },
+              rendered: { items: 3, rows: 13 },
+              published: { items: 9, rows: 16 },
+            },
+            sync: { synced: 0, needsRepublish: 0, unpublished: 0 },
+            availableTargets: ["local"],
+            integrations: [],
+            sheetLinks: {},
+            dbEnv: "production",
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+  const INTAKE = [
+    { kind: "threads", count: 223 },
+    { kind: "replies-dropped", op: "-", count: 92 },
+    { kind: "lark", op: "+", count: 3 },
+  ];
+
+  const card = async (breakdown: unknown) => {
+    vi.stubGlobal("fetch", statusWith(breakdown));
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    return await screen.findByTestId("collected-breakdown");
+  };
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the intake funnel, ending on the total the header is showing", async () => {
+    const el = await card({
+      intake: INTAKE,
+      total: 134,
+      reach: { kind: "measured", inScope: 20, belowFloor: 114, floor: "2026-07-27T14:35:25.000Z" },
+    });
+    // 223 - 92 = 131, and the header says 134. The Lark term is what stops a reader who subtracts
+    // from coming up 3 short and concluding the pipeline lost items.
+    expect(el.textContent).toContain("223");
+    expect(el.textContent).toContain("-92");
+    expect(el.textContent).toContain("+3");
+    expect(el.textContent).toContain("합계");
+    expect(el.textContent).toContain("134");
+  });
+
+  it("says how much of the total the scheduler can still reach, and against which floor", async () => {
+    const el = await card({
+      intake: INTAKE,
+      total: 134,
+      reach: { kind: "measured", inScope: 20, belowFloor: 114, floor: "2026-07-27T14:35:25.000Z" },
+    });
+    expect(el.textContent).toContain("번역 대상 20건");
+    expect(el.textContent).toContain("하한 아래 114건");
+    // Rendered in KST (this board is read in Korea), with the exact instant `pnpm status` prints
+    // kept as the tooltip so the two can still be compared character for character.
+    expect(el.textContent).toContain("2026-07-27 23:35 KST");
+    expect(el.querySelector('[title="2026-07-27T14:35:25.000Z"]')).toBeTruthy();
+  });
+
+  it("raises an alarm when the unit runs with no floor at all", async () => {
+    // Not a missing setting — the scheduler working the oldest posts in the archive, every tick.
+    const el = await card({ intake: INTAKE, total: 134, reach: { kind: "no-floor", inScope: 134 } });
+    expect(el.textContent).toContain("⚠");
+    expect(el.textContent).toContain("하한 없음");
+    expect(el.textContent).toContain("오래된 것부터");
+  });
+
+  /**
+   * What the hosted dashboard shows on every request, forever: a Vercel function has no systemd to
+   * ask, so the floor is genuinely unknowable there. The intake half is derived from the database
+   * and must survive; the floor half must read as "this screen cannot see it" and must not raise the
+   * alarm that belongs to the state above — those two mean opposite things.
+   */
+  it("says the floor cannot be read from here, without implying there is none", async () => {
+    const el = await card({
+      intake: INTAKE,
+      total: 134,
+      reach: { kind: "unknown", detail: "could not ask systemd about herald-watch.service" },
+    });
+    expect(el.textContent).toContain("223");
+    expect(el.textContent).toContain("읽을 수 없습니다");
+    expect(el.textContent).toContain("하한이 없다는 뜻이 아니라");
+    expect(el.textContent).toContain("could not ask systemd about herald-watch.service");
+    expect(el.textContent).not.toContain("⚠");
+  });
+
+  it("still reports the total when there is no funnel to draw", async () => {
+    // No X threads at all, or two reads of the database that disagree — the server sends no terms,
+    // and the card must not invent any.
+    const el = await card({ total: 3, reach: { kind: "unknown" } });
+    expect(el.textContent).toContain("수집 3건");
+    expect(el.textContent).not.toContain("합계");
   });
 });

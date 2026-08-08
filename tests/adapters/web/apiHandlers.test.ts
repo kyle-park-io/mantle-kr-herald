@@ -106,7 +106,22 @@ function makeDeps(
     loadStatus: async () => ({
       storageMode: "cloud" as const,
       funnel: {
-        collected: { items: 5, rows: 5 },
+        // With its breakdown, because the route must forward it: the header's `수집 5` is the number
+        // that was misread once already, and the card under it is the only thing on that screen that
+        // says where it came from.
+        collected: {
+          items: 5,
+          rows: 5,
+          breakdown: {
+            intake: [
+              { kind: "threads" as const, count: 9 },
+              { kind: "replies-dropped" as const, op: "-" as const, count: 5 },
+              { kind: "lark" as const, op: "+" as const, count: 1 },
+            ],
+            total: 5,
+            reach: { kind: "measured" as const, inScope: 2, belowFloor: 3, floor: "2026-07-27T14:35:25.000Z" },
+          },
+        },
         translated: { items: 3, rows: 3 },
         // Distinct items and rows deliberately differ past the branch, so a handler that
         // flattened the tally back to one number would show up here.
@@ -426,7 +441,21 @@ describe("handleApi", () => {
     expect(res.json).toEqual({
       storageMode: "cloud",
       funnel: {
-        collected: { items: 5, rows: 5 },
+        // Forwarded whole, breakdown included — a route that dropped it would leave the header with
+        // the bare total and nothing to explain it, which is where this started.
+        collected: {
+          items: 5,
+          rows: 5,
+          breakdown: {
+            intake: [
+              { kind: "threads", count: 9 },
+              { kind: "replies-dropped", op: "-", count: 5 },
+              { kind: "lark", op: "+", count: 1 },
+            ],
+            total: 5,
+            reach: { kind: "measured", inScope: 2, belowFloor: 3, floor: "2026-07-27T14:35:25.000Z" },
+          },
+        },
         translated: { items: 3, rows: 3 },
         // Distinct items and rows deliberately differ past the branch, so a handler that
         // flattened the tally back to one number would show up here.

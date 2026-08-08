@@ -27,7 +27,7 @@ try {
   // answered "is 134 even right?" with a database query, which is the signal it belonged on screen.
   //
   // Two reads of the same database, back to back and deliberately in this order: a `collect` landing
-  // between them can only make the thread count outrun the item count, which `intakeFunnel` reports
+  // between them can only make the thread count outrun the item count, which `intakeTerms` reports
   // by printing no funnel at all. The other order would silently inflate the Lark term instead.
   const threads = await stores.collectionRepository.loadAll();
   const translations = await stores.translationStore.loadAll();

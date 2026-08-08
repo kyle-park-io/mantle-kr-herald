@@ -10,7 +10,14 @@ import { ALL_DELIVERY_STATUSES, deliveredToRoom } from "../../src/domain/deliver
 import { ALL_TRANSLATION_STATUSES } from "../../src/domain/translation/models";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
 import type { FormatWarning } from "../../src/app/FormatVariants";
-import type { FunnelCounts } from "../../src/status/pipeline";
+import type { CollectedTally, FunnelCounts } from "../../src/status/pipeline";
+import {
+  FLOOR_VAR,
+  WATCH_UNIT,
+  type CollectedBreakdown,
+  type CollectedReach,
+  type IntakeTerm,
+} from "../../src/status/translateFloor";
 import {
   ALL_TYPES as WEB_TYPES,
   ALL_CHANNELS as WEB_CHANNELS,
@@ -32,6 +39,12 @@ import {
   type BoardRow as WebBoardRow,
   type FormatWarning as WebFormatWarning,
   type FunnelCounts as WebFunnelCounts,
+  type CollectedTally as WebCollectedTally,
+  type CollectedBreakdown as WebCollectedBreakdown,
+  type CollectedReach as WebCollectedReach,
+  type IntakeTerm as WebIntakeTerm,
+  WATCH_UNIT as WEB_WATCH_UNIT,
+  FLOOR_VAR as WEB_FLOOR_VAR,
 } from "../../web/src/types";
 
 /**
@@ -154,6 +167,64 @@ describe("web type mirror", () => {
     const keys: SameKeys<WebFunnelCounts, FunnelCounts> = true;
     expect([fromDomain, toDomain]).toHaveLength(2);
     expect(keys).toBe(true);
+  });
+
+  /**
+   * The 수집 breakdown, checked a level down. `SameKeys` above compares the funnel's *own* five keys
+   * and stops there, so renaming an optional field inside the collected stage's breakdown — say
+   * `belowFloor` to `below` — would leave every key set matching and every assignment legal (an
+   * absent optional property is legal in both directions, the exact hole the board check's own
+   * comment describes). The result on screen would be a hover card reading `하한 아래 undefined건`
+   * beside a number whose whole purpose is to be believable.
+   *
+   * Each nested type therefore gets its own pair, and the two `kind` unions get `SameUnion`: those
+   * decide which of three states the card paints, and "the unit sets no floor" and "this screen
+   * cannot ask" are opposite facts (`CollectedReach`'s own doc comment). A member that existed on
+   * one side only would render as no state at all.
+   */
+  it("mirrors the collected breakdown field-for-field, nested types included", () => {
+    const tallyFromDomain: WebCollectedTally = {} as CollectedTally;
+    const tallyToDomain: CollectedTally = {} as WebCollectedTally;
+    const breakdownFromDomain: WebCollectedBreakdown = {} as CollectedBreakdown;
+    const breakdownToDomain: CollectedBreakdown = {} as WebCollectedBreakdown;
+    const reachFromDomain: WebCollectedReach = {} as CollectedReach;
+    const reachToDomain: CollectedReach = {} as WebCollectedReach;
+    const termFromDomain: WebIntakeTerm = {} as IntakeTerm;
+    const termToDomain: IntakeTerm = {} as WebIntakeTerm;
+
+    const tallyKeys: SameKeys<WebCollectedTally, CollectedTally> = true;
+    const breakdownKeys: SameKeys<WebCollectedBreakdown, CollectedBreakdown> = true;
+    const reachKeys: SameKeys<WebCollectedReach, CollectedReach> = true;
+    const termKeys: SameKeys<WebIntakeTerm, IntakeTerm> = true;
+    const reachKinds: SameUnion<WebCollectedReach["kind"], CollectedReach["kind"]> = true;
+    const termKinds: SameUnion<WebIntakeTerm["kind"], IntakeTerm["kind"]> = true;
+    const termOps: SameUnion<NonNullable<WebIntakeTerm["op"]>, NonNullable<IntakeTerm["op"]>> = true;
+
+    // The assertion is the compile above; these only keep the bindings live.
+    expect([
+      tallyFromDomain,
+      tallyToDomain,
+      breakdownFromDomain,
+      breakdownToDomain,
+      reachFromDomain,
+      reachToDomain,
+      termFromDomain,
+      termToDomain,
+    ]).toHaveLength(8);
+    expect([tallyKeys, breakdownKeys, reachKeys, termKeys, reachKinds, termKinds, termOps]).toEqual(
+      Array.from({ length: 7 }, () => true),
+    );
+  });
+
+  /**
+   * The card names the unit and the variable so an operator reading "하한 없음" knows what to go and
+   * fix. Both are `string` on both sides, so nothing but this compares the actual spellings — and a
+   * dashboard that named `herald-watch.timer`, or a variable one letter off, would send someone to
+   * edit the wrong thing while the real floor sat where it was.
+   */
+  it("names the scheduler's unit and floor variable exactly as the domain does", () => {
+    expect(WEB_WATCH_UNIT).toBe(WATCH_UNIT);
+    expect(WEB_FLOOR_VAR).toBe(FLOOR_VAR);
   });
 
   /**

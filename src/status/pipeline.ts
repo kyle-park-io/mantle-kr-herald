@@ -1,6 +1,8 @@
 import {
+  collectedBreakdown,
   collectedScopeNote,
   formatTranslateFloor,
+  type CollectedBreakdown,
   type CollectedScope,
   type TranslateFloorStatus,
 } from "./translateFloor";
@@ -86,8 +88,18 @@ export interface StageTally {
   rows: number;
 }
 
+/**
+ * The Collected stage, which is the one that needs qualifying — see `pipelineStages` above for the
+ * misreading a bare total invited. The breakdown hangs off the stage it explains rather than sitting
+ * beside the funnel, so a reader of this type cannot find the number without also finding the story
+ * behind it.
+ */
+export interface CollectedTally extends StageTally {
+  breakdown: CollectedBreakdown;
+}
+
 export interface FunnelCounts {
-  collected: StageTally;
+  collected: CollectedTally;
   translated: StageTally;
   converted: StageTally;
   rendered: StageTally;
@@ -100,14 +112,20 @@ export interface FunnelCounts {
  * One function for both readers on purpose: they were separate, and the separation showed — the CLI
  * learned to report the terminal `posted` status while the header kept counting it as work in
  * progress, and nothing in the code connected the two well enough to make that obvious.
+ *
+ * `scope` is required here for exactly the reason it is required by `pipelineStages`, and because
+ * that lesson was learned twice: the floor and the intake funnel landed on the CLI's Collected line
+ * while this function kept handing the header a bare 134, so the dashboard went on showing the
+ * number that had already been misread once. A required parameter is what makes the header
+ * unrenderable without the qualification, rather than merely able to carry it.
  */
-export function funnelCounts(input: StatusInput): FunnelCounts {
+export function funnelCounts(input: StatusInput, scope: CollectedScope): FunnelCounts {
   // Collected and translated are one row per item — `x_threads.root_id` and `translations.item_id`
   // are primary keys — so their two counts are equal by construction, not by coincidence.
   const perItem = (n: number): StageTally => ({ items: n, rows: n });
   const fanOut = (rows: { itemId: string }[]): StageTally => ({ items: itemCount(rows), rows: rows.length });
   return {
-    collected: perItem(input.collected),
+    collected: { ...perItem(input.collected), breakdown: collectedBreakdown(scope) },
     translated: perItem(input.translations.length),
     converted: fanOut(input.variants),
     rendered: fanOut(input.renderings),

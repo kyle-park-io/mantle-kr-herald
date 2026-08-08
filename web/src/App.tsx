@@ -5,6 +5,7 @@ import { TranslationList } from "./components/TranslationList";
 import { TranslationDetail } from "./components/TranslationDetail";
 import { RenderingsView } from "./components/RenderingsView";
 import { EnvironmentBanner } from "./components/EnvironmentBanner";
+import { CollectedBreakdownCard } from "./components/CollectedBreakdownCard";
 import { btn } from "./buttonStyles";
 
 type Mode = "translations" | "renderings";
@@ -321,16 +322,34 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                 >
                   {FUNNEL_STEPS.map(([label, key], i) => {
                     const tally = status.funnel[key];
+                    // 수집 is the one stage whose number needs qualifying — see
+                    // `CollectedBreakdownCard`. The strip itself is untouched: the card is a
+                    // descendant of the stage but not one of its own two spans, so `수집 134` keeps
+                    // its value, its density, and the way a test reads one stage at a time.
+                    const collected = key === "collected";
                     return (
                       // The separator is a sibling of the stage, not a child of it, so a stage's own
                       // text is exactly its own — which is what lets a test read one stage at a time.
                       <Fragment key={key}>
                         {i > 0 && <span className="text-line-strong">·</span>}
-                        <div data-testid={`funnel-${key}`} className="flex items-center gap-1.5">
+                        <div
+                          data-testid={`funnel-${key}`}
+                          className={`flex items-center gap-1.5${
+                            collected ? " group/collected relative cursor-help" : ""
+                          }`}
+                          // The funnel's own `title` explains items-vs-rows for every stage; over 수집
+                          // it would open on top of the card. An empty `title` is the spec's way for an
+                          // element to say it has no advisory information of its own — an omitted one
+                          // inherits the nearest ancestor's, which is exactly what has to stop here.
+                          title={collected ? "" : undefined}
+                        >
                           <span className="text-muted">{label}</span>
                           <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
                           {tally.rows !== tally.items && (
                             <span className="font-mono text-[11px] tabular-nums text-faint">{tally.rows}건</span>
+                          )}
+                          {collected && (
+                            <CollectedBreakdownCard breakdown={status.funnel.collected.breakdown} />
                           )}
                         </div>
                       </Fragment>
