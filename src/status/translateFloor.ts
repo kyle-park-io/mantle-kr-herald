@@ -3,6 +3,11 @@
 // hands to `translate:prepare --since` have to be the same string, normalisation included, or the
 // number printed here is not the number the scheduler selects with.
 import { parseTranslateSince } from "../cli/translateSince";
+// The measurement, not a re-derivation of it: `XThreadIntake` is what `xThreadIntake` counts beside
+// the filter that does the dropping. A shape declared locally here would be a second place the two
+// numbers are defined, and the note below would eventually describe something the pipeline stopped
+// doing. Type-only — nothing in this module runs adapter code.
+import type { XThreadIntake } from "../adapters/content/XContentSource";
 
 /** The unit the floor's only real home is. Named once, because both the `systemctl` call
  *  (`src/cli/systemdShow.ts`) and every line printed below have to mean the same unit. */
@@ -150,6 +155,13 @@ export interface CollectedScope {
   /** Items at or after the floor. Undefined when there is no floor to measure against — an unknown
    *  scope must read as unknown, not as zero and not as everything. */
   inScope?: number;
+  /**
+   * What X collection handed the pipeline before the reply filter, when the caller could count it.
+   * Optional, and every note state below still prints without it: only `pnpm status` has the
+   * `x_threads` rows in hand, and the dashboard, `WatchTick`'s fixtures and every test build a scope
+   * without ever reading that table. A required field here would make them fabricate one.
+   */
+  intake?: XThreadIntake;
 }
 
 /**
@@ -158,29 +170,84 @@ export interface CollectedScope {
  * (parsing to Date, tolerating a missing timestamp) would report a scope the scheduler does not
  * have: an item with `createdAt: ""` (a thread `flattenXThreads` found no tweets for) sorts below
  * every floor, so it is never selected, so it is not in scope.
+ *
+ * `intake` is carried through untouched rather than derived from `items`: by the time an item exists
+ * the dropped threads are gone, so nothing here can recover them — they have to be counted where the
+ * rows still are (`xThreadIntake`), and travel beside the total they must reconcile with.
  */
-export function collectedScope(items: { createdAt: string }[], floor: TranslateFloorStatus): CollectedScope {
+export function collectedScope(
+  items: { createdAt: string }[],
+  floor: TranslateFloorStatus,
+  intake?: XThreadIntake,
+): CollectedScope {
   const since = floor.kind === "configured" ? floor.floor : undefined;
   return {
     floor,
     total: items.length,
     inScope: since === undefined ? undefined : items.filter((i) => i.createdAt >= since).length,
+    intake,
   };
 }
 
 /**
- * The note under the Collected total, and the reason this module reaches into the pipeline table at
+ * The note beside the Collected total, and the reason this module reaches into the pipeline table at
  * all. A bare `Collected (X + Lark)  108` was read as a backlog of 108 and reported to a human as
  * one, when the floor put the older two thirds of it permanently out of the scheduler's reach.
  * Every state therefore says something — "scope unknown" included, because the alternative is the
  * bare total that caused the mistake.
+ *
+ * The intake funnel goes in front of that, never in place of it: same line, left to right, from what
+ * collection found to what the scheduler can still reach.
  */
 export function collectedScopeNote(scope: CollectedScope): string {
+  const funnel = scope.intake && intakeFunnel(scope.intake, scope.total);
+  return funnel ? `${funnel} · ${floorNote(scope)}` : floorNote(scope);
+}
+
+function floorNote(scope: CollectedScope): string {
   if (scope.inScope !== undefined) {
     return `in scope ${scope.inScope} · below floor ${scope.total - scope.inScope}`;
   }
   if (scope.floor.kind === "none") return `in scope ${scope.total} · no floor set`;
   return "scope unknown · no floor could be read";
+}
+
+/**
+ * How the collected total was arrived at: `223 X threads - 92 replies dropped + 3 Lark`, printed as
+ * arithmetic that ends on the number beside it.
+ *
+ * **Why the Lark term is here at all.** `threads - repliesDropped` is the X item count, 131 — but
+ * the headline says 134, because three Lark items are in the total and are not threads. Left
+ * unnamed, a reader who subtracts comes up 3 short and concludes the pipeline lost items: the same
+ * shape of mistake as reading the bare total as a backlog, which is what put this funnel on the line
+ * in the first place. So the third term is named, and the whole segment reads as a sum.
+ *
+ * **Why it is derived, not counted.** The remainder is `total - (threads - repliesDropped)`, never a
+ * separate count of Lark items. Derived, the printed line reconciles by construction and there is no
+ * arrangement of the numbers that leaves a silent gap. Counted, the two could disagree and the line
+ * would show a funnel that visibly fails to reach its own total — reporting a defect that does not
+ * exist. The label is "Lark" because the stage this sits on is `Collected (X + Lark)`: those are the
+ * two sources, and a third would rename the stage first.
+ *
+ * The disagreement is still possible in one direction — the threads and the items are two reads of
+ * the same database, so a `collect` landing between them can imply more X items than there are
+ * collected items at all. That is the one case that prints no funnel: a negative term is nonsense,
+ * and the floor note still says everything it said before.
+ *
+ * Zero terms are omitted rather than printed. `- 0 replies dropped` sends a reader looking for
+ * something that did not happen, and dropping a zero term changes no arithmetic.
+ */
+function intakeFunnel(intake: XThreadIntake, total: number): string | undefined {
+  // Nothing came from X: `0 X threads + 3 Lark` is not a funnel, it is noise in front of the number
+  // that matters. A deployment with no X collection reads exactly as it did before.
+  if (intake.threads === 0) return undefined;
+  const xItems = intake.threads - intake.repliesDropped;
+  const rest = total - xItems;
+  if (xItems < 0 || rest < 0) return undefined;
+  const terms = [`${intake.threads} X threads`];
+  if (intake.repliesDropped > 0) terms.push(`- ${intake.repliesDropped} replies dropped`);
+  if (rest > 0) terms.push(`+ ${rest} Lark`);
+  return terms.join(" ");
 }
 
 /**

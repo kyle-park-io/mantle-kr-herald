@@ -12,6 +12,8 @@ import {
   collectedScopeNote,
   formatTranslateFloor,
   WATCH_UNIT,
+  type CollectedScope,
+  type TranslateFloorStatus,
 } from "../../src/status/translateFloor";
 
 /** Verbatim shape of `systemctl --user show herald-watch.service --property=Environment --property=LoadState`
@@ -178,6 +180,21 @@ describe("collectedScope", () => {
     expect(scope.inScope).toBe(0);
   });
 
+  it("carries the intake through untouched, beside the total it has to reconcile with", () => {
+    const scope = collectedScope(items, translateFloorStatus({ unitShow: ARMED, shellValue: undefined }), {
+      threads: 223,
+      repliesDropped: 92,
+    });
+    expect(scope.intake).toEqual({ threads: 223, repliesDropped: 92 });
+  });
+
+  it("has no intake when the caller has no thread rows to count", () => {
+    // The dashboard and every fake build a scope without ever reading `x_threads`; the note has to
+    // keep working for them, which is why the intake is optional at the type level.
+    expect(collectedScope(items, translateFloorStatus({ unitShow: ARMED, shellValue: undefined })).intake)
+      .toBeUndefined();
+  });
+
   it("has no in-scope count when there is no floor to measure against", () => {
     for (const show of [NO_FLOOR, NOT_INSTALLED, undefined]) {
       expect(collectedScope(items, translateFloorStatus({ unitShow: show, shellValue: undefined })).inScope).toBeUndefined();
@@ -216,6 +233,115 @@ describe("collectedScopeNote", () => {
     const invalid = ["Environment=HERALD_TRANSLATE_SINCE=last-tuesday", "LoadState=loaded"].join("\n");
     for (const show of [ARMED, NO_FLOOR, NOT_INSTALLED, undefined, invalid, "garbage"]) {
       expect(note(show).length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("collectedScopeNote — the intake funnel", () => {
+  const CONFIGURED: TranslateFloorStatus = { kind: "configured", floor: "2026-07-27T14:35:25.000Z" };
+  /** Production on 2026-08-08: 223 collected threads, 92 of them reply-rooted, 3 Lark items, 20 of
+   *  the resulting 134 at or after the floor. Every number below is that measurement. */
+  const PRODUCTION: CollectedScope = {
+    floor: CONFIGURED,
+    total: 134,
+    inScope: 20,
+    intake: { threads: 223, repliesDropped: 92 },
+  };
+
+  /**
+   * Adds up the arithmetic the funnel actually printed. The test asserts the *line*, not a
+   * re-derivation of what the line should have said — a reader adds up what is on screen, so that
+   * is what has to reach the total beside it.
+   */
+  const funnelSum = (note: string): number =>
+    [...note.matchAll(/([-+]?)\s*(\d+)\s+(?:X threads|replies dropped|Lark)/g)].reduce(
+      (n, [, sign, value]) => n + (sign === "-" ? -Number(value) : Number(value)),
+      0,
+    );
+
+  it("states the whole funnel left to right, in front of the scope it already reported", () => {
+    expect(collectedScopeNote(PRODUCTION)).toBe(
+      "223 X threads - 92 replies dropped + 3 Lark · in scope 20 · below floor 114",
+    );
+  });
+
+  it("names the Lark contribution, so a reader who subtracts lands on the total and not 3 short", () => {
+    // The trap this line has to survive: 223 - 92 = 131, but the headline beside it says 134,
+    // because the 3 Lark items are in the total and are not threads. Somebody coming up 3 short
+    // concludes the pipeline lost items — the same shape of mistake as reading the bare total as a
+    // backlog, which is what put the funnel on this line in the first place.
+    expect(funnelSum(collectedScopeNote(PRODUCTION))).toBe(PRODUCTION.total);
+  });
+
+  it("omits a zero drop term rather than printing a filter that did nothing", () => {
+    // `- 0 replies dropped` sends a reader looking for something that did not happen, and dropping
+    // the term changes no arithmetic: the line still reaches the total.
+    const note = collectedScopeNote({
+      ...PRODUCTION,
+      total: 226,
+      intake: { threads: 223, repliesDropped: 0 },
+    });
+    expect(note).toBe("223 X threads + 3 Lark · in scope 20 · below floor 206");
+    expect(funnelSum(note)).toBe(226);
+  });
+
+  it("omits the Lark term when the total is all X, for the same reason", () => {
+    const note = collectedScopeNote({ ...PRODUCTION, total: 131, inScope: 20 });
+    expect(note).toBe("223 X threads - 92 replies dropped · in scope 20 · below floor 111");
+    expect(funnelSum(note)).toBe(131);
+  });
+
+  it("prints no funnel when nothing came from X, and still reports the scope", () => {
+    // A deployment with no X threads at all: `0 X threads + 3 Lark` is not a funnel, it is noise in
+    // front of the number that matters.
+    const note = collectedScopeNote({
+      floor: CONFIGURED,
+      total: 3,
+      inScope: 1,
+      intake: { threads: 0, repliesDropped: 0 },
+    });
+    expect(note).toBe("in scope 1 · below floor 2");
+  });
+
+  it("prints no funnel when the two reads disagree, rather than one that does not add up", () => {
+    // The threads and the items are two reads of the same database, so a collect landing between
+    // them can leave more X items implied by the funnel than there are collected items at all. A
+    // funnel that visibly fails to reach its own total is worse than no funnel: it reports a defect
+    // that does not exist.
+    const note = collectedScopeNote({ ...PRODUCTION, total: 100 });
+    expect(note).toBe("in scope 20 · below floor 80");
+  });
+
+  it("keeps every floor state's wording exactly as it was, funnel or no funnel", () => {
+    // Invariant from the previous change: no floor state may produce a bare total. The funnel is
+    // added in front of these, never in place of them.
+    const scopes: [CollectedScope, string][] = [
+      [{ floor: CONFIGURED, total: 134, inScope: 20 }, "in scope 20 · below floor 114"],
+      [{ floor: { kind: "none" }, total: 134 }, "in scope 134 · no floor set"],
+      [{ floor: { kind: "not-installed" }, total: 134 }, "scope unknown · no floor could be read"],
+    ];
+    for (const [scope, expected] of scopes) {
+      expect(collectedScopeNote(scope)).toBe(expected);
+      expect(collectedScopeNote({ ...scope, intake: { threads: 223, repliesDropped: 92 } })).toBe(
+        `223 X threads - 92 replies dropped + 3 Lark · ${expected}`,
+      );
+    }
+  });
+
+  it("is never empty, for any floor state and any intake", () => {
+    const intakes = [undefined, { threads: 0, repliesDropped: 0 }, { threads: 223, repliesDropped: 92 }];
+    const floors: TranslateFloorStatus[] = [
+      CONFIGURED,
+      { kind: "none" },
+      { kind: "not-installed" },
+      { kind: "unreadable", detail: "systemctl: not found" },
+      { kind: "invalid", detail: 'HERALD_TRANSLATE_SINCE is not a date this can parse: "soon"' },
+    ];
+    for (const floor of floors) {
+      for (const intake of intakes) {
+        const inScope = floor.kind === "configured" ? 20 : undefined;
+        expect(collectedScopeNote({ floor, total: 134, inScope, intake }).length).toBeGreaterThan(0);
+      }
     }
   });
 });

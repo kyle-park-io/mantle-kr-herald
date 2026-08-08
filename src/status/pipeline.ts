@@ -60,6 +60,11 @@ const fannedOutNote = (rows: { itemId: string; status: string }[]) =>
  * backlog of 108 — it was read that way, and reported to a human that way, on 2026-08-08. Requiring
  * the scope means the table cannot be rendered without stating how much of that total the
  * translation floor actually leaves in reach (`./translateFloor`).
+ *
+ * The scope's optional `intake` extends the same line backwards, to what collection found before the
+ * reply filter took 41% of it: `223 X threads - 92 replies dropped + 3 Lark · in scope 20 · below
+ * floor 114`. One line, left to right, no second output line — `WatchTick`/`ConvertTick` parse this
+ * stdout, and every line that is not a stage line is one more thing they have to be safe against.
  */
 export function pipelineStages(input: StatusInput, scope: CollectedScope): StageCount[] {
   return [

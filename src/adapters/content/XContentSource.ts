@@ -28,9 +28,51 @@ import { THREAD_TWEET_SEPARATOR } from "../../domain/formatting/canonical";
  * The cost, stated plainly: this is total. A reply excluded here cannot be recovered by
  * `translate:prepare --ids`, because it never becomes an item for the selector to find. Reaching one
  * would take a code change or a hand-written `translate:save`.
+ *
+ * Exported because `pnpm status` now reports the toll (`xThreadIntake` below, printed on the
+ * Collected line). It is the predicate itself that travels, never a second copy of the rule: a copy
+ * can drift from the one that actually filters, and the funnel would then print a number no code
+ * path agrees with — which is worse than the bare total it replaced, because it looks checked.
  */
-function isCommenterReply(t: SourceTweet): boolean {
+export function isCommenterReply(t: SourceTweet): boolean {
   return t.isReply && t.text.trimStart().startsWith("@");
+}
+
+/** What X collection handed the pipeline, and what the reply filter took out before anything was
+ *  rendered — the two numbers in front of `pnpm status`'s Collected total. */
+export interface XThreadIntake {
+  /** Threads the pipeline considered. `status === "active"` only: a deleted thread was not dropped
+   *  by any rule, it never enters the funnel at all, so counting it would put a number on screen
+   *  that nothing downstream can ever produce. */
+  threads: number;
+  /** Of those, the ones dropped whole because their FIRST tweet is a commenter reply. A thread with
+   *  a *nested* commenter reply is not counted here: it still becomes an item, minus that block. */
+  repliesDropped: number;
+}
+
+/**
+ * The reply filter's toll, counted rather than described.
+ *
+ * `pnpm status` printed a bare `Collected (X + Lark) 134` while 92 threads — 41% of everything ever
+ * collected — had been dropped here before becoming items, and answering "is 134 even right?" took
+ * a database query. A number that costs a query to verify belongs on screen.
+ *
+ * Counted beside the filter, over the same predicate and the same two guards `flattenXThreads`
+ * applies in the same order, so `threads - repliesDropped` is exactly `flattenXThreads(rows, new
+ * Set()).length` — the empty set being what `pnpm status` passes, since it asks for everything
+ * collected rather than for what is still untranslated. `tests/adapters/content/xContentSource.test.ts`
+ * asserts that identity directly; it is the only thing keeping the printed funnel honest.
+ */
+export function xThreadIntake(threads: Pick<CollectedThread, "tweets" | "status">[]): XThreadIntake {
+  let considered = 0;
+  let repliesDropped = 0;
+  for (const thread of threads) {
+    if (thread.status !== "active") continue;
+    considered += 1;
+    const first = thread.tweets[0];
+    if (first && isCommenterReply(first)) repliesDropped += 1;
+  }
+  return { threads: considered, repliesDropped };
 }
 
 /** Surface a post's media as canonical markers, each on its own line, so it is visible through the

@@ -46,8 +46,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scheduler's reach. The floor's only real home is `Environment=` on `herald-watch.service`: `.env`
   carries the key blank and nothing else in the repo carries the value, so there was no read-only
   way to ask what production selects with. The stage line now reads
-  `Collected (X + Lark)  135   (in scope 20 · below floor 115)`, with the floor itself printed under
-  the table.
+  `Collected (X + Lark)  135   (224 X threads - 92 replies dropped + 3 Lark · in scope 20 · below floor 115)`,
+  with the floor itself printed under the table.
+  - **The whole funnel is on that one line, left to right.** Qualifying the total with the floor
+    alone left the same class of question — "is 135 even right?" — answerable only by a database
+    query, because ~41% of everything ever collected is a reply Mantle made to someone else and is
+    dropped before it can become an item (`isCommenterReply`). The counting reuses that predicate
+    rather than restating it, over `status = 'active'` threads and their first tweet, so the number
+    printed is the drop the pipeline actually took.
+  - **The Lark term is named, and derived.** `224 - 92 = 132`, but the headline is 135: three Lark
+    items are in the total and are not threads, and a reader who subtracts and comes up 3 short
+    concludes the pipeline lost items. The remainder is computed as `total - (threads - dropped)`,
+    never counted separately, so the printed arithmetic reaches the headline by construction — and
+    on the one input where it cannot (a `collect` landing between the two reads), no funnel is
+    printed at all rather than one that visibly fails to add up. Zero terms are omitted, and a
+    deployment with no X threads reads exactly as it did before.
   - **Asked of systemd, not of the shell.** `systemctl --user show herald-watch.service` reports
     what the *manager* loaded, so a unit file edited without `daemon-reload` is described by what
     will really run rather than by what someone meant. `process.env.HERALD_TRANSLATE_SINCE` is

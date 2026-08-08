@@ -60,6 +60,25 @@ describe("pipelineStages", () => {
     }
   });
 
+  it("carries the whole intake funnel on the Collected line, no second line to go looking at", () => {
+    // Production on 2026-08-08. "is 134 even right?" came back the day the scope note landed, and
+    // answering it took a database query — 223 threads collected, 92 of them reply-rooted and
+    // dropped by `isCommenterReply` before becoming items, plus 3 Lark items. All of it left to
+    // right on the stage line, arithmetic that ends at the total printed beside it.
+    const stages = pipelineStages(
+      { collected: 134, translations: [], variants: [], renderings: [], published: [] },
+      {
+        floor: { kind: "configured", floor: "2026-07-27T14:35:25.000Z" },
+        total: 134,
+        inScope: 20,
+        intake: { threads: 223, repliesDropped: 92 },
+      },
+    );
+    const collected = stages.find((s) => s.label === "Collected (X + Lark)");
+    expect(collected?.total).toBe(134);
+    expect(collected?.note).toBe("223 X threads - 92 replies dropped + 3 Lark · in scope 20 · below floor 114");
+  });
+
   it("splits the translated note three ways, so a terminal `posted` is not read as a review queue", () => {
     const stages = pipelineStages(
       {
@@ -223,10 +242,32 @@ describe("formatStatus", () => {
       { kind: "invalid", detail: 'HERALD_TRANSLATE_SINCE is not a date this can parse: "soon"' },
     ];
     for (const floor of floors) {
-      const out = formatStatus(pipelineStages(input, { floor, total: 128, inScope: 12 }), floor);
+      // With the intake funnel too: it lengthens the Collected line rather than adding one, and
+      // this suite is what proves no added text can be found ahead of the real stage line.
+      const scope = { floor, total: 128, inScope: 12, intake: { threads: 220, repliesDropped: 95 } };
+      const out = formatStatus(pipelineStages(input, scope), floor);
       const matches = out.split("\n").filter((l) => TRANSLATED_LINE.test(l));
       expect(matches).toHaveLength(1);
       expect(matches[0]).toMatch(/^\s*Translated\s+41/);
     }
+  });
+
+  it("keeps the funnel on the Collected line itself, adding no output line to the table", () => {
+    // The presentation that was chosen: left to right on the stage line. A second line would be one
+    // more thing for `WatchTick`/`ConvertTick` to parse past, and one more place a reader can miss.
+    const scope: CollectedScope = {
+      floor: NO_SCHEDULER,
+      total: 134,
+      intake: { threads: 223, repliesDropped: 92 },
+    };
+    const out = formatStatus(
+      pipelineStages({ collected: 134, translations: [], variants: [], renderings: [], published: [] }, scope),
+      NO_SCHEDULER,
+    );
+    const funnelLines = out.split("\n").filter((l) => l.includes("X threads"));
+    expect(funnelLines).toHaveLength(1);
+    expect(funnelLines[0]).toContain("Collected (X + Lark)");
+    expect(funnelLines[0]).toContain("134");
+    expect(funnelLines[0]).toContain("223 X threads - 92 replies dropped + 3 Lark");
   });
 });
