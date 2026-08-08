@@ -4,6 +4,22 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { build } from "esbuild";
 import { REPO_ROOT } from "../../src/paths";
+import type * as Entry from "../../src/vercel/entry";
+import type * as Declared from "../../src/vercel/api-entry";
+
+/**
+ * The declaration `build:api` ships to `dist/` describes the bundle structurally rather than
+ * re-exporting `entry.ts` — see `src/vercel/api-entry.d.ts` for why that alternative is worse. The
+ * cost of being structural is that it can lie, so this pins it: `entry.ts`'s two exports must stay
+ * assignable to what Vercel is told they are.
+ *
+ * A type-level assertion rather than a runtime one, and `import type` rather than `import`, so
+ * `pnpm typecheck` is the gate and nothing here evaluates `entry.ts`'s module body. These aliases
+ * are unused by design — the compile IS the assertion.
+ */
+type AssertAssignable<Actual extends Promised, Promised> = [Actual, Promised];
+type _ConfigMatchesDeclaration = AssertAssignable<typeof Entry.config, typeof Declared.config>;
+type _HandlerMatchesDeclaration = AssertAssignable<typeof Entry.default, typeof Declared.default>;
 
 /**
  * The deployed Vercel Function must be a self-contained bundle. This is not a preference — it is the
@@ -100,5 +116,22 @@ describe("the deployed function bundle", () => {
     // build step of ours would get to bundle it.
     expect(shim).not.toMatch(/\bcreateHandler\s*\(/);
     expect(shim.split("\n").filter((l) => l.trim().startsWith("import ")).length).toBe(0);
+  });
+
+  /**
+   * The bundle is plain JavaScript, so Vercel's typecheck of `api/[...path].ts` had nothing to read
+   * and printed `TS7016` on every deploy. `src/vercel/api-entry.d.ts` supplies the shape and
+   * `build:api` copies it next to the bundle — if that copy step is dropped, the error comes back
+   * silently, because it never failed a build in the first place.
+   */
+  it("ships a declaration for the bundle, or the TS7016 returns on every deploy", async () => {
+    const pkg = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(pkg.scripts["build:api"]).toContain("dist/api-entry.d.ts");
+    // Next to the bundle and named for it: TypeScript finds a declaration only by resolving the
+    // imported specifier's own path, so `dist/api-entry.js` is answered by `dist/api-entry.d.ts`
+    // and by nothing else.
+    expect(pkg.scripts["build:api"]).toContain("src/vercel/api-entry.d.ts");
   });
 });
