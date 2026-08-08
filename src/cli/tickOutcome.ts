@@ -1,7 +1,21 @@
 import type { TickReport } from "../app/TickReport";
 import { condense } from "../shared/text/condense";
 
-export type TickOutcome = { line: string; exitCode: 0 | 1 };
+export type TickOutcome = {
+  line: string;
+  exitCode: 0 | 1;
+  /**
+   * `report.notes`, verbatim, for the entry point to print **before** `line` — see `TickReport` for
+   * what they are and why they are not failures. They stay separate lines rather than being folded
+   * into `line`: each is already one journal entry's worth of text, and `line` is the one entry
+   * `deploy/herald-notify-failure.sh` must still find whole.
+   *
+   * Routed through here rather than read off the report by each entry point, so that everything a
+   * tick reports has exactly one path to the journal. A field only one of the two callers knows to
+   * print is a detail that exists in the process and never reaches anyone.
+   */
+  notes: string[];
+};
 
 /**
  * The last place a failure detail can still be made one line long. `runStage` already caps the
@@ -28,13 +42,14 @@ const MAX_DETAIL_CHARS = 300;
  */
 export function tickOutcome(label: string, report: TickReport): TickOutcome {
   const stages = report.stagesRun.length > 0 ? report.stagesRun.join(" → ") : "(none)";
+  const notes = report.notes ?? [];
 
   if (report.ok) {
-    return { line: `${label}: ok — ran ${stages}`, exitCode: 0 };
+    return { line: `${label}: ok — ran ${stages}`, exitCode: 0, notes };
   }
 
   const detail = report.failure
     ? condense(`${report.failure.stage}: ${report.failure.detail}`, MAX_DETAIL_CHARS)
     : "unknown failure";
-  return { line: `${label}: FAILED — ${detail} (ran ${stages})`, exitCode: 1 };
+  return { line: `${label}: FAILED — ${detail} (ran ${stages})`, exitCode: 1, notes };
 }

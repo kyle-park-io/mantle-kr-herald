@@ -44,7 +44,11 @@ console.log(watchStartupLine(OUTPUT_DIR, process.env.HERALD_OUTPUT_DIR, loadDbCo
 const agent = new ClaudeCodeAgent(realClaudeSpawn);
 
 const report = await new WatchTick(runStage, agent, { translateSince, batch }).run();
-const { line, exitCode } = watchOutcome(report);
+const { line, exitCode, notes } = watchOutcome(report);
 
+// `WatchTick` reports no notes today, so this loop prints nothing — it is here so that the day it
+// does, they reach the journal rather than being dropped by the one entry point that never learned
+// about them. Before the outcome line, so that line stays last for herald-notify-failure.sh's tail.
+for (const note of notes) console.log(note);
 console.log(line);
 process.exitCode = exitCode;

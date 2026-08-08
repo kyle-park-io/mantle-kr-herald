@@ -1,17 +1,27 @@
 # deploy/herald-convert.service
 #
-# systemd --user unit for one `pnpm convert:tick` — convert:prepare, and (only if it prepared
-# anything) one `claude -p` pass that fills the worksheet and calls `pnpm convert:save` for each
-# variant. It exists so the 2차 검수 board is already populated when a reviewer gets there: the
-# pipeline was automated up to `translated` by herald-watch.service and stopped, so everything after
-# a 1차 검수 approval was manual and in practice the work went out by hand instead.
+# systemd --user unit for one `pnpm convert:tick` — convert:prepare, (only if it prepared anything)
+# one `claude -p` pass that fills the worksheet and calls `pnpm convert:save` for each variant, and
+# finally `pnpm format --only-missing`. It exists so the 2차 검수 board is already populated when a
+# reviewer gets there: the pipeline was automated up to `translated` by herald-watch.service and
+# stopped, so everything after a 1차 검수 approval was manual and in practice the work went out by
+# hand instead.
 #
-# WHAT THIS UNIT NEVER DOES: format, publish, or send. It stops at `status: "converted"`. Whether a
-# variant ever reaches X, Telegram, Typefully or Drive is exactly what 2차 검수 decides, and an
-# unattended timer must not pre-empt a human review gate. That is enforced in three places, not
-# stated in one: src/app/ConvertTick.ts runs no such stage, ClaudeCodeAgent's allowlist gives the
-# agent one shell command (`pnpm convert:save`) and denies the send/publish commands outright, and
-# tests/deploy/convertTiming.test.ts fails if this ExecStart= ever grows one.
+# WHAT THIS UNIT NEVER DOES: publish, or send. It stops at `status: "rendered"` — a card sitting on
+# the 2차 검수 board waiting to be read. Whether a variant ever reaches X, Telegram, Typefully or
+# Drive is exactly what 2차 검수 decides, and an unattended timer must not pre-empt a human review
+# gate. That is enforced in three places, not stated in one: src/app/ConvertTick.ts runs no such
+# stage, ClaudeCodeAgent's allowlist gives the agent one shell command (`pnpm convert:save`) and
+# denies the send/publish commands outright, and tests/deploy/convertTiming.test.ts fails if this
+# ExecStart= ever grows one.
+#
+# The tick reached only `converted` until 2026-08-08, which was one stage short of its own purpose:
+# the board is built from `renderings`, not from `variants`, so every item it converted still showed
+# "아직 렌더링이 없습니다" and gave the reviewer no button. The format stage it now runs is pinned to
+# `--only-missing` — a bare `pnpm format` rebuilds EVERY rendering from its variant and would discard
+# 2차 검수's edits and approvals twice an hour. That is why `format` is still on this file's list of
+# words that must never appear in ExecStart= below: inside the tick it carries that flag, and a
+# hand-chained one here would not.
 #
 # NOT installed by any committed script. Copying this into ~/.config/systemd/user/ and running
 # `systemctl --user daemon-reload` is a later, human-supervised step (see the team runbook) — same as

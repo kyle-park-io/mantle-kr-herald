@@ -17,4 +17,20 @@ export type TickReport = {
   ok: boolean;
   stagesRun: string[];
   failure?: { stage: string; detail: string };
+
+  /**
+   * Lines a stage produced that are worth a human's attention but are not a failure — today, the
+   * over-length emissions `FormatVariants` warns about (`ConvertTick`'s format stage).
+   *
+   * They exist because `runStage` captures each stage's stdout and a successful tick discards it:
+   * without a way out of the report, a warning printed by a scheduled `pnpm format` is seen by
+   * nobody, ever. `tickOutcome` prints them ahead of the outcome line, which keeps that line last —
+   * `deploy/herald-notify-failure.sh` reads the journal's last 5 entries.
+   *
+   * Deliberately not a failure: an over-limit rendering is a copy problem for 2차 검수 to fix on the
+   * board, where the length is shown per destination anyway. Failing the tick would page whoever is
+   * on call because a Korean tweet came out two weighted characters long, and — worse — would leave
+   * the tick's real work reported as broken.
+   */
+  notes?: string[];
 };

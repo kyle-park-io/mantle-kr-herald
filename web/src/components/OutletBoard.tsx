@@ -270,7 +270,8 @@ export function OutletBoard(props: {
 
       {board.groups.length === 0 ? (
         <p className="rounded-xl border border-line bg-surface p-5 text-[13px] leading-relaxed text-faint shadow-sm">
-          이 항목은 아직 렌더링이 없습니다. <code className="font-mono">pnpm format</code> 을 먼저 실행하세요.
+          이 항목은 아직 렌더링이 없습니다. <code className="font-mono">pnpm format --only-missing</code> 을 먼저
+          실행하세요.
         </p>
       ) : (
         <div className="flex flex-col gap-4">
@@ -307,7 +308,7 @@ export function OutletBoard(props: {
               <p className="mt-2 text-[13px] leading-relaxed text-faint">
                 대시보드는 변환하지 않습니다 — 여기서는 유형을 골라 워크시트만 준비할 수 있습니다. 에이전트가
                 채운 뒤 <code className="font-mono">pnpm convert:save</code> 와{" "}
-                <code className="font-mono">pnpm format</code> 을 실행하면 여기에 카드가 생깁니다.
+                <code className="font-mono">pnpm format --only-missing</code> 을 실행하면 여기에 카드가 생깁니다.
               </p>
               <div className="mt-2.5 flex flex-wrap items-center gap-3">
                 {board.unconverted.map((t) => (
@@ -363,7 +364,8 @@ export function OutletBoard(props: {
                   ) : (
                     <p className="text-[13px] text-faint">
                       대기 중인 항목이 없습니다 — 승인된 원문이 없거나 이미 변환된 상태입니다. 이미 변환됐다면{" "}
-                      <code className="font-mono">pnpm format</code> 을 실행하면 여기에 카드가 생깁니다.
+                      <code className="font-mono">pnpm format --only-missing</code> 을 실행하면 여기에 카드가
+                      생깁니다.
                     </p>
                   ))}
               </div>

@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The conversion tick now formats what it converted, so its output actually reaches the 2차 검수
+  board.** The tick shipped one stage short of its own purpose: it produced rows in `variants`, but
+  the board is built from `renderings` (`src/adapters/web/board.ts` derives its `unconverted` list
+  from rendering keys), so an item the scheduler had just converted still read *"이 항목은 아직
+  렌더링이 없습니다. `pnpm format` 을 먼저 실행하세요"* and gave the reviewer no button. Measured in
+  production on 2026-08-08: the scheduler converted `x:2085728188546855340` into 6 variants at
+  13:10–13:12 KST and `renderings` for that day stayed at 0 until `pnpm format` was run by hand.
+  - **`pnpm format --only-missing`, and the flag is the whole safety property.** A bare `pnpm format`
+    rebuilds *every* rendering it selects from its variant, at `status: "rendered"`, `refined: false`
+    — which discards the text a reviewer edited on the board and revokes their approval. That is the
+    right behaviour for the dashboard's red `[포맷 다시]` and for a hand run, where a human confirms
+    the loss first (`docs/ko/review.md`), and it stays the default. On a 30-minute timer it would
+    have erased 2차 검수's accumulated work 48 times a day, silently, starting with the 5 approved
+    renderings production is holding right now. The new mode formats only (item, type, channel) pairs
+    with **no rendering at all**, built on `FormattingStore.listRenderedKeys()` — which already
+    existed, unused anywhere in `src/`, as the exact analogue of the `listConvertedKeys` skip
+    `PrepareConversions` uses. The key both sides compare now comes from one exported
+    `renderingKey()` in the port: a consumer that rebuilt that string inline would keep compiling and
+    match nothing the day a store changed it, and "matches nothing" in this mode does not mean "skip
+    nothing", it means overwrite every approved rendering there is.
+  - **The skip is per (item, type, channel), not per variant.** One `announcement` fans out to
+    telegram *and* kakao; skipping the whole variant because telegram was already rendered would
+    leave the 카카오 card permanently missing.
+  - **No agent turn, and it runs on every tick — including one that prepared nothing.** Formatting is
+    mechanical (canonical text per channel, minus bold where a channel cannot render it), so the
+    stage costs a subprocess and a query rather than a `claude -p` turn — which is the only thing the
+    "nothing was prepared" early return exists to protect. Gating it on this tick's own conversions
+    would strand any variant that lost its rendering for reasons this tick had no part in (an earlier
+    tick that failed after `convert:save`, a hand-run `convert:save`, a migration), the same shape as
+    the quiet-source-account bug that left 19 translatable items stranded in `WatchTick` for 21 hours.
+  - **Unrecognised stage stdout fails the tick, never "nothing to do"** — the contract every parser in
+    `WatchTick`/`ConvertTick` already follows, and the zero-work line is a deliberate second shape
+    (`formatted 0 rendering(s) — nothing is waiting to be formatted`) rather than a count of zero on
+    the `→ the database (renderings)` line. Both shapes and the flag itself live in the new
+    `src/cli/formatLines.ts`, the sibling of `convertPrepareLines.ts`: the CLI and the tick are two
+    processes that agree on nothing but this text.
+  - **`FormatVariants`' warnings (over-length emissions) travel out as `TickReport.notes`**, which
+    `tickOutcome` prints ahead of the outcome line — `runStage` captures a stage's stdout and a
+    successful tick discards it, so a scheduled `pnpm format`'s ⚠ lines would otherwise be seen by
+    nobody. They are notes and not a failure: an over-limit rendering is a copy problem for 2차 검수
+    to fix on the board, where the per-destination length is shown anyway, and failing the tick would
+    fire the Telegram hook because a Korean tweet came out two weighted characters long. Before the
+    outcome line, never after, so that line stays the last journal entry
+    `deploy/herald-notify-failure.sh` reads back.
+  - **Still nothing that publishes or sends.** The tick's end state moves from `converted` to
+    `rendered`, which is not a step closer to an audience: `SendChannels` sends only `approved`
+    renderings, and approving one is the human act this tick exists to prepare for. The agent's deny
+    list is untouched, and `tests/deploy/convertTiming.test.ts` still fails if this unit's
+    `ExecStart=` ever grows a `format` of its own — now for a sharper reason, since a chained one
+    would be the unflagged, overwriting kind.
+  - The dashboard's three "run `pnpm format`" hints and the runbook's own step 8 now say
+    `--only-missing`, because a reviewer following that advice on a board the scheduler keeps filling
+    was being told to wipe their own approvals.
+
 - **A scheduled conversion tick (`pnpm convert:tick`, `deploy/herald-convert.{service,timer}`), so
   the 2차 검수 board is already populated when a reviewer gets there.** The pipeline was automated up
   to `translated` and stopped: after a 1차 검수 approval, turning that approval into channel variants

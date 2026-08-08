@@ -13,6 +13,12 @@ import { ALL_CHANNELS, type Channel } from "../domain/formatting/models";
 import { archiveFile } from "../shared/store/archive";
 import { writeJsonFileAtomic } from "../shared/store/jsonFile";
 import { loadXMaxWeighted, loadDbConfig } from "../config";
+import {
+  ONLY_MISSING_FLAG,
+  NOTHING_TO_FORMAT_LINE,
+  formattedRenderingsLine,
+  formatWarningLine,
+} from "./formatLines";
 import { paths } from "../paths";
 
 if (process.argv.some((a) => a === "--x-bold" || a.startsWith("--x-bold="))) {
@@ -40,6 +46,23 @@ if (channelsArg) {
 }
 const refine = process.argv.includes("--refine");
 
+/**
+ * Opt-in, and it stays opt-in: without it this command rebuilds every rendering it selects, which
+ * is what `[포맷 다시]` and a hand `pnpm format --ids …` after a re-saved conversion are for
+ * (docs/ko/review.md spells out that it discards the saved text and the approval). Flipping the
+ * default would break both, so the caller that must not overwrite — `src/app/ConvertTick.ts`, on a
+ * 30-minute timer — is the one that asks.
+ */
+const onlyMissing = process.argv.includes(ONLY_MISSING_FLAG);
+
+// `--refine` prepares a worksheet for an agent to *improve* existing renderings; it writes no
+// rendering at all, so there is nothing for "only the missing ones" to mean there. Refused rather
+// than ignored: a flag that is accepted and does nothing is how a caller ends up believing a run was
+// scoped when it was not.
+if (onlyMissing && refine) {
+  throw new Error(`${ONLY_MISSING_FLAG} does not apply to --refine: that mode prepares a refinement worksheet and writes no renderings.`);
+}
+
 const xMaxWeighted = loadXMaxWeighted();
 
 const db = createDb(loadDbConfig());
@@ -65,9 +88,16 @@ try {
     console.log(`prepared ${pending.length} refinement draft(s) → ${worksheetPath}`);
     console.log("Fill each 보정 section, then run: pnpm format:save --id <id> --type <t> --channel <c> --file <txt>");
   } else {
-    const { renderings, warnings } = await new FormatVariants(conversionStore, stores.formattingStore, undefined, xMaxWeighted).run(selector);
-    console.log(`formatted ${renderings.length} rendering(s) → the database (renderings)`);
-    for (const w of warnings) console.log(`  ⚠ ${w.itemId}/${w.type}/${w.channel}: ${w.messages.join("; ")}`);
+    const { renderings, warnings } = await new FormatVariants(conversionStore, stores.formattingStore, undefined, xMaxWeighted).run(
+      selector,
+      { onlyMissing },
+    );
+    // Both shapes come from src/cli/formatLines.ts, not from a template literal here:
+    // `src/app/ConvertTick.ts` parses this first line on every scheduled fire and fails the tick on
+    // anything it does not recognise, so the wording is a contract with another process. See that
+    // module's own comment.
+    console.log(renderings.length > 0 ? formattedRenderingsLine(renderings.length) : NOTHING_TO_FORMAT_LINE);
+    for (const w of warnings) console.log(formatWarningLine(w));
   }
 } finally {
   await db.close();

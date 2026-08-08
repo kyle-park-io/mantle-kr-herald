@@ -159,9 +159,15 @@ describe("convert scheduler timing", () => {
 // because nothing else in the suite would notice any of them being deleted.
 describe("convert scheduler service — the lines whose absence fails silently", () => {
   it("runs the conversion tick, and nothing that sends", () => {
-    // The tick stops at `converted` by design: 2차 검수 is what decides whether a variant is ever
-    // sent. An ExecStart= that grew a `&& pnpm send:channels` (or format, or drive:publish) would
-    // turn an unattended scheduler into a publisher, so the command is pinned to its tail.
+    // The tick stops at `rendered` by design: 2차 검수 is what decides whether a variant is ever
+    // sent. An ExecStart= that grew a `&& pnpm send:channels` (or drive:publish) would turn an
+    // unattended scheduler into a publisher, so the command is pinned to its tail.
+    //
+    // `format` stays on this list even though the tick itself now runs that stage, and for a reason
+    // stronger than tidiness: inside the tick it is `pnpm format --only-missing`, which cannot touch
+    // an existing rendering. A `&& pnpm format` chained here would be the unflagged one — every
+    // rendering in the database rebuilt from its variant, every 2차 검수 edit and approval discarded,
+    // 48 times a day.
     expect(service).toMatch(/^ExecStart=.*\/pnpm convert:tick$/m);
     for (const forbidden of ["send:", "drive:publish", "format", "--approve"]) {
       expect(service.match(/^ExecStart=.*$/m)![0], forbidden).not.toContain(forbidden);

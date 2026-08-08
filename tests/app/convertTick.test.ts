@@ -7,10 +7,21 @@
 // shared shape lives in `src/app/WatchTick.ts` and in that file's own test, and is not repeated.
 import { describe, it, expect } from "vitest";
 import { ConvertTick } from "../../src/app/ConvertTick";
+import { FormatVariants } from "../../src/app/FormatVariants";
 import type { StageResult, WorksheetAgent } from "../../src/ports/WorksheetAgent";
+import type { ConversionStore } from "../../src/ports/ConversionStore";
+import { renderingKey, type FormattingStore } from "../../src/ports/FormattingStore";
+import type { ContentVariant } from "../../src/domain/conversion/models";
+import type { ChannelRendering } from "../../src/domain/formatting/models";
 import { formatStatus, pipelineStages } from "../../src/status/pipeline";
 import { tickOutcome } from "../../src/cli/tickOutcome";
 import { preparedVariantsLine, NOTHING_TO_CONVERT_LINE } from "../../src/cli/convertPrepareLines";
+import {
+  ONLY_MISSING_FLAG,
+  formattedRenderingsLine,
+  formatWarningLine,
+  NOTHING_TO_FORMAT_LINE,
+} from "../../src/cli/formatLines";
 
 function recordingAgent(onFill?: (kind: string) => void) {
   const calls: string[] = [];
@@ -73,6 +84,11 @@ function pipeline(
      *  `prepare` line hands it — i.e. a fully successful pass. */
     savesPerPass?: number;
     converted?: number;
+    /** What the `format` stage prints. Defaults to a full pass over the three variants the default
+     *  `prepare` line hands over — the realistic shape, since a variant saved this tick has no
+     *  rendering yet by construction. The tests that care what formatting actually *did* drive the
+     *  real use case instead; see `memoryPipeline`. */
+    format?: string;
     /** Make this one stage exit non-zero, the way a real stage does when the database is down. */
     failStage?: string;
   } = {},
@@ -88,11 +104,15 @@ function pipeline(
     if (script === opts.failStage) return { ok: false, stage: script, detail: "ECONNREFUSED" };
     if (script === "convert:prepare") return { ok: true, stdout: opts.prepare ?? PREPARED_3 };
     if (script === "status") return { ok: true, stdout: statusStdout(converted) };
+    if (script === "format") return { ok: true, stdout: opts.format ?? formattedRenderingsLine(3) };
     return { ok: true, stdout: "" };
   };
 
   return { run, agent, ran, calls, paths };
 }
+
+/** The one stage every successful tick ends with, spelled as `ran` records it. */
+const FORMAT_CALL = `format ${ONLY_MISSING_FLAG}`;
 
 describe("ConvertTick", () => {
   it("prepares, hands the worksheet to the agent, and brackets it with the count that proves the save", async () => {
@@ -101,27 +121,29 @@ describe("ConvertTick", () => {
     const report = await new ConvertTick(run, agent).run();
 
     expect(report.ok).toBe(true);
-    expect(report.stagesRun).toEqual(["convert:prepare", "status", "status"]);
+    expect(report.stagesRun).toEqual(["convert:prepare", "status", "status", "format"]);
     expect(calls).toEqual(["conversion"]);
     expect(paths).toEqual(["output/variants/worksheets/batch-X.md"]);
     // The two `status` runs bracket the agent pass — they are the before/after of the saved-something
-    // check, not pipeline steps.
-    expect(ran).toEqual(["convert:prepare --limit 1", "status", "status"]);
+    // check, not pipeline steps. `format` is a pipeline step, and the last one: it is what turns the
+    // variants the agent just saved into the cards 2차 검수 reads.
+    expect(ran).toEqual(["convert:prepare --limit 1", "status", "status", FORMAT_CALL]);
   });
 
   it("does not spend an agent turn when nothing approved is waiting to convert", async () => {
     // The common case at a 30-minute cadence: 1차 검수 approves in bursts, and most fires have
-    // nothing to do. The whole tick must then cost one short subprocess and no `claude -p` call.
-    const { run, agent, ran, calls } = pipeline({ prepare: NOTHING_TO_CONVERT_LINE });
+    // nothing to do. The whole tick must then cost two short subprocesses and no `claude -p` call.
+    const { run, agent, ran, calls } = pipeline({ prepare: NOTHING_TO_CONVERT_LINE, format: NOTHING_TO_FORMAT_LINE });
 
     const report = await new ConvertTick(run, agent).run();
 
     expect(report.ok).toBe(true);
     expect(calls).toEqual([]);
-    expect(report.stagesRun).toEqual(["convert:prepare"]);
+    expect(report.stagesRun).toEqual(["convert:prepare", "format"]);
     // No agent pass means nothing to verify: the saved-something check must not spend two extra
-    // database reads on a batch nobody was ever asked to convert.
-    expect(ran).toEqual(["convert:prepare --limit 1"]);
+    // database reads on a batch nobody was ever asked to convert. `format` still runs — see
+    // "formats even when this tick prepared nothing" below for why that is not the same decision.
+    expect(ran).toEqual(["convert:prepare --limit 1", FORMAT_CALL]);
   });
 
   it("still treats a zero count as nothing to do even if a worksheet path comes with it", async () => {
@@ -131,13 +153,14 @@ describe("ConvertTick", () => {
     // on an empty worksheet spends a subscription turn converting nothing.
     const { run, agent, ran, calls } = pipeline({
       prepare: preparedVariantsLine(0, "output/variants/worksheets/batch-X.md"),
+      format: NOTHING_TO_FORMAT_LINE,
     });
 
     const report = await new ConvertTick(run, agent).run();
 
     expect(report.ok).toBe(true);
     expect(calls).toEqual([]);
-    expect(ran).toEqual(["convert:prepare --limit 1"]);
+    expect(ran).toEqual(["convert:prepare --limit 1", FORMAT_CALL]);
   });
 
   it("reports the failing stage and runs nothing after it", async () => {
@@ -280,6 +303,7 @@ describe("ConvertTick", () => {
     let converted = 12;
     const run = async (script: string): Promise<StageResult> => {
       if (script === "convert:prepare") return { ok: true, stdout: PREPARED_3 };
+      if (script === "format") return { ok: true, stdout: formattedRenderingsLine(3) };
       return { ok: true, stdout: statusStdout(converted, 41) };
     };
     const { agent } = recordingAgent(() => {
@@ -331,16 +355,21 @@ describe("ConvertTick", () => {
 
   // --- the boundaries this tick must never cross -----------------------------------------------
 
-  it("stops at converted: it runs no formatting, publishing or sending stage", async () => {
+  it("stops at rendered: it runs no publishing or sending stage", async () => {
     // The tick's whole reason for existing is to have 2차 검수 already populated. Sending is what
     // 2차 검수 decides, so nothing here may reach X, Telegram, Typefully or Drive. Asserted over the
-    // full list of stages actually run rather than as a comment, because "add the format step too,
-    // it is right there" is the most likely next edit to this file.
+    // full list of stages actually run rather than as a comment.
+    //
+    // `format` was on this list until the tick grew a format stage of its own, and taking it off is
+    // not a relaxation of the boundary — a rendering is not a delivery. `SendChannels` sends only
+    // `approved` renderings and only when a human asks it to; everything this tick writes is
+    // `status: "rendered"`, which is precisely the state 2차 검수 exists to act on. What replaced the
+    // ban is the far narrower rule below: format runs, in one mode, with no other flag.
     const { run, agent, ran } = pipeline();
 
     await new ConvertTick(run, agent).run();
 
-    for (const forbidden of ["format", "send:", "drive:publish", "translate:save", "x:reconcile"]) {
+    for (const forbidden of ["send:", "drive:publish", "translate:save", "x:reconcile", "--approve"]) {
       expect(ran.join(" "), forbidden).not.toContain(forbidden);
     }
   });
@@ -370,6 +399,20 @@ describe("ConvertTick", () => {
     expect(ran.filter((r) => r.startsWith("convert:prepare"))).toEqual(["convert:prepare --limit 2"]);
   });
 
+  it("calls format with the only-missing flag and nothing else, ever", async () => {
+    // The flag IS the invariant. A bare `pnpm format` rebuilds every rendering there is, from the
+    // variant, at `status: "rendered"` — which discards the text a reviewer edited in 2차 검수 and
+    // resets their approval. Wired into a 30-minute tick, dropping this one argument erases the
+    // board's accumulated review work 48 times a day, silently. `--ids`/`--types`/`--channels` are
+    // what a "make it configurable too" change reaches for next, and each of them would narrow what
+    // the scheduler ever renders while still looking like it ran.
+    const { run, agent, ran } = pipeline();
+
+    await new ConvertTick(run, agent, { batch: 2 }).run();
+
+    expect(ran.filter((r) => r.startsWith("format"))).toEqual([FORMAT_CALL]);
+  });
+
   it("keeps a failure short enough for the Telegram alert to still name the stage", async () => {
     // `tickOutcome` composes `${stage}: ${detail}` and condenses it, and
     // deploy/herald-notify-failure.sh then keeps only the last 500 characters of the journal line.
@@ -384,5 +427,279 @@ describe("ConvertTick", () => {
     expect(line).not.toContain("\n");
     expect(line.slice(-500)).toContain("convert: FAILED — claude-agent:conversion:");
     expect(line).toContain("(ran convert:prepare → status → status)");
+  });
+});
+
+// --- the format stage ---------------------------------------------------------------------------
+//
+// Why these tests drive the real `FormatVariants` instead of a canned stdout like every other stage
+// in this file: the rule the format stage has to hold — it must never touch a rendering that already
+// exists — is a property of the use case, and no string fixture can observe it. A tick that ran
+// `pnpm format` with no flag at all would satisfy every parser test above and still discard 2차 검수's
+// accumulated work on its first fire.
+
+const NOW = "2026-08-08T04:17:00.000Z";
+
+function contentVariant(over: Partial<ContentVariant> = {}): ContentVariant {
+  return {
+    itemId: "x:1", type: "x", sourceKorean: "승인된 번역", convertedText: "변환된 카피",
+    status: "converted", createdAt: "2026-08-01T00:00:00.000Z", ...over,
+  };
+}
+
+/**
+ * A tick whose `format` stage is the actual use case over in-memory stores, driven by the argv the
+ * tick really passes and printing the lines `src/cli/format.ts` really prints (both built from
+ * `src/cli/formatLines.ts`, so a rewording on either side cannot pass here and fail in production).
+ *
+ * The agent stub does what a real `claude -p` pass does through `convert:save`: it upserts variants.
+ * `status` is then computed from the store rather than canned, so the tick's own saved-something
+ * check is satisfied by the same rows the format stage later reads — the two stages agree because
+ * they share a database, exactly as they do in production.
+ */
+function memoryPipeline(opts: { variants: ContentVariant[]; renderings: ChannelRendering[]; saves?: ContentVariant[] }) {
+  const { variants, renderings } = opts;
+  const saves = opts.saves ?? [];
+
+  const conversionStore: ConversionStore = {
+    loadAll: async () => [...variants],
+    upsert: async (v) => {
+      const i = variants.findIndex((x) => x.itemId === v.itemId && x.type === v.type);
+      if (i >= 0) variants[i] = v;
+      else variants.push(v);
+    },
+    listConvertedKeys: async () => new Set(variants.map((v) => `${v.itemId}:${v.type}`)),
+  };
+  const formattingStore: FormattingStore = {
+    loadAll: async () => [...renderings],
+    upsert: async (r) => {
+      const i = renderings.findIndex((x) => renderingKey(x) === renderingKey(r));
+      if (i >= 0) renderings[i] = r;
+      else renderings.push(r);
+    },
+    listRenderedKeys: async () => new Set(renderings.map(renderingKey)),
+  };
+
+  const ran: string[] = [];
+  const agent: WorksheetAgent = {
+    async fill() {
+      for (const v of saves) await conversionStore.upsert(v);
+      return { ok: true, stdout: "saved" };
+    },
+  };
+
+  const run = async (script: string, args: string[]): Promise<StageResult> => {
+    ran.push([script, ...args].join(" "));
+    if (script === "convert:prepare") {
+      return {
+        ok: true,
+        stdout: saves.length > 0 ? preparedVariantsLine(saves.length, "w.md") : NOTHING_TO_CONVERT_LINE,
+      };
+    }
+    if (script === "status") return { ok: true, stdout: statusStdout(variants.length) };
+    if (script === "format") {
+      const { renderings: made, warnings } = await new FormatVariants(conversionStore, formattingStore, () => NOW).run(
+        {},
+        { onlyMissing: args.includes(ONLY_MISSING_FLAG) },
+      );
+      const first = made.length > 0 ? formattedRenderingsLine(made.length) : NOTHING_TO_FORMAT_LINE;
+      return { ok: true, stdout: [first, ...warnings.map(formatWarningLine)].join("\n") };
+    }
+    return { ok: true, stdout: "" };
+  };
+
+  return { run, agent, ran };
+}
+
+describe("ConvertTick — the format stage", () => {
+  it("never touches a rendering that already exists: an approved one survives a full tick byte-identical", async () => {
+    // THE invariant. `FormatVariants` builds every rendering it emits at `status: "rendered"`,
+    // `refined: false`, with canonical text straight from the variant, and upserts it — so a format
+    // run that selects a pair a reviewer has already approved *overwrites the approval and the
+    // reviewer's edit*, with no trace and no confirmation. Production is holding approved renderings
+    // right now, and this tick fires every 30 minutes.
+    //
+    // The variant is deliberately still present and its `convertedText` deliberately differs from
+    // the stored rendering: that is the state a reviewer leaves behind after editing on the board,
+    // and it is the only state in which the overwrite is observable at all.
+    const approved: ChannelRendering = {
+      itemId: "x:1", type: "x", channel: "x",
+      text: "검수자가 2차 검수에서 직접 고쳐 둔 문구",
+      refined: true,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      status: "approved",
+      approvedAt: "2026-08-02T03:04:05.678Z",
+    };
+    const untouched = structuredClone(approved);
+    const renderings = [approved];
+    const variants = [contentVariant({ itemId: "x:1", convertedText: "검수자가 고치기 전의 변환본" })];
+
+    const { run, agent } = memoryPipeline({
+      variants,
+      renderings,
+      saves: [contentVariant({ itemId: "x:2", convertedText: "이번 tick이 새로 변환한 글" })],
+    });
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    const after = renderings.find((r) => r.itemId === "x:1")!;
+    expect(after).toEqual(untouched);
+    // Spelled out as well as compared whole, so a failure names which half moved.
+    expect(after.text).toBe(untouched.text);
+    expect(after.status).toBe("approved");
+    expect(after.approvedAt).toBe("2026-08-02T03:04:05.678Z");
+    expect(after.refined).toBe(true);
+    expect(after.createdAt).toBe("2026-08-01T00:00:00.000Z");
+
+    // The discriminating half: a format stage that skipped everything — or was never wired at all —
+    // would satisfy every assertion above. The variant this tick converted must have become a card.
+    expect(renderings.filter((r) => r.itemId === "x:2").map((r) => r.channel)).toEqual(["x"]);
+    expect(renderings.find((r) => r.itemId === "x:2")!.status).toBe("rendered");
+  });
+
+  it("renders every channel of a multi-channel type the tick just converted", async () => {
+    // `announcement` fans out to telegram + kakao, so "the board is populated" is not one row per
+    // variant. A tick that rendered only the first channel would leave the 카카오 card missing and
+    // look like it worked.
+    const renderings: ChannelRendering[] = [];
+    const { run, agent } = memoryPipeline({
+      variants: [],
+      renderings,
+      saves: [contentVariant({ itemId: "x:9", type: "announcement", convertedText: "📢 **공지** 본문" })],
+    });
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(renderings.map((r) => r.channel)).toEqual(["telegram", "kakao"]);
+  });
+
+  it("formats even when this tick prepared nothing", async () => {
+    // The stranded-backlog case, and the reason the format stage sits outside the "nothing was
+    // prepared" early return. A variant can exist with no rendering for reasons this tick had no
+    // part in: an earlier tick that failed at its own format stage, a hand-run `pnpm convert:save`,
+    // a rendering deleted during a migration. If formatting only ever ran on a tick that itself
+    // converted something, such an item would wait for an unrelated approval to come along — the
+    // same shape of bug that once left 19 translatable items stranded for 21 hours because a quiet
+    // source account ended `WatchTick` before its translate stages.
+    //
+    // What the early return protects is the `claude -p` subscription turn, and this stage spends
+    // none: it is mechanical, it is one query when there is nothing to do, and the agent is not
+    // involved.
+    const renderings: ChannelRendering[] = [];
+    const { run, agent, ran } = memoryPipeline({
+      variants: [contentVariant({ itemId: "x:7", convertedText: "지난 tick이 저장하고 렌더링은 못 한 변환본" })],
+      renderings,
+    });
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(ran).toEqual(["convert:prepare --limit 1", FORMAT_CALL]);
+    expect(renderings.map((r) => r.itemId)).toEqual(["x:7"]);
+  });
+
+  it("does nothing at all when every variant already has its rendering", async () => {
+    // The steady state at this cadence, and the one the zero-work output shape exists for: the
+    // stage must report "nothing" in a shape the tick recognises, not fail and not silently rewrite
+    // the rows it just decided to leave alone.
+    const existing: ChannelRendering = {
+      itemId: "x:1", type: "x", channel: "x", text: "이미 렌더링된 문구",
+      refined: false, createdAt: "2026-08-01T00:00:00.000Z", status: "rendered",
+    };
+    const renderings = [existing];
+    const { run, agent } = memoryPipeline({ variants: [contentVariant({ itemId: "x:1" })], renderings });
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(renderings).toEqual([structuredClone(existing)]);
+  });
+
+  it("carries FormatVariants' warnings out of the tick instead of swallowing them", async () => {
+    // `runStage` captures a stage's stdout and the tick throws it away on success, so an over-length
+    // emission would be reported to nobody: the reviewer sees the card but not that it is 2 weighted
+    // characters over X's limit until they open the destination breakdown. They travel as report
+    // notes, which `tickOutcome` prints ahead of the outcome line — see its own comment for why they
+    // are notes and not a failure.
+    const renderings: ChannelRendering[] = [];
+    const { run, agent } = memoryPipeline({
+      variants: [],
+      renderings,
+      saves: [contentVariant({ itemId: "x:5", type: "x", convertedText: "가".repeat(141) })],
+    });
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(report.notes).toEqual(["  ⚠ x:5/x/x: x_paste, x_typefully: 282/280 (2 초과)"]);
+    // End to end: the note reaches the journal, and the outcome line stays the last line so the
+    // failure hook's `journalctl -n 5` tail keeps working.
+    const { notes, line } = tickOutcome("convert", report);
+    expect(notes).toEqual(report.notes);
+    expect(line).toContain("convert: ok");
+  });
+
+  it("fails the tick when format prints something it does not recognise", async () => {
+    // Same contract as every other parser here: unrecognised is a failure, never "nothing to do". A
+    // format stage whose line stopped matching is a board that stops filling, which looks exactly
+    // like a quiet week.
+    const { agent } = recordingAgent();
+    const run = async (script: string): Promise<StageResult> => {
+      if (script === "convert:prepare") return { ok: true, stdout: NOTHING_TO_CONVERT_LINE };
+      return { ok: true, stdout: "  ⚠ x:1/x/x: 282/280 (2 초과)" };
+    };
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure?.stage).toBe("format");
+    expect(report.failure?.detail).toContain("unrecognised format output");
+  });
+
+  it("reports a failing format stage", async () => {
+    const { run, agent } = pipeline({ failStage: "format" });
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(report.failure).toEqual({ stage: "format", detail: "ECONNREFUSED" });
+    expect(report.stagesRun).toEqual(["convert:prepare", "status", "status", "format"]);
+  });
+
+  it("does not run format after a failure earlier in the tick", async () => {
+    // A tick that already failed must not go on writing rows. The agent failure is the realistic
+    // one: its batch is half-saved at best, and formatting a half-saved batch produces cards a
+    // reviewer would then be reading against nothing.
+    const { run, agent, ran } = pipeline({ savesPerPass: 0 });
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(false);
+    expect(ran).not.toContain(FORMAT_CALL);
+  });
+
+  it("still reads format's line when pnpm printed its own output around it", async () => {
+    // Every stage is spawned as `pnpm <script>`, and pnpm writes `Already up to date` /
+    // `Done in 463ms …` to stdout around the script's own lines whenever it does install work.
+    const { run, agent } = pipeline({
+      format: ["Already up to date", "", formattedRenderingsLine(3), "Done in 463ms using pnpm v11.20.0"].join("\n"),
+    });
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+  });
+
+  it("parses the two shapes pnpm format actually prints, and only those", async () => {
+    // Cross-file pin, the same one `convertPrepareLines` gets above: the CLI and the tick are two
+    // processes that agree on nothing but this text, so both build it from
+    // `src/cli/formatLines.ts` and this asserts the parser accepts what that module emits.
+    for (const stdout of [formattedRenderingsLine(7), NOTHING_TO_FORMAT_LINE]) {
+      const { run, agent } = pipeline({ format: stdout });
+      const report = await new ConvertTick(run, agent).run();
+      expect(report.ok, stdout).toBe(true);
+    }
   });
 });
