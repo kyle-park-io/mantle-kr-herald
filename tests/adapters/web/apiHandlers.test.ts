@@ -176,7 +176,7 @@ function makeDeps(
     formatVariants: {
       run: async (input: unknown) => {
         spy.formats.push(input);
-        return { renderings: [], warnings: [] };
+        return { renderings: [], warnings: [], skippedPosted: [] };
       },
     } as unknown as ApiDeps["formatVariants"],
     loadQuota: async () => ({ error: "not configured" }),
@@ -785,14 +785,14 @@ describe("POST /api/items/:id/format", () => {
     d.formatVariants = {
       run: async (input: unknown) => {
         spy.formats.push(input);
-        return { renderings: [rnd(), rnd()], warnings: [] };
+        return { renderings: [rnd(), rnd()], warnings: [], skippedPosted: [] };
       },
     } as unknown as ApiDeps["formatVariants"];
 
     const res = await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"], channels: ["telegram"] });
 
     expect(res.status).toBe(200);
-    expect(res.json).toEqual({ rendered: 2, warnings: [] });
+    expect(res.json).toEqual({ rendered: 2, warnings: [], alreadyPosted: false });
     expect(spy.formats).toEqual([{ ids: ["x:1"], types: ["announcement"], channels: ["telegram"] }]);
   });
 
@@ -801,7 +801,7 @@ describe("POST /api/items/:id/format", () => {
     d.formatVariants = {
       run: async (input: unknown) => {
         spy.formats.push(input);
-        return { renderings: [], warnings: [] };
+        return { renderings: [], warnings: [], skippedPosted: [] };
       },
     } as unknown as ApiDeps["formatVariants"];
 
@@ -813,11 +813,29 @@ describe("POST /api/items/:id/format", () => {
   it("surfaces FormatVariants' warnings in the response, alongside the rendered count", async () => {
     const { d } = spied();
     const warning = { itemId: "x:1", type: "announcement" as const, channel: "telegram" as const, messages: ["over the X limit"] };
-    d.formatVariants = { run: async () => ({ renderings: [rnd()], warnings: [warning] }) } as unknown as ApiDeps["formatVariants"];
+    d.formatVariants = { run: async () => ({ renderings: [rnd()], warnings: [warning], skippedPosted: [] }) } as unknown as ApiDeps["formatVariants"];
 
     const res = await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"] });
 
-    expect(res.json).toEqual({ rendered: 1, warnings: [warning] });
+    expect(res.json).toEqual({ rendered: 1, warnings: [warning], alreadyPosted: false });
+  });
+
+  /**
+   * `FormatVariants` refuses to re-render an item whose 1차 translation is `posted`, for every
+   * caller — this route included. A 200 with `rendered: 0` and nothing else would read as a broken
+   * button, so the refusal is on the reply: the request was well-formed and the item really is
+   * finished, which is not a 400.
+   */
+  it("reports a refusal on a finished item rather than an unexplained zero", async () => {
+    const { d } = spied();
+    d.formatVariants = {
+      run: async () => ({ renderings: [], warnings: [], skippedPosted: ["x:1"] }),
+    } as unknown as ApiDeps["formatVariants"];
+
+    const res = await handleApi(d, "POST", "/api/items/x%3A1/format", { types: ["announcement"] });
+
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ rendered: 0, warnings: [], alreadyPosted: true });
   });
 
   it("400s without a non-empty types array, and does not run the use-case", async () => {

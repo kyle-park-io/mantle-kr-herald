@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A format run no longer builds channel cards for an item that has already been published.**
+  `selectVariants` filters on `types`/`ids`/`channels` and never looked at the source translation's
+  status, so `pnpm format --only-missing` — added this morning and run by the scheduler every 30
+  minutes — read a retired item's absent renderings as work to do and manufactured them. Three items
+  were in that state in production on 2026-08-08 (`x:2080608995371597892`,
+  `x:2080661810034917770`, `x:2081711456320655644`: 13 renderings, 10 variants between them), and
+  they sat on the 2차 검수 board as finished work a reviewer could not clear. Deleting the renderings
+  by hand did not help either — the variants remain, so the next tick rebuilt every one, losing the
+  approvals and keeping the clutter.
+  - **The rule is `PublishTranslations`', extended, not a new one.** That class already refuses to
+    re-process a `posted` translation, for every caller, because a finished item's record is the
+    record of what went out and re-processing *demotes* it. What re-processing demotes here is the
+    2차 검수 board rather than the Drive doc; the reasoning is the same and its comment is not
+    repeated in `FormatVariants`.
+  - **The skip applies to every caller, not only to `--only-missing`.** Scoping it to the scheduled
+    mode was the alternative and it is the weaker one: a bare `pnpm format` is documented as
+    "rebuild every card" and is what an operator runs after re-saving a conversion, so under that
+    scoping it would resurrect every card a human cleanup had just deleted — the cleanup would not
+    have survived one hand run. `posted` already means terminal for every caller in four other
+    places (`PublishTranslations`, `syncSummary`, `loadPublishState`, the 발행 route); a fifth that
+    meant it only on a timer is where a rule like this drifts. The cost is that `[포맷 다시]` and
+    `pnpm format --ids <a posted item>` render nothing; 되돌리기 reopens the item and 게시됨으로
+    closes it again, exactly as the Drive path already documents.
+  - **The refusal is reported rather than returned as a silent zero.** `FormatVariants.run` now
+    reports `skippedPosted`, `pnpm format` prints `skipped n item(s) already posted` under its
+    summary line, and the format route answers `alreadyPosted: true` alongside `rendered: 0`. An
+    unexplained zero is indistinguishable from "your selector matched nothing", which is the
+    appears-to-work-and-does-nothing shape this CLI already refuses elsewhere (`--only-missing` with
+    `--refine` throws rather than being ignored). The new line is deliberately not a `⚠`: it is the
+    permanent steady state of every retired item, not something `ConvertTick` should carry into the
+    journal as a note, and the summary line the tick parses is unchanged.
+  - **Counted where a write was actually declined**, which is why the gate sits after the
+    already-rendered check rather than before it: a finished item whose cards are all still on the
+    board is not work this run refused, and reporting it would put a line in the scheduler's run log
+    every 30 minutes about nothing having happened.
+  - **`status === "posted"` and nothing else.** Not `postedUrl`, which 되돌리기 leaves on the row as
+    the evidence of a disputed match — a gate on it would refuse exactly the item a reviewer just
+    reopened. An item with no translation row at all still formats: only an explicit `posted` says
+    "this went out", and the send path already blocks a missing source loudly.
+  - **The rest of what the schedulers touch was checked, not assumed.** `PrepareConversions`
+    (`convert:prepare`) filters `status === "approved"`; `PrepareTranslations` (`translate:prepare`)
+    selects only ids with no translation row at all, via `listTranslatedIds`, which counts every
+    status; `PrepareAlignment` (`translate:align`) filters `status === "translated"`; `collect` and
+    `status` write no translation; `RetireTranslation` (`x:reconcile`) is idempotent on `postedUrl`,
+    so a 되돌리기 survives the next reconcile. `FormatVariants` was the only hole.
+
 ### Added
 
 - **The conversion tick now formats what it converted, so its output actually reaches the 2차 검수

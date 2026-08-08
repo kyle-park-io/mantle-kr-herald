@@ -527,6 +527,13 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
     // overwrites whatever was stored (including an edit or an approval) for the chosen (type,
     // channel) pairs. The dashboard is expected to confirm that loss with the operator before
     // calling this; the route itself does not ask twice.
+    //
+    // With one exception it does not get to opt out of: an item whose 1차 translation is `posted` is
+    // finished, and `FormatVariants` renders nothing for it no matter who is asking (see that
+    // class's gate for why the skip is not scoped to the scheduler). Such a call 200s with
+    // `rendered: 0` and `alreadyPosted: true` — a refusal, not a fault, and 되돌리기 is what reopens
+    // the item. The flag is on the reply so a caller can say that instead of showing an unexplained
+    // zero; a 400 would be wrong, since the request was well-formed and the item really is done.
     if (method === "POST" && segments[3] === "format") {
       const b = (body ?? {}) as { types?: unknown; channels?: unknown };
       const typesRaw = b.types;
@@ -549,8 +556,11 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
         channels = b.channels as Channel[];
       }
 
-      const { renderings, warnings } = await deps.formatVariants.run({ ids: [itemId], types: typesRaw as ConversionType[], channels });
-      return { status: 200, json: { rendered: renderings.length, warnings } };
+      const { renderings, warnings, skippedPosted } = await deps.formatVariants.run({ ids: [itemId], types: typesRaw as ConversionType[], channels });
+      // `skippedPosted` is at most this one item, so it goes over the wire as the boolean question a
+      // caller actually asks — "was nothing rendered because this item is finished?" — rather than
+      // as a list the dashboard would have to compare against the id it just sent.
+      return { status: 200, json: { rendered: renderings.length, warnings, alreadyPosted: skippedPosted.length > 0 } };
     }
   }
 

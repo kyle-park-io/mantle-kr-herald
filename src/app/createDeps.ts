@@ -450,8 +450,11 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   }
 
   // Same stores and xMaxWeighted as `src/cli/format.ts` (non-refine branch), so a board-triggered
-  // reformat renders byte-identical output to `pnpm format`.
-  const formatVariants = new FormatVariants(conversionStore, formattingStore, undefined, loadXMaxWeighted());
+  // reformat renders byte-identical output to `pnpm format` — `translationStore` included, which is
+  // what makes the `posted` gate hold for the route as well as for the CLI. Handing this one a
+  // narrower set of stores than the CLI gets is how the two would come to disagree about which
+  // items are finished.
+  const formatVariants = new FormatVariants(conversionStore, formattingStore, translationStore, undefined, loadXMaxWeighted());
 
   /** Shared by both lockout layers below — see `attemptLimiter.ts`'s doc comment for why there are two. */
   const LOGIN_LOCKOUT_MS = 60_000;

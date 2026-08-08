@@ -18,6 +18,7 @@ import {
   NOTHING_TO_FORMAT_LINE,
   formattedRenderingsLine,
   formatWarningLine,
+  skippedPostedLine,
 } from "./formatLines";
 import { paths } from "../paths";
 
@@ -88,15 +89,21 @@ try {
     console.log(`prepared ${pending.length} refinement draft(s) → ${worksheetPath}`);
     console.log("Fill each 보정 section, then run: pnpm format:save --id <id> --type <t> --channel <c> --file <txt>");
   } else {
-    const { renderings, warnings } = await new FormatVariants(conversionStore, stores.formattingStore, undefined, xMaxWeighted).run(
-      selector,
-      { onlyMissing },
-    );
-    // Both shapes come from src/cli/formatLines.ts, not from a template literal here:
+    const { renderings, warnings, skippedPosted } = await new FormatVariants(
+      conversionStore,
+      stores.formattingStore,
+      stores.translationStore,
+      undefined,
+      xMaxWeighted,
+    ).run(selector, { onlyMissing });
+    // Every shape comes from src/cli/formatLines.ts, not from a template literal here:
     // `src/app/ConvertTick.ts` parses this first line on every scheduled fire and fails the tick on
     // anything it does not recognise, so the wording is a contract with another process. See that
     // module's own comment.
     console.log(renderings.length > 0 ? formattedRenderingsLine(renderings.length) : NOTHING_TO_FORMAT_LINE);
+    // Under the summary it qualifies, and ahead of the warnings: those are about text this run
+    // wrote, and this is about text it deliberately did not.
+    if (skippedPosted.length > 0) console.log(skippedPostedLine(skippedPosted.length));
     for (const w of warnings) console.log(formatWarningLine(w));
   }
 } finally {

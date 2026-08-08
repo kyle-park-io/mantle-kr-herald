@@ -506,10 +506,18 @@ export interface ConvertPrepareReply {
   archived?: string;
 }
 
-/** `POST /api/items/:id/format`. Unlike conversion this always does real work — see `FormatVariants`. */
+/**
+ * `POST /api/items/:id/format`. Unlike conversion this does the work itself — see `FormatVariants`.
+ *
+ * Except on a finished item: a translation retired to `posted` is never re-rendered, for any caller,
+ * so the reply comes back `rendered: 0` with `alreadyPosted: true`. Anything that offers this button
+ * has to say so — an unexplained zero reads as a broken button, and the way to reopen the item is
+ * 되돌리기, not another press.
+ */
 export interface FormatReply {
   rendered: number;
   warnings: FormatWarning[];
+  alreadyPosted: boolean;
 }
 
 /**
