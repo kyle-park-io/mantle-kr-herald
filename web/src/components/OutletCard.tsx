@@ -474,7 +474,7 @@ export function OutletCard(props: {
 
       <div className="rounded-b-xl border-t border-line bg-surface px-4 py-2.5">
         {addable.length === 0 ? (
-          <span className="text-[13px] text-faint">이 채널의 모든 방이 이미 올라와 있습니다.</span>
+          <span className="text-[13px] text-faint">추가할 수 있는 방이 더 없습니다.</span>
         ) : (
           <>
             <button
