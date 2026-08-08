@@ -60,7 +60,7 @@
     "serve:hosted": "tsx --env-file-if-exists=.env src/cli/serve-hosted.ts",
     "dev:web": "vite --config web/vite.config.ts",
     "build:web": "vite build --config web/vite.config.ts",
-    "build:api": "esbuild src/vercel/entry.ts --bundle --packages=external --platform=node --format=esm --target=node22 --outfile=dist/api-entry.js",
+    "build:api": "esbuild src/vercel/entry.ts --bundle --packages=external --platform=node --format=esm --target=node22 --outfile=dist/api-entry.js && cp src/vercel/api-entry.d.ts dist/api-entry.d.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "probe": "vitest run -c vitest.probe.config.ts",
