@@ -9,6 +9,12 @@ import type { ConversionType } from "../conversion/models";
  *
  * NOT to be confused with `Destination` in domain/formatting/emitters, which is the *spelling* of
  * a channel (`telegram_paste` vs `telegram_bot`), nor with `--target` in `drive:publish`.
+ *
+ * A room, specifically — not every place copy can end up. The X Articles surface is the same
+ * @0xMantleKR account in a different format, fed from the translation by `send:x-article` against
+ * its own ledger, and it lives in `domain/publish/xArticleTarget.ts` rather than here. It was in
+ * this array until 2026-08-08, which made `outletsForChannel("x")` answer with a room nothing could
+ * send to and every consumer filter it back out; see that file for the whole story.
  */
 export interface Outlet {
   id: string;
@@ -20,14 +26,6 @@ export interface Outlet {
   suggestedTypes: ConversionType[];
   /** Name of the env var holding the chat id. Only auto Telegram rooms have one. */
   chatIdEnv?: string;
-  /**
-   * Which pipeline delivers an `auto` outlet. `"channel"` (the default) = `send:channels` posts it
-   * through the channel's `ChannelSender`. `"x-article"` = `send:x-article` posts it from the
-   * translation rather than from a `ChannelRendering`, against its own ledger — so `send:channels`
-   * must skip it, or one approved `x` rendering goes out on the account twice. Ignored when
-   * `delivery` is `manual`.
-   */
-  autoPipeline?: "channel" | "x-article";
 }
 
 /**
@@ -37,7 +35,6 @@ export interface Outlet {
  */
 export const ALL_OUTLETS: Outlet[] = [
   { id: "x-post", label: "@0xMantleKR 포스트", channel: "x", delivery: "auto", suggestedTypes: ["x"] },
-  { id: "x-article", label: "@0xMantleKR 아티클", channel: "x", delivery: "auto", suggestedTypes: [], autoPipeline: "x-article" },
   { id: "tg-community", label: "맨틀 한국 커뮤니티", channel: "telegram", delivery: "auto", suggestedTypes: ["announcement", "casual"], chatIdEnv: "TELEGRAM_CHAT_ID_COMMUNITY" },
   { id: "tg-dev", label: "맨틀 한국 데브방", channel: "telegram", delivery: "auto", suggestedTypes: ["announcement", "explainer"], chatIdEnv: "TELEGRAM_CHAT_ID_DEV" },
   // Community rooms before KOL rooms, on both channels: this array's order is the order the board
@@ -77,9 +74,15 @@ export function outletsForChannel(channel: Channel): Outlet[] {
 
 /**
  * Whether `send:channels` delivers this outlet, i.e. an auto room posted through the channel's
- * `ChannelSender`. Manual rooms are pasted by a human, and `x-article` is posted by `send:x-article`
- * from the translation against its own ledger — sending it here too would post the copy twice.
+ * `ChannelSender`. Manual rooms are pasted by a human instead.
+ *
+ * Every room in this registry is now delivered by its channel's sender or by hand, so this is `auto`
+ * spelled out. It kept a second clause while the X Articles surface was registered as a room, since
+ * that one was `auto` and yet posted by `send:x-article`; the surface moved out
+ * (`domain/publish/xArticleTarget.ts`) and the clause went with it. Kept as a named predicate rather
+ * than inlined: the call sites ask "does send:channels deliver this?", which is the question that
+ * survives the next room being added.
  */
 export function deliveredByChannelSender(o: Outlet): boolean {
-  return o.delivery === "auto" && (o.autoPipeline ?? "channel") === "channel";
+  return o.delivery === "auto";
 }

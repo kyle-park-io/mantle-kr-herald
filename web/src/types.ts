@@ -307,7 +307,6 @@ export const PASTE_DESTINATION: Record<Channel, Destination> = {
 // wrong delivery mode would offer [발송] on a room no bot can post to.
 export const OUTLET_LABEL: Record<string, string> = {
   "x-post": "@0xMantleKR 포스트",
-  "x-article": "@0xMantleKR 아티클",
   "tg-community": "맨틀 한국 커뮤니티",
   "tg-dev": "맨틀 한국 데브방",
   "tg-kol": "텔레그램 KOL방",
@@ -320,7 +319,6 @@ export const OUTLET_LABEL: Record<string, string> = {
 /** `auto` = a bot posts it ([발송]); `manual` = a human pastes it and ticks 전달함. */
 export const OUTLET_DELIVERY: Record<string, "auto" | "manual"> = {
   "x-post": "auto",
-  "x-article": "auto",
   "tg-community": "auto",
   "tg-dev": "auto",
   "tg-kol": "manual",
@@ -384,7 +382,8 @@ export const CHANNEL_RENDERS_BOLD: Record<Channel, boolean> = {
 export const CHANNEL_FORMAT_NOTE: Record<Channel, string> = {
   // "포스트", not "X": X Articles do carry rich text, and they are a different path (`send:x-article`
   // posts the translation's markdown directly, never touching this channel). The article path is not
-  // named here — the reviewer on this card cannot act on it, and the board never rows that outlet.
+  // named here — the reviewer on this card cannot act on it, and the article surface is not a room
+  // at all (`src/domain/publish/xArticleTarget.ts`), so no card will ever carry it.
   x: "X 포스트에는 굵게가 없습니다. **로 감싸도 그대로 평문으로 나갑니다.",
   telegram: "**굵게**는 봇으로 보낼 때만 굵게 보입니다. 복사해서 붙여넣으면 평문입니다.",
   kakao: "카카오톡에는 굵게가 없습니다. **로 감싸도 그대로 평문이고, 강조는 이모지 · [대괄호] · 줄바꿈으로 하세요.",
