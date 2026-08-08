@@ -16,6 +16,7 @@ import type { ContentVariant } from "../../src/domain/conversion/models";
 import type { ChannelRendering } from "../../src/domain/formatting/models";
 import type { Translation } from "../../src/domain/translation/models";
 import { formatStatus, pipelineStages } from "../../src/status/pipeline";
+import type { TranslateFloorStatus } from "../../src/status/translateFloor";
 import { tickOutcome } from "../../src/cli/tickOutcome";
 import { preparedVariantsLine, NOTHING_TO_CONVERT_LINE } from "../../src/cli/convertPrepareLines";
 import {
@@ -52,19 +53,26 @@ function recordingAgent(onFill?: (kind: string) => void) {
  * would be invisible if the two fixtures agreed.
  */
 function statusStdout(converted: number, translated = 41): string {
+  // Same floor state `watchTick.test.ts`'s fixture uses, and for the same reason: a scheduled tick
+  // runs `pnpm status` from inside a loaded unit that carries a cutoff.
+  const floor: TranslateFloorStatus = { kind: "configured", floor: "2026-07-27T14:35:25.000Z" };
   return [
     "database: development · localhost:5432/herald",
     formatStatus(
-      pipelineStages({
-        collected: 128,
-        translations: Array.from({ length: translated }, () => ({ status: "approved" })),
-        // Rows, not items: `Converted (variants)`' total is one per (itemId, type), which is also
-        // exactly what one `convert:save` adds — see ConvertTick's own comment on why that makes it
-        // comparable with the count `convert:prepare` reported.
-        variants: Array.from({ length: converted }, (_, i) => ({ itemId: `x:${i}`, status: "converted" })),
-        renderings: [],
-        published: [],
-      }),
+      pipelineStages(
+        {
+          collected: 128,
+          translations: Array.from({ length: translated }, () => ({ status: "approved" })),
+          // Rows, not items: `Converted (variants)`' total is one per (itemId, type), which is also
+          // exactly what one `convert:save` adds — see ConvertTick's own comment on why that makes it
+          // comparable with the count `convert:prepare` reported.
+          variants: Array.from({ length: converted }, (_, i) => ({ itemId: `x:${i}`, status: "converted" })),
+          renderings: [],
+          published: [],
+        },
+        { floor, total: 128, inScope: 17 },
+      ),
+      floor,
     ),
   ].join("\n");
 }

@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { WatchTick } from "../../src/app/WatchTick";
 import type { StageResult, WorksheetAgent } from "../../src/ports/WorksheetAgent";
 import { formatStatus, pipelineStages } from "../../src/status/pipeline";
+import type { TranslateFloorStatus } from "../../src/status/translateFloor";
 import { watchOutcome } from "../../src/cli/watchSummary";
 
 function recordingAgent(onFill?: (kind: string) => void) {
@@ -30,16 +31,24 @@ function recordingAgent(onFill?: (kind: string) => void) {
  * before the funnel.
  */
 function statusStdout(translated: number): string {
+  // The floor state a real tick's `pnpm status` reports: this command runs *inside*
+  // herald-watch.service, so the unit is loaded and carries a cutoff. `tests/status/pipeline.test.ts`
+  // runs the other four states past the same line-anchored patterns.
+  const floor: TranslateFloorStatus = { kind: "configured", floor: "2026-07-27T14:35:25.000Z" };
   return [
     "database: development · localhost:5432/herald",
     formatStatus(
-      pipelineStages({
-        collected: 128,
-        translations: Array.from({ length: translated }, () => ({ status: "translated" })),
-        variants: [],
-        renderings: [],
-        published: [],
-      }),
+      pipelineStages(
+        {
+          collected: 128,
+          translations: Array.from({ length: translated }, () => ({ status: "translated" })),
+          variants: [],
+          renderings: [],
+          published: [],
+        },
+        { floor, total: 128, inScope: 17 },
+      ),
+      floor,
     ),
   ].join("\n");
 }
