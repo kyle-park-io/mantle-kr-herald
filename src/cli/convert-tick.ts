@@ -36,7 +36,11 @@ console.log(tickStartupLine("convert", OUTPUT_DIR, process.env.HERALD_OUTPUT_DIR
 const agent = new ClaudeCodeAgent(realClaudeSpawn);
 
 const report = await new ConvertTick(runStage, agent, { batch }).run();
-const { line, exitCode } = tickOutcome("convert", report);
+const { line, exitCode, notes } = tickOutcome("convert", report);
 
+// Before the outcome line, never after it: the outcome line has to stay this run's last journal
+// entry, because deploy/herald-notify-failure.sh reads the last five back. Notes are the format
+// stage's ⚠ warnings — the only place a scheduled `pnpm format`'s stdout survives at all.
+for (const note of notes) console.log(note);
 console.log(line);
 process.exitCode = exitCode;

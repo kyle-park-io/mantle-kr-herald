@@ -1,20 +1,30 @@
 import { agentStage, type StageResult, type StageRunner, type WorksheetAgent } from "../ports/WorksheetAgent";
 import type { TickReport } from "./TickReport";
 import { DEFAULT_CONVERT_BATCH } from "../cli/convertBatch";
+import { ONLY_MISSING_FLAG, WARNING_PREFIX } from "../cli/formatLines";
 
 /**
  * One tick of the conversion scheduler: `convert:prepare`, then — only if it prepared anything — one
- * `claude -p` pass over the worksheet, then a check that the pass actually saved what it was given.
+ * `claude -p` pass over the worksheet, then a check that the pass actually saved what it was given,
+ * then `format` for the pairs that have no rendering yet.
  *
  * It exists because the pipeline was automated up to `translated` and stopped there. After a human
  * approves in 1차 검수, turning that approval into channel variants was a manual `convert:prepare` +
  * agent + `convert:save`, so in practice the work went out by hand and the pipeline was bypassed.
  * Pre-rendering the variants means 2차 검수 is already populated when a reviewer arrives.
  *
- * **It stops at `converted`, and that is the whole design.** Nothing here formats, publishes or
- * sends: whether a variant ever reaches X, Telegram or Typefully is what 2차 검수 decides, and an
- * unattended scheduler must not pre-empt that. `ClaudeCodeAgent`'s allowlist is the structural half
- * of the same rule — the only shell command the agent can run at all is `pnpm convert:save`.
+ * **It stops at `rendered`, and that is the whole design.** Nothing here publishes or sends: whether
+ * a variant ever reaches X, Telegram or Typefully is what 2차 검수 decides, and an unattended
+ * scheduler must not pre-empt that. `ClaudeCodeAgent`'s allowlist is the structural half of the same
+ * rule — the only shell command the agent can run at all is `pnpm convert:save`, and the send/publish
+ * commands are denied outright.
+ *
+ * It stopped at `converted` until the format stage was added, which was one stage short of its own
+ * purpose: the 2차 검수 board is built from `renderings`, not from `variants`
+ * (`src/adapters/web/board.ts`), so an item this tick converted still showed "이 항목은 아직 렌더링이
+ * 없습니다. `pnpm format` 을 먼저 실행하세요" and offered the reviewer no button. `rendered` is not a
+ * step closer to publishing than `converted` was — `SendChannels` sends only `approved` renderings,
+ * and approving one is the human act this whole tick exists to prepare for.
  *
  * `WatchTick` is the pattern this follows, guard for guard; where the reasoning is identical it is
  * not restated here. The differences that matter:
@@ -30,6 +40,7 @@ import { DEFAULT_CONVERT_BATCH } from "../cli/convertBatch";
 
 const PREPARE_STAGE = "convert:prepare";
 const STATUS_STAGE = "status";
+const FORMAT_STAGE = "format";
 
 // `src/cli/convert-prepare.ts` prints exactly one of two first lines, both built by
 // `src/cli/convertPrepareLines.ts` (which explains why they are built there and not inline):
@@ -61,6 +72,24 @@ const NOTHING_TO_CONVERT_LINE = /^prepared 0 variant\(s\) — /m;
 // carries literal parentheses; they are escaped, not a group.
 const CONVERTED_LINE = /^\s*Converted \(variants\)\s+(\d+)/m;
 
+// `src/cli/format.ts` prints exactly one of two first lines, both built by `src/cli/formatLines.ts`
+// (which explains why they are built there and not inline):
+//   formatted 6 rendering(s) → the database (renderings)
+//   formatted 0 rendering(s) — nothing is waiting to be formatted
+// Warning lines may follow either, so both patterns match a single line with `m` rather than
+// anchoring the whole buffer — and `m` is load-bearing for pnpm's own stdout lines besides, exactly
+// as it is for PREPARED_LINE above.
+//
+// The `→` half is not captured: unlike `convert:prepare`, whose path the tick has to hand to the
+// agent, nothing downstream of this stage reads its destination. Only the count is read, and only
+// to tell "it did something" from "it had nothing to do" in the journal.
+const FORMATTED_LINE = /^formatted (\d+) rendering\(s\) → /m;
+
+// A prefix match, not a full-line anchor, for the same reason `NOTHING_TO_CONVERT_LINE` is one: the
+// zero case is the one most likely to grow an explanatory suffix later, and a tick that started
+// failing over a friendlier message would be a self-inflicted outage.
+const NOTHING_TO_FORMAT_LINE = /^formatted 0 rendering\(s\) — /m;
+
 type Prepared = { count: number; worksheetPath: string };
 
 /**
@@ -83,6 +112,35 @@ function parseConvertedCount(stdout: string): number | undefined {
   const match = CONVERTED_LINE.exec(stdout);
   if (!match) return undefined;
   return Number(match[1]);
+}
+
+/**
+ * How many renderings `pnpm format` wrote — `0` when it explicitly wrote none, `undefined` when the
+ * stdout matches neither known shape. Same contract as every parser above, and it matters as much
+ * here as anywhere: "formatted nothing" is this stage's normal outcome, so a line that stopped
+ * matching would be indistinguishable from a quiet week if unrecognised output were let through.
+ */
+function parseFormatted(stdout: string): number | undefined {
+  const match = FORMATTED_LINE.exec(stdout);
+  if (match) return Number(match[1]);
+  if (NOTHING_TO_FORMAT_LINE.test(stdout)) return 0;
+  return undefined;
+}
+
+/**
+ * The `⚠` lines `pnpm format` prints under its summary — over-length emissions and anything else
+ * `FormatVariants` flagged about the text it just wrote.
+ *
+ * Read out of stdout rather than recomputed, because this process never sees the renderings: the
+ * stage is a subprocess and the warnings exist only in the text it printed. `\r` is trimmed because
+ * these lines are compared and then re-printed, and a carriage return that survives into the journal
+ * is invisible right up until someone greps for one of them.
+ */
+function parseWarnings(stdout: string): string[] {
+  return stdout
+    .split("\n")
+    .map((line) => line.replace(/\r$/, ""))
+    .filter((line) => line.startsWith(WARNING_PREFIX));
 }
 
 export type ConvertTickOptions = {
@@ -137,10 +195,28 @@ export class ConvertTick {
     // spends a subscription turn converting nothing. The tick and the CLI deploy together, so the
     // second branch should be unreachable, but a version skew between them is exactly the kind of
     // thing that is only noticed by the bill.
-    if (prepared === null || prepared.count === 0) {
-      return { ok: true, stagesRun };
+    //
+    // It skips the agent pass, NOT the whole tick — this used to be an early return, and the format
+    // stage below runs either way. What the gate protects is the `claude -p` subscription turn, and
+    // formatting spends none; see `format`'s own comment for the backlog that would otherwise be
+    // stranded on every quiet fire.
+    if (prepared !== null && prepared.count > 0) {
+      const failed = await this.convert(stagesRun, prepared);
+      if (failed) return failed;
     }
 
+    return this.format(stagesRun);
+  }
+
+  /**
+   * The agent half: bracket one `claude -p` pass with the count that proves it saved what it was
+   * given. Returns the failing `TickReport` if anything went wrong, or `undefined` to carry on.
+   *
+   * Split out of `run` when the format stage arrived, so that "the agent pass and its verification"
+   * stays one unit that either completes or ends the tick, and the stage that follows it is not
+   * nested three levels inside its success path.
+   */
+  private async convert(stagesRun: string[], prepared: Prepared): Promise<TickReport | undefined> {
     // Bracket the agent pass with the one number that proves it did the job. A clean `claude -p` —
     // exit 0, `is_error: false`, no `permission_denials` — proves the process ran and was never
     // blocked; it does NOT prove the model ever called `convert:save`. A model that reads the
@@ -186,7 +262,52 @@ export class ConvertTick {
       });
     }
 
-    return { ok: true, stagesRun };
+    return undefined;
+  }
+
+  /**
+   * The last stage: turn variants into the channel renderings the 2차 검수 board is actually built
+   * from (`src/adapters/web/board.ts` computes its `unconverted` list from rendering keys, so a
+   * converted-but-unrendered item shows "아직 렌더링이 없습니다" and offers the reviewer no button).
+   *
+   * **`--only-missing`, and never anything else.** A bare `pnpm format` rebuilds every rendering in
+   * the database from its variant at `status: "rendered"`, `refined: false` — discarding the text a
+   * reviewer edited on the board and the approval they gave it. That is the right behaviour for
+   * `[포맷 다시]` and for a hand run, where a human confirms the loss first; on a 30-minute timer it
+   * is 2차 검수's work erased 48 times a day with a green tick each time. The flag is the whole
+   * safety property of this stage, which is why it is spelled once, in `src/cli/formatLines.ts`,
+   * shared with the CLI that reads it.
+   *
+   * No `--ids` either, and that is what makes this stage run unconditionally rather than only after
+   * a pass that converted something. A variant can exist with no rendering for reasons this tick had
+   * no part in — an earlier tick that failed after `convert:save`, a hand-run `convert:save`, a
+   * rendering lost in a migration — and none of those would ever be picked up if formatting were
+   * gated on this tick's own agent pass. The cost of being wrong in the other direction is one extra
+   * read-only query per fire; the cost of this direction is an item that waits for an unrelated
+   * approval to come along, which is the same shape as the quiet-source-account bug that stranded 19
+   * translatable items in `WatchTick` for 21 hours.
+   *
+   * No agent turn: formatting is mechanical (canonical text per channel, minus bold on the channels
+   * that cannot render it), so this stage costs a subprocess and a query, not a subscription turn.
+   *
+   * Warnings do not fail the tick — see `TickReport.notes` for where they go instead and why.
+   */
+  private async format(stagesRun: string[]): Promise<TickReport> {
+    const result = await this.runStage(FORMAT_STAGE, [ONLY_MISSING_FLAG]);
+    stagesRun.push(FORMAT_STAGE);
+
+    if (!result.ok) return this.fail(stagesRun, result);
+
+    if (parseFormatted(result.stdout) === undefined) {
+      return this.fail(stagesRun, {
+        ok: false,
+        stage: FORMAT_STAGE,
+        detail: `unrecognised format output: "${result.stdout}"`,
+      });
+    }
+
+    const notes = parseWarnings(result.stdout);
+    return notes.length > 0 ? { ok: true, stagesRun, notes } : { ok: true, stagesRun };
   }
 
   /**

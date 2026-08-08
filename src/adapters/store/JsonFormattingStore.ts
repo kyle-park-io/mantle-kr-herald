@@ -1,9 +1,7 @@
 import { join } from "node:path";
 import type { ChannelRendering } from "../../domain/formatting/models";
-import type { FormattingStore } from "../../ports/FormattingStore";
+import { renderingKey as key, type FormattingStore } from "../../ports/FormattingStore";
 import { readJsonFile, writeJsonFileAtomic } from "../../shared/store/jsonFile";
-
-const key = (r: Pick<ChannelRendering, "itemId" | "type" | "channel">) => `${r.itemId}:${r.type}:${r.channel}`;
 
 export class JsonFormattingStore implements FormattingStore {
   private readonly path: string;

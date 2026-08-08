@@ -4,12 +4,24 @@ import { CHANNEL_RENDERS_BOLD, emitAll, type Destination, type EmitResult } from
 import { DEFAULT_CHANNELS_BY_TYPE, type Channel, type ChannelRendering } from "../domain/formatting/models";
 import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { ConversionStore } from "../ports/ConversionStore";
-import type { FormattingStore } from "../ports/FormattingStore";
+import { renderingKey, type FormattingStore } from "../ports/FormattingStore";
 
 export interface FormatSelector {
   ids?: string[];
   types?: ConversionType[];
   channels?: Channel[];
+}
+
+export interface FormatOptions {
+  /**
+   * Format only the (item, type, channel) pairs that have **no rendering at all** yet, and leave
+   * every existing one exactly as it is. Default (`false`) rebuilds and overwrites — see `run`.
+   *
+   * A separate argument rather than another field on `FormatSelector` because that type is shared
+   * with `PrepareRefinements`, which does not and cannot honour this: a selector field that one of
+   * its two consumers silently ignores is a flag that appears to work and does nothing.
+   */
+  onlyMissing?: boolean;
 }
 
 export interface FormatWarning {
@@ -42,8 +54,29 @@ export class FormatVariants {
     private readonly xMaxWeighted: number = X_MAX_WEIGHTED,
   ) {}
 
-  async run(selector: FormatSelector): Promise<{ renderings: ChannelRendering[]; warnings: FormatWarning[] }> {
+  /**
+   * Render each selected variant into its channels' canonical text and upsert the result.
+   *
+   * **By default this overwrites.** Every rendering it emits carries `status: "rendered"`,
+   * `refined: false` and text rebuilt from the variant, so a pair that a reviewer edited and
+   * approved in 2차 검수 comes back out of here as an unapproved, unedited card. That is deliberate
+   * and is what the dashboard's red `[포맷 다시]` button and a hand-run `pnpm format --ids …` are
+   * for — the operator is told exactly what is lost and confirms it (`docs/ko/review.md`).
+   *
+   * `options.onlyMissing` is the mode for callers that are not an operator standing at a
+   * confirmation dialog — today, the 30-minute `ConvertTick`. It formats only the pairs with no
+   * rendering at all, which is the difference between "the board fills itself" and "the board is
+   * wiped twice an hour".
+   */
+  async run(
+    selector: FormatSelector,
+    options: FormatOptions = {},
+  ): Promise<{ renderings: ChannelRendering[]; warnings: FormatWarning[] }> {
     const variants = await selectVariants(this.conversionStore, selector);
+    // Read once for the whole run, before anything is written — and only in this mode, so the
+    // default path costs no extra query. Reading it inside the loop would also be wrong, not just
+    // slower: this run's own upserts would start appearing in it.
+    const alreadyRendered = options.onlyMissing ? await this.formattingStore.listRenderedKeys() : undefined;
 
     const renderings: ChannelRendering[] = [];
     const warnings: FormatWarning[] = [];
@@ -53,6 +86,11 @@ export class FormatVariants {
       // point that the writer can then refine per channel, which is what per-channel approval is for.
       const canonical = toCanonical(v.convertedText);
       for (const channel of channels) {
+        // The skip is per (item, type, channel), not per variant: one `announcement` fans out to
+        // telegram and kakao, and a run that skipped the whole variant because telegram was already
+        // rendered would leave the kakao card missing for good. The key comes from the port that
+        // produced the set — see `renderingKey`'s own comment for what a hand-rolled copy costs.
+        if (alreadyRendered?.has(renderingKey({ itemId: v.itemId, type: v.type, channel }))) continue;
         /**
          * …with one exception: bold markers are dropped for a channel that cannot render them.
          *

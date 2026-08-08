@@ -2,7 +2,7 @@ import type { Db } from "../db/Db";
 import { omitNulls } from "../db/omitNulls";
 import type { ConversionType } from "../../domain/conversion/models";
 import type { Channel, ChannelRendering } from "../../domain/formatting/models";
-import type { FormattingStore } from "../../ports/FormattingStore";
+import { renderingKey, type FormattingStore } from "../../ports/FormattingStore";
 
 /** The shape a row from `renderings` (see `src/adapters/db/schema.ts`) comes back as. */
 interface RenderingRow {
@@ -72,6 +72,11 @@ export class PgFormattingStore implements FormattingStore {
     const rows = await this.db.query<{ item_id: string; type: string; channel: string }>(
       "select item_id, type, channel from renderings",
     );
-    return new Set(rows.map((r) => `${r.item_id}:${r.type}:${r.channel}`));
+    // Through `renderingKey`, not a template literal of its own: this set is now read back by
+    // `FormatVariants`' only-missing mode, and the two sides have to spell the key the same way or
+    // that mode silently stops skipping anything. See the port's own comment.
+    return new Set(
+      rows.map((r) => renderingKey({ itemId: r.item_id, type: r.type as ConversionType, channel: r.channel as Channel })),
+    );
   }
 }
