@@ -14,9 +14,12 @@ import { kstStamp, type CollectedBreakdown } from "../types";
  *
  * - The **intake funnel** is derived from the database and works on every deployment, hosted
  *   included. It is why 수집 134 is not 223.
- * - The **floor scope** can only be read where the scheduler actually lives, because the floor's one
- *   real home is a systemd unit. On the hosted dashboard it never can be — see `reachCopy`'s
- *   `unknown` state, which says so in those words rather than implying no floor exists.
+ * - The **floor scope** can only be *read* where the scheduler actually lives, because the floor's
+ *   one real home is a systemd unit and the hosted dashboard is a Vercel function. What it shows
+ *   there instead is the scheduler's own report of the floor it ran with — `reachCopy`'s `reported`
+ *   state, which prints the report's age beside it so an observation is never mistaken for a
+ *   reading. With no report at all it falls back to `unknown`, which says the floor cannot be seen
+ *   from here rather than implying none exists.
  *
  * Every number here was computed server-side by the same function `pnpm status`'s Collected line is
  * formatted from (`collectedBreakdown` in `src/status/translateFloor.ts`). Nothing is re-derived on
@@ -67,6 +70,15 @@ export function CollectedBreakdownCard({ breakdown }: { breakdown: CollectedBrea
           </p>
         )}
         <p className="mt-0.5 text-faint">{reach.detail}</p>
+        {/* The report's age, and the only thing standing between a three-week-old observation and a
+            number that looks checked. Marked when it is stale or when it disagrees with what systemd
+            says on this machine — see `reachCopy`'s `report`/`reportAlarming`. */}
+        {reach.report && (
+          <p className={`mt-0.5 ${reach.reportAlarming ? "font-medium text-amber-ink" : "text-faint"}`}>
+            {reach.reportAlarming ? "⚠ " : ""}
+            {reach.report}
+          </p>
+        )}
         {reach.refusal && <p className="mt-0.5 font-mono text-[11px] text-faint">{reach.refusal}</p>}
       </div>
     </div>

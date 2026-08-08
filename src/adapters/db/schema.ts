@@ -266,6 +266,37 @@ const STATEMENTS: readonly string[] = [
 
   // `posted_url`/`posted_at` — declared in `ALTERED_COLUMNS` above, generated here too (Task 4.5).
   ...ALTERED_COLUMNS.filter((c) => c.table === "translations").map(alterColumnStatement),
+
+  // translate_floor_reports — TranslateFloorReport (status/translateFloor.ts). One row, id
+  // 'singleton', upserted by the watch tick (`PgTranslateFloorReport`).
+  //
+  // What it is for: the translation floor lives in `herald-watch.service`'s
+  // `HERALD_TRANSLATE_SINCE=` and nowhere else, and the hosted dashboard is a Vercel function with
+  // no systemd to ask — so it showed "cannot be read from here" forever. This is the scheduler
+  // *reporting* what it actually ran with, so that screen can read it from the database it already
+  // reads everything else from. The unit stays the single source of truth: nothing here is ever
+  // consulted to decide what to translate, and `collectedReach` (translateFloor.ts) gives a live
+  // `systemctl` answer precedence over this row wherever one can be had.
+  //
+  // Why its own table rather than a `lineage` row: `lineage` is `item_id NOT NULL, content NOT
+  // NULL` and models per-item content events, so a config observation would have to fabricate both
+  // — and `pnpm lineage --activity` is a date × stage rollup that would then grow a row on every
+  // date forever, burying the content history it exists to show.
+  //
+  // `floor` is nullable and that is load-bearing: null means the tick genuinely ran with no floor
+  // (the alarming state, the whole backlog oldest-first), which is a different fact from the row
+  // being absent because nothing has ever reported. `reported_at` is never null — the value is an
+  // observation with an age, and a reader that could not tell a fresh report from a three-week-old
+  // one would be back to stating a number as though it had been checked.
+  //
+  // No `ordinal`, for the same reason `auth_attempts` has none: that column exists so `db:export`
+  // can reproduce a file's insertion order, and this table is operational state that `db:export`
+  // never moves.
+  `create table if not exists translate_floor_reports (
+    id text primary key,
+    floor text,
+    reported_at text not null
+  )`,
 ];
 
 export async function applySchema(db: Db): Promise<void> {

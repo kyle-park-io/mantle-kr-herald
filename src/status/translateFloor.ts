@@ -144,6 +144,41 @@ function fromUnit(show: string | undefined): TranslateFloorStatus {
 }
 
 /**
+ * What the *scheduler itself* recorded about the floor it ran with, on the machine that owns it.
+ *
+ * The floor's only real home is the systemd unit, and nothing here changes that: this is an
+ * observation of that unit made by the tick, not a second place the value is configured. It exists
+ * because the hosted dashboard is a Vercel function — no systemd to ask, ever — and the honest
+ * `unknown` it showed instead was useless to the people who mostly read that screen. Copying the
+ * value into a Vercel env var was the obvious alternative and was rejected: a content decision
+ * stored twice drifts silently, which is the exact hazard this whole area exists to remove.
+ *
+ * So it travels with `at`, always, and every reader is required to show it. This is an observation
+ * with an age, not a setting — a scheduler that stopped ticking three weeks ago must read as a
+ * three-week-old report, never as a confident current answer.
+ */
+export interface TranslateFloorReport {
+  /**
+   * The floor that tick handed `translate:prepare --since`, already normalised by
+   * `parseTranslateSince`. Absent when the tick genuinely ran with none — the alarming state, and
+   * why this is optional rather than the row simply being missing: "the scheduler reported no floor"
+   * and "the scheduler has never reported" are different facts, the same way `none` and
+   * `not-installed` are above.
+   */
+  floor?: string;
+  /** When the tick read it. ISO, and never omitted — see this interface's own comment. */
+  at: string;
+}
+
+/** A `TranslateFloorReport` plus the same measurement `CollectedScope.inScope` carries, taken
+ *  against the *reported* floor rather than the one systemd named here. Both counts exist at once so
+ *  a reader that has systemd AND a report can compare them instead of picking one blind. */
+export interface ReportedScope extends TranslateFloorReport {
+  /** Items at or after `floor` — all of them when the reporting tick ran with no floor. */
+  inScope: number;
+}
+
+/**
  * How much of the collected total the scheduler can ever select, and the floor that decides it.
  *
  * `total` and `inScope` travel together so the note below can state both without a caller having to
@@ -152,9 +187,18 @@ function fromUnit(show: string | undefined): TranslateFloorStatus {
 export interface CollectedScope {
   floor: TranslateFloorStatus;
   total: number;
-  /** Items at or after the floor. Undefined when there is no floor to measure against — an unknown
-   *  scope must read as unknown, not as zero and not as everything. */
+  /** Items at or after the floor **systemd named here**. Undefined when there is no floor to measure
+   *  against — an unknown scope must read as unknown, not as zero and not as everything. */
   inScope?: number;
+  /**
+   * The scheduler's own last report, and the same count taken against it. Optional: a caller with no
+   * database in hand (every test fixture, `WatchTick`'s own status parsing) builds a scope without
+   * one, and absence here means "nothing has been reported", never "no floor".
+   *
+   * Carried even when systemd answered on this machine, deliberately — see `collectedReach` for the
+   * precedence rule and why a disagreement between the two must be shown rather than resolved away.
+   */
+  reported?: ReportedScope;
   /**
    * What X collection handed the pipeline before the reply filter, when the caller could count it.
    * Optional, and every note state below still prints without it: only `pnpm status` has the
@@ -179,14 +223,27 @@ export function collectedScope(
   items: { createdAt: string }[],
   floor: TranslateFloorStatus,
   intake?: XThreadIntake,
+  report?: TranslateFloorReport,
 ): CollectedScope {
   const since = floor.kind === "configured" ? floor.floor : undefined;
   return {
     floor,
     total: items.length,
     inScope: since === undefined ? undefined : items.filter((i) => i.createdAt >= since).length,
+    // The report's floor is measured with the identical string comparison, over the identical
+    // array — not a looser one, and not a second pass over a different query. The reported floor
+    // came out of `parseTranslateSince` on the scheduler's side (`watch.ts` parses before anything
+    // else runs), so it is already the same normalised shape `applySelector` compares with.
+    reported: report && {
+      ...report,
+      inScope: report.floor === undefined ? items.length : countAtOrAfter(items, report.floor),
+    },
     intake,
   };
+}
+
+function countAtOrAfter(items: { createdAt: string }[], floor: string): number {
+  return items.filter((i) => i.createdAt >= floor).length;
 }
 
 /**
@@ -208,32 +265,52 @@ export interface IntakeTerm {
 
 /**
  * How much of the collected total the scheduler can still reach — `TranslateFloorKind`'s five states
- * reduced to the three a reader has to tell apart, which is exactly the three branches `floorNote`
- * has always printed:
+ * plus the scheduler's own report, reduced to the four a reader has to tell apart:
  *
- * - `measured` — a floor is set and both sides of it were counted.
+ * - `measured` — a floor was read **here**, from systemd, and both sides of it were counted.
  * - `no-floor` — the unit is loaded and sets none. **The alarming one**, and emphatically not the
  *                same as `unknown`: it means the scheduler is draining the whole collected backlog
  *                oldest first.
- * - `unknown`  — nothing here could read the floor (`not-installed`, `unreadable`, `invalid`). The
- *                hosted dashboard is always this and always will be: a Vercel function has no
- *                systemd to ask. It says nothing whatever about whether a floor is set.
+ * - `reported` — nothing could be read here, but the scheduler recorded what it last ran with. The
+ *                numbers are real and the floor is real; what makes this its own state is that both
+ *                are *as of* `reportedAt` rather than as of now. The hosted dashboard's normal
+ *                state, and the reason this state exists at all.
+ * - `unknown`  — nothing could be read here and nothing has been reported (or systemd answered with
+ *                something unusable — see `collectedReach` for why that does not fall back). It says
+ *                nothing whatever about whether a floor is set.
  *
  * The reduction lives here rather than in each reader because the distinction it has to preserve is
- * the whole point of the module: `no-floor` and `unknown` are opposite facts, and a UI that
- * collapses them any further is back to reporting a number as though it had been checked.
+ * the whole point of the module: `no-floor` and `unknown` are opposite facts, `reported` is neither
+ * of them, and a UI that collapses any two is back to reporting a number as though it had been
+ * checked. `reported` in particular must never render as `measured`: one was verified against the
+ * running manager a moment ago, the other is an observation that could be three weeks old.
  *
  * `detail` carries the refusal's own words so `invalid`'s parse error is not lost in the collapse.
  */
 export interface CollectedReach {
-  kind: "measured" | "no-floor" | "unknown";
-  /** Items the scheduler can select. Set for `measured`, and for `no-floor` where it is all of them. */
+  kind: "measured" | "no-floor" | "reported" | "unknown";
+  /** Items the scheduler can select. Set for `measured`, for `no-floor` where it is all of them, and
+   *  for `reported` where it is measured against the reported floor. */
   inScope?: number;
-  /** Items below the floor, which are never selected. Only `measured`. */
+  /** Items below the floor, which are never selected. `measured` and `reported`. */
   belowFloor?: number;
-  /** The floor itself, normalised ISO. Only `measured`, and only when a `configured` floor produced
-   *  it — a hand-built scope can state an `inScope` without naming what it was measured against. */
+  /** The floor read **here**, from systemd, normalised ISO. Only `measured`, and only when a
+   *  `configured` floor produced it — a hand-built scope can state an `inScope` without naming what
+   *  it was measured against. Never holds a reported value: the two have different provenance and a
+   *  reader that cannot tell them apart is exactly what this type prevents. */
   floor?: string;
+  /**
+   * The floor the scheduler reported, normalised ISO — absent when the report says it ran with none.
+   * Only meaningful alongside `reportedAt`, which is what says a report exists at all.
+   */
+  reportedFloor?: string;
+  /**
+   * When the scheduler read `reportedFloor`. Set on `reported` always; set on `measured`/`no-floor`
+   * **only when the report disagrees with what systemd says here** — see `collectedReach`. So on
+   * those two kinds its presence is itself the disagreement flag, and a reader must show it rather
+   * than quietly preferring the fresher number.
+   */
+  reportedAt?: string;
   /** Why nothing could be read, in the words of whatever refused. Only `unknown`, and not always. */
   detail?: string;
 }
@@ -264,20 +341,81 @@ export function collectedBreakdown(scope: CollectedScope): CollectedBreakdown {
   };
 }
 
+/**
+ * Floor kinds where **systemd itself answered** about the floor, whatever the answer was.
+ *
+ * `configured` and `none` are the two useful answers. `invalid` is here too, and that is the one
+ * worth explaining: the unit sets a value `parseTranslateSince` refuses, so `watch.ts` throws before
+ * any stage runs and *every tick exits at startup*. A stored report from before that edit would
+ * therefore be a report from a scheduler that is now dead — falling back to it would paint a
+ * confident floor over the exact failure an operator has to see. So `invalid` keeps its `unknown`,
+ * with systemd's own parse error attached.
+ *
+ * `not-installed` and `unreadable` are the two that are NOT here: nothing was learned either way, so
+ * there is nothing for a report to contradict.
+ */
+function answeredBySystemd(kind: TranslateFloorKind): boolean {
+  return kind === "configured" || kind === "none" || kind === "invalid";
+}
+
+/**
+ * **Precedence: systemd first, the report only as a fallback, and a disagreement is never hidden.**
+ *
+ * A `systemctl show` is current by construction — it asks the running manager what the next tick
+ * will fire with. A stored report is what the *last* tick already fired with, which is the same
+ * thing right up until someone edits the unit and reloads. So where the machine can ask, the answer
+ * it gets wins; the report is what a reader with no systemd (the hosted dashboard, always) falls
+ * back to instead of the bare "cannot be read here" it used to show.
+ *
+ * When both exist and they differ, neither is dropped: `reportedFloor`/`reportedAt` ride along on
+ * the systemd-derived state so the reader can say "the unit now says X, the last tick ran with Y at
+ * <time>". That gap is real information — either the scheduler has not ticked since the change, or
+ * it has stopped — and resolving it silently in favour of the fresher value is how a dead scheduler
+ * looks healthy.
+ */
 function collectedReach(scope: CollectedScope): CollectedReach {
+  const reported = scope.reported;
+
   // `inScope !== undefined` rather than `floor.kind === "configured"`, carried over unchanged from
   // the note this replaced: a caller that measured a scope has one to report, whatever the floor's
   // provenance, and changing the predicate here would change `pnpm status`'s output.
   if (scope.inScope !== undefined) {
+    return withDisagreement(
+      {
+        kind: "measured",
+        inScope: scope.inScope,
+        belowFloor: scope.total - scope.inScope,
+        floor: scope.floor.floor,
+      },
+      scope.floor.floor,
+      reported,
+    );
+  }
+  if (scope.floor.kind === "none") {
+    return withDisagreement({ kind: "no-floor", inScope: scope.total }, undefined, reported);
+  }
+  if (reported && !answeredBySystemd(scope.floor.kind)) {
     return {
-      kind: "measured",
-      inScope: scope.inScope,
-      belowFloor: scope.total - scope.inScope,
-      floor: scope.floor.floor,
+      kind: "reported",
+      inScope: reported.inScope,
+      belowFloor: scope.total - reported.inScope,
+      reportedFloor: reported.floor,
+      reportedAt: reported.at,
     };
   }
-  if (scope.floor.kind === "none") return { kind: "no-floor", inScope: scope.total };
   return { kind: "unknown", detail: scope.floor.detail };
+}
+
+/** Attaches the report to a systemd-derived reach **only when the two name different floors** — see
+ *  `collectedReach`'s precedence comment. `undefined === undefined` (the unit sets none and the last
+ *  tick ran with none) is agreement, and agreement is nothing to report. */
+function withDisagreement(
+  reach: CollectedReach,
+  floorHere: string | undefined,
+  reported: ReportedScope | undefined,
+): CollectedReach {
+  if (!reported || reported.floor === floorHere) return reach;
+  return { ...reach, reportedFloor: reported.floor, reportedAt: reported.at };
 }
 
 /** The English label per term, for the one-line CLI form below. The dashboard keeps its own, in
@@ -313,12 +451,27 @@ export function collectedScopeNote(scope: CollectedScope): string {
 function floorNote(reach: CollectedReach): string {
   switch (reach.kind) {
     case "measured":
-      return `in scope ${reach.inScope} · below floor ${reach.belowFloor}`;
+      return `in scope ${reach.inScope} · below floor ${reach.belowFloor}${disagreementNote(reach)}`;
     case "no-floor":
-      return `in scope ${reach.inScope} · no floor set`;
+      return `in scope ${reach.inScope} · no floor set${disagreementNote(reach)}`;
+    case "reported":
+      // Never worded like `measured`. This machine did not read a floor — it is repeating what the
+      // scheduler wrote down, and the instant is part of the claim, not a decoration on it.
+      return reach.reportedFloor === undefined
+        ? `in scope ${reach.inScope} · ⚠ scheduler reported NO floor, at ${reach.reportedAt}`
+        : `in scope ${reach.inScope} · below floor ${reach.belowFloor} · as the scheduler reported at ${reach.reportedAt}`;
     case "unknown":
       return "scope unknown · no floor could be read";
   }
+}
+
+/** The suffix a systemd-derived state carries when the scheduler's last report named a different
+ *  floor — see `collectedReach`'s precedence comment for why this is printed rather than resolved.
+ *  ⚠ because it has exactly two explanations and both need looking at: the unit was edited and the
+ *  scheduler has not ticked since, or the scheduler has stopped ticking altogether. */
+function disagreementNote(reach: CollectedReach): string {
+  if (reach.reportedAt === undefined) return "";
+  return ` · ⚠ last tick ran with ${reach.reportedFloor ?? "no floor"}, reported ${reach.reportedAt}`;
 }
 
 /**

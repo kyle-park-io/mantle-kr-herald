@@ -15,7 +15,8 @@ describe("applySchema", () => {
     );
     expect(rows.map((r) => r.table_name)).toEqual([
       "auth_attempts", "deliveries", "few_shot_examples", "lark_items", "lineage", "outlet_overrides",
-      "publish_entries", "renderings", "translations", "variants", "x_article_deliveries", "x_threads",
+      "publish_entries", "renderings", "translate_floor_reports", "translations", "variants",
+      "x_article_deliveries", "x_threads",
     ]);
   });
 

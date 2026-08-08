@@ -218,22 +218,35 @@ export interface IntakeTerm {
 
 /**
  * Mirrors `CollectedReach` in `src/status/translateFloor.ts` — how much of 수집 the scheduler can
- * still reach, in the three states a reader has to tell apart.
+ * still reach, in the four states a reader has to tell apart.
  *
  * `no-floor` and `unknown` are opposite facts and must never render alike: the first means the
  * scheduler is draining the whole backlog oldest first (something to act on), the second means this
- * screen could not ask (nothing is known either way). The hosted dashboard is always `unknown` —
- * a Vercel function has no systemd — so the copy for it has to read as "cannot be seen from here",
- * never as "there is none".
+ * screen could not ask (nothing is known either way).
+ *
+ * `reported` is the state the hosted dashboard normally shows, and it is neither of those and not
+ * `measured` either. A Vercel function has no systemd, so the floor it prints is the one the
+ * *scheduler wrote down* on the machine that owns the unit — real numbers, real floor, but as of
+ * `reportedAt` rather than as of now. Rendering it like `measured` would turn a possibly-three-week
+ * -old observation into a confident current answer, which is the whole failure mode this state
+ * exists to keep visible.
  */
 export interface CollectedReach {
-  kind: "measured" | "no-floor" | "unknown";
-  /** Items the scheduler can select. Set for `measured`, and for `no-floor` where it is all of them. */
+  kind: "measured" | "no-floor" | "reported" | "unknown";
+  /** Items the scheduler can select. Set for `measured`, for `no-floor` where it is all of them, and
+   *  for `reported` where it is measured against the reported floor. */
   inScope?: number;
-  /** Items below the floor, which are never selected. Only `measured`. */
+  /** Items below the floor, which are never selected. `measured` and `reported`. */
   belowFloor?: number;
-  /** The floor itself, normalised ISO. Only `measured`. */
+  /** The floor read from systemd on the serving machine, normalised ISO. Only `measured` — never a
+   *  reported value, so the card can never present one as the other. */
   floor?: string;
+  /** The floor the scheduler reported. Absent when the report says it ran with none. */
+  reportedFloor?: string;
+  /** When the scheduler read it. Always set on `reported`; on `measured`/`no-floor` it appears only
+   *  when the report DISAGREES with what systemd says on the serving machine, so its presence there
+   *  is the disagreement itself and the card has to show it. */
+  reportedAt?: string;
   /** Why nothing could be read, in the words of whatever refused. Only `unknown`, and not always. */
   detail?: string;
 }

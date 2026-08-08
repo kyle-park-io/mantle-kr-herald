@@ -14,10 +14,13 @@ import type { CollectedTally, FunnelCounts } from "../../src/status/pipeline";
 import {
   FLOOR_VAR,
   WATCH_UNIT,
+  collectedBreakdown,
   type CollectedBreakdown,
   type CollectedReach,
   type IntakeTerm,
+  type TranslateFloorStatus,
 } from "../../src/status/translateFloor";
+import { reachCopy } from "../../web/src/collectedBreakdown";
 import {
   ALL_TYPES as WEB_TYPES,
   ALL_CHANNELS as WEB_CHANNELS,
@@ -178,9 +181,12 @@ describe("web type mirror", () => {
    * beside a number whose whole purpose is to be believable.
    *
    * Each nested type therefore gets its own pair, and the two `kind` unions get `SameUnion`: those
-   * decide which of three states the card paints, and "the unit sets no floor" and "this screen
-   * cannot ask" are opposite facts (`CollectedReach`'s own doc comment). A member that existed on
-   * one side only would render as no state at all.
+   * decide which of four states the card paints, and "the unit sets no floor", "this screen cannot
+   * ask" and "the scheduler reported this a while ago" are three different facts
+   * (`CollectedReach`'s own doc comment). A member that existed on one side only would render as no
+   * state at all — which is exactly what adding `reported` to the domain without mirroring it here
+   * would have produced: a hover card with a blank 스케줄러 번역 범위 section on every hosted page
+   * load, since `reachCopy`'s switch would fall through every case.
    */
   it("mirrors the collected breakdown field-for-field, nested types included", () => {
     const tallyFromDomain: WebCollectedTally = {} as CollectedTally;
@@ -214,6 +220,50 @@ describe("web type mirror", () => {
     expect([tallyKeys, breakdownKeys, reachKeys, termKeys, reachKinds, termKinds, termOps]).toEqual(
       Array.from({ length: 7 }, () => true),
     );
+  });
+
+  /**
+   * The mirror checks above compare *declarations*. This one closes the loop the other way: it
+   * drives the real `collectedBreakdown` through every floor state the server can be in, with and
+   * without a scheduler report, and requires the dashboard's own `reachCopy` to have something to
+   * say about each `reach` that comes back.
+   *
+   * The declaration checks alone cannot catch a reach the server can *produce* but the card never
+   * renders — a kind mirrored in `types.ts` and mirrored in `reachCopy`'s switch can still return an
+   * empty headline, and the section on screen would simply be blank. Blank is the one outcome this
+   * card must never have: its whole purpose is that the 수집 total is never shown without the
+   * qualification that makes it believable.
+   */
+  it("gives the dashboard copy for every reach the server can actually produce", () => {
+    const floors: TranslateFloorStatus[] = [
+      { kind: "configured", floor: "2026-07-27T14:35:25.000Z" },
+      { kind: "none" },
+      { kind: "not-installed" },
+      { kind: "unreadable", detail: "systemctl: not found" },
+      { kind: "invalid", detail: 'HERALD_TRANSLATE_SINCE is not a date this can parse: "soon"' },
+    ];
+    const reports = [
+      undefined,
+      // Agreeing, disagreeing, and one that says the tick ran with no floor at all — the three
+      // shapes `collectedReach`'s precedence rule branches on.
+      { floor: "2026-07-27T14:35:25.000Z", at: "2026-08-08T04:17:09.000Z", inScope: 20 },
+      { floor: "2026-06-01T00:00:00.000Z", at: "2026-08-08T04:17:09.000Z", inScope: 90 },
+      { at: "2026-08-08T04:17:09.000Z", inScope: 134 },
+    ];
+    const kinds = new Set<string>();
+    for (const floor of floors) {
+      for (const reported of reports) {
+        const inScope = floor.kind === "configured" ? 20 : undefined;
+        const reach = collectedBreakdown({ floor, total: 134, inScope, reported }).reach;
+        kinds.add(reach.kind);
+        const copy = reachCopy(reach, new Date("2026-08-08T05:17:09.000Z"));
+        expect(copy.headline.trim().length, `headline for ${reach.kind}`).toBeGreaterThan(0);
+        expect(copy.detail.trim().length, `detail for ${reach.kind}`).toBeGreaterThan(0);
+      }
+    }
+    // And the sweep really did reach all four — a precedence change that made one unreachable would
+    // otherwise leave this test passing over three.
+    expect([...kinds].sort()).toEqual(["measured", "no-floor", "reported", "unknown"]);
   });
 
   /**

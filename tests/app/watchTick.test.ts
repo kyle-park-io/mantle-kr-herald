@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { WatchTick } from "../../src/app/WatchTick";
 import type { StageResult, WorksheetAgent } from "../../src/ports/WorksheetAgent";
 import { formatStatus, pipelineStages } from "../../src/status/pipeline";
-import type { TranslateFloorStatus } from "../../src/status/translateFloor";
+import type { TranslateFloorReport, TranslateFloorStatus } from "../../src/status/translateFloor";
 import { watchOutcome } from "../../src/cli/watchSummary";
 
 function recordingAgent(onFill?: (kind: string) => void) {
@@ -687,4 +687,118 @@ describe("WatchTick", () => {
 
     expect(ran.filter((r) => r.startsWith("collect"))).toEqual(["collect"]);
   });
+});
+
+/**
+ * The floor the tick ran with, written down for readers that cannot ask systemd — the hosted
+ * dashboard, which is a Vercel function and never will have one. `herald-watch.service`'s
+ * `HERALD_TRANSLATE_SINCE=` stays the single source of truth; this is a report of it, and every
+ * property below is about that distinction holding under the states a real tick can be in.
+ */
+describe("WatchTick — reporting the floor it ran with", () => {
+  const NOW = new Date("2026-08-08T04:17:09.000Z");
+
+  /** Records what was reported, and optionally refuses to record it. */
+  function recorder(options: { throws?: string } = {}) {
+    const reports: TranslateFloorReport[] = [];
+    const reportFloor = async (report: TranslateFloorReport): Promise<void> => {
+      reports.push(report);
+      if (options.throws) throw new Error(options.throws);
+    };
+    return { reportFloor, reports };
+  }
+
+  it("reports the floor it was handed, stamped with when it read it", async () => {
+    const { run, agent } = pipeline({ align: NOTHING_TO_ALIGN });
+    const { reportFloor, reports } = recorder();
+
+    await new WatchTick(run, agent, {
+      translateSince: "2026-07-27T14:35:25.000Z",
+      reportFloor,
+      now: () => NOW,
+    }).run();
+
+    expect(reports).toEqual([{ floor: "2026-07-27T14:35:25.000Z", at: "2026-08-08T04:17:09.000Z" }]);
+  });
+
+  it("reports a tick running with no floor as exactly that, not as no report", async () => {
+    // The alarming state, and it has to survive the trip: a tick with no `--since` selects from the
+    // whole collected backlog oldest first. A reader that saw nothing at all would show "cannot be
+    // read from here", which is the opposite fact.
+    const { run, agent } = pipeline({ align: NOTHING_TO_ALIGN });
+    const { reportFloor, reports } = recorder();
+
+    await new WatchTick(run, agent, { reportFloor, now: () => NOW }).run();
+
+    expect(reports).toEqual([{ floor: undefined, at: "2026-08-08T04:17:09.000Z" }]);
+  });
+
+  it("reports before any stage runs, so a tick that dies at collect still says the scheduler is alive", async () => {
+    // Two reasons this is not at the end. A tick spends minutes inside `claude -p`, so an instant
+    // stamped afterwards would fold the run's own duration into the age a reader uses to judge
+    // whether the scheduler is still going. And a tick that fails at collect *did* run, with this
+    // floor — which is exactly what a reader with no systemd needs to know.
+    const { run, agent } = pipeline({ failStage: "collect" });
+    const { reportFloor, reports } = recorder();
+
+    const report = await new WatchTick(run, agent, {
+      translateSince: "2026-07-27T14:35:25.000Z",
+      reportFloor,
+      now: () => NOW,
+    }).run();
+
+    expect(report.ok).toBe(false);
+    expect(reports).toHaveLength(1);
+  });
+
+  /**
+   * The house rule for post-action bookkeeping (`SendChannels`, around its ledger write): a
+   * bookkeeping failure must never be reported as a failure of the work it was bookkeeping for.
+   * Here the work is the entire pipeline — and a failed tick fires `OnFailure=`, which runs
+   * `deploy/herald-notify-failure.sh` and pages a human. Translating, aligning and saving everything
+   * correctly and then going red over a one-row upsert is not a trade this scheduler makes.
+   */
+  it("never fails a tick because the report could not be written", async () => {
+    const { run, agent, calls } = pipeline({ align: NOTHING_TO_ALIGN });
+    const { reportFloor, reports } = recorder({ throws: "ECONNREFUSED 127.0.0.1:5432" });
+
+    const report = await new WatchTick(run, agent, {
+      translateSince: "2026-07-27T14:35:25.000Z",
+      reportFloor,
+      now: () => NOW,
+    }).run();
+
+    expect(report.ok).toBe(true);
+    // And the tick genuinely carried on — the pipeline ran, not just the return value.
+    expect(reports).toHaveLength(1);
+    expect(calls).toEqual(["translation"]);
+    expect(report.stagesRun).toContain("translate:align");
+  });
+
+  it("is not a stage, so a report never shows up in what the tick says it ran", async () => {
+    // `stagesRun` is what `watchOutcome` prints and what an operator reads to see how far a tick
+    // got. A bookkeeping write is not a pipeline stage and must not lengthen that list.
+    const { run, agent } = pipeline({ align: NOTHING_TO_ALIGN });
+    const { reportFloor } = recorder();
+
+    const withReport = await new WatchTick(run, agent, { reportFloor, now: () => NOW }).run();
+    const without = await new WatchTick(...pipelineArgs()).run();
+
+    expect(withReport.stagesRun).toEqual(without.stagesRun);
+  });
+
+  it("writes nothing at all when no reporter was supplied", async () => {
+    // A hand-run `pnpm watch` from a checkout, and every other test in this file. The option being
+    // absent has to mean "do not report", never "report to a default somewhere".
+    const { run, agent } = pipeline({ align: NOTHING_TO_ALIGN });
+    const report = await new WatchTick(run, agent).run();
+    expect(report.ok).toBe(true);
+  });
+
+  /** The same pipeline the test above compares against, built fresh so the two runs cannot share
+   *  the stub agent's accumulated translated count. */
+  function pipelineArgs(): [ReturnType<typeof pipeline>["run"], WorksheetAgent] {
+    const { run, agent } = pipeline({ align: NOTHING_TO_ALIGN });
+    return [run, agent];
+  }
 });
