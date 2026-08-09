@@ -10,8 +10,10 @@ import {
   checkStatus,
   checkConvertPrepare,
   checkLogout,
+  checkLiveness,
   type StatusPayload,
 } from "../deploy/smokeChecks";
+import type { LiveProbeResult } from "../doctor/liveProbes";
 
 /**
  * `pnpm deploy:smoke <url>` — run against a deployment once it is up, to prove the thing that
@@ -135,6 +137,18 @@ if (cookie) {
   const statusRes = await request("/api/status", { headers: { cookie } });
   const payload = (statusRes ? await statusRes.json().catch(() => undefined) : undefined) as StatusPayload;
   results.push(...checkStatus(payload));
+
+  // The one thing checkStatus cannot tell you: whether the credentials behind those `present` flags
+  // still work. Read through the same session the status call used. `.catch(() => undefined)` on the
+  // parse, same as the `/api/status` call above: a non-JSON body (a gateway error page, say) must fall
+  // into checkLiveness's "route unreadable" path, not crash the whole script via registerErrorHandler.
+  const liveRes = await request("/api/diagnostics/live");
+  const liveBody = liveRes && liveRes.ok ? await liveRes.json().catch(() => undefined) : undefined;
+  const probes = (liveBody as { probes?: LiveProbeResult[] } | undefined)?.probes;
+  // Same null/undefined guard checkStatus itself applies to `payload` before reading a field off it —
+  // a malformed body parses to `undefined` here despite the `as StatusPayload` cast.
+  const sendsEnabled = payload !== null && typeof payload === "object" && payload.sendsEnabled === true;
+  results.push(...checkLiveness(probes, sendsEnabled));
 
   const convertPrepareCode = await statusOf("/api/items/deploy-smoke-probe/convert-prepare", {
     method: "POST",

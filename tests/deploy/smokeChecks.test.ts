@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   checkAnonymous, checkLogin, checkCredentials, checkStatus, checkConvertPrepare, checkLogout,
+  checkLiveness,
   type StatusPayload,
 } from "../../src/deploy/smokeChecks";
+import type { LiveProbeResult } from "../../src/doctor/liveProbes";
 import { SESSION_COOKIE_NAME } from "../../src/adapters/web/sessionCookie";
 
 const HEALTHY: StatusPayload = {
@@ -243,5 +245,56 @@ describe("checkLogout", () => {
   it("never checks a follow-up /api/status call", () => {
     const rs = checkLogout(200, CLEARED);
     expect(rs.some((r) => r.name.includes("/api/status"))).toBe(false);
+  });
+});
+
+const probe = (key: string, status: LiveProbeResult["status"]): LiveProbeResult => ({ key, status, detail: `${key} ${status}` });
+
+describe("checkLiveness", () => {
+  it("passes everything when every probe is ok", () => {
+    const rs = checkLiveness([probe("google_auth", "ok"), probe("telegram", "ok")], false);
+    expect(rs.every((r) => r.status === "ok")).toBe(true);
+  });
+
+  // The Drive probe is two keys, not one — a broken review folder and a broken approved folder are
+  // distinguishable by name (liveProbes.ts). Both are publishing credentials and both must fail.
+  it("fails a dead publishing credential — that is what this deployment is for", () => {
+    for (const key of ["google_auth", "google_drive_review", "google_drive_approved", "lark"]) {
+      const rs = checkLiveness([probe(key, "dead")], false);
+      expect(rs[0].status, key).toBe("fail");
+    }
+  });
+
+  it("warns on a dead send credential while sends are closed", () => {
+    for (const key of ["telegram", "typefully"]) {
+      expect(checkLiveness([probe(key, "dead")], false)[0].status, key).toBe("warn");
+    }
+  });
+
+  it("fails the same credential once sends are open", () => {
+    // The flag comes from the same status payload, so the check tightens exactly when sends open
+    // rather than on a second decision someone has to remember.
+    for (const key of ["telegram", "typefully"]) {
+      expect(checkLiveness([probe(key, "dead")], true)[0].status, key).toBe("fail");
+    }
+  });
+
+  it("only ever warns about the Sheet — it is header links", () => {
+    expect(checkLiveness([probe("google_sheets", "dead")], true)[0].status).toBe("warn");
+  });
+
+  it("treats an unconfigured probe as ok, never as a failure", () => {
+    // Presence is deploy:check's job. A Telegram-only install must not go red over Lark Drive.
+    const rs = checkLiveness([probe("lark", "skipped"), probe("typefully", "skipped")], true);
+    expect(rs.every((r) => r.status === "ok")).toBe(true);
+  });
+
+  it("fails loudly when the route could not be read at all", () => {
+    // Distinguished from "everything passed": a deployment too old to have the route, or one
+    // answering 500, must not read as a clean bill of health.
+    const rs = checkLiveness(undefined, false);
+    expect(rs).toHaveLength(1);
+    expect(rs[0].status).toBe("fail");
+    expect(rs[0].detail).toMatch(/diagnostics/);
   });
 });

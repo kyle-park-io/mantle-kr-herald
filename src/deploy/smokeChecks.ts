@@ -1,5 +1,6 @@
 import type { CheckResult } from "../doctor/report";
 import { SESSION_COOKIE_NAME } from "../adapters/web/sessionCookie";
+import type { LiveProbeResult } from "../doctor/liveProbes";
 
 /**
  * The parsed shape of a running deployment's `/api/status` response (`StatusView`,
@@ -334,4 +335,50 @@ function clearsSessionCookie(setCookieHeader: string | undefined): boolean {
   const name = nameValue.slice(0, eq).trim();
   const value = nameValue.slice(eq + 1).trim();
   return name === SESSION_COOKIE_NAME && value === "" && /max-age=0/i.test(setCookieHeader);
+}
+
+/**
+ * Severity by what the credential is for, not by which API answered. Publishing is what this
+ * deployment exists to do, so a dead publish credential fails; sends ship closed and follow the flag
+ * the same status payload already carries; the Sheet is header links.
+ *
+ * `skipped` is ok, never a failure — presence is `deploy:check`'s job, and a Telegram-only install
+ * must not go red because Lark Drive is absent. Same split `requirements.ts` draws, same reason.
+ *
+ * Drive is two keys, not one (`google_drive_review` and `google_drive_approved` — `liveProbes.ts`
+ * split it so a broken review folder and a broken approved folder are distinguishable by name), and
+ * both are publishing credentials, so both are listed here.
+ */
+const PUBLISH_KEYS = ["google_auth", "google_drive_review", "google_drive_approved", "lark"] as const;
+const SEND_KEYS = ["telegram", "typefully"] as const;
+
+/**
+ * Judges `GET /api/diagnostics/live`'s probe results — the one thing `checkStatus` cannot tell you:
+ * whether the credentials behind those `present` flags still work. `probes` is `undefined` when the
+ * route itself could not be read (an old deployment without it, or one answering an error), which is
+ * a `fail`, not a pass — the same false clean bill this whole plan exists to remove.
+ */
+export function checkLiveness(probes: LiveProbeResult[] | undefined, sendsEnabled: boolean): CheckResult[] {
+  if (probes === undefined) {
+    return [
+      {
+        name: "credential liveness",
+        status: "fail",
+        detail:
+          "GET /api/diagnostics/live could not be read — an old deployment without the route, or one answering an error. " +
+          "Not the same as every credential being alive, so this is a failure rather than a pass.",
+      },
+    ];
+  }
+  return probes.map((probe) => {
+    const name = `live: ${probe.key}`;
+    if (probe.status === "ok") return { name, status: "ok" as const, detail: probe.detail };
+    if (probe.status === "skipped") return { name, status: "ok" as const, detail: probe.detail };
+    const severity: CheckResult["status"] = (PUBLISH_KEYS as readonly string[]).includes(probe.key)
+      ? "fail"
+      : (SEND_KEYS as readonly string[]).includes(probe.key) && sendsEnabled
+        ? "fail"
+        : "warn";
+    return { name, status: severity, detail: probe.detail };
+  });
 }
