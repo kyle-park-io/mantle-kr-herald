@@ -22,7 +22,7 @@
 # never migrated. Every step here must either complete or stop the script.
 set -euo pipefail
 
-# The tree this script installs INTO. Never edited by hand; `git reset --hard` below is what makes
+# The tree this script installs INTO. Never edited by hand; step 1's hard reset below is what makes
 # that safe to assume rather than hope. Spelled with $HOME to match the units' own `%h`.
 APP_DIR="$HOME/.herald/app"
 
@@ -37,6 +37,18 @@ DEV_DIR="/home/kyle/code/mantle-kr-herald"
 PROD_ENV="$HOME/.herald/prod.env"
 
 echo "herald-deploy: $DEV_DIR (config source) → $APP_DIR (runtime)"
+
+# ── 0. Configuration gate ─────────────────────────────────────────────────────────────────────────
+# Before anything destructive. Until 2026-08-09 the deploy checkout's .env was a symlink into
+# $DEV_DIR, so production's configuration was the development checkout's, read fresh at every timer
+# fire — the same exposure the deploy checkout closed for code on 2026-08-07, still open on the
+# config axis. It is a copy now, taken here, and this gate prints what the copy would change (names
+# only, never values) and stops unless --yes says the change is intended.
+#
+# It runs before step 1 hard-resets the checkout below, not next to the copy in step 3, because
+# refusing after the code has already moved is exactly the half-finished deploy this script's header
+# rules out. Read-only: nothing on disk changes until step 3.
+pnpm deploy:freeze --check --dev "$DEV_DIR" --app "$APP_DIR" "$@"
 
 # ── 1. Move the deploy checkout to merged main ────────────────────────────────────────────────────
 # `fetch` then `reset --hard`, not `pull`: a pull can leave a merge commit or refuse on a conflict,
@@ -59,47 +71,12 @@ fi
 echo "  deps: pnpm install --frozen-lockfile"
 (cd "$APP_DIR" && pnpm install --frozen-lockfile --silent)
 
-# ── 3. Relink the git-ignored steering config ─────────────────────────────────────────────────────
-# The glossary, style guide, locale, conversion prompts and .env are git-ignored, so a fresh clone
-# has only the committed `*.example.*` files. They are symlinked rather than copied so there is
-# exactly one copy of the real credentials and one copy of the team's steering decisions on this
-# machine — a second copy is a second thing to keep in sync, and the one that drifts is always the
-# one nobody remembers exists.
-#
-# The list is DERIVED, never hardcoded: every file under these directories that git ignores in the
-# development checkout gets linked. A steering file added later is picked up by the next deploy
-# with no edit here — a hardcoded list is the version of this that rots silently, and a missing
-# glossary does not fail loudly, it makes `translate:check` pass vacuously (see that command's own
-# empty-glossary refusal for the incident).
-link_ignored_config() {
-  local rel="$1"
-  [ -d "$DEV_DIR/$rel" ] || return 0
-  mkdir -p "$APP_DIR/$rel"
-  local src name
-  for src in "$DEV_DIR/$rel"/*; do
-    [ -f "$src" ] || continue
-    # Only the ignored ones. The committed `*.example.*` files are already in the clone from git,
-    # and linking over them would make the deploy checkout permanently dirty.
-    git -C "$DEV_DIR" check-ignore --quiet "$src" || continue
-    name="$(basename "$src")"
-    ln -sfn "$src" "$APP_DIR/$rel/$name"
-    echo "  link: $rel/$name"
-  done
-}
-
-# .env sits at the root rather than in a config directory, so it is linked on its own. Everything
-# the units need beyond DATABASE_URL comes from it — TWITTERAPI_IO_KEY, TELEGRAM_*, the Google
-# credentials — read by each command's own `tsx --env-file-if-exists=.env`.
-ln -sfn "$DEV_DIR/.env" "$APP_DIR/.env"
-echo "  link: .env"
-
-link_ignored_config translation
-link_ignored_config conversion
-# keys/ holds the Google service-account json. GOOGLE_AUTH_MODE is `oauth` today, so nothing reads
-# it — but GOOGLE_SA_KEY_FILE is a RELATIVE path (`keys/mantle-sa.json`), resolved against the
-# process working directory, which is now this checkout. Linking it means flipping that mode back
-# does not silently resolve to a file that is not there.
-link_ignored_config keys
+# ── 3. Freeze the git-ignored configuration ───────────────────────────────────────────────────────
+# Copies .env and every git-ignored file under translation/, conversion/ and keys/ from the
+# development checkout. The list is DERIVED, never hardcoded — `git check-ignore` decides, so a
+# steering file added later is picked up with no edit here. Step 0 already showed and gated the
+# change; this is the write.
+pnpm deploy:freeze --apply --dev "$DEV_DIR" --app "$APP_DIR"
 
 # ── 4. Schema ─────────────────────────────────────────────────────────────────────────────────────
 # Run on every deploy, not only when someone remembers a migration is pending. `applySchema` is
