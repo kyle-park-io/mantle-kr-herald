@@ -165,3 +165,86 @@ describe("deploy:freeze --apply", () => {
     expect(second.stdout).toContain("unchanged");
   });
 });
+
+// The two trees get opposite symlink semantics, and each direction has its own way of failing
+// silently, so each direction is pinned here rather than left to the tests above.
+//
+// Development side: a link is followed, because `apply()` copies with `readFileSync` and the
+// scheduler reads through it too. Deploy side: a link is never a snapshot — it is the pre-2026-08-09
+// layout — but it must still be *seen*, or the sweep cannot remove one the old deploy left behind.
+describe("deploy:freeze and the two trees' opposite symlink rules", () => {
+  it("follows a symlinked development .env instead of reporting its variables removed", async () => {
+    // A development `.env` that is itself a link (a shared secrets file, a restored backup) is what
+    // the scheduler would read, so the freeze must read the same bytes. Read with `lstat` instead,
+    // the development snapshot comes back empty and every name the deploy checkout already holds
+    // prints as removed — a diff that `--apply` then "fixes" by writing the identical bytes back,
+    // so the next `--check` prints it again, forever. The second check below is that half.
+    await writeFile(join(dev, ".env.source"), "SHARED_SECRET=one\n");
+    spawnSync("ln", ["-sfn", join(dev, ".env.source"), join(dev, ".env")]);
+    await writeFile(join(app, ".env"), "SHARED_SECRET=one\n");
+
+    const first = freeze("--check", "--dev", dev, "--app", app);
+    expect(first.stdout).toContain("env: unchanged");
+    expect(first.stdout).not.toContain("- SHARED_SECRET");
+    expect(first.status).toBe(0);
+
+    expect(freeze("--apply", "--dev", dev, "--app", app).status).toBe(0);
+
+    const second = freeze("--check", "--dev", dev, "--app", app);
+    expect(second.stdout).toContain("env: unchanged");
+    expect(second.status).toBe(0);
+  });
+
+  it("copies a symlinked development steering file, as a real file", async () => {
+    // The bash this replaced gated on `[ -f "$src" ]`, which follows links and would have linked
+    // this glossary. Skipping it writes no file and no `translation/` directory at all, and
+    // JsonGlossaryStore.load() turns a missing glossary into `[]` — the scheduler would translate
+    // against an empty glossary and say nothing.
+    await writeFile(join(dev, ".env"), "A=1\n");
+    await writeFile(join(dev, "glossary.shared.json"), `{"term":"linked"}`);
+    spawnSync("ln", ["-sfn", join(dev, "glossary.shared.json"), join(dev, "translation", "glossary.json")]);
+
+    const res = freeze("--apply", "--dev", dev, "--app", app);
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("freeze: translation/glossary.json");
+    expect(lstatSync(join(app, "translation", "glossary.json")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(app, "translation", "glossary.json"), "utf8")).toBe(`{"term":"linked"}`);
+  });
+
+  it("sweeps a deploy-checkout steering symlink whose development file is gone", async () => {
+    // Exactly what a migration finds: `ln -sfn` from the old deploy, its target since deleted in
+    // the development checkout. `ln -sfn` never removed anything, so this is the state the freeze
+    // exists to clear — and a link hidden from the snapshot survives every future deploy silently.
+    await writeFile(join(dev, ".env"), "A=1\n");
+    await writeFile(join(app, ".env"), "A=1\n");
+    const retired = join(app, "translation", "retired.json");
+    spawnSync("ln", ["-sfn", join(dev, "translation", "retired.json"), retired]);
+
+    const check = freeze("--check", "--dev", dev, "--app", app);
+    expect(check.stdout).toContain("- translation/retired.json");
+    expect(check.status).toBe(2);
+
+    expect(freeze("--apply", "--dev", dev, "--app", app).status).toBe(0);
+    // `existsSync` cannot answer this: it follows the link and already returns false for a dangling
+    // one, so it would pass against a link that is still sitting there. `lstat` sees the link.
+    expect(lstatSync(retired, { throwIfNoEntry: false })).toBeUndefined();
+  });
+
+  it("replaces a deploy-checkout steering symlink whose development file still exists", async () => {
+    // The other half of the same rule: the link is not a snapshot even when it resolves to the very
+    // bytes that would be written, so it reports as changed and `--apply` turns it into a copy.
+    await writeFile(join(dev, ".env"), "A=1\n");
+    await writeFile(join(app, ".env"), "A=1\n");
+    await writeFile(join(dev, "translation", "glossary.json"), `{"a":1}`);
+    spawnSync("ln", ["-sfn", join(dev, "translation", "glossary.json"), join(app, "translation", "glossary.json")]);
+
+    // `~`, not `+`: the deploy checkout does hold that path, it just does not hold a snapshot of it.
+    const check = freeze("--check", "--dev", dev, "--app", app);
+    expect(check.stdout).toContain("~ translation/glossary.json");
+    expect(check.status).toBe(2);
+
+    freeze("--apply", "--dev", dev, "--app", app);
+    expect(lstatSync(join(app, "translation", "glossary.json")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(app, "translation", "glossary.json"), "utf8")).toBe(`{"a":1}`);
+  });
+});

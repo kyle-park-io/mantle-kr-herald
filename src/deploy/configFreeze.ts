@@ -4,6 +4,17 @@
  * Node's own `--env-file` parsing (measured, see `tests/deploy/configFreeze.test.ts`) rather than a
  * generic dotenv dialect, and they are pure: every file read lives in `src/cli/deploy-freeze.ts`,
  * the same split `requirements.ts` and `smokeChecks.ts` already use.
+ *
+ * The modelling is deliberately partial, and "model Node's parsing" should be read with these two
+ * exclusions attached, because both fail *quietly*:
+ *   - **A quoted value spanning multiple lines.** Every line is parsed on its own here, so the first
+ *     line becomes an unterminated-quote value and the continuation lines are not assignments at all
+ *     and are skipped. A change confined to those continuation lines therefore reports as unchanged
+ *     and the deploy proceeds without `--yes`.
+ *   - **A key not starting `[A-Za-z_]`.** `ASSIGNMENT` never matches it, so the name is absent from
+ *     both sides of the diff and any change to it is invisible rather than misreported.
+ * Neither shape appears in this repo's `.env`, which is why they were left out; a `.env` that starts
+ * using either one needs this parser extended before the gate can be trusted to describe it.
  */
 
 /** `export FOO=`, `FOO =`, `FOO=` — the key, and everything after the first `=`. */
