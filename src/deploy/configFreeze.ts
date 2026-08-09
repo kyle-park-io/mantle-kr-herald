@@ -26,13 +26,35 @@ export function parseEnv(text: string): Map<string, string> {
   return out;
 }
 
-/** Quoted: taken literally, `#` included. Unquoted: trimmed and cut at the first `#`. */
+/**
+ * Quoted values: stripped of quotes, everything after the closing quote discarded, and only `\n`
+ * inside double quotes interpreted to a real newline. Unquoted: trimmed and cut at the first `#`.
+ * If a value starts with a quote but has no closing quote, it's treated as unquoted (the opening
+ * quote stays in the value), matching Node's behavior.
+ */
 function readValue(rest: string): string {
   const value = rest.trim();
   const quote = value[0];
-  if (value.length >= 2 && (quote === '"' || quote === "'") && value.endsWith(quote)) {
-    return value.slice(1, -1);
+
+  // Check if starts with a quote character
+  if (quote === '"' || quote === "'" || quote === "`") {
+    // Look for the closing quote
+    const closingIndex = value.indexOf(quote, 1);
+    if (closingIndex !== -1) {
+      // Found closing quote - extract content between quotes
+      let content = value.slice(1, closingIndex);
+
+      // Only interpret \n to newline in double quotes
+      if (quote === '"') {
+        content = content.replace(/\\n/g, "\n");
+      }
+
+      return content;
+    }
+    // No closing quote - fall through to unquoted path
   }
+
+  // Unquoted: truncate at first # and trim
   const hash = value.indexOf("#");
   return (hash === -1 ? value : value.slice(0, hash)).trim();
 }
