@@ -47,8 +47,11 @@ fi
 # Derived from this script's own location, not hardcoded. Since 2026-08-07 the scheduled units run
 # out of the deploy checkout (%h/.herald/app) rather than the development tree, and this script is
 # invoked from there too — a hardcoded development path would send it back to read a *different*
-# tree's .env, which works today only because that file happens to be symlinked and would be
-# silently wrong the moment it is not. tests/deploy/workingDirectory.test.ts pins this shape.
+# tree's .env. That used to be survivable by accident, because the deploy checkout's .env was a
+# symlink into the development tree and the two names resolved to one file. Since 2026-08-09 it is a
+# deploy-time copy, so the two genuinely differ the moment anyone edits the development one, and a
+# hardcoded path would send this alert with credentials production never ran with — or, once the
+# development tree loses its .env, with none. tests/deploy/workingDirectory.test.ts pins this shape.
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$REPO_DIR/.env"
 
