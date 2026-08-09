@@ -169,16 +169,29 @@ export function accessResult(name: string, res: { ok: boolean; status: number; f
  * Interpret a Sheets-API spreadsheet fetch. Unlike Drive files (checked with drive.file, which only
  * sees app-created files), a spreadsheet is reached with the `spreadsheets` scope, so this correctly
  * verifies a sheet the operator created themselves (e.g. the performance-tracker workbook).
- * 403 → the Sheets API is disabled in the GCP project, or the account can't access the sheet;
- * 404 → wrong id, or an uploaded `.xlsx` rather than a native Google Sheet.
+ * 403 → the Sheets API is disabled in the GCP project, or the account can't access the sheet.
+ *
+ * 404 has TWO causes and they are indistinguishable from the response alone, which is why
+ * `spreadsheetsScopeGranted` is a required field rather than an optional hint. A token carrying only
+ * `drive.file` is still a valid token to the Sheets API, so the call is not refused with 403 — it
+ * succeeds into a restricted view where the only visible spreadsheets are ones the app itself
+ * created, and everything else is simply "not found". A correct GSHEET_ID therefore 404s exactly
+ * like a wrong one. Until 2026-08-10 this said "check GSHEET_ID" in both cases, which sent an
+ * operator hunting for a new id while the id was right and the scope was the whole problem —
+ * with the scope failure printed on the line immediately above, already known to the caller.
  */
-export function sheetAccessResult(name: string, res: { ok: boolean; status: number; title?: string }): CheckResult {
+export function sheetAccessResult(
+  name: string,
+  res: { ok: boolean; status: number; title?: string; spreadsheetsScopeGranted: boolean },
+): CheckResult {
   if (res.ok) return { name, status: "ok", detail: `accessible${res.title ? ` (${res.title})` : ""}` };
   const detail =
     res.status === 403
       ? "403 — enable the Google Sheets API in the GCP project, or confirm this account can access the sheet"
       : res.status === 404
-        ? "not found — check GSHEET_ID (it must be a native Google Sheet, not an uploaded .xlsx)"
+        ? res.spreadsheetsScopeGranted
+          ? "not found — check GSHEET_ID (it must be a native Google Sheet, not an uploaded .xlsx)"
+          : "not found, but the token has no spreadsheets scope — fix that first (see the line above); a correct GSHEET_ID 404s the same way until it is granted"
         : `HTTP ${res.status}`;
   return { name, status: "fail", detail };
 }

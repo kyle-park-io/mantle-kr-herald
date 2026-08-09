@@ -131,26 +131,36 @@ describe("accessResult", () => {
 
 describe("sheetAccessResult", () => {
   it("ok when the sheet is reachable (with its title)", () => {
-    const r = sheetAccessResult("Sheet", { ok: true, status: 200, title: "2026 Q3 KR Work Sheet" });
+    const r = sheetAccessResult("Sheet", { ok: true, status: 200, title: "2026 Q3 KR Work Sheet", spreadsheetsScopeGranted: true });
     expect(r.status).toBe("ok");
     expect(r.detail).toContain("2026 Q3 KR Work Sheet");
   });
 
   it("403 hints at enabling the Sheets API (not a re-init like a Drive file)", () => {
-    const r = sheetAccessResult("Sheet", { ok: false, status: 403 });
+    const r = sheetAccessResult("Sheet", { ok: false, status: 403, spreadsheetsScopeGranted: true });
     expect(r.status).toBe("fail");
     expect(r.detail).toMatch(/Google Sheets API/);
     expect(r.detail).not.toContain("drive:init");
   });
 
-  it("404 hints at a wrong id or a non-native .xlsx", () => {
-    const r = sheetAccessResult("Sheet", { ok: false, status: 404 });
+  it("404 with the scope granted hints at a wrong id or a non-native .xlsx", () => {
+    const r = sheetAccessResult("Sheet", { ok: false, status: 404, spreadsheetsScopeGranted: true });
     expect(r.status).toBe("fail");
     expect(r.detail).toMatch(/native Google Sheet|\.xlsx/);
   });
 
+  // A drive.file-only token is valid to the Sheets API, so the call is not refused — it succeeds
+  // into a view containing only app-created spreadsheets, and a perfectly good GSHEET_ID reads as
+  // "not found". Sending the operator to re-check the id here costs an afternoon; it happened.
+  it("404 without the scope blames the scope, not the id", () => {
+    const r = sheetAccessResult("Sheet", { ok: false, status: 404, spreadsheetsScopeGranted: false });
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("spreadsheets scope");
+    expect(r.detail).not.toContain("check GSHEET_ID");
+  });
+
   it("other status → HTTP N", () => {
-    expect(sheetAccessResult("Sheet", { ok: false, status: 500 }).detail).toBe("HTTP 500");
+    expect(sheetAccessResult("Sheet", { ok: false, status: 500, spreadsheetsScopeGranted: true }).detail).toBe("HTTP 500");
   });
 });
 
