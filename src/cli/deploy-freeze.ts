@@ -76,10 +76,18 @@ export function readSnapshot(dir: string): Snapshot {
  * Written to a temp name in the destination directory and renamed, so an interrupted deploy leaves
  * each file either wholly old or wholly new. `chmod` before the rename, not after: the window where
  * a credential exists at the wrong mode should not exist at all.
+ *
+ * Both the `{ mode }` passed to `writeFileSync` and the following `chmodSync` are required, and
+ * neither is redundant. `writeFileSync`'s `mode` option only applies to a file it creates — the temp
+ * name is new on a clean run, so this closes the window where the freshly written bytes are briefly
+ * world-readable at the umask-derived default. But if a previous run was interrupted after this
+ * write and before its rename, the temp name from that run still exists on disk at the wrong mode;
+ * `writeFileSync`'s `mode` option is silently ignored for a file that already exists, so only the
+ * explicit `chmodSync` corrects it before this run's rename.
  */
 function writeFrozen(dest: string, data: Buffer, mode: number): void {
   const tmp = `${dest}.freeze-${process.pid}`;
-  writeFileSync(tmp, data);
+  writeFileSync(tmp, data, { mode });
   chmodSync(tmp, mode);
   renameSync(tmp, dest);
 }

@@ -102,7 +102,7 @@ describe("deploy:freeze --check", () => {
   });
 });
 
-import { statSync, readFileSync, existsSync } from "node:fs";
+import { statSync, readFileSync, existsSync, lstatSync } from "node:fs";
 
 describe("deploy:freeze --apply", () => {
   it("writes the env file with mode 600", async () => {
@@ -113,13 +113,25 @@ describe("deploy:freeze --apply", () => {
   });
 
   it("replaces a symlink left by the old layout with a real file", async () => {
-    await writeFile(join(dev, ".env"), "A=1\n");
+    // Content distinct from the "A=1\n" used elsewhere in this file, so a write that landed on the
+    // wrong file could not coincidentally read back as correct.
+    await writeFile(join(dev, ".env"), "REAL_DEV_SECRET=do-not-touch\n");
+    const devModeBefore = statSync(join(dev, ".env")).mode & 0o777;
     spawnSync("ln", ["-sfn", join(dev, ".env"), join(app, ".env")]);
     freeze("--apply", "--dev", dev, "--app", app);
-    expect(statSync(join(app, ".env")).isFile()).toBe(true);
+    // `statSync` follows symlinks, so it cannot tell a replaced file from an untouched link that
+    // still resolves to one — only `lstatSync` on the app path sees the link itself.
+    expect(lstatSync(join(app, ".env")).isSymbolicLink()).toBe(false);
     expect(existsSync(join(app, ".env"))).toBe(true);
-    // The development copy must survive: rename replaces the link, not its target.
-    expect(readFileSync(join(dev, ".env"), "utf8")).toBe("A=1\n");
+    expect(readFileSync(join(app, ".env"), "utf8")).toBe("REAL_DEV_SECRET=do-not-touch\n");
+    // The development copy must survive: rename replaces the link, not its target. Content alone
+    // cannot prove this — a write that went straight through the old symlink instead of using the
+    // tmp+rename dance would read dev/.env's own bytes and write those same bytes straight back, so
+    // content would come out identical either way. What it would also do is `chmod` the file the
+    // link points at — dev/.env — down to the frozen `.env` mode. Checking the mode is what actually
+    // fails if apply() ever wrote through the link again.
+    expect(readFileSync(join(dev, ".env"), "utf8")).toBe("REAL_DEV_SECRET=do-not-touch\n");
+    expect(statSync(join(dev, ".env")).mode & 0o777).toBe(devModeBefore);
   });
 
   it("copies steering files and gives keys/ mode 600", async () => {
