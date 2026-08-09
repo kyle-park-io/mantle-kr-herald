@@ -101,3 +101,55 @@ describe("deploy:freeze --check", () => {
     expect(res.status).not.toBe(0);
   });
 });
+
+import { statSync, readFileSync, existsSync } from "node:fs";
+
+describe("deploy:freeze --apply", () => {
+  it("writes the env file with mode 600", async () => {
+    await writeFile(join(dev, ".env"), "A=1\n");
+    expect(freeze("--apply", "--dev", dev, "--app", app).status).toBe(0);
+    expect(readFileSync(join(app, ".env"), "utf8")).toBe("A=1\n");
+    expect(statSync(join(app, ".env")).mode & 0o777).toBe(0o600);
+  });
+
+  it("replaces a symlink left by the old layout with a real file", async () => {
+    await writeFile(join(dev, ".env"), "A=1\n");
+    spawnSync("ln", ["-sfn", join(dev, ".env"), join(app, ".env")]);
+    freeze("--apply", "--dev", dev, "--app", app);
+    expect(statSync(join(app, ".env")).isFile()).toBe(true);
+    expect(existsSync(join(app, ".env"))).toBe(true);
+    // The development copy must survive: rename replaces the link, not its target.
+    expect(readFileSync(join(dev, ".env"), "utf8")).toBe("A=1\n");
+  });
+
+  it("copies steering files and gives keys/ mode 600", async () => {
+    await writeFile(join(dev, ".env"), "A=1\n");
+    await writeFile(join(dev, "translation", "glossary.json"), `{"a":1}`);
+    await writeFile(join(dev, "keys", "mantle-sa.json"), `{"private_key":"x"}`);
+    freeze("--apply", "--dev", dev, "--app", app);
+    expect(readFileSync(join(app, "translation", "glossary.json"), "utf8")).toBe(`{"a":1}`);
+    expect(statSync(join(app, "keys", "mantle-sa.json")).mode & 0o777).toBe(0o600);
+  });
+
+  it("removes a steering file that no longer exists in the development checkout", async () => {
+    await writeFile(join(dev, ".env"), "A=1\n");
+    await writeFile(join(app, "translation", "glossary.json"), "{}");
+    freeze("--apply", "--dev", dev, "--app", app);
+    expect(existsSync(join(app, "translation", "glossary.json"))).toBe(false);
+  });
+
+  it("leaves committed example files alone", async () => {
+    await writeFile(join(dev, ".env"), "A=1\n");
+    await writeFile(join(app, "translation", "tm.example.json"), "{}");
+    freeze("--apply", "--dev", dev, "--app", app);
+    expect(existsSync(join(app, "translation", "tm.example.json"))).toBe(true);
+  });
+
+  it("is idempotent", async () => {
+    await writeFile(join(dev, ".env"), "A=1\n");
+    freeze("--apply", "--dev", dev, "--app", app);
+    const second = freeze("--apply", "--dev", dev, "--app", app);
+    expect(second.status).toBe(0);
+    expect(second.stdout).toContain("unchanged");
+  });
+});

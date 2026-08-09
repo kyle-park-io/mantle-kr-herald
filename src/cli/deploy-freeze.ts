@@ -10,7 +10,7 @@
  * from leaving the deploy checkout's code already moved to origin/main — that script's header calls
  * a half-finished deploy worse than none.
  */
-import { readFileSync, readdirSync, existsSync, lstatSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, lstatSync, writeFileSync, chmodSync, renameSync, rmSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -72,6 +72,44 @@ export function readSnapshot(dir: string): Snapshot {
   return { env: isRealFile ? readFileSync(envPath, "utf8") : undefined, steering };
 }
 
+/**
+ * Written to a temp name in the destination directory and renamed, so an interrupted deploy leaves
+ * each file either wholly old or wholly new. `chmod` before the rename, not after: the window where
+ * a credential exists at the wrong mode should not exist at all.
+ */
+function writeFrozen(dest: string, data: Buffer, mode: number): void {
+  const tmp = `${dest}.freeze-${process.pid}`;
+  writeFileSync(tmp, data);
+  chmodSync(tmp, mode);
+  renameSync(tmp, dest);
+}
+
+/** `.env` and the service-account key are secrets; a glossary is a team document. */
+function modeFor(relPath: string): number {
+  return relPath === ".env" || relPath.startsWith("keys/") ? 0o600 : 0o644;
+}
+
+function apply(devDir: string, appDir: string): void {
+  writeFrozen(join(appDir, ".env"), readFileSync(join(devDir, ".env")), modeFor(".env"));
+  console.log("  freeze: .env");
+
+  for (const rel of STEERING_DIRS) {
+    const wanted = ignoredFilesIn(devDir, rel);
+    if (wanted.length > 0) mkdirSync(join(appDir, rel), { recursive: true });
+    for (const name of wanted) {
+      writeFrozen(join(appDir, rel, name), readFileSync(join(devDir, rel, name)), modeFor(`${rel}/${name}`));
+      console.log(`  freeze: ${rel}/${name}`);
+    }
+    // Only ever the git-ignored ones: the committed `*.example.*` files came from the clone, and
+    // deleting them would leave the deploy checkout permanently dirty.
+    for (const stale of ignoredFilesIn(appDir, rel)) {
+      if (wanted.includes(stale)) continue;
+      rmSync(join(appDir, rel, stale));
+      console.log(`  remove: ${rel}/${stale}`);
+    }
+  }
+}
+
 function main(): void {
   const devDir = option("dev");
   const appDir = option("app");
@@ -92,6 +130,11 @@ function main(): void {
     if (isEmptyDiff(envDiff) && isEmptyDiff(steeringDiff)) process.exit(0);
     if (flag("yes")) process.exit(0);
     fail("  config: changes above are not applied. Re-run with --yes once they are what you intend.", 2);
+  }
+
+  if (flag("apply")) {
+    apply(devDir, appDir);
+    process.exit(0);
   }
 
   fail("Nothing to do: pass --check or --apply.", 1);
