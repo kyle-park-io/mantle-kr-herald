@@ -242,6 +242,33 @@ describe("runLiveProbes", () => {
     expect(byKey(results, "telegram").detail.length).toBeGreaterThan(0);
   });
 
+  // Round-2 load-bearing test: `attempt()` used to redact only `result.detail`. A secret planted in
+  // any OTHER field a probe result carries — a Drive folder's `name`, Typefully's `resets_at`,
+  // Google's `tokeninfo` `scope` — survived into the returned object and into `JSON.stringify()` of
+  // the whole array, which is exactly what `GET /api/diagnostics/live` will serialise over the
+  // network once Task 3 exists. Asserts on the SERIALISED WHOLE RESULT, not field by field, so this
+  // one test also covers whatever field gets added next — the same reason the fix went into
+  // `attempt()` and not into each probe individually.
+  it("redacts every secret from the serialised whole result, not only from detail, field by field", async () => {
+    const GOOGLE_TOKEN = "ya29.access-token-WWWWWWWW"; // matches fullInput()'s googleToken
+    const results = await runLiveProbes(fullInput(), async (url) => {
+      if (String(url).includes("tokeninfo")) return ok({ scope: `leaked-in-scope:${GOOGLE_TOKEN}` });
+      if (String(url).includes("revfolder")) return ok({ id: "revfolder", name: `leaked-in-name:${GOOGLE_TOKEN}` });
+      if (String(url).includes("typefully")) {
+        return ok({ publishing_quota: { used: 1, remaining: 14, resets_at: `leaked-in-resetsAt:${SECRETS.typefullyKey}` } });
+      }
+      return ok({ code: 0, tenant_access_token: "t" });
+    });
+    const serialized = JSON.stringify(results);
+    expect(serialized).not.toContain(GOOGLE_TOKEN);
+    expect(serialized).not.toContain(SECRETS.typefullyKey);
+    // And the fields are still there, redacted rather than dropped — a diagnostic that goes silent
+    // instead of failing loudly is a different bug this must not trade for.
+    expect(serialized).toContain("leaked-in-scope:***");
+    expect(serialized).toContain("leaked-in-name:***");
+    expect(serialized).toContain("leaked-in-resetsAt:***");
+  });
+
   it("bounds each call with the given timeout", async () => {
     let seen: AbortSignal | undefined;
     await runLiveProbes(fullInput({ googleToken: undefined, googleDrive: undefined, googleSheetId: undefined, lark: undefined, typefully: undefined }),

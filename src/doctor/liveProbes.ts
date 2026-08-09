@@ -14,10 +14,21 @@
 
 export type ProbeStatus = "ok" | "dead" | "skipped";
 
+/**
+ * Every string this carries, at any depth — `detail`, `grantedScopes`' entries, `resourceName`, and
+ * `quota.resetsAt` — is guaranteed credential-free by construction: `attempt()` (below) walks the
+ * whole result and redacts every string leaf before it leaves the module, not just `detail`. A field
+ * added later gets this for free from the same walk; nothing here needs its own enforcement.
+ *
+ * Why the whole result and not just the human-readable line: a response body — a Drive folder's
+ * `name`, Typefully's `resets_at`, Google's `tokeninfo` `scope` — is attacker-influenced input the
+ * same way a thrown error's message is, and every field here is about to be serialised whole over the
+ * network by the deployment (`GET /api/diagnostics/live`), not merely printed as a terminal line.
+ */
 export interface LiveProbeResult {
   key: string;
   status: ProbeStatus;
-  /** Human-readable, English, and — enforced below — never containing a credential. */
+  /** Human-readable, English. */
   detail: string;
   /** Google only: the scopes `tokeninfo` reported for the access token this probe obtained. */
   grantedScopes?: string[];
@@ -78,6 +89,25 @@ function redact(text: string, secrets: readonly (string | undefined)[]): string 
   return out;
 }
 
+/**
+ * `redact()`, walked over every string leaf of a value — not just one named field. A probe result is
+ * a plain JSON-shaped object (strings, numbers, an array of strings, one level of nesting for
+ * `quota`), so a generic walk covers it completely: `detail` today, `grantedScopes`'s entries,
+ * `resourceName`, `quota.resetsAt` — and whatever string field the next probe adds, without this
+ * function or its caller needing to change. Naming fields one by one is exactly the shape of bug this
+ * fixes: `attempt()` used to redact `result.detail` alone, and every sibling field went out unredacted.
+ */
+function redactDeep<T>(value: T, secrets: readonly (string | undefined)[]): T {
+  if (typeof value === "string") return redact(value, secrets) as T;
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, secrets)) as T;
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = redactDeep(v, secrets);
+    return out as T;
+  }
+  return value;
+}
+
 /** A probe never throws: a diagnostic that dies when something is wrong is no diagnostic. */
 async function attempt(
   key: string,
@@ -90,7 +120,9 @@ async function attempt(
     // 200-OK body has a non-zero code would leak a secret if the provider echoes back what was
     // sent (e.g., { code: 10003, msg: "invalid app_secret: <the-real-secret>" }). Returning is
     // as common a failure path as throwing, and probes return dead() directly without exception.
-    return { ...result, detail: redact(result.detail, secrets) };
+    // The whole result is walked, not just `detail` — see `redactDeep` and `LiveProbeResult`'s doc
+    // comment.
+    return redactDeep(result, secrets);
   } catch (err) {
     return dead(key, redact(err instanceof Error ? err.message : String(err), secrets));
   }
@@ -110,12 +142,22 @@ export async function runLiveProbes(
   // distinguishable by name — the way `doctor --live` told them apart before this module replaced
   // its inline checks.
 
+  // One mutable array for the whole call, not a fresh one per `attempt()`: the Google token isn't
+  // known until INSIDE the google_auth probe below, so it can't be included in a `secrets` literal
+  // built before that probe runs. `attempt()` only reads `secrets` AFTER `run()` resolves, so pushing
+  // the token onto this same array the moment it's obtained — before that probe's own redaction step
+  // — makes it available there too, not just to the probes that come after. Getting this wrong is
+  // exactly how `google_auth`'s `grantedScopes` carried the live token through tokeninfo's response
+  // unredacted: its `attempt()` call used to be given a hardcoded `[]`.
+  const secrets: (string | undefined)[] = [input.lark?.appSecret, input.typefully?.apiKey, input.telegramBotToken];
+
   // Google first and alone: Drive and Sheets both need the token this produces, so they cannot run
   // in parallel with it. Everything after this point does.
   let token: string | undefined;
   const googleAuth = input.googleToken
-    ? await attempt("google_auth", [], async () => {
+    ? await attempt("google_auth", secrets, async () => {
         token = await input.googleToken!();
+        secrets.push(token);
         // Best-effort: which scopes actually ended up on the token matters to callers (a token
         // missing `spreadsheets` scope is a different fix than a wrong GSHEET_ID — see
         // `sheetAccessResult`), but `tokeninfo` failing must not fail this probe: the token itself
@@ -241,7 +283,8 @@ export async function runLiveProbes(
       : dead("telegram", `HTTP ${res.status}`, { httpStatus: res.status });
   };
 
-  const secrets = [input.lark?.appSecret, input.typefully?.apiKey, input.telegramBotToken, token];
+  // Same array declared before `googleAuth` ran, now also carrying `token` (pushed onto it inside
+  // that probe, if a token was obtained) — not a fresh one, so nothing below has to re-derive it.
   const rest = await Promise.all([
     attempt("google_drive_review", secrets, googleDriveReview),
     attempt("google_drive_approved", secrets, googleDriveApproved),
