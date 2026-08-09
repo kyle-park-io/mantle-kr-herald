@@ -367,6 +367,13 @@ export async function runLiveProbes(
     if (body.code !== 0 || !body.tenant_access_token) {
       return dead("lark", `Lark code ${body.code} — ${body.msg ?? "no message"}`);
     }
+    // Enrolled, not merely never-named. `LiveProbeResult`'s doc claims every string it carries is
+    // credential-free "by construction" — and construction here means `redactDeep` over the
+    // `secrets` array, not the discipline of nobody interpolating a token into a detail. A tenant
+    // token obtained mid-flight that is not in that array is outside the guarantee, whether or not
+    // any path today happens to echo it. One line to bring it back inside.
+    secrets.push(body.tenant_access_token);
+
     // A tenant token issues fine for an app that has been removed from every room — proving the
     // token is real is not proving `pnpm collect-lark` (im:message.group_msg) has anything to read.
     // Listing chats needs nothing beyond the app credentials already used above (see `pnpm

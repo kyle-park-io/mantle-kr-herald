@@ -429,6 +429,34 @@ describe("runLiveProbes", () => {
     });
   });
 
+  /**
+   * `LiveProbeResult`'s doc claims every string it carries is credential-free "by construction", and
+   * construction means enrolment in `secrets` — not the discipline of nobody interpolating a token
+   * into a detail. Lark's tenant token is obtained mid-flight, so it can only get there by being
+   * pushed. No path today echoes it; the guarantee is what is being tested, not one path.
+   */
+  it("enrols Lark's mid-flight tenant token in the redaction set", async () => {
+    const TENANT = "t-abcdefghijklmnop-tenant-token";
+    const results = await runLiveProbes(
+      { lark: { appId: "cli_app", appSecret: SECRETS.larkSecret, baseUrl: "https://open.larksuite.com" } },
+      async (url) =>
+        String(url).includes("/im/v1/chats")
+          ? ok({ code: 0, data: { items: [{ chat_id: `echoed-back:${TENANT}` }] } })
+          : ok({ code: 0, tenant_access_token: TENANT }),
+    );
+    // Proven through a detail the probe does build from response content: swap the chat list for one
+    // that fails, and the fallback detail is the one under test either way.
+    const leaky = await runLiveProbes(
+      { lark: { appId: "cli_app", appSecret: SECRETS.larkSecret, baseUrl: "https://open.larksuite.com" } },
+      async (url) =>
+        String(url).includes("/im/v1/chats")
+          ? ok({ code: 99991400, msg: `token rejected: ${TENANT}` })
+          : ok({ code: 0, tenant_access_token: TENANT }),
+    );
+    expect(JSON.stringify(results)).not.toContain(TENANT);
+    expect(JSON.stringify(leaky)).not.toContain(TENANT);
+  });
+
   it("redacts secrets from any probe returning dead, not only on throw", async () => {
     // A probe fails by returning dead() as commonly as by throwing. Typefully returning 401 is the
     // natural failure case to verify redaction on the return path is universal.
