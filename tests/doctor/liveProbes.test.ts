@@ -366,6 +366,69 @@ describe("runLiveProbes", () => {
     });
   });
 
+  /**
+   * Four failures with four different remedies, which one social-set call collapses into one HTTP
+   * code. The pre-module `doctor --live` made two calls specifically to keep them apart, and the loss
+   * was invisible to the branch's own before/after ledger because that was measured on an all-green
+   * machine — every one of these is an unhappy path.
+   */
+  describe("the Typefully probe's four distinct answers", () => {
+    const typefullyOnly = (): LiveProbeInput => ({ typefully: { apiKey: SECRETS.typefullyKey, socialSetId: "283589" } });
+
+    it("blames the key when /v2/me rejects it", async () => {
+      for (const code of [401, 403]) {
+        const results = await runLiveProbes(typefullyOnly(), async (url) =>
+          String(url).includes("/v2/me") ? status(code) : ok({}),
+        );
+        const t = byKey(results, "typefully");
+        expect(t.status, String(code)).toBe("dead");
+        expect(t.detail, String(code)).toContain("TYPEFULLY_API_KEY");
+        expect(t.httpStatus, String(code)).toBe(code);
+      }
+    });
+
+    it("blames Typefully, not the key, on any other /v2/me failure", async () => {
+      // Sending an operator to rotate a perfectly good key during an upstream outage is the cost.
+      const results = await runLiveProbes(typefullyOnly(), async (url) =>
+        String(url).includes("/v2/me") ? status(503) : ok({}),
+      );
+      const t = byKey(results, "typefully");
+      expect(t.status).toBe("dead");
+      expect(t.detail).toContain("upstream");
+      expect(t.detail).not.toContain("TYPEFULLY_API_KEY");
+    });
+
+    it("blames the social set id when the key is good and the set is not", async () => {
+      const results = await runLiveProbes(typefullyOnly(), async (url) =>
+        String(url).includes("/v2/me") ? ok({}) : status(404),
+      );
+      const t = byKey(results, "typefully");
+      expect(t.status).toBe("dead");
+      expect(t.detail).toContain("TYPEFULLY_SOCIAL_SET_ID");
+      expect(t.detail).not.toContain("TYPEFULLY_API_KEY");
+    });
+
+    it("says unreachable when the call never reached Typefully at all", async () => {
+      // A network-level rejection (DNS, TLS, connection refused) is not an HTTP code and not a
+      // credential problem — the remedy is the network, and neither variable is at fault.
+      const results = await runLiveProbes(typefullyOnly(), async () => {
+        throw new Error("getaddrinfo ENOTFOUND api.typefully.com");
+      });
+      const t = byKey(results, "typefully");
+      expect(t.status).toBe("dead");
+      expect(t.detail).toContain("unreachable");
+      expect(t.detail).toContain("ENOTFOUND");
+    });
+
+    it("still reports the quota when both calls succeed", async () => {
+      const results = await runLiveProbes(typefullyOnly(), async (url) =>
+        String(url).includes("/v2/me") ? ok({}) : ok({ publishing_quota: { used: 1, remaining: 14 } }),
+      );
+      expect(byKey(results, "typefully").status).toBe("ok");
+      expect(byKey(results, "typefully").quota).toEqual({ remaining: 14, limit: 15, resetsAt: undefined });
+    });
+  });
+
   it("redacts secrets from any probe returning dead, not only on throw", async () => {
     // A probe fails by returning dead() as commonly as by throwing. Typefully returning 401 is the
     // natural failure case to verify redaction on the return path is universal.

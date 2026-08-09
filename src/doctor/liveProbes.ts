@@ -391,23 +391,75 @@ export async function runLiveProbes(
     return alive("lark", "tenant token issued — could not verify chat membership");
   };
 
+  /**
+   * Two calls, on purpose, and this is a restoration rather than an addition. The pre-module
+   * `doctor --live` called `/v2/me` and then the social set specifically so that four failures with
+   * four different remedies stayed four different messages:
+   *
+   *   | `/v2/me` 401/403      | the key itself was rejected — check TYPEFULLY_API_KEY            |
+   *   | `/v2/me` other non-2xx| Typefully's side is failing — do not go re-check a good key      |
+   *   | `/v2/me` ok, set not  | the key is fine and the id is not — check TYPEFULLY_SOCIAL_SET_ID|
+   *   | `fetch` rejects       | unreachable — DNS/TLS/connection, not a credential at all        |
+   *
+   * A single social-set call collapses all four into one HTTP code: a 401 there could be either of
+   * the first two variables and a 404 could be either of the last two causes. Sending an operator to
+   * rotate a perfectly good API key during a Typefully outage is the concrete cost, and it is the
+   * kind of thing that only shows up on the unhappy path nobody measured.
+   *
+   * Sequential, not parallel: when the key is dead there is nothing to learn from the social set,
+   * and the run's single deadline already bounds the pair (see `DEFAULT_TIMEOUT_MS`).
+   */
   const typefully = async (): Promise<LiveProbeResult> => {
     if (!input.typefully) return skipped("typefully", "TYPEFULLY_API_KEY / TYPEFULLY_SOCIAL_SET_ID unset");
-    const res = await fetchFn(`https://api.typefully.com/v2/social-sets/${input.typefully.socialSetId}/`, {
-      headers: { Authorization: `Bearer ${input.typefully.apiKey}` },
-      signal: signal(),
-    });
-    if (!res.ok) return dead("typefully", `HTTP ${res.status}`, { httpStatus: res.status });
+    const headers = { Authorization: `Bearer ${input.typefully.apiKey}` };
+
+    let me: Response;
+    try {
+      me = await fetchFn("https://api.typefully.com/v2/me", { headers, signal: signal() });
+    } catch (err) {
+      // A spent budget is not "unreachable" — `attempt()` phrases that one, and it names the budget.
+      if (isBudgetError(err)) throw err;
+      return dead("typefully", `unreachable — ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!me.ok) {
+      const detail =
+        me.status === 401 || me.status === 403
+          ? `GET /v2/me → HTTP ${me.status} — check TYPEFULLY_API_KEY`
+          : `GET /v2/me → HTTP ${me.status} — Typefully upstream failure, not necessarily your key`;
+      return dead("typefully", detail, { httpStatus: me.status });
+    }
+
+    // The trailing slash is required — without it the API answers 301 with an empty body. Confirmed
+    // live 2026-07-29; `TypefullyQuota.ts` carries the same note over the same URL.
+    let res: Response;
+    try {
+      res = await fetchFn(`https://api.typefully.com/v2/social-sets/${input.typefully.socialSetId}/`, {
+        headers,
+        signal: signal(),
+      });
+    } catch (err) {
+      if (isBudgetError(err)) throw err;
+      return dead("typefully", `key OK, social set unreachable — ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!res.ok) {
+      return dead("typefully", `key OK, social set unreadable — HTTP ${res.status} — check TYPEFULLY_SOCIAL_SET_ID`, {
+        httpStatus: res.status,
+      });
+    }
+
     // Same field names TypefullyQuota.ts reads off this response. `used` is required, not defaulted,
     // there too — an absent `used` is a different (and untrustworthy) answer from a real zero, per
     // that file's own comment — so a response missing either number is reported reachable with no
-    // quota, rather than guessing one.
+    // quota, rather than guessing one. Deliberately `ok` and not `dead`, which is where this differs
+    // from `TypefullyQuota.read()` throwing on the same payload: that read exists to decide whether
+    // a send may proceed, and this one only asks whether the credential is alive. It demonstrably is
+    // — two calls just answered with it.
     const body = (await res.json()) as { publishing_quota?: { used?: number; remaining?: number; resets_at?: string } };
     const q = body.publishing_quota;
     if (!q || typeof q.remaining !== "number" || typeof q.used !== "number") {
-      return alive("typefully", "social set reachable");
+      return alive("typefully", "key OK · social set reachable — the response carried no readable publishing quota");
     }
-    return alive("typefully", "social set reachable", {
+    return alive("typefully", "key OK · social set reachable", {
       quota: { remaining: q.remaining, limit: q.used + q.remaining, resetsAt: q.resets_at },
     });
   };
