@@ -36,11 +36,20 @@
 (`src/cli/deploy-check.ts`의 `vercel()` 헬퍼). 그래서 설치할 것이 없습니다 — `npx`가 처음 쓸 때
 받아옵니다.
 
-`npm i -g vercel`은 락파일에 고정되지 않는 전역 버전을 하나 더 만들 뿐이고, `package.json`에
+`npm i -g vercel`은 머신마다 손으로 관리해야 하는 사본을 하나 더 만들 뿐이고, `package.json`에
 devDependency로 넣는 것도 좋지 않습니다 — Vercel 빌드는 기본적으로 devDependencies를 설치하므로
 **Vercel 빌드 안에서 Vercel CLI를 매번 설치**하게 됩니다. 이 규칙이 지금까지 예시로만 전달되고
 어디에도 적혀 있지 않아서, 2026-08-10에 실제로 전역 설치를 권하는 조언이 나왔습니다. 그래서 여기
 적어 둡니다.
+
+**단, `npx`도 버전을 고정하지는 않습니다.** 프로젝트에도 PATH에도 없으면 `npx`는 그때의 `latest`를
+공유 캐시(`~/.npm/_npx/<해시>/`)에 받아 실행합니다 — 2026-08-10에는 `vercel@58.9.0`이었습니다.
+캐시를 비우거나 다른 머신에서 돌리면 다른 버전이 올 수 있습니다. 세 방법 중 **어느 것도 락파일로
+고정되지 않으므로**, 버전이 문제가 되는 순간에는 `npx vercel@58.9.0 …`처럼 그 호출만 고정하세요.
+
+캐시가 비어 있어도 비대화형 실행은 막히지 않습니다. tty 없이 스폰해도(= `pnpm deploy:check`가 하는
+방식) npx는 묻지 않고 받아서 실행하고, `npm warn exec The following package was not found and will
+be installed: vercel@…`만 stderr로 남깁니다.
 
 ## 1. PostgreSQL 준비
 
