@@ -196,7 +196,7 @@ if (live) {
       if (driveReview) {
         results.push(
           viaHttp("Google Drive review   live", driveReview, (ok, status) =>
-            accessResult("Google Drive review   live", { ok, status }),
+            accessResult("Google Drive review   live", { ok, status, fileName: driveReview.resourceName }),
           ),
         );
       }
@@ -204,7 +204,7 @@ if (live) {
       if (driveApproved) {
         results.push(
           viaHttp("Google Drive approved  live", driveApproved, (ok, status) =>
-            accessResult("Google Drive approved  live", { ok, status }),
+            accessResult("Google Drive approved  live", { ok, status, fileName: driveApproved.resourceName }),
           ),
         );
       }
@@ -214,7 +214,12 @@ if (live) {
           viaHttp("Google Sheet file  live", sheets, (ok, status) =>
             // The scope check two lines up already knows this; pass it along so a 404 can say which
             // of its two causes applies instead of always blaming the id.
-            sheetAccessResult("Google Sheet file  live", { ok, status, spreadsheetsScopeGranted: granted.includes(SHEETS_SCOPE) }),
+            sheetAccessResult("Google Sheet file  live", {
+              ok,
+              status,
+              title: sheets.resourceName,
+              spreadsheetsScopeGranted: granted.includes(SHEETS_SCOPE),
+            }),
           ),
         );
       }

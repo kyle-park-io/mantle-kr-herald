@@ -31,6 +31,11 @@ export interface LiveProbeResult {
    *  treats "absent" and "zero" as different answers for that field and callers here don't need it
    *  raw, only combined into a total. */
   quota?: { remaining: number; limit: number; resetsAt?: string };
+  /** Google Drive/Sheet only: the resource's own display name/title, when the response carried one.
+   *  `accessResult`/`sheetAccessResult` (`src/doctor/checks.ts`) use it to name what was actually
+   *  reached, not just that something was — restoring the same evidence the pre-module `doctor --live`
+   *  showed (`accessible (review)`, not just `accessible`). */
+  resourceName?: string;
 }
 
 export interface LiveProbeInput {
@@ -53,7 +58,7 @@ function parseScopes(scope: string | undefined): string[] {
   return (scope ?? "").split(/\s+/).filter((s) => s.length > 0);
 }
 
-type ProbeExtras = Partial<Pick<LiveProbeResult, "grantedScopes" | "httpStatus" | "quota">>;
+type ProbeExtras = Partial<Pick<LiveProbeResult, "grantedScopes" | "httpStatus" | "quota" | "resourceName">>;
 
 const skipped = (key: string, why: string): LiveProbeResult => ({ key, status: "skipped", detail: `not configured — ${why}` });
 const dead = (key: string, detail: string, extras: ProbeExtras = {}): LiveProbeResult => ({ key, status: "dead", detail, ...extras });
@@ -137,13 +142,15 @@ export async function runLiveProbes(
    *  built from it only differ in which folder they name. */
   const driveFolder = (key: string, label: string, id: string) => async (): Promise<LiveProbeResult> => {
     if (!token) return dead(key, "not checked — the Google token could not be refreshed");
-    const res = await fetchFn(`https://www.googleapis.com/drive/v3/files/${id}?fields=id`, {
+    // `,name` alongside `id`: the same extra field the pre-module implementation asked for, so the
+    // rendered check can name the folder it reached, not just report that reaching it worked.
+    const res = await fetchFn(`https://www.googleapis.com/drive/v3/files/${id}?fields=id,name`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: signal(),
     });
-    return res.ok
-      ? alive(key, `${label} folder reachable`)
-      : dead(key, `${label} folder unreachable — HTTP ${res.status}`, { httpStatus: res.status });
+    if (!res.ok) return dead(key, `${label} folder unreachable — HTTP ${res.status}`, { httpStatus: res.status });
+    const body = (await res.json()) as { name?: string };
+    return alive(key, `${label} folder reachable`, { resourceName: body.name });
   };
   const googleDriveReview = input.googleDrive
     ? driveFolder("google_drive_review", "review", input.googleDrive.reviewFolderId)
@@ -155,13 +162,14 @@ export async function runLiveProbes(
   const googleSheets = async (): Promise<LiveProbeResult> => {
     if (!input.googleSheetId) return skipped("google_sheets", "GSHEET_ID unset");
     if (!token) return dead("google_sheets", "not checked — the Google token could not be refreshed");
+    // `,properties.title` alongside `spreadsheetId`: same reasoning as the Drive folder's `,name` above.
     const res = await fetchFn(
-      `https://sheets.googleapis.com/v4/spreadsheets/${input.googleSheetId}?fields=spreadsheetId`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${input.googleSheetId}?fields=spreadsheetId,properties.title`,
       { headers: { Authorization: `Bearer ${token}` }, signal: signal() },
     );
-    return res.ok
-      ? alive("google_sheets", "spreadsheet reachable")
-      : dead("google_sheets", `HTTP ${res.status}`, { httpStatus: res.status });
+    if (!res.ok) return dead("google_sheets", `HTTP ${res.status}`, { httpStatus: res.status });
+    const body = (await res.json()) as { properties?: { title?: string } };
+    return alive("google_sheets", "spreadsheet reachable", { resourceName: body.properties?.title });
   };
 
   const lark = async (): Promise<LiveProbeResult> => {
@@ -174,10 +182,33 @@ export async function runLiveProbes(
     });
     if (!res.ok) return dead("lark", `HTTP ${res.status}`, { httpStatus: res.status });
     // Lark answers 200 with a non-zero `code` for a bad secret — the status line alone would pass.
-    const body = (await res.json()) as { code?: number; msg?: string };
-    return body.code === 0
-      ? alive("lark", "tenant token issued")
-      : dead("lark", `Lark code ${body.code} — ${body.msg ?? "no message"}`);
+    const body = (await res.json()) as { code?: number; msg?: string; tenant_access_token?: string };
+    if (body.code !== 0 || !body.tenant_access_token) {
+      return dead("lark", `Lark code ${body.code} — ${body.msg ?? "no message"}`);
+    }
+
+    // A tenant token issues fine for an app that has been removed from every room — proving the
+    // token is real is not proving `pnpm collect-lark` (im:message.group_msg) has anything to read.
+    // Listing chats needs nothing beyond the app credentials already used above (see `pnpm
+    // lark:chats`, meant to run before any chat id is known — LARK_CHAT_IDS is deliberately unset on
+    // the deployment), so this evidence is available in both places this module runs. A chat-list
+    // failure must not fail this probe: the token itself is still real, so it degrades to the
+    // token-only detail rather than propagating. Reports a count, never chat names — a name is
+    // response content this module has no reason to trust is safe to print.
+    try {
+      const chats = await fetchFn(`${input.lark.baseUrl}/open-apis/im/v1/chats?page_size=100`, {
+        headers: { Authorization: `Bearer ${body.tenant_access_token}` },
+        signal: signal(),
+      });
+      const chatsBody = (await chats.json()) as { code?: number; data?: { items?: unknown[] } };
+      if (chats.ok && chatsBody.code === 0) {
+        const n = chatsBody.data?.items?.length ?? 0;
+        return alive("lark", `tenant token OK · bot in ${n} chat(s) (im:message.group_msg verified by pnpm collect-lark)`);
+      }
+    } catch {
+      /* chat list unreachable — the tenant token itself is still real */
+    }
+    return alive("lark", "tenant token issued — could not verify chat membership");
   };
 
   const typefully = async (): Promise<LiveProbeResult> => {

@@ -161,6 +161,64 @@ describe("runLiveProbes", () => {
     expect(t.quota).toBeUndefined();
   });
 
+  it("carries the Drive folder's display name through as resourceName", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) => {
+      if (String(url).includes("revfolder")) return ok({ id: "revfolder", name: "review" });
+      if (String(url).includes("appfolder")) return ok({ id: "appfolder", name: "approved" });
+      return ok({ code: 0 });
+    });
+    expect(byKey(results, "google_drive_review").resourceName).toBe("review");
+    expect(byKey(results, "google_drive_approved").resourceName).toBe("approved");
+  });
+
+  it("carries the spreadsheet's title through as resourceName", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) =>
+      String(url).includes("sheets.googleapis.com")
+        ? ok({ spreadsheetId: "sheet123", properties: { title: "2026 Q3 KR Work Sheet" } })
+        : ok({ code: 0 }),
+    );
+    expect(byKey(results, "google_sheets").resourceName).toBe("2026 Q3 KR Work Sheet");
+  });
+
+  it("reports the bot's chat count on the Lark probe — a tenant token alone does not prove the bot is still in a room", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) =>
+      String(url).includes("/im/v1/chats")
+        ? ok({ code: 0, data: { items: [{ chat_id: "c1" }, { chat_id: "c2" }] } })
+        : ok({ code: 0, tenant_access_token: "t" }),
+    );
+    const lark = byKey(results, "lark");
+    expect(lark.status).toBe("ok");
+    expect(lark.detail).toContain("2 chat(s)");
+  });
+
+  it("reports zero chats without failing the probe — a real, if empty, answer", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) =>
+      String(url).includes("/im/v1/chats") ? ok({ code: 0, data: { items: [] } }) : ok({ code: 0, tenant_access_token: "t" }),
+    );
+    const lark = byKey(results, "lark");
+    expect(lark.status).toBe("ok");
+    expect(lark.detail).toContain("0 chat(s)");
+  });
+
+  it("still reports Lark ok when the chat-list call fails — the tenant token itself is still real", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) => {
+      if (String(url).includes("/im/v1/chats")) throw new Error("getaddrinfo ENOTFOUND open.larksuite.com");
+      return ok({ code: 0, tenant_access_token: "t" });
+    });
+    const lark = byKey(results, "lark");
+    expect(lark.status).toBe("ok");
+    expect(lark.detail).not.toMatch(/chat\(s\)/);
+  });
+
+  it("still reports Lark ok when the chat list itself answers with a Lark error code", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) =>
+      String(url).includes("/im/v1/chats") ? ok({ code: 99991400, msg: "no permission" }) : ok({ code: 0, tenant_access_token: "t" }),
+    );
+    const lark = byKey(results, "lark");
+    expect(lark.status).toBe("ok");
+    expect(lark.detail).not.toMatch(/chat\(s\)/);
+  });
+
   it("reports Lark dead when the API answers 200 with a non-zero code", async () => {
     // Lark signals failure in the body, not the status line.
     const results = await runLiveProbes(fullInput(), async (url) =>
@@ -201,6 +259,17 @@ describe("runLiveProbes", () => {
     const detail = byKey(results, "lark").detail;
     expect(detail).not.toContain(SECRETS.larkSecret);
     expect(detail).toContain("10003");
+  });
+
+  it("never reports a chat's name, only the count — a name is untrusted response content", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) =>
+      String(url).includes("/im/v1/chats")
+        ? ok({ code: 0, data: { items: [{ chat_id: "c1", name: "internal-secret-room-name" }] } })
+        : ok({ code: 0, tenant_access_token: "t" }),
+    );
+    const detail = byKey(results, "lark").detail;
+    expect(detail).not.toContain("internal-secret-room-name");
+    expect(detail).toContain("1 chat(s)");
   });
 
   it("redacts secrets from any probe returning dead, not only on throw", async () => {
