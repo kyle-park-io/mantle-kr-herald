@@ -177,7 +177,7 @@ does not leave configuration ahead of code.
 - `tests/deploy/configFreeze.test.ts` — the pure functions. The load-bearing assertion is that a
   secret-shaped value placed in both inputs never appears in `formatFreezeDiff`'s output. Plus
   parsing (comments, quotes, empty values, duplicate keys) and each of added/changed/removed.
-- `tests/deploy/herald-deploy.test.ts` — regex over the script text, the same technique
+- `tests/deploy/heraldDeploy.test.ts` — regex over the script text, the same technique
   `workingDirectory.test.ts` uses. Asserts: no `ln -sfn` for `.env`; `deploy:freeze --check` appears
   before the `git reset --hard` line; `--apply` appears after `pnpm install`.
 - `tests/deploy/workingDirectory.test.ts` — extended to pin the freeze target equal to `APP_DIR` and
