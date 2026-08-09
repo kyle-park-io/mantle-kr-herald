@@ -120,4 +120,26 @@ describe("runLiveProbes", () => {
       async (_url, init) => { seen = (init as RequestInit | undefined)?.signal ?? undefined; return ok(); }, 1234);
     expect(seen).toBeInstanceOf(AbortSignal);
   });
+
+  it("redacts secrets from Lark's 200 response when msg echoes the secret back", async () => {
+    // Lark signals failure via a non-zero code in the body. If the provider echoes back the secret
+    // in the msg field, that detail would leak to the network and logs without redaction on the
+    // return path.
+    const results = await runLiveProbes(fullInput(), async (url) =>
+      String(url).includes("larksuite") ? ok({ code: 10003, msg: `invalid app_secret: ${SECRETS.larkSecret}` }) : ok({ code: 0 }),
+    );
+    const detail = byKey(results, "lark").detail;
+    expect(detail).not.toContain(SECRETS.larkSecret);
+    expect(detail).toContain("10003");
+  });
+
+  it("redacts secrets from any probe returning dead, not only on throw", async () => {
+    // A probe fails by returning dead() as commonly as by throwing. Typefully returning 401 is the
+    // natural failure case to verify redaction on the return path is universal.
+    const results = await runLiveProbes(fullInput(), async (url) =>
+      String(url).includes("typefully") ? status(401) : ok({ code: 0 }),
+    );
+    expect(byKey(results, "typefully").status).toBe("dead");
+    expect(byKey(results, "typefully").detail).not.toContain(SECRETS.typefullyKey);
+  });
 });

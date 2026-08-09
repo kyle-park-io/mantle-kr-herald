@@ -58,7 +58,12 @@ async function attempt(
   run: () => Promise<LiveProbeResult>,
 ): Promise<LiveProbeResult> {
   try {
-    return await run();
+    const result = await run();
+    // Redact on the return path too, not only on throw. A Lark probe returning dead because its
+    // 200-OK body has a non-zero code would leak a secret if the provider echoes back what was
+    // sent (e.g., { code: 10003, msg: "invalid app_secret: <the-real-secret>" }). Returning is
+    // as common a failure path as throwing, and probes return dead() directly without exception.
+    return { ...result, detail: redact(result.detail, secrets) };
   } catch (err) {
     return dead(key, redact(err instanceof Error ? err.message : String(err), secrets));
   }
