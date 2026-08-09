@@ -299,6 +299,73 @@ describe("runLiveProbes", () => {
     expect(detail).toContain("1 chat(s)");
   });
 
+  /**
+   * The design doc promises "the route answers in about five seconds even when an external API is
+   * hanging". Before this, it did not: `googleToken` is a caller closure and nothing bounded it —
+   * measured still hanging at 6009 ms against a `timeoutMs` of 1000 — and the probes that do take a
+   * signal each got a FRESH one, so Google's two calls plus a sequential Lark's two put the real
+   * worst case at 3x the number. The route runs on Vercel with no `maxDuration`, where a hang is a
+   * platform 504 that `checkLiveness` cannot tell apart from a deployment too old to have the route.
+   */
+  describe("the deadline", () => {
+    const hang = <T,>(): Promise<T> => new Promise<T>(() => {});
+
+    it("returns within the budget when the Google token closure never resolves", async () => {
+      const started = performance.now();
+      const results = await runLiveProbes(fullInput({ googleToken: () => hang<string>() }), async () => ok({ code: 0 }), 300);
+      const elapsed = Math.round(performance.now() - started);
+      expect(elapsed, `still running after ${elapsed}ms`).toBeLessThan(2000);
+      expect(byKey(results, "google_auth").status).toBe("dead");
+      expect(byKey(results, "google_auth").detail).toMatch(/timed out/);
+    });
+
+    it("returns within the budget when every fetch hangs", async () => {
+      const started = performance.now();
+      const results = await runLiveProbes(fullInput(), () => hang<Response>(), 300);
+      const elapsed = Math.round(performance.now() - started);
+      expect(elapsed, `still running after ${elapsed}ms`).toBeLessThan(2000);
+      expect(results).toHaveLength(7);
+      for (const r of results) expect(r.status, r.key).toBe("dead");
+    });
+
+    /**
+     * The half a `Promise.race` cannot do. Giving up WAITING for a hung refresh still leaves the
+     * socket open, which keeps a CLI from exiting and a Vercel function billing until the platform
+     * kills it — and `GoogleOAuthAuth.getToken` has no timeout of its own, so the signal handed to
+     * this closure is the only thing that can cancel it.
+     */
+    it("hands the Google token closure the run's own abort signal", async () => {
+      let seen: AbortSignal | undefined;
+      await runLiveProbes(
+        fullInput({
+          googleToken: async (signal) => {
+            seen = signal;
+            return "ya29.access-token-WWWWWWWW";
+          },
+        }),
+        async () => ok({ code: 0 }),
+        300,
+      );
+      expect(seen).toBeInstanceOf(AbortSignal);
+      expect(seen?.aborted).toBe(false);
+    });
+
+    /**
+     * One hanging credential must not condemn the other six. The probes used to run Google first and
+     * alone; under a single shared budget that is starvation, and it would report four healthy
+     * credentials as timed out on the strength of a fifth being slow.
+     */
+    it("does not let a hanging Google starve the probes that do not need its token", async () => {
+      const results = await runLiveProbes(
+        fullInput({ googleToken: () => hang<string>() }),
+        async (url) => (String(url).includes("google") ? hang<Response>() : ok({ code: 0, tenant_access_token: "t" })),
+        400,
+      );
+      for (const key of ["lark", "typefully", "telegram"]) expect(byKey(results, key).status, key).toBe("ok");
+      expect(byKey(results, "google_auth").status).toBe("dead");
+    });
+  });
+
   it("redacts secrets from any probe returning dead, not only on throw", async () => {
     // A probe fails by returning dead() as commonly as by throwing. Typefully returning 401 is the
     // natural failure case to verify redaction on the return path is universal.

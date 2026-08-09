@@ -66,8 +66,15 @@ export interface LiveProbeResult {
 }
 
 export interface LiveProbeInput {
-  /** Refreshes an access token. Absent when Google auth is not configured. */
-  googleToken?: () => Promise<string>;
+  /**
+   * Refreshes an access token. Absent when Google auth is not configured.
+   *
+   * The `AbortSignal` is the run's own deadline, and a closure that reaches the network is expected
+   * to forward it. Ignoring it is safe for the caller — `attempt()` bounds every probe regardless —
+   * but only the signal can cancel the underlying socket, and an uncancelled one keeps a CLI from
+   * exiting and a Vercel function running until the platform kills it.
+   */
+  googleToken?: (signal: AbortSignal) => Promise<string>;
   googleDrive?: { reviewFolderId: string; approvedFolderId: string };
   googleSheetId?: string;
   lark?: { appId: string; appSecret: string; baseUrl: string };
@@ -75,6 +82,17 @@ export interface LiveProbeInput {
   telegramBotToken?: string;
 }
 
+/**
+ * The budget for a WHOLE `runLiveProbes` call, not for each request inside it. Per-request timeouts
+ * were the previous meaning and they do not bound anything a caller can promise: Google auth ran
+ * before the others and made two calls, Lark and Typefully make two each, so the real worst case was
+ * 3× this number, and the one call that matters most — the caller-supplied `googleToken` closure —
+ * had no bound at all (measured: still hanging at 6009 ms against a `timeoutMs` of 1000). The route
+ * this module backs runs on Vercel with no `maxDuration` in `vercel.json`, so an unbounded hang
+ * becomes a platform 504, which `checkLiveness` cannot tell apart from a deployment too old to have
+ * the route. One deadline for the run is what makes the design doc's "answers in about five seconds
+ * even when an external API is hanging" a property of the code rather than a hope.
+ */
 const DEFAULT_TIMEOUT_MS = 5_000;
 
 /** A space-separated OAuth scope string → array (empties dropped). Duplicated from
@@ -124,14 +142,58 @@ function redactDeep<T>(value: T, secrets: readonly (string | undefined)[]): T {
   return value;
 }
 
+/** Thrown by `withDeadline` when the run's budget is spent. Its own class so `attempt()` can phrase
+ *  a timeout as a timeout instead of leaking a generic message an operator has to decode. */
+class DeadlineError extends Error {}
+
+/**
+ * True for the two shapes a spent budget arrives as: `DeadlineError` (this module gave up waiting on
+ * something that does not take a signal), and the `DOMException` that `AbortSignal.timeout` aborts a
+ * `fetch` with (`TimeoutError`, or `AbortError` on some runtimes). The only signal this module ever
+ * passes anywhere is the deadline, so an abort here has exactly one cause.
+ */
+function isBudgetError(err: unknown): boolean {
+  if (err instanceof DeadlineError) return true;
+  const name = (err as { name?: unknown } | null)?.name;
+  return name === "TimeoutError" || name === "AbortError";
+}
+
+/**
+ * Rejects if `promise` has not settled within `ms`. The backstop half of the deadline: `signal()`
+ * already bounds every `fetch` this module makes itself, but `input.googleToken` is a caller closure
+ * this module cannot see inside, and `fetchFn` is injectable. Without this, one function that
+ * ignores its signal holds the whole run — and therefore the route, and therefore `deploy:smoke` —
+ * open indefinitely.
+ *
+ * The timer is deliberately NOT `unref`'d: a promise pending on nothing (the shape a hung closure
+ * takes in a test) keeps no handle alive on its own, so an unref'd timer would let the process exit
+ * before the report was ever printed.
+ */
+function withDeadline<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new DeadlineError(`${what} did not answer within the budget`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 /** A probe never throws: a diagnostic that dies when something is wrong is no diagnostic. */
 async function attempt(
   key: ProbeKey,
   secrets: readonly (string | undefined)[],
+  budget: { remainingMs: () => number; totalMs: number },
   run: () => Promise<LiveProbeResult>,
 ): Promise<LiveProbeResult> {
   try {
-    const result = await run();
+    const result = await withDeadline(run(), budget.remainingMs(), `the ${key} probe`);
     // Redact on the return path too, not only on throw. A Lark probe returning dead because its
     // 200-OK body has a non-zero code would leak a secret if the provider echoes back what was
     // sent (e.g., { code: 10003, msg: "invalid app_secret: <the-real-secret>" }). Returning is
@@ -140,6 +202,13 @@ async function attempt(
     // comment.
     return redactDeep(result, secrets);
   } catch (err) {
+    if (isBudgetError(err)) {
+      // Said plainly, because the remedy is not the credential's: a probe that timed out is not a
+      // probe that answered "dead", and an operator who reads `The operation was aborted` has to
+      // work out which of the two they are looking at. Still graded `dead` — unverified is not
+      // verified, and `checkLiveness` exists to stop a deploy reading as healthy on a maybe.
+      return dead(key, `timed out — the ${budget.totalMs}ms budget for the whole probe run elapsed before this answered`);
+    }
     return dead(key, redact(err instanceof Error ? err.message : String(err), secrets));
   }
 }
@@ -149,7 +218,26 @@ export async function runLiveProbes(
   fetchFn: typeof fetch = fetch,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<LiveProbeResult[]> {
-  const signal = (): AbortSignal => AbortSignal.timeout(timeoutMs);
+  /**
+   * ONE deadline for the whole call, not one per request — see `DEFAULT_TIMEOUT_MS`. Every `fetch`
+   * below gets a signal for whatever is left of it, and `attempt()` bounds each probe by the same
+   * remainder, so `runLiveProbes` returns within `timeoutMs` regardless of what any injected
+   * function does.
+   */
+  // `performance.now()`, not `Date.now()`: the deadline measures ELAPSED time, and the wall clock is
+  // not a measure of elapsed time. It steps — NTP correction, a laptop waking, a VM's host resyncing
+  // it — and a step is indistinguishable from time passing when you subtract two readings. Caught
+  // here rather than reasoned about: this machine jumped ~40s forward and back mid-run while these
+  // probes were being tested, which made one run report a 40383 ms elapsed and the next -39781 ms.
+  // Forward, that aborts every probe the instant it starts and reports seven live credentials dead;
+  // backward, it silently extends the budget the route's whole contract rests on. `setTimeout` in
+  // `withDeadline` is already monotonic (libuv), so this makes the two agree.
+  const deadline = performance.now() + timeoutMs;
+  // `Math.ceil`: `AbortSignal.timeout` refuses a non-integer delay outright (`ERR_OUT_OF_RANGE`),
+  // and `performance.now()` is fractional.
+  const remainingMs = (): number => Math.max(Math.ceil(deadline - performance.now()), 0);
+  const signal = (): AbortSignal => AbortSignal.timeout(remainingMs());
+  const budget = { remainingMs, totalMs: timeoutMs };
 
   // Result order (== the array order returned below), fixed and callers may rely on it:
   //   google_auth, google_drive_review, google_drive_approved, google_sheets, lark, typefully, telegram
@@ -158,47 +246,81 @@ export async function runLiveProbes(
   // distinguishable by name — the way `doctor --live` told them apart before this module replaced
   // its inline checks.
 
-  // One mutable array for the whole call, not a fresh one per `attempt()`: the Google token isn't
-  // known until INSIDE the google_auth probe below, so it can't be included in a `secrets` literal
-  // built before that probe runs. `attempt()` only reads `secrets` AFTER `run()` resolves, so pushing
-  // the token onto this same array the moment it's obtained — before that probe's own redaction step
-  // — makes it available there too, not just to the probes that come after. Getting this wrong is
-  // exactly how `google_auth`'s `grantedScopes` carried the live token through tokeninfo's response
-  // unredacted: its `attempt()` call used to be given a hardcoded `[]`.
+  // One mutable array for the whole call, not a fresh one per `attempt()`: the Google token and
+  // Lark's tenant token are not known until a probe is already in flight, so neither can be in a
+  // `secrets` literal built up front. `attempt()` only reads `secrets` AFTER `run()` resolves, so
+  // pushing a token onto this same array the moment it is obtained — before that probe's own
+  // redaction step — makes it available there too, not just to the probes that come after. Getting
+  // this wrong is exactly how `google_auth`'s `grantedScopes` carried the live token through
+  // tokeninfo's response unredacted: its `attempt()` call used to be given a hardcoded `[]`.
   const secrets: (string | undefined)[] = [input.lark?.appSecret, input.typefully?.apiKey, input.telegramBotToken];
 
-  // Google first and alone: Drive and Sheets both need the token this produces, so they cannot run
-  // in parallel with it. Everything after this point does.
-  let token: string | undefined;
-  const googleAuth = input.googleToken
-    ? await attempt("google_auth", secrets, async () => {
-        token = await input.googleToken!();
-        secrets.push(token);
-        // Best-effort: which scopes actually ended up on the token matters to callers (a token
-        // missing `spreadsheets` scope is a different fix than a wrong GSHEET_ID — see
-        // `sheetAccessResult`), but `tokeninfo` failing must not fail this probe: the token itself
-        // still refreshed, which is what "ok" means here. The failure is discarded, not returned or
-        // rethrown, so it can never carry the token — which is literally in this call's URL — into a
-        // detail string or an exception `attempt()` would otherwise redact-and-report.
-        let grantedScopes: string[] | undefined;
-        try {
-          const info = (await fetchFn(
-            `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`,
-            { signal: signal() },
-          ).then((r) => r.json())) as { scope?: string };
-          grantedScopes = parseScopes(info.scope);
-        } catch {
-          /* tokeninfo unreachable — the token still refreshed; scopes just aren't known this run */
-        }
-        return alive("google_auth", "token refreshed", { grantedScopes });
-      })
-    : skipped("google_auth", "no Google OAuth credentials");
+  const probe = (key: ProbeKey, run: () => Promise<LiveProbeResult>) => attempt(key, secrets, budget, run);
+
+  /**
+   * The Google token, started once and shared by the four probes that need it, rather than obtained
+   * inside a `google_auth` probe the other three then wait on. Both halves matter:
+   *
+   * - *Shared*, so Drive and Sheets do not each refresh their own.
+   * - *Started here, in parallel with everything else*, so a hanging Google does not eat the run's
+   *   single deadline before Lark, Typefully and Telegram have made their calls. The old shape ran
+   *   `google_auth` sequentially first; under one shared budget that is starvation, and it would
+   *   report four healthy credentials as timed out on the strength of a fifth being slow.
+   *
+   * The `.then` that pushes onto `secrets` is registered before any probe awaits this promise, so it
+   * runs first and every consumer's redaction already knows the token.
+   */
+  let tokenPromise: Promise<string> | undefined;
+  if (input.googleToken) {
+    tokenPromise = input.googleToken(signal());
+    tokenPromise.then(
+      (t) => secrets.push(t),
+      () => {
+        /* handled by each consumer's own try/catch; attached here only so a rejection is never
+           unhandled when config leaves every consumer but `google_auth` skipped */
+      },
+    );
+  }
+
+  const googleAuth = async (): Promise<LiveProbeResult> => {
+    if (!tokenPromise) return skipped("google_auth", "no Google OAuth credentials");
+    const token = await tokenPromise;
+    // Best-effort: which scopes actually ended up on the token matters to callers (a token
+    // missing `spreadsheets` scope is a different fix than a wrong GSHEET_ID — see
+    // `sheetAccessResult`), but `tokeninfo` failing must not fail this probe: the token itself
+    // still refreshed, which is what "ok" means here. The failure is discarded, not returned or
+    // rethrown, so it can never carry the token — which is literally in this call's URL — into a
+    // detail string or an exception `attempt()` would otherwise redact-and-report.
+    let grantedScopes: string[] | undefined;
+    try {
+      const info = (await fetchFn(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`, {
+        signal: signal(),
+      }).then((r) => r.json())) as { scope?: string };
+      grantedScopes = parseScopes(info.scope);
+    } catch {
+      /* tokeninfo unreachable — the token still refreshed; scopes just aren't known this run */
+    }
+    return alive("google_auth", "token refreshed", { grantedScopes });
+  };
+
+  /** The token for a probe downstream of it, or `undefined` if it never came. Never rethrows: the
+   *  auth probe above is where a refresh failure is reported, and blaming a folder id for it is the
+   *  mis-blame `tests/doctor/checks.test.ts` already guards against for the Sheet's 404. */
+  const tokenOrUndefined = async (): Promise<string | undefined> => {
+    if (!tokenPromise) return undefined;
+    try {
+      return await tokenPromise;
+    } catch {
+      return undefined;
+    }
+  };
 
   const DRIVE_NOT_CONFIGURED = "GDRIVE_REVIEW_FOLDER_ID / GDRIVE_APPROVED_FOLDER_ID unset";
   /** One folder's reachability, parameterised by key/label/id — `input.googleDrive` is only ever
    *  present with both ids set (`loadGoogleDriveConfig` requires both together), so the two probes
    *  built from it only differ in which folder they name. */
   const driveFolder = (key: ProbeKey, label: string, id: string) => async (): Promise<LiveProbeResult> => {
+    const token = await tokenOrUndefined();
     if (!token) return dead(key, "not checked — the Google token could not be refreshed");
     // `,name` alongside `id`: the same extra field the pre-module implementation asked for, so the
     // rendered check can name the folder it reached, not just report that reaching it worked.
@@ -219,6 +341,7 @@ export async function runLiveProbes(
 
   const googleSheets = async (): Promise<LiveProbeResult> => {
     if (!input.googleSheetId) return skipped("google_sheets", "GSHEET_ID unset");
+    const token = await tokenOrUndefined();
     if (!token) return dead("google_sheets", "not checked — the Google token could not be refreshed");
     // `,properties.title` alongside `spreadsheetId`: same reasoning as the Drive folder's `,name` above.
     const res = await fetchFn(
@@ -244,7 +367,6 @@ export async function runLiveProbes(
     if (body.code !== 0 || !body.tenant_access_token) {
       return dead("lark", `Lark code ${body.code} — ${body.msg ?? "no message"}`);
     }
-
     // A tenant token issues fine for an app that has been removed from every room — proving the
     // token is real is not proving `pnpm collect-lark` (im:message.group_msg) has anything to read.
     // Listing chats needs nothing beyond the app credentials already used above (see `pnpm
@@ -299,16 +421,16 @@ export async function runLiveProbes(
       : dead("telegram", `HTTP ${res.status}`, { httpStatus: res.status });
   };
 
-  // Same array declared before `googleAuth` ran, now also carrying `token` (pushed onto it inside
-  // that probe, if a token was obtained) — not a fresh one, so nothing below has to re-derive it.
-  const rest = await Promise.all([
-    attempt("google_drive_review", secrets, googleDriveReview),
-    attempt("google_drive_approved", secrets, googleDriveApproved),
-    attempt("google_sheets", secrets, googleSheets),
-    attempt("lark", secrets, lark),
-    attempt("typefully", secrets, typefully),
-    attempt("telegram", secrets, telegram),
+  // All seven at once, under the one deadline. `Promise.all` preserves array position, so the fixed
+  // result order documented above survives the probes finishing in whatever order they finish in.
+  return Promise.all([
+    probe("google_auth", googleAuth),
+    probe("google_drive_review", googleDriveReview),
+    probe("google_drive_approved", googleDriveApproved),
+    probe("google_sheets", googleSheets),
+    probe("lark", lark),
+    probe("typefully", typefully),
+    probe("telegram", telegram),
   ]);
-
-  return [googleAuth, ...rest];
 }
+

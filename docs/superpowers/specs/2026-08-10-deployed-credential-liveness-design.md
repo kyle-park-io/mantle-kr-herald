@@ -135,8 +135,17 @@ legitimate deployment, not a broken one".
 
 ## Error handling and cost
 
-- Each probe gets a 5-second timeout and they run in parallel, so the route answers in about five
-  seconds even when an external API is hanging.
+- **One 5-second deadline for the whole run**, shared by every probe, so the route answers in about
+  five seconds even when an external API is hanging. Not a 5-second timeout *per request*, which is
+  what this line said until 2026-08-10 and which bounds nothing a caller can promise: Google's probe
+  ran first and made two calls, Lark and Typefully make two each, so the real worst case was 3× the
+  number — and `LiveProbeInput.googleToken` is a caller closure that took no signal at all, measured
+  still hanging at 6009 ms against a `timeoutMs` of 1000. All seven probes now start together under
+  one deadline; every `fetch` gets a signal for whatever is left of it, and `attempt()` bounds each
+  probe by the same remainder, so a closure that ignores its signal cannot hold the run open either.
+  This matters most on the deployment: `vercel.json` sets no `maxDuration`, so an unbounded hang
+  becomes a platform 504, which `checkLiveness` cannot tell apart from a deployment too old to have
+  the route.
 - A probe that throws becomes `status: "dead"` with the error's message. The route never 500s on a
   probe failure — a diagnostic endpoint that dies when something is wrong is no diagnostic.
 - **No probe's `detail` may contain a credential.** This is the load-bearing property: the route
