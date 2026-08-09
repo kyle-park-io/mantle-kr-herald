@@ -159,7 +159,11 @@ if (live) {
         headers: { Authorization: `Bearer ${token}` },
       });
       const title = r.ok ? ((await r.json()) as { properties?: { title?: string } }).properties?.title : undefined;
-      results.push(sheetAccessResult(label, { ok: r.ok, status: r.status, title }));
+      // The scope check two lines up already knows this; pass it along so a 404 can say which of its
+      // two causes applies instead of always blaming the id.
+      results.push(
+        sheetAccessResult(label, { ok: r.ok, status: r.status, title, spreadsheetsScopeGranted: granted.includes(SHEETS_SCOPE) }),
+      );
     };
     try {
       const g = loadGoogleDriveConfig();
