@@ -27,10 +27,11 @@
 # `systemctl --user daemon-reload` is a later, human-supervised step (see the team runbook) — same as
 # herald-watch.service and herald-x-reconcile.service.
 #
-# Machine-specific by design, not templated: every absolute path below was found with
+# Machine-specific by design, not templated: the absolute paths below were found with
 # `command -v pnpm|node|claude` on the one machine this runs on — the same machine, and the same
 # lookup, the two units before it used. A different machine needs its own copy of this file with its
-# own paths, not a parameterised one.
+# own paths, not a parameterised one. The exception is node and pnpm, reached through
+# `%h/.herald/bin` since 2026-08-09 — see the PATH= comment below.
 
 [Unit]
 Description=Mantle KR Herald conversion scheduler — one tick (convert:prepare -> claude -p -> convert:save)
@@ -59,7 +60,13 @@ WorkingDirectory=%h/.herald/app
 # `#!/usr/bin/env node`, and `env` resolves "node" via this PATH, not via ExecStart='s path. claude is
 # spawned from inside the Node process by ClaudeCodeAgent (src/adapters/agent/), exactly as it is for
 # herald-watch.service — unlike herald-x-reconcile.service, which needs no `claude` on its PATH.
-Environment=PATH=/home/kyle/.nvm/versions/node/v24.14.0/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+#
+# `%h/.herald/bin` is a directory of symlinks (node, pnpm), NOT an nvm version directory — see the
+# same block in herald-watch.service for the 2026-08-09 rebuild that made this necessary. An nvm
+# path carries its version and nvm deletes that directory on upgrade, so a unit naming one dies at
+# the next fire with 203/EXEC. After a node upgrade, re-point the symlinks, not these units:
+#   ln -sfn "$(which node)" ~/.herald/bin/node && ln -sfn "$(which pnpm)" ~/.herald/bin/pnpm
+Environment=PATH=%h/.herald/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # The scheduler's own artifact tree — the same one herald-watch.service uses, and never the repo's
 # own output/. tests/deploy/convertTiming.test.ts pins the two units' values equal, because this is
@@ -137,4 +144,4 @@ TimeoutStartSec=840
 # `bash deploy/herald-deploy.sh` must have run (landing this commit in %h/.herald/app) BEFORE this
 # unit file is copied into ~/.config/systemd/user/ — otherwise the next fire runs an ExecStart= that
 # does not exist yet.
-ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n /home/kyle/.nvm/versions/node/v24.14.0/bin/pnpm convert:tick
+ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n %h/.herald/bin/pnpm convert:tick

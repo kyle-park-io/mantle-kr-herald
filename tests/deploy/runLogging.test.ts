@@ -343,7 +343,14 @@ describe("the scheduled units run through the wrapper", () => {
       // must not run whatever happens to be checked out in the tree someone edits. `%n` is what
       // keys the per-unit log directory and what herald-notify-failure.sh looks its fallback up
       // under, so the two agree without either hardcoding a list of units.
-      expect(execStart).toMatch(/^%h\/\.herald\/app\/deploy\/herald-run-logged\.sh %n \/\S*pnpm /);
+      //
+      // pnpm comes from `%h/.herald/bin`, a directory of symlinks, and not from an nvm version
+      // directory: nvm deletes the old one on upgrade, which turns every fire into 203/EXEC before
+      // any pipeline code runs. This pattern used to accept any absolute path (`\/\S*pnpm`), which
+      // is how three units sat pointing at a node version that no longer existed on the box —
+      // tests/deploy/unitToolPaths.test.ts is the dedicated check, and this one no longer looks the
+      // other way either.
+      expect(execStart).toMatch(/^%h\/\.herald\/app\/deploy\/herald-run-logged\.sh %n %h\/\.herald\/bin\/pnpm /);
       expect(execStart?.includes(repoRoot)).toBe(false);
     });
 
