@@ -834,6 +834,22 @@ bash deploy/herald-deploy.sh
    ```bash
    cut -d= -f1 ~/.herald/prod.env      # DATABASE_URL, HERALD_DB_ENV
    ```
+
+   > **아직 Vercel에 값이 없다면** — 배포보다 스케줄러를 먼저 세우는 경우입니다. 위 `env pull`이
+   > 가져올 게 없으니, **데이터베이스 제공자에서 직접** 가져옵니다: Neon 콘솔의 connection string을
+   > 복사해 `DATABASE_URL=` 한 줄로 쓰고, `HERALD_DB_ENV=production`을 붙이면 같은 두 줄이 됩니다.
+   >
+   > DSN의 최초 출처는 언제나 제공자이지 Vercel이 아닙니다([`setup/vercel.md`](setup/vercel.md) §1).
+   > 이 프로젝트에서 `DATABASE_URL`이 Vercel에 있는 것도 손으로 넣어서가 아니라 **마켓플레이스의 Neon
+   > 연동이 주입**한 것이고, 그래서 `POSTGRES_*`·`PG*`·`NEON_PROJECT_ID` 같은 변수가 열몇 개 같이
+   > 들어 있습니다. 위 절차가 Vercel을 경유하는 건 그게 원본이라서가 아니라, **이미 있는 값을 값 노출
+   > 없이 파일로 옮기는 가장 짧은 길**이기 때문입니다.
+
+   > **프로덕션 DSN을 저장소의 `.env`에 넣지 마세요.** 사는 곳은 정확히 두 곳입니다 — Vercel 환경변수와
+   > 이 `prod.env`. `.env`에 넣으면 두 가지가 동시에 깨집니다: 로컬 `pnpm status`·`serve`와 CLI 스물몇
+   > 개가 전부 프로덕션을 치게 되고, 더 나쁘게는 **`db:import`의 프로덕션 거부가 꺼집니다** — 그 가드는
+   > URL이 아니라 `HERALD_DB_ENV` 라벨로 판단하는데(`src/cli/db-import.ts`), `.env`는 `development`라고
+   > 말하기 때문입니다. 프로덕션을 가리키면서 안전장치는 열린 상태가 됩니다.
    저장소의 `.env`는 그대로 로컬 Docker를 가리키고 있어도 됩니다 — `TWITTERAPI_IO_KEY` 같은
    나머지 값은 여전히 `.env`에서 오고, 이 두 줄만 `DATABASE_URL`/`HERALD_DB_ENV`를 덮어씁니다.
 
