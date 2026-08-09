@@ -58,3 +58,53 @@ function readValue(rest: string): string {
   const hash = value.indexOf("#");
   return (hash === -1 ? value : value.slice(0, hash)).trim();
 }
+
+/**
+ * Names only. Both halves of every value are in memory when a diff is computed, and none of them
+ * leave this shape — the deploy prints what it returns.
+ */
+export interface NameDiff {
+  added: string[];
+  changed: string[];
+  removed: string[];
+}
+
+/** `previous` is undefined on the first freeze, and when the old path was still a symlink. */
+export function diffEnv(previous: string | undefined, next: string): NameDiff {
+  return diffMaps(parseEnv(previous ?? ""), parseEnv(next));
+}
+
+/** Steering files: the map is path → content hash, so the same shape serves both diffs. */
+export function diffFiles(
+  previous: ReadonlyMap<string, string>,
+  next: ReadonlyMap<string, string>,
+): NameDiff {
+  return diffMaps(previous, next);
+}
+
+function diffMaps(previous: ReadonlyMap<string, string>, next: ReadonlyMap<string, string>): NameDiff {
+  const added: string[] = [];
+  const changed: string[] = [];
+  const removed: string[] = [];
+  for (const [name, value] of next) {
+    if (!previous.has(name)) added.push(name);
+    else if (previous.get(name) !== value) changed.push(name);
+  }
+  for (const name of previous.keys()) if (!next.has(name)) removed.push(name);
+  // Sorted so two deploys that change the same things print the same lines.
+  return { added: added.sort(), changed: changed.sort(), removed: removed.sort() };
+}
+
+export function isEmptyDiff(diff: NameDiff): boolean {
+  return diff.added.length === 0 && diff.changed.length === 0 && diff.removed.length === 0;
+}
+
+/** Indented to sit under `herald-deploy.sh`'s existing `  code: …` / `  deps: …` lines. */
+export function formatFreezeDiff(label: string, diff: NameDiff): string {
+  if (isEmptyDiff(diff)) return `  ${label}: unchanged`;
+  const lines = [`  ${label}:`];
+  for (const name of diff.added) lines.push(`    + ${name}`);
+  for (const name of diff.changed) lines.push(`    ~ ${name}`);
+  for (const name of diff.removed) lines.push(`    - ${name}`);
+  return lines.join("\n");
+}

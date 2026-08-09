@@ -116,3 +116,65 @@ describe("parseEnv", () => {
     expect(parseEnv('E8="unterminated').get("E8")).toBe('"unterminated');
   });
 });
+
+import { diffEnv, diffFiles, isEmptyDiff, formatFreezeDiff } from "../../src/deploy/configFreeze";
+
+describe("diffEnv", () => {
+  it("classifies added, changed and removed by name", () => {
+    const diff = diffEnv("KEPT=same\nMOVED=before\nGONE=x", "KEPT=same\nMOVED=after\nFRESH=y");
+    expect(diff).toEqual({ added: ["FRESH"], changed: ["MOVED"], removed: ["GONE"] });
+  });
+
+  it("treats an absent previous snapshot as everything added", () => {
+    expect(diffEnv(undefined, "A=1\nB=2")).toEqual({ added: ["A", "B"], changed: [], removed: [] });
+  });
+
+  it("sorts each list so deploy output is stable", () => {
+    expect(diffEnv("", "Z=1\nA=1\nM=1").added).toEqual(["A", "M", "Z"]);
+  });
+
+  it("sees no change when only formatting differs", () => {
+    // Same value to Node, so the scheduler reads the same thing — reporting it would train the
+    // operator to skim the diff.
+    expect(isEmptyDiff(diffEnv(`A=hello`, `export A = "hello"`))).toBe(true);
+  });
+});
+
+describe("diffFiles", () => {
+  it("classifies steering files by content hash", () => {
+    const before = new Map([["glossary.json", "h1"], ["dropped.md", "h2"]]);
+    const after = new Map([["glossary.json", "h9"], ["added.md", "h3"]]);
+    expect(diffFiles(before, after)).toEqual({
+      added: ["added.md"], changed: ["glossary.json"], removed: ["dropped.md"],
+    });
+  });
+});
+
+describe("formatFreezeDiff", () => {
+  // The load-bearing test of this file. A diff printed at deploy time is the one place where both
+  // the old and the new value of every credential are in memory at once.
+  it("never puts a value in its output", () => {
+    const secret = "sk-live-51H8ZqABCDEFGHIJKLMNOP";
+    const other = "postgres://user:hunter2@db.example.com:5432/herald";
+    const out = formatFreezeDiff(
+      "env",
+      diffEnv(`TYPEFULLY_API_KEY=${secret}\nDATABASE_URL=old`, `TYPEFULLY_API_KEY=rotated\nDATABASE_URL=${other}`),
+    );
+    expect(out).not.toContain(secret);
+    expect(out).not.toContain(other);
+    expect(out).not.toContain("hunter2");
+    expect(out).toContain("TYPEFULLY_API_KEY");
+    expect(out).toContain("DATABASE_URL");
+  });
+
+  it("marks each class with its own sigil", () => {
+    const out = formatFreezeDiff("env", { added: ["NEW"], changed: ["MOVED"], removed: ["OLD"] });
+    expect(out).toContain("+ NEW");
+    expect(out).toContain("~ MOVED");
+    expect(out).toContain("- OLD");
+  });
+
+  it("says so plainly when nothing moved", () => {
+    expect(formatFreezeDiff("env", { added: [], changed: [], removed: [] })).toBe("  env: unchanged");
+  });
+});
