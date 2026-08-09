@@ -22,7 +22,7 @@
 # never migrated. Every step here must either complete or stop the script.
 set -euo pipefail
 
-# The tree this script installs INTO. Never edited by hand; step 1's hard reset below is what makes
+# The tree this script installs INTO. Never edited by hand; `git reset --hard` below is what makes
 # that safe to assume rather than hope. Spelled with $HOME to match the units' own `%h`.
 APP_DIR="$HOME/.herald/app"
 
@@ -45,9 +45,9 @@ echo "herald-deploy: $DEV_DIR (config source) → $APP_DIR (runtime)"
 # config axis. It is a copy now, taken here, and this gate prints what the copy would change (names
 # only, never values) and stops unless --yes says the change is intended.
 #
-# It runs before step 1 hard-resets the checkout below, not next to the copy in step 3, because
-# refusing after the code has already moved is exactly the half-finished deploy this script's header
-# rules out. Read-only: nothing on disk changes until step 3.
+# It runs before the `git reset --hard` below and not next to the copy in step 3, because refusing
+# after the code has already moved is exactly the half-finished deploy this script's header rules
+# out. Read-only: nothing on disk changes until step 3.
 pnpm deploy:freeze --check --dev "$DEV_DIR" --app "$APP_DIR" "$@"
 
 # ── 1. Move the deploy checkout to merged main ────────────────────────────────────────────────────
