@@ -1,6 +1,6 @@
 import type { CheckResult } from "../doctor/report";
 import { SESSION_COOKIE_NAME } from "../adapters/web/sessionCookie";
-import type { LiveProbeResult } from "../doctor/liveProbes";
+import type { LiveProbeResult, ProbeKey } from "../doctor/liveProbes";
 
 /**
  * The parsed shape of a running deployment's `/api/status` response (`StatusView`,
@@ -347,10 +347,53 @@ function clearsSessionCookie(setCookieHeader: string | undefined): boolean {
  *
  * Drive is two keys, not one (`google_drive_review` and `google_drive_approved` — `liveProbes.ts`
  * split it so a broken review folder and a broken approved folder are distinguishable by name), and
- * both are publishing credentials, so both are listed here.
+ * both are publishing credentials, so both are classified `"publish"` below.
  */
-const PUBLISH_KEYS = ["google_auth", "google_drive_review", "google_drive_approved", "lark"] as const;
-const SEND_KEYS = ["telegram", "typefully"] as const;
+type ProbeTier = "publish" | "send" | "data";
+
+/**
+ * `Record<ProbeKey, ProbeTier>`, not two arrays checked with `.includes()`. The array shape is what
+ * this map replaced: a probe added to `runLiveProbes` (`liveProbes.ts`) but never added to either
+ * list produced no compile error — `.includes()` on a plain string list accepts, and silently
+ * rejects, any string equally — and fell through to `warn` regardless of `sendsEnabled`, which is a
+ * milder replay of the exact false-green incident this plan responds to. `LiveProbeResult.key` is
+ * typed `ProbeKey`, so a `Record` indexed by that same union makes the classification exhaustive:
+ * adding a key to `ProbeKey` without adding it here fails `pnpm typecheck` at this object literal,
+ * not at some caller three files away.
+ */
+const PROBE_TIER: Record<ProbeKey, ProbeTier> = {
+  google_auth: "publish",
+  google_drive_review: "publish",
+  google_drive_approved: "publish",
+  lark: "publish",
+  typefully: "send",
+  telegram: "send",
+  google_sheets: "data",
+};
+
+/**
+ * `dead`/`ok`/`skipped` was already judged by the caller; this only classifies a `dead` probe's
+ * severity by tier. The `default` branch is the runtime half of the same "unknown is not-known"
+ * argument the `undefined`-route case above already makes: `PROBE_TIER` is exhaustive over `ProbeKey`
+ * at compile time, but a key can still reach here having escaped the type system — a hand-built
+ * `LiveProbeResult` in a test, or a live deployment answering with a probe key this build of
+ * `deploy:smoke` predates. Defaulting to `fail` rather than `warn` matches the rest of this module:
+ * this command's whole purpose is to stop a deploy reading as healthy when something is unverified,
+ * so not-knowing which tier a credential belongs to is graded the same as knowing it is dead.
+ */
+function liveSeverity(key: ProbeKey, sendsEnabled: boolean): CheckResult["status"] {
+  const tier = PROBE_TIER[key];
+  switch (tier) {
+    case "publish":
+      return "fail";
+    case "send":
+      return sendsEnabled ? "fail" : "warn";
+    case "data":
+      return "warn";
+    default:
+      return "fail";
+  }
+}
 
 /**
  * Judges `GET /api/diagnostics/live`'s probe results — the one thing `checkStatus` cannot tell you:
@@ -374,11 +417,6 @@ export function checkLiveness(probes: LiveProbeResult[] | undefined, sendsEnable
     const name = `live: ${probe.key}`;
     if (probe.status === "ok") return { name, status: "ok" as const, detail: probe.detail };
     if (probe.status === "skipped") return { name, status: "ok" as const, detail: probe.detail };
-    const severity: CheckResult["status"] = (PUBLISH_KEYS as readonly string[]).includes(probe.key)
-      ? "fail"
-      : (SEND_KEYS as readonly string[]).includes(probe.key) && sendsEnabled
-        ? "fail"
-        : "warn";
-    return { name, status: severity, detail: probe.detail };
+    return { name, status: liveSeverity(probe.key, sendsEnabled), detail: probe.detail };
   });
 }

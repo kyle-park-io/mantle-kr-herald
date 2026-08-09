@@ -15,6 +15,22 @@
 export type ProbeStatus = "ok" | "dead" | "skipped";
 
 /**
+ * Every key `runLiveProbes` can emit, and the only ones — see the fixed result order noted below.
+ * `LiveProbeResult.key` is typed against this union (not a bare `string`) so that a caller
+ * classifying probes by key, like `checkLiveness` in `src/deploy/smokeChecks.ts`, can be written as
+ * an exhaustive `Record<ProbeKey, ...>`: adding a probe here without updating that map then fails
+ * `pnpm typecheck` at the map, rather than silently defaulting to whatever that map's fallback does.
+ */
+export type ProbeKey =
+  | "google_auth"
+  | "google_drive_review"
+  | "google_drive_approved"
+  | "google_sheets"
+  | "lark"
+  | "typefully"
+  | "telegram";
+
+/**
  * Every string this carries, at any depth — `detail`, `grantedScopes`' entries, `resourceName`, and
  * `quota.resetsAt` — is guaranteed credential-free by construction: `attempt()` (below) walks the
  * whole result and redacts every string leaf before it leaves the module, not just `detail`. A field
@@ -26,7 +42,7 @@ export type ProbeStatus = "ok" | "dead" | "skipped";
  * network by the deployment (`GET /api/diagnostics/live`), not merely printed as a terminal line.
  */
 export interface LiveProbeResult {
-  key: string;
+  key: ProbeKey;
   status: ProbeStatus;
   /** Human-readable, English. */
   detail: string;
@@ -71,9 +87,9 @@ function parseScopes(scope: string | undefined): string[] {
 
 type ProbeExtras = Partial<Pick<LiveProbeResult, "grantedScopes" | "httpStatus" | "quota" | "resourceName">>;
 
-const skipped = (key: string, why: string): LiveProbeResult => ({ key, status: "skipped", detail: `not configured — ${why}` });
-const dead = (key: string, detail: string, extras: ProbeExtras = {}): LiveProbeResult => ({ key, status: "dead", detail, ...extras });
-const alive = (key: string, detail: string, extras: ProbeExtras = {}): LiveProbeResult => ({ key, status: "ok", detail, ...extras });
+const skipped = (key: ProbeKey, why: string): LiveProbeResult => ({ key, status: "skipped", detail: `not configured — ${why}` });
+const dead = (key: ProbeKey, detail: string, extras: ProbeExtras = {}): LiveProbeResult => ({ key, status: "dead", detail, ...extras });
+const alive = (key: ProbeKey, detail: string, extras: ProbeExtras = {}): LiveProbeResult => ({ key, status: "ok", detail, ...extras });
 
 /**
  * Replaces every secret with `***`. Not belt-and-braces: the Telegram probe puts its bot token in
@@ -110,7 +126,7 @@ function redactDeep<T>(value: T, secrets: readonly (string | undefined)[]): T {
 
 /** A probe never throws: a diagnostic that dies when something is wrong is no diagnostic. */
 async function attempt(
-  key: string,
+  key: ProbeKey,
   secrets: readonly (string | undefined)[],
   run: () => Promise<LiveProbeResult>,
 ): Promise<LiveProbeResult> {
@@ -182,7 +198,7 @@ export async function runLiveProbes(
   /** One folder's reachability, parameterised by key/label/id — `input.googleDrive` is only ever
    *  present with both ids set (`loadGoogleDriveConfig` requires both together), so the two probes
    *  built from it only differ in which folder they name. */
-  const driveFolder = (key: string, label: string, id: string) => async (): Promise<LiveProbeResult> => {
+  const driveFolder = (key: ProbeKey, label: string, id: string) => async (): Promise<LiveProbeResult> => {
     if (!token) return dead(key, "not checked — the Google token could not be refreshed");
     // `,name` alongside `id`: the same extra field the pre-module implementation asked for, so the
     // rendered check can name the folder it reached, not just report that reaching it worked.

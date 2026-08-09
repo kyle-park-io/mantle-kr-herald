@@ -4,7 +4,7 @@ import {
   checkLiveness,
   type StatusPayload,
 } from "../../src/deploy/smokeChecks";
-import type { LiveProbeResult } from "../../src/doctor/liveProbes";
+import type { LiveProbeResult, ProbeKey } from "../../src/doctor/liveProbes";
 import { SESSION_COOKIE_NAME } from "../../src/adapters/web/sessionCookie";
 
 const HEALTHY: StatusPayload = {
@@ -248,7 +248,7 @@ describe("checkLogout", () => {
   });
 });
 
-const probe = (key: string, status: LiveProbeResult["status"]): LiveProbeResult => ({ key, status, detail: `${key} ${status}` });
+const probe = (key: ProbeKey, status: LiveProbeResult["status"]): LiveProbeResult => ({ key, status, detail: `${key} ${status}` });
 
 describe("checkLiveness", () => {
   it("passes everything when every probe is ok", () => {
@@ -259,14 +259,14 @@ describe("checkLiveness", () => {
   // The Drive probe is two keys, not one — a broken review folder and a broken approved folder are
   // distinguishable by name (liveProbes.ts). Both are publishing credentials and both must fail.
   it("fails a dead publishing credential — that is what this deployment is for", () => {
-    for (const key of ["google_auth", "google_drive_review", "google_drive_approved", "lark"]) {
+    for (const key of ["google_auth", "google_drive_review", "google_drive_approved", "lark"] as const) {
       const rs = checkLiveness([probe(key, "dead")], false);
       expect(rs[0].status, key).toBe("fail");
     }
   });
 
   it("warns on a dead send credential while sends are closed", () => {
-    for (const key of ["telegram", "typefully"]) {
+    for (const key of ["telegram", "typefully"] as const) {
       expect(checkLiveness([probe(key, "dead")], false)[0].status, key).toBe("warn");
     }
   });
@@ -274,13 +274,20 @@ describe("checkLiveness", () => {
   it("fails the same credential once sends are open", () => {
     // The flag comes from the same status payload, so the check tightens exactly when sends open
     // rather than on a second decision someone has to remember.
-    for (const key of ["telegram", "typefully"]) {
+    for (const key of ["telegram", "typefully"] as const) {
       expect(checkLiveness([probe(key, "dead")], true)[0].status, key).toBe("fail");
     }
   });
 
-  it("only ever warns about the Sheet — it is header links", () => {
+  it("only ever warns about the Sheet — it is header links — sends open", () => {
     expect(checkLiveness([probe("google_sheets", "dead")], true)[0].status).toBe("warn");
+  });
+
+  // Companion to the above: the Sheet's severity does not depend on `sendsEnabled` at all, so it
+  // must warn identically with sends closed too — it is not merely "not yet tightened", it never
+  // tightens, because a Sheet credential is not `"send"`-tiered in the first place.
+  it("only ever warns about the Sheet — it is header links — sends closed too", () => {
+    expect(checkLiveness([probe("google_sheets", "dead")], false)[0].status).toBe("warn");
   });
 
   it("treats an unconfigured probe as ok, never as a failure", () => {
@@ -296,5 +303,15 @@ describe("checkLiveness", () => {
     expect(rs).toHaveLength(1);
     expect(rs[0].status).toBe("fail");
     expect(rs[0].detail).toMatch(/diagnostics/);
+  });
+
+  it("fails loudly on a key PROBE_TIER never classified, rather than defaulting to warn", () => {
+    // "future_probe" is not a real ProbeKey — `PROBE_TIER`'s `Record<ProbeKey, ...>` makes every
+    // real key a compile error to leave unclassified, so the only way this branch is reached at
+    // runtime is a key that escaped the type system: a hand-built LiveProbeResult (as here), or a
+    // live deployment one probe ahead of the `deploy:smoke` build reading it. `as ProbeKey` is a
+    // deliberate lie to the type system, standing in for that future/unknown probe.
+    const rs = checkLiveness([probe("future_probe" as ProbeKey, "dead")], false);
+    expect(rs[0].status).toBe("fail");
   });
 });
