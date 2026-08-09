@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   checkAnonymous, checkLogin, checkCredentials, checkStatus, checkConvertPrepare, checkLogout,
+  checkLiveness,
   type StatusPayload,
 } from "../../src/deploy/smokeChecks";
+import type { LiveProbeResult, ProbeKey } from "../../src/doctor/liveProbes";
 import { SESSION_COOKIE_NAME } from "../../src/adapters/web/sessionCookie";
 
 const HEALTHY: StatusPayload = {
@@ -243,5 +245,162 @@ describe("checkLogout", () => {
   it("never checks a follow-up /api/status call", () => {
     const rs = checkLogout(200, CLEARED);
     expect(rs.some((r) => r.name.includes("/api/status"))).toBe(false);
+  });
+});
+
+const probe = (key: ProbeKey, status: LiveProbeResult["status"]): LiveProbeResult => ({ key, status, detail: `${key} ${status}` });
+
+/**
+ * Every key `runLiveProbes` emits, in its fixed order. Tests below build a WHOLE report and flip the
+ * one probe under test, because `checkLiveness` now judges the report's membership as well as each
+ * entry: a partial array is itself a failure (see "fails a report that is missing a probe"), so a
+ * one-element array would no longer isolate the thing these tests mean to isolate.
+ */
+const ALL_KEYS: ProbeKey[] = [
+  "google_auth",
+  "google_drive_review",
+  "google_drive_approved",
+  "google_sheets",
+  "lark",
+  "typefully",
+  "telegram",
+];
+
+/** A full report with every probe `ok`, then `overrides` applied. */
+const report = (overrides: Partial<Record<ProbeKey, LiveProbeResult["status"]>> = {}): LiveProbeResult[] =>
+  ALL_KEYS.map((key) => probe(key, overrides[key] ?? "ok"));
+
+/** The one check named for a given probe key. */
+const forKey = (rs: CheckResultLike[], key: ProbeKey): CheckResultLike => {
+  const found = rs.find((r) => r.name === `live: ${key}`);
+  expect(found, `no check for ${key}`).toBeDefined();
+  return found as CheckResultLike;
+};
+
+describe("checkLiveness", () => {
+  it("passes everything when every probe is ok", () => {
+    const rs = checkLiveness(report(), false);
+    expect(rs).toHaveLength(ALL_KEYS.length);
+    expect(rs.every((r) => r.status === "ok")).toBe(true);
+  });
+
+  // The Drive probe is two keys, not one — a broken review folder and a broken approved folder are
+  // distinguishable by name (liveProbes.ts). Both are publishing credentials and both must fail.
+  it("fails a dead publishing credential — that is what this deployment is for", () => {
+    for (const key of ["google_auth", "google_drive_review", "google_drive_approved", "lark"] as const) {
+      const rs = checkLiveness(report({ [key]: "dead" }), false);
+      expect(forKey(rs, key).status, key).toBe("fail");
+    }
+  });
+
+  it("warns on a dead send credential while sends are closed", () => {
+    for (const key of ["telegram", "typefully"] as const) {
+      expect(forKey(checkLiveness(report({ [key]: "dead" }), false), key).status, key).toBe("warn");
+    }
+  });
+
+  it("fails the same credential once sends are open", () => {
+    // The flag comes from the same status payload, so the check tightens exactly when sends open
+    // rather than on a second decision someone has to remember.
+    for (const key of ["telegram", "typefully"] as const) {
+      expect(forKey(checkLiveness(report({ [key]: "dead" }), true), key).status, key).toBe("fail");
+    }
+  });
+
+  it("only ever warns about the Sheet — it is header links — sends open", () => {
+    expect(forKey(checkLiveness(report({ google_sheets: "dead" }), true), "google_sheets").status).toBe("warn");
+  });
+
+  // Companion to the above: the Sheet's severity does not depend on `sendsEnabled` at all, so it
+  // must warn identically with sends closed too — it is not merely "not yet tightened", it never
+  // tightens, because a Sheet credential is not `"send"`-tiered in the first place.
+  it("only ever warns about the Sheet — it is header links — sends closed too", () => {
+    expect(forKey(checkLiveness(report({ google_sheets: "dead" }), false), "google_sheets").status).toBe("warn");
+  });
+
+  it("treats an unconfigured probe as ok, never as a failure", () => {
+    // Presence is deploy:check's job. A Telegram-only install must not go red over Lark Drive.
+    const rs = checkLiveness(report({ lark: "skipped", typefully: "skipped" }), true);
+    expect(rs.every((r) => r.status === "ok")).toBe(true);
+  });
+
+  it("fails loudly when the route could not be read at all", () => {
+    // Distinguished from "everything passed": a deployment too old to have the route, or one
+    // answering 500, must not read as a clean bill of health.
+    const rs = checkLiveness(undefined, false);
+    expect(rs).toHaveLength(1);
+    expect(rs[0].status).toBe("fail");
+    expect(rs[0].detail).toMatch(/diagnostics/);
+  });
+
+  /**
+   * The failure that shipped: `deploy:smoke` called the session-gated route with no cookie, got 401,
+   * and printed the "old deployment without the route" line on every run — including runs where every
+   * credential was alive. Both halves of the fix are pinned: the caller sends the cookie
+   * (tests/deploy/smokeSession.test.ts), and the message that appears when it does not says which of
+   * the two things actually happened.
+   */
+  it("names a 401 as a missing session, not as a missing route", () => {
+    const rs = checkLiveness(undefined, false, 401);
+    expect(rs[0].status).toBe("fail");
+    expect(rs[0].detail).toContain("401");
+    expect(rs[0].detail).toMatch(/session/i);
+  });
+
+  /**
+   * Measured before the fix: `checkLiveness([], false)` returned `[]` — zero checks, therefore zero
+   * fails, therefore a clean exit for a deployment that reported nothing at all. The plan's own
+   * self-review named this case and then fixed only the `undefined` half.
+   */
+  it("fails an empty report rather than reporting nothing", () => {
+    const rs = checkLiveness([], false);
+    expect(rs.some((r) => r.status === "fail")).toBe(true);
+    for (const key of ALL_KEYS) expect(rs.map((r) => r.detail).join(" "), key).toContain(key);
+  });
+
+  it("fails a report that is missing a probe, and names which", () => {
+    // A one-probe array used to mention that probe and never notice Google was absent.
+    const rs = checkLiveness([probe("telegram", "ok")], false);
+    const missing = rs.filter((r) => r.status === "fail");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].detail).toContain("google_auth");
+    expect(missing[0].detail).not.toContain("telegram");
+  });
+
+  /**
+   * A 200 body is not a well-formed body. `{"probes": "x"}` used to reach `.map` on a string, throw a
+   * TypeError out of a pure judging function, and end `deploy:smoke` in a stack trace through
+   * `registerErrorHandler` — the one outcome a check that exists to REPORT failures must never have.
+   */
+  it("fails rather than throws when `probes` is not an array", () => {
+    for (const body of ["x", 42, {}, true]) {
+      const rs = checkLiveness(body, false, 200);
+      expect(rs, JSON.stringify(body)).toHaveLength(1);
+      expect(rs[0].status, JSON.stringify(body)).toBe("fail");
+    }
+  });
+
+  it("fails the one malformed entry without discarding the rest of the report", () => {
+    const rs = checkLiveness([...report(), null, { key: "google_auth" }], false);
+    expect(rs.filter((r) => r.status === "fail")).toHaveLength(2);
+    // Every real probe still got judged on its own merits.
+    for (const key of ALL_KEYS) expect(forKey(rs, key).status, key).toBe("ok");
+  });
+
+  it("fails loudly on a key PROBE_TIER never classified, rather than defaulting to warn", () => {
+    // "future_probe" is not a real ProbeKey — `PROBE_TIER`'s `Record<ProbeKey, ...>` makes every
+    // real key a compile error to leave unclassified, so the only way this branch is reached at
+    // runtime is a key that escaped the type system: a hand-built LiveProbeResult (as here), or a
+    // live deployment one probe ahead of the `deploy:smoke` build reading it. `as ProbeKey` is a
+    // deliberate lie to the type system, standing in for that future/unknown probe.
+    const rs = checkLiveness([...report(), probe("future_probe" as ProbeKey, "dead")], false);
+    expect(forKey(rs, "future_probe" as ProbeKey).status).toBe("fail");
+  });
+
+  /** A deployment one probe AHEAD of this build is not a broken one: the unknown key is judged (above),
+   *  and the seven this build knows about are all present, so nothing is reported missing. */
+  it("does not report a missing probe when the report merely carries an extra one", () => {
+    const rs = checkLiveness([...report(), probe("future_probe" as ProbeKey, "ok")], false);
+    expect(rs.every((r) => r.status === "ok")).toBe(true);
   });
 });

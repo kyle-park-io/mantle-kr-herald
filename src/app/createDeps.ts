@@ -65,6 +65,7 @@ import { ReconcilePublished } from "./ReconcilePublished";
 import { TypefullyDraftLookup } from "../adapters/send/TypefullyDraftLookup";
 import type { DraftLookup } from "../ports/DraftLookup";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
+import { runLiveProbes, buildLiveProbeInput, type LiveProbeResult } from "../doctor/liveProbes";
 
 /** Which route set an entry point serves. See `prepareConversionRun`'s construction below — this is
  *  the one axis the route set currently varies on. */
@@ -280,6 +281,15 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       { key: "google_sheets", label: "Google Sheets", group: "data", configured: probe(loadGoogleSheetConfig) },
     ];
   })();
+
+  /**
+   * Live credential checks — the counterpart to `integrations` above, which only reports presence.
+   *
+   * Both halves come from `src/doctor/liveProbes.ts`, including the environment-reading half. This
+   * used to be a verbatim copy of `src/cli/doctor.ts`'s block, and a copy is exactly what that
+   * module's header rules out: the drifted one would be this one, the one running in production.
+   */
+  const probeLiveness = async (): Promise<LiveProbeResult[]> => runLiveProbes(buildLiveProbeInput());
 
   const linkCfg: PublishLinkConfig = {};
   if (storageMode === "cloud") {
@@ -655,5 +665,6 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     sendToOutlet: sendsEnabled ? sendToOutlet : undefined,
     reconcilePublished,
     loadQuota,
+    probeLiveness,
   };
 }

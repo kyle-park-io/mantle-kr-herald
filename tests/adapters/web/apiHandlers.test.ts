@@ -195,6 +195,7 @@ function makeDeps(
       },
     } as unknown as ApiDeps["formatVariants"],
     loadQuota: async () => ({ error: "not configured" }),
+    probeLiveness: async () => [],
     login: async () => ({ ok: false, retryAfterMs: 0 }),
     sessionConfig: { secret: "test-secret-at-least-32-characters-long", ttlMs: SESSION_TTL_MS },
     ipConfig: { trustProxy: false, trustedHopsFromEnd: 1 },

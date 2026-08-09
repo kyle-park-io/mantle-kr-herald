@@ -1,5 +1,6 @@
 import type { CheckResult } from "../doctor/report";
 import { SESSION_COOKIE_NAME } from "../adapters/web/sessionCookie";
+import type { LiveProbeResult, ProbeKey } from "../doctor/liveProbes";
 
 /**
  * The parsed shape of a running deployment's `/api/status` response (`StatusView`,
@@ -334,4 +335,178 @@ function clearsSessionCookie(setCookieHeader: string | undefined): boolean {
   const name = nameValue.slice(0, eq).trim();
   const value = nameValue.slice(eq + 1).trim();
   return name === SESSION_COOKIE_NAME && value === "" && /max-age=0/i.test(setCookieHeader);
+}
+
+/**
+ * Severity by what the credential is for, not by which API answered. Publishing is what this
+ * deployment exists to do, so a dead publish credential fails; sends ship closed and follow the flag
+ * the same status payload already carries; the Sheet is header links.
+ *
+ * `skipped` is ok, never a failure — presence is `deploy:check`'s job, and a Telegram-only install
+ * must not go red because Lark Drive is absent. Same split `requirements.ts` draws, same reason.
+ *
+ * Drive is two keys, not one (`google_drive_review` and `google_drive_approved` — `liveProbes.ts`
+ * split it so a broken review folder and a broken approved folder are distinguishable by name), and
+ * both are publishing credentials, so both are classified `"publish"` below.
+ */
+type ProbeTier = "publish" | "send" | "data";
+
+/**
+ * `Record<ProbeKey, ProbeTier>`, not two arrays checked with `.includes()`. The array shape is what
+ * this map replaced: a probe added to `runLiveProbes` (`liveProbes.ts`) but never added to either
+ * list produced no compile error — `.includes()` on a plain string list accepts, and silently
+ * rejects, any string equally — and fell through to `warn` regardless of `sendsEnabled`, which is a
+ * milder replay of the exact false-green incident this plan responds to. `LiveProbeResult.key` is
+ * typed `ProbeKey`, so a `Record` indexed by that same union makes the classification exhaustive:
+ * adding a key to `ProbeKey` without adding it here fails `pnpm typecheck` at this object literal,
+ * not at some caller three files away.
+ */
+const PROBE_TIER: Record<ProbeKey, ProbeTier> = {
+  google_auth: "publish",
+  google_drive_review: "publish",
+  google_drive_approved: "publish",
+  lark: "publish",
+  typefully: "send",
+  telegram: "send",
+  google_sheets: "data",
+};
+
+/**
+ * `dead`/`ok`/`skipped` was already judged by the caller; this only classifies a `dead` probe's
+ * severity by tier. The `default` branch is the runtime half of the same "unknown is not-known"
+ * argument the `undefined`-route case above already makes: `PROBE_TIER` is exhaustive over `ProbeKey`
+ * at compile time, but a key can still reach here having escaped the type system — a hand-built
+ * `LiveProbeResult` in a test, or a live deployment answering with a probe key this build of
+ * `deploy:smoke` predates. Defaulting to `fail` rather than `warn` matches the rest of this module:
+ * this command's whole purpose is to stop a deploy reading as healthy when something is unverified,
+ * so not-knowing which tier a credential belongs to is graded the same as knowing it is dead.
+ */
+function liveSeverity(key: ProbeKey, sendsEnabled: boolean): CheckResult["status"] {
+  const tier = PROBE_TIER[key];
+  switch (tier) {
+    case "publish":
+      return "fail";
+    case "send":
+      return sendsEnabled ? "fail" : "warn";
+    case "data":
+      return "warn";
+    default:
+      return "fail";
+  }
+}
+
+/**
+ * Every key the report is expected to carry, derived from `PROBE_TIER` rather than written out
+ * again. `PROBE_TIER` is a `Record<ProbeKey, …>`, so this list is exhaustive over `ProbeKey` by
+ * construction and a probe added to `liveProbes.ts` joins it with no edit here — the same
+ * compile-time guarantee, reused rather than re-established next to it where the two could disagree.
+ */
+const EXPECTED_PROBE_KEYS = Object.keys(PROBE_TIER) as ProbeKey[];
+
+/** The one probe entry shape this function can judge, narrowed off an unvalidated HTTP body. */
+interface ParsedProbe {
+  key: ProbeKey;
+  status: LiveProbeResult["status"];
+  detail: string;
+}
+
+/** `entry` as a probe result, or `undefined` if it is not one. `key` is accepted as any string and
+ *  cast: an unknown key is a real possibility (a deployment one probe ahead of this build), and
+ *  `liveSeverity` already grades an unclassifiable key as `fail` rather than guessing. */
+function parseProbe(entry: unknown): ParsedProbe | undefined {
+  if (entry === null || typeof entry !== "object") return undefined;
+  const { key, status, detail } = entry as { key?: unknown; status?: unknown; detail?: unknown };
+  if (typeof key !== "string" || key === "") return undefined;
+  if (status !== "ok" && status !== "dead" && status !== "skipped") return undefined;
+  return { key: key as ProbeKey, status, detail: typeof detail === "string" ? detail : "(no detail reported)" };
+}
+
+/**
+ * Judges `GET /api/diagnostics/live`'s probe results — the one thing `checkStatus` cannot tell you:
+ * whether the credentials behind those `present` flags still work.
+ *
+ * **Total over its input, and its input is an unvalidated HTTP body.** `probes` is typed `unknown`
+ * rather than `LiveProbeResult[] | undefined` on purpose: the caller parses a response body it did
+ * not write, so "an array of probe results" is a conclusion this function reaches, never a premise
+ * it may assume. The cast that used to stand in for that check made `probes.map(...)` look safe, and
+ * a 200 carrying `{"probes": "x"}` ended `deploy:smoke` in a `TypeError` through
+ * `registerErrorHandler` instead of in a failing check.
+ *
+ * **A short report is a failure, not a pass.** Three inputs used to produce zero failing checks
+ * between them: `[]` produced zero checks at all — no fails, therefore a clean exit; a one-probe
+ * array mentioned that one probe and never noticed the other six were missing; and a body with no
+ * `probes` field at all took the `undefined` path only by luck of `?.`. The report is
+ * fixed-membership by construction (`runLiveProbes` always returns one result per `ProbeKey`, in a
+ * fixed order), so anything short of the full set means the deployment did not answer the question
+ * asked — which is the same false clean bill as an unreachable route, and is graded the same way.
+ */
+export function checkLiveness(probes: unknown, sendsEnabled: boolean, httpStatus?: number): CheckResult[] {
+  if (probes === undefined || probes === null) {
+    return [
+      {
+        name: "credential liveness",
+        status: "fail",
+        detail:
+          `GET /api/diagnostics/live could not be read (${describeStatus(httpStatus)}) — an old deployment without the ` +
+          "route, one answering an error, or a caller that did not send its session. Not the same as every credential " +
+          "being alive, so this is a failure rather than a pass.",
+      },
+    ];
+  }
+  if (!Array.isArray(probes)) {
+    return [
+      {
+        name: "credential liveness",
+        status: "fail",
+        detail:
+          `GET /api/diagnostics/live answered (${describeStatus(httpStatus)}) with a \`probes\` field that is not an ` +
+          `array: ${JSON.stringify(probes)}. Nothing in it can be judged, so this is a failure rather than a pass.`,
+      },
+    ];
+  }
+
+  const results: CheckResult[] = [];
+  const seen = new Set<string>();
+  probes.forEach((entry, index) => {
+    const probe = parseProbe(entry);
+    if (!probe) {
+      results.push({
+        name: `credential liveness (entry ${index})`,
+        status: "fail",
+        detail: `Not a probe result: ${JSON.stringify(entry)} — expected { key, status: ok|dead|skipped, detail }.`,
+      });
+      return;
+    }
+    seen.add(probe.key);
+    const name = `live: ${probe.key}`;
+    // `skipped` is ok, never a failure — presence is `deploy:check`'s job, and a Telegram-only
+    // install must not go red because Lark Drive is absent.
+    if (probe.status === "ok" || probe.status === "skipped") {
+      results.push({ name, status: "ok", detail: probe.detail });
+      return;
+    }
+    results.push({ name, status: liveSeverity(probe.key, sendsEnabled), detail: probe.detail });
+  });
+
+  const missing = EXPECTED_PROBE_KEYS.filter((key) => !seen.has(key));
+  if (missing.length > 0) {
+    results.push({
+      name: "credential liveness (every probe reported)",
+      status: "fail",
+      detail:
+        `The report is missing ${missing.length} of ${EXPECTED_PROBE_KEYS.length} probes: ${missing.join(", ")}. ` +
+        "A credential nobody asked about is not a credential known to be alive — an empty or partial report " +
+        "otherwise reads as a clean pass, which is the exact false green these checks exist to remove.",
+    });
+  }
+
+  return results;
+}
+
+/** The HTTP status in words, for a detail line an operator reads once and acts on. */
+function describeStatus(httpStatus: number | undefined): string {
+  if (httpStatus === undefined) return "status unknown";
+  if (httpStatus === -1) return "the request never completed";
+  if (httpStatus === 401) return "HTTP 401 — no session was sent with the request";
+  return `HTTP ${httpStatus}`;
 }

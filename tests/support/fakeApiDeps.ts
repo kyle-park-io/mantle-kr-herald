@@ -86,6 +86,7 @@ export function fakeDeps(): ApiDeps {
     loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
     xMaxWeighted: 280,
     loadQuota: async () => ({ error: "not configured" }),
+    probeLiveness: async () => [],
     login: async () => ({ ok: false, retryAfterMs: 0 }),
     sessionConfig: { secret: TEST_SESSION_SECRET, ttlMs: SESSION_TTL_MS },
     ipConfig: TEST_IP_CONFIG,

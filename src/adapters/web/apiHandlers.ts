@@ -24,6 +24,7 @@ import type { LoginResult } from "../../app/Login";
 import { signSession, type SessionPayload } from "../../domain/auth/session";
 import type { SessionConfig } from "../../config";
 import { buildSessionCookie, CLEARED_SESSION_COOKIE } from "./sessionCookie";
+import type { LiveProbeResult } from "../../doctor/liveProbes";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -163,6 +164,12 @@ export interface ApiDeps {
    */
   loadQuota: () => Promise<HeadroomView>;
   /**
+   * Runs the live credential probes inside this deployment and reports what it found. Present on
+   * both route sets: the check is about credentials, not about where the process happens to run,
+   * and having it locally means `pnpm serve` exercises the same route in development.
+   */
+  probeLiveness: () => Promise<LiveProbeResult[]>;
+  /**
    * Checks the dashboard's one credential behind the two-layer lockout (global + per-IP — see
    * `attemptLimiter.ts`'s doc comment). `clientIp` is the request's own — pass `deps.clientIp`
    * straight through, never a value computed independently, so the limiter this call actually
@@ -300,6 +307,13 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
 
   if (method === "GET" && segments.length === 2 && segments[1] === "status") {
     return { status: 200, json: await deps.loadStatus() };
+  }
+
+  // Deliberately NOT a field on /api/status: the dashboard calls that on every load, and
+  // `createDeps`'s "env only, no live calls" is a property worth keeping rather than an accident.
+  // Six external calls per board render would be a different bug.
+  if (method === "GET" && segments[1] === "diagnostics" && segments[2] === "live" && segments.length === 3) {
+    return { status: 200, json: { probes: await deps.probeLiveness() } };
   }
 
   // Account-wide, not per item — and deliberately not a field on BoardView: board loads are

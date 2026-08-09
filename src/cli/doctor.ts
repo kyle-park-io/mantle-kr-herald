@@ -13,17 +13,12 @@ import {
   type DbConfig,
 } from "../config";
 import { createDb } from "../adapters/db/createDb";
-import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
-import { LarkAuth } from "../adapters/lark/LarkAuth";
-import { TypefullyQuota } from "../adapters/send/TypefullyQuota";
-import { HttpClient } from "../shared/http/HttpClient";
 import { paths, OUTPUT_DIR } from "../paths";
 import { steeringFiles, missingSteeringFiles, skeletonSteeringFiles } from "../doctor/steering";
 import {
   configCheck,
   cloudCheck,
   optionalCheck,
-  parseScopes,
   scopeCheck,
   accessResult,
   sheetAccessResult,
@@ -35,6 +30,7 @@ import {
 } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
+import { runLiveProbes, buildLiveProbeInput, type LiveProbeResult } from "../doctor/liveProbes";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -129,114 +125,118 @@ results.push(
 
 // --- live checks (network, read-only) ---
 if (live) {
-  try {
-    const auth = await createGoogleAuth(loadGoogleAuthConfig());
-    const token = await auth.getToken();
-    const info = (await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`,
-    ).then((r) => r.json())) as { scope?: string };
-    const granted = parseScopes(info.scope);
-    const shown = granted.map((s) => s.replace("https://www.googleapis.com/auth/", "")).join(", ") || "(none reported)";
-    results.push({ name: "Google auth  live", status: "ok", detail: `token OK · scopes: ${shown}` });
-    results.push(scopeCheck("Google Drive  live", granted, DRIVE_SCOPE, "run pnpm google:auth"));
-    results.push(
-      scopeCheck("Google Sheet  live", granted, SHEETS_SCOPE, 'add spreadsheets to GOOGLE_OAUTH_SCOPE + pnpm google:auth'),
-    );
+  // The environment → `LiveProbeInput` step lives in the probe module, not here: `createDeps.ts`
+  // needs the identical thing for `GET /api/diagnostics/live`, and this block used to be its
+  // verbatim twin.
+  const probes = await runLiveProbes(buildLiveProbeInput());
+  const byKey = (key: string): LiveProbeResult | undefined => probes.find((p) => p.key === key);
+  /**
+   * For a probe that never reached the network at all — not configured (`skipped`), or blocked on a
+   * Google token that never came (`dead` with no `httpStatus`) — there is no HTTP response for
+   * accessResult/sheetAccessResult to interpret, so fall back to the probe's own status and detail
+   * verbatim rather than inventing one.
+   *
+   * **`skipped` maps to `warn`, where the pre-module code pushed a `fail` from its catch.** That is
+   * deliberate, and it is the one live-block verdict this branch changed on the unhappy path:
+   *
+   * - Presence is graded once already, offline, and with the mode-awareness this line cannot have.
+   *   `cloudCheck("Google auth", …)` above fails a missing Google credential in cloud mode and
+   *   reports "not needed in local mode" in local mode; `optionalCheck` grades a missing Lark app or
+   *   Typefully key a `warn` because a Google+X operator has no Lark and a Telegram-only operator
+   *   has no Typefully. The old live `fail` contradicted every one of those judgements — including
+   *   itself: `pnpm doctor --live` in local mode exited 1 over a credential the same report, four
+   *   lines earlier, called not needed.
+   * - It cannot turn a red into a green. Every configuration where a probe reports `skipped` is one
+   *   where the offline check above has already graded the same absence, so nothing that used to
+   *   fail now passes silently — only the double-count is gone.
+   * - "Not configured" and "configured but dead" are different findings with different remedies, and
+   *   `liveProbes.ts` returns them as different statuses precisely so a reader can tell them apart.
+   *   `checkLiveness` (`smokeChecks.ts`) draws the same line for the same reason.
+   *
+   * A `dead` probe is still a `fail`, unchanged — including the case the old code could not
+   * distinguish at all: Google auth configured but its service-account key file unreadable, which
+   * `buildLiveProbeInput` now surfaces as `dead` rather than as an absent probe.
+   */
+  const passthrough = (name: string, probe: LiveProbeResult): CheckResult => ({
+    name,
+    status: probe.status === "ok" ? "ok" : probe.status === "skipped" ? "warn" : "fail",
+    detail: probe.detail,
+  });
+  const viaHttp = (name: string, probe: LiveProbeResult, render: (ok: boolean, status: number) => CheckResult): CheckResult =>
+    probe.status === "ok" || (probe.status === "dead" && probe.httpStatus !== undefined)
+      ? render(probe.status === "ok", probe.httpStatus ?? 0)
+      : passthrough(name, probe);
 
-    // Are the configured Drive folders / Sheet actually reachable with this token?
-    // (drive.file only sees files the app created — a stale folder id gives 404.)
-    const fileAccess = async (label: string, id: string): Promise<void> => {
-      const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=id,name`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const fileName = r.ok ? ((await r.json()) as { name?: string }).name : undefined;
-      results.push(accessResult(label, { ok: r.ok, status: r.status, fileName }));
-    };
-    // The Sheet is reached with the spreadsheets scope via the Sheets API — not drive.file — so this
-    // verifies a sheet the operator created themselves (unlike fileAccess, which only sees app-created files).
-    const sheetAccess = async (label: string, id: string): Promise<void> => {
-      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=spreadsheetId,properties.title`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const title = r.ok ? ((await r.json()) as { properties?: { title?: string } }).properties?.title : undefined;
-      // The scope check two lines up already knows this; pass it along so a 404 can say which of its
-      // two causes applies instead of always blaming the id.
+  const auth = byKey("google_auth");
+  if (auth) {
+    if (auth.status === "ok") {
+      // Same construction the module's own tokeninfo call used to feed straight into `doctor.ts`
+      // before Task 2: the granted-scopes summary on the auth line, and the two scope checks below it.
+      const granted = auth.grantedScopes ?? [];
+      const shown = granted.map((s) => s.replace("https://www.googleapis.com/auth/", "")).join(", ") || "(none reported)";
+      results.push({ name: "Google auth  live", status: "ok", detail: `token OK · scopes: ${shown}` });
+      results.push(scopeCheck("Google Drive  live", granted, DRIVE_SCOPE, "run pnpm google:auth"));
       results.push(
-        sheetAccessResult(label, { ok: r.ok, status: r.status, title, spreadsheetsScopeGranted: granted.includes(SHEETS_SCOPE) }),
+        scopeCheck("Google Sheet  live", granted, SHEETS_SCOPE, "add spreadsheets to GOOGLE_OAUTH_SCOPE + pnpm google:auth"),
       );
-    };
-    try {
-      const g = loadGoogleDriveConfig();
-      await fileAccess("Google Drive review   live", g.reviewFolderId);
-      await fileAccess("Google Drive approved  live", g.approvedFolderId);
-    } catch {
-      // Drive folders not configured — the offline config check already reported it.
-    }
-    try {
-      const gs = loadGoogleSheetConfig();
-      await sheetAccess("Google Sheet file  live", gs.spreadsheetId);
-    } catch {
-      // GSHEET_ID not set — the offline config check already reported it.
-    }
-  } catch (err) {
-    results.push({ name: "Google auth  live", status: "fail", detail: err instanceof Error ? err.message : String(err) });
-  }
 
-  try {
-    const l = loadLarkConfig();
-    const auth = new LarkAuth(new HttpClient(l.baseUrl), l.appId, l.appSecret);
-    const token = await auth.getToken();
-    const chats = (await fetch(`${l.baseUrl}/open-apis/im/v1/chats?page_size=100`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then((r) => r.json())) as { data?: { items?: unknown[] } };
-    const n = chats.data?.items?.length ?? 0;
-    results.push({
-      name: "Lark  live",
-      status: "ok",
-      detail: `tenant token OK · bot in ${n} chat(s) (im:message.group_msg verified by pnpm collect-lark)`,
-    });
-  } catch (err) {
-    results.push({ name: "Lark  live", status: "fail", detail: err instanceof Error ? err.message : String(err) });
-  }
-
-  let typefully: ReturnType<typeof loadTypefullyConfig> | undefined;
-  try {
-    typefully = loadTypefullyConfig();
-  } catch {
-    // TYPEFULLY_* not set — the offline check above already reported it as a warn.
-  }
-  if (typefully) {
-    const t = typefully;
-    try {
-      // Two calls on purpose: /me proves the key, the social set proves the id and carries the quota.
-      // Reporting "quota unreadable" for what is really a bad key would send the operator the wrong way.
-      const me = await fetch("https://api.typefully.com/v2/me", { headers: { Authorization: `Bearer ${t.apiKey}` } });
-      if (!me.ok) {
-        // 401/403 mean the key itself was rejected — anything else (5xx, 429, ...) is Typefully's
-        // side failing, and sending the operator to re-check a perfectly good key during an outage
-        // is the wrong remedy.
-        const detail =
-          me.status === 401 || me.status === 403
-            ? `GET /v2/me → HTTP ${me.status} — check TYPEFULLY_API_KEY`
-            : `GET /v2/me → HTTP ${me.status} — Typefully upstream failure, not necessarily your key`;
-        results.push({ name: "Typefully  live", status: "fail", detail });
-      } else {
-        try {
-          results.push(quotaResult("Typefully  live", await new TypefullyQuota(t.apiKey, t.socialSetId).read()));
-        } catch (err) {
-          results.push({
-            name: "Typefully  live",
-            status: "fail",
-            detail: `key OK, social set unreadable — check TYPEFULLY_SOCIAL_SET_ID (${(err as Error).message})`,
-          });
-        }
+      const driveReview = byKey("google_drive_review");
+      if (driveReview) {
+        results.push(
+          viaHttp("Google Drive review   live", driveReview, (ok, status) =>
+            accessResult("Google Drive review   live", { ok, status, fileName: driveReview.resourceName }),
+          ),
+        );
       }
-    } catch (err) {
-      // fetch() rejects on network-level failures (DNS, connection refused, TLS, timeout) — distinct
-      // from an HTTP error status, which is handled above via `!me.ok`. Both must be visible.
-      results.push({ name: "Typefully  live", status: "fail", detail: `unreachable — ${(err as Error).message}` });
+      const driveApproved = byKey("google_drive_approved");
+      if (driveApproved) {
+        results.push(
+          viaHttp("Google Drive approved  live", driveApproved, (ok, status) =>
+            accessResult("Google Drive approved  live", { ok, status, fileName: driveApproved.resourceName }),
+          ),
+        );
+      }
+      const sheets = byKey("google_sheets");
+      if (sheets) {
+        results.push(
+          viaHttp("Google Sheet file  live", sheets, (ok, status) =>
+            // The scope check two lines up already knows this; pass it along so a 404 can say which
+            // of its two causes applies instead of always blaming the id.
+            sheetAccessResult("Google Sheet file  live", {
+              ok,
+              status,
+              title: sheets.resourceName,
+              spreadsheetsScopeGranted: granted.includes(SHEETS_SCOPE),
+            }),
+          ),
+        );
+      }
+    } else {
+      // No token was ever obtained — nothing downstream of one was checked, so (like the
+      // pre-module implementation) only this one line is reported, not five absent/blamed ones.
+      results.push(passthrough("Google auth  live", auth));
     }
   }
+
+  const lark = byKey("lark");
+  if (lark) results.push(passthrough("Lark  live", lark));
+
+  const typefully = byKey("typefully");
+  if (typefully) {
+    results.push(
+      typefully.status === "ok" && typefully.quota
+        ? quotaResult("Typefully  live", {
+            used: typefully.quota.limit - typefully.quota.remaining,
+            remaining: typefully.quota.remaining,
+            resetsAt: typefully.quota.resetsAt ?? "",
+          })
+        : passthrough("Typefully  live", typefully),
+    );
+  }
+
+  // New — did not exist before this module: a gap in the old output, not a regression.
+  const telegram = byKey("telegram");
+  if (telegram) results.push(passthrough("Telegram  live", telegram));
 }
 
 console.log(formatReport(results, { live }));
