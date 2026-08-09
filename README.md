@@ -11,6 +11,13 @@ cp .env.example .env
 pnpm config:init
 pnpm doctor
 pnpm status
+
+# The review dashboard, at http://localhost:5757. `web/dist/` is git-ignored, so a fresh clone
+# has no bundle for the server to hand out — without the build, `/` answers 500 (ENOENT on
+# web/dist/index.html) while `/api/*` works fine, which reads like a broken install rather than
+# a missing step.
+pnpm build:web
+pnpm serve
 ```
 
 ## Documentation map
