@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   loadConfig,
   loadLarkConfig,
+  loadLarkAppConfig,
   loadLarkDriveConfig,
   loadGoogleAuthConfig,
   loadGoogleDriveConfig,
@@ -14,20 +15,12 @@ import {
 } from "../config";
 import { createDb } from "../adapters/db/createDb";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
-import { LarkAuth } from "../adapters/lark/LarkAuth";
-import { TypefullyQuota } from "../adapters/send/TypefullyQuota";
-import { HttpClient } from "../shared/http/HttpClient";
 import { paths, OUTPUT_DIR } from "../paths";
 import { steeringFiles, missingSteeringFiles, skeletonSteeringFiles } from "../doctor/steering";
 import {
   configCheck,
   cloudCheck,
   optionalCheck,
-  parseScopes,
-  scopeCheck,
-  accessResult,
-  sheetAccessResult,
-  quotaResult,
   runDbCheck,
   databaseProbe,
   outputRootResult,
@@ -35,9 +28,7 @@ import {
 } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
-
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
-const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+import { runLiveProbes, type LiveProbeInput } from "../doctor/liveProbes";
 
 const live = process.argv.includes("--live");
 const results: CheckResult[] = [];
@@ -129,113 +120,56 @@ results.push(
 
 // --- live checks (network, read-only) ---
 if (live) {
+  const probeInput: LiveProbeInput = {};
   try {
     const auth = await createGoogleAuth(loadGoogleAuthConfig());
-    const token = await auth.getToken();
-    const info = (await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`,
-    ).then((r) => r.json())) as { scope?: string };
-    const granted = parseScopes(info.scope);
-    const shown = granted.map((s) => s.replace("https://www.googleapis.com/auth/", "")).join(", ") || "(none reported)";
-    results.push({ name: "Google auth  live", status: "ok", detail: `token OK · scopes: ${shown}` });
-    results.push(scopeCheck("Google Drive  live", granted, DRIVE_SCOPE, "run pnpm google:auth"));
-    results.push(
-      scopeCheck("Google Sheet  live", granted, SHEETS_SCOPE, 'add spreadsheets to GOOGLE_OAUTH_SCOPE + pnpm google:auth'),
-    );
-
-    // Are the configured Drive folders / Sheet actually reachable with this token?
-    // (drive.file only sees files the app created — a stale folder id gives 404.)
-    const fileAccess = async (label: string, id: string): Promise<void> => {
-      const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=id,name`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const fileName = r.ok ? ((await r.json()) as { name?: string }).name : undefined;
-      results.push(accessResult(label, { ok: r.ok, status: r.status, fileName }));
-    };
-    // The Sheet is reached with the spreadsheets scope via the Sheets API — not drive.file — so this
-    // verifies a sheet the operator created themselves (unlike fileAccess, which only sees app-created files).
-    const sheetAccess = async (label: string, id: string): Promise<void> => {
-      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=spreadsheetId,properties.title`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const title = r.ok ? ((await r.json()) as { properties?: { title?: string } }).properties?.title : undefined;
-      // The scope check two lines up already knows this; pass it along so a 404 can say which of its
-      // two causes applies instead of always blaming the id.
-      results.push(
-        sheetAccessResult(label, { ok: r.ok, status: r.status, title, spreadsheetsScopeGranted: granted.includes(SHEETS_SCOPE) }),
-      );
-    };
-    try {
-      const g = loadGoogleDriveConfig();
-      await fileAccess("Google Drive review   live", g.reviewFolderId);
-      await fileAccess("Google Drive approved  live", g.approvedFolderId);
-    } catch {
-      // Drive folders not configured — the offline config check already reported it.
-    }
-    try {
-      const gs = loadGoogleSheetConfig();
-      await sheetAccess("Google Sheet file  live", gs.spreadsheetId);
-    } catch {
-      // GSHEET_ID not set — the offline config check already reported it.
-    }
-  } catch (err) {
-    results.push({ name: "Google auth  live", status: "fail", detail: err instanceof Error ? err.message : String(err) });
-  }
-
-  try {
-    const l = loadLarkConfig();
-    const auth = new LarkAuth(new HttpClient(l.baseUrl), l.appId, l.appSecret);
-    const token = await auth.getToken();
-    const chats = (await fetch(`${l.baseUrl}/open-apis/im/v1/chats?page_size=100`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then((r) => r.json())) as { data?: { items?: unknown[] } };
-    const n = chats.data?.items?.length ?? 0;
-    results.push({
-      name: "Lark  live",
-      status: "ok",
-      detail: `tenant token OK · bot in ${n} chat(s) (im:message.group_msg verified by pnpm collect-lark)`,
-    });
-  } catch (err) {
-    results.push({ name: "Lark  live", status: "fail", detail: err instanceof Error ? err.message : String(err) });
-  }
-
-  let typefully: ReturnType<typeof loadTypefullyConfig> | undefined;
-  try {
-    typefully = loadTypefullyConfig();
+    probeInput.googleToken = () => auth.getToken();
   } catch {
-    // TYPEFULLY_* not set — the offline check above already reported it as a warn.
+    /* not configured — the offline check already reported it, and the probe reports skipped */
   }
-  if (typefully) {
-    const t = typefully;
-    try {
-      // Two calls on purpose: /me proves the key, the social set proves the id and carries the quota.
-      // Reporting "quota unreadable" for what is really a bad key would send the operator the wrong way.
-      const me = await fetch("https://api.typefully.com/v2/me", { headers: { Authorization: `Bearer ${t.apiKey}` } });
-      if (!me.ok) {
-        // 401/403 mean the key itself was rejected — anything else (5xx, 429, ...) is Typefully's
-        // side failing, and sending the operator to re-check a perfectly good key during an outage
-        // is the wrong remedy.
-        const detail =
-          me.status === 401 || me.status === 403
-            ? `GET /v2/me → HTTP ${me.status} — check TYPEFULLY_API_KEY`
-            : `GET /v2/me → HTTP ${me.status} — Typefully upstream failure, not necessarily your key`;
-        results.push({ name: "Typefully  live", status: "fail", detail });
-      } else {
-        try {
-          results.push(quotaResult("Typefully  live", await new TypefullyQuota(t.apiKey, t.socialSetId).read()));
-        } catch (err) {
-          results.push({
-            name: "Typefully  live",
-            status: "fail",
-            detail: `key OK, social set unreadable — check TYPEFULLY_SOCIAL_SET_ID (${(err as Error).message})`,
-          });
-        }
-      }
-    } catch (err) {
-      // fetch() rejects on network-level failures (DNS, connection refused, TLS, timeout) — distinct
-      // from an HTTP error status, which is handled above via `!me.ok`. Both must be visible.
-      results.push({ name: "Typefully  live", status: "fail", detail: `unreachable — ${(err as Error).message}` });
-    }
+  try {
+    const g = loadGoogleDriveConfig();
+    probeInput.googleDrive = { reviewFolderId: g.reviewFolderId, approvedFolderId: g.approvedFolderId };
+  } catch {
+    /* same */
+  }
+  try {
+    probeInput.googleSheetId = loadGoogleSheetConfig().spreadsheetId;
+  } catch {
+    /* same */
+  }
+  try {
+    // `loadLarkAppConfig`, NOT `loadLarkConfig`: the latter also requires LARK_CHAT_IDS, which is a
+    // collection variable deliberately absent from the deployment. Using it here would make the Lark
+    // probe report `skipped` on every hosted run — the check quietly never running is the failure
+    // this whole plan exists to remove.
+    const l = loadLarkAppConfig();
+    probeInput.lark = { appId: l.appId, appSecret: l.appSecret, baseUrl: l.baseUrl };
+  } catch {
+    /* same */
+  }
+  try {
+    const t = loadTypefullyConfig();
+    probeInput.typefully = { apiKey: t.apiKey, socialSetId: t.socialSetId };
+  } catch {
+    /* same */
+  }
+  probeInput.telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || undefined;
+
+  const LIVE_LABELS: Record<string, string> = {
+    google_auth: "Google auth  live",
+    google_drive: "Google Drive  live",
+    google_sheets: "Google Sheet file  live",
+    lark: "Lark  live",
+    typefully: "Typefully  live",
+    telegram: "Telegram  live",
+  };
+  for (const probe of await runLiveProbes(probeInput)) {
+    results.push({
+      name: LIVE_LABELS[probe.key] ?? probe.key,
+      status: probe.status === "ok" ? "ok" : probe.status === "skipped" ? "warn" : "fail",
+      detail: probe.detail,
+    });
   }
 }
 
