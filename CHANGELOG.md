@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm deploy:freeze --check|--apply` — the scheduler's configuration is now a snapshot taken at
+  deploy time, not a live window into the development checkout.** The 2026-08-07 outage was fixed by
+  giving the scheduled units their own code checkout; configuration never got the same treatment.
+  `~/.herald/app/.env` was a symlink into `~/code/mantle-kr-herald`, and `herald-deploy.sh` linked
+  every git-ignored file under `translation/`, `conversion/` and `keys/` the same way — so
+  `TELEGRAM_CHAT_ID_*`, `TYPEFULLY_API_KEY`, every `GDRIVE_*`, the glossary, the style guide and the
+  conversion prompts were, at the moment a timer fired, **whatever the development checkout said
+  right then**. Point a chat id at a scratch room to test something and the 18:41 fire delivers
+  production copy there; pull a glossary update mid-edit and the next tick translates against a
+  half-written one. Unlike code, this needed no checkout, no merge and no deploy — editing a file was
+  enough. The three units' `WorkingDirectory` and `~/.herald/prod.env` are untouched: shell
+  environment still beats Node's `--env-file`, so `prod.env`'s two lines still override the copy's
+  local-Docker `DATABASE_URL`.
+  - **Two phases, because the gate has to run before anything destructive.** `--check` is read-only
+    and prints a **name-only** diff between the deploy checkout's current snapshot and the
+    development checkout — `+ NAME` / `~ NAME` / `- NAME`, never a value, pinned by a test that puts
+    a secret-shaped string in both inputs and asserts it never reaches the output. It exits 2 unless
+    nothing changed or `--yes` is passed, and `herald-deploy.sh` forwards its own `"$@"` to it, so
+    the human-typed command stays `bash deploy/herald-deploy.sh [--yes]`. It runs **before** the
+    `git reset --hard`, not next to the copy: refusing after the code has already moved is precisely
+    the half-finished deploy that script's header rules out. `--apply` then writes, after
+    `pnpm install`, to a temp name in the destination and renames, so an interrupted deploy leaves
+    each file wholly old or wholly new. `.env` and everything under `keys/` are written `chmod 600`,
+    steering files `0644`.
+  - **It closes two failures `ln -sfn` could not report.** `ln -sfn` succeeds when its target does
+    not exist, and `set -euo pipefail` cannot catch a command that did not fail — so a missing
+    development `.env` produced a deploy that reported success and a scheduler that ran with no
+    credentials at all, announced by one line in the journal. That is now exit 1 naming the remedy.
+    And `ln -sfn` never removed anything: a steering file deleted in the development checkout kept
+    its link forever, so production kept translating against a glossary that no longer existed. The
+    stale entry is now reported as removed and deleted, links included.
+  - **The two trees are asked opposite questions about symlinks, deliberately.** The development side
+    *follows* them — a `.env` or glossary that is itself a link is what the scheduler would read, and
+    the bash this replaced followed links too, so anything else silently drops a real config file
+    from the copy. The deploy side does *not*: a link there is the pre-freeze layout awaiting
+    migration, never a snapshot, so it reports as `+`/`~` on the first freeze rather than diffing the
+    development file against itself and calling it unchanged — while still being listed, or the
+    sweep above could never remove one.
+  - **The file list stays derived, never hardcoded.** `git -C <dev> check-ignore` selects exactly what
+    the old `link_ignored_config` selected, so a steering file added later is picked up with no edit
+    to the script, and the committed `*.example.*` files are never touched in either direction.
+  - **The first deploy after rebuilding `~/.herald` will stop, and that is correct.** With no previous
+    snapshot every name reports as added and the gate exits 2; `docs/ko/team-runbook.md` now shows the
+    two-command sequence for it.
+
 - **`pnpm text:video-backfill [--yes]` — the other half of `x:video-backfill`, for the `[영상]`
   markers already frozen into reviewed text.** `x:video-backfill` fills `videoUrl` on the *collected*
   `x_threads` rows, and that is where it stops: **nothing re-derives stored text on read**, so every

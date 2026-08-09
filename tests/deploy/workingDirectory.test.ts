@@ -81,8 +81,9 @@ describe("scheduled units run from the deploy checkout, never a development one"
 
   it("herald-notify-failure.sh reads .env from its own checkout, not a hardcoded one", () => {
     // Once the script is invoked out of the deploy checkout, a hardcoded development path would
-    // send it back to read a different tree's .env — working today only because that file is
-    // symlinked, and silently wrong the moment it is not.
+    // send it back to read a different tree's .env. That was survivable by accident while the
+    // deploy checkout's .env was a symlink into the development tree; since 2026-08-09 it is a
+    // deploy-time copy, so the two files genuinely differ between deploys.
     const script = readFileSync(resolve(repoRoot, "deploy/herald-notify-failure.sh"), "utf8");
     expect(script).not.toContain(`REPO_DIR="${repoRoot}"`);
     expect(script).toMatch(/REPO_DIR="\$\(cd "\$\(dirname "\$\{BASH_SOURCE\[0\]}"\)\/\.\." && pwd\)"/);
