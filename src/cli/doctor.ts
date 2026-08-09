@@ -21,6 +21,10 @@ import {
   configCheck,
   cloudCheck,
   optionalCheck,
+  scopeCheck,
+  accessResult,
+  sheetAccessResult,
+  quotaResult,
   runDbCheck,
   databaseProbe,
   outputRootResult,
@@ -28,7 +32,10 @@ import {
 } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
-import { runLiveProbes, type LiveProbeInput } from "../doctor/liveProbes";
+import { runLiveProbes, type LiveProbeInput, type LiveProbeResult } from "../doctor/liveProbes";
+
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
 const live = process.argv.includes("--live");
 const results: CheckResult[] = [];
@@ -156,21 +163,87 @@ if (live) {
   }
   probeInput.telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || undefined;
 
-  const LIVE_LABELS: Record<string, string> = {
-    google_auth: "Google auth  live",
-    google_drive: "Google Drive  live",
-    google_sheets: "Google Sheet file  live",
-    lark: "Lark  live",
-    typefully: "Typefully  live",
-    telegram: "Telegram  live",
-  };
-  for (const probe of await runLiveProbes(probeInput)) {
-    results.push({
-      name: LIVE_LABELS[probe.key] ?? probe.key,
-      status: probe.status === "ok" ? "ok" : probe.status === "skipped" ? "warn" : "fail",
-      detail: probe.detail,
-    });
+  const probes = await runLiveProbes(probeInput);
+  const byKey = (key: string): LiveProbeResult | undefined => probes.find((p) => p.key === key);
+  // For a probe that never reached the network at all — not configured (`skipped`), or blocked on a
+  // Google token that never came (`dead` with no `httpStatus`) — there is no HTTP response for
+  // accessResult/sheetAccessResult to interpret, so fall back to the probe's own status and detail
+  // verbatim rather than inventing one.
+  const passthrough = (name: string, probe: LiveProbeResult): CheckResult => ({
+    name,
+    status: probe.status === "ok" ? "ok" : probe.status === "skipped" ? "warn" : "fail",
+    detail: probe.detail,
+  });
+  const viaHttp = (name: string, probe: LiveProbeResult, render: (ok: boolean, status: number) => CheckResult): CheckResult =>
+    probe.status === "ok" || (probe.status === "dead" && probe.httpStatus !== undefined)
+      ? render(probe.status === "ok", probe.httpStatus ?? 0)
+      : passthrough(name, probe);
+
+  const auth = byKey("google_auth");
+  if (auth) {
+    if (auth.status === "ok") {
+      // Same construction the module's own tokeninfo call used to feed straight into `doctor.ts`
+      // before Task 2: the granted-scopes summary on the auth line, and the two scope checks below it.
+      const granted = auth.grantedScopes ?? [];
+      const shown = granted.map((s) => s.replace("https://www.googleapis.com/auth/", "")).join(", ") || "(none reported)";
+      results.push({ name: "Google auth  live", status: "ok", detail: `token OK · scopes: ${shown}` });
+      results.push(scopeCheck("Google Drive  live", granted, DRIVE_SCOPE, "run pnpm google:auth"));
+      results.push(
+        scopeCheck("Google Sheet  live", granted, SHEETS_SCOPE, "add spreadsheets to GOOGLE_OAUTH_SCOPE + pnpm google:auth"),
+      );
+
+      const driveReview = byKey("google_drive_review");
+      if (driveReview) {
+        results.push(
+          viaHttp("Google Drive review   live", driveReview, (ok, status) =>
+            accessResult("Google Drive review   live", { ok, status }),
+          ),
+        );
+      }
+      const driveApproved = byKey("google_drive_approved");
+      if (driveApproved) {
+        results.push(
+          viaHttp("Google Drive approved  live", driveApproved, (ok, status) =>
+            accessResult("Google Drive approved  live", { ok, status }),
+          ),
+        );
+      }
+      const sheets = byKey("google_sheets");
+      if (sheets) {
+        results.push(
+          viaHttp("Google Sheet file  live", sheets, (ok, status) =>
+            // The scope check two lines up already knows this; pass it along so a 404 can say which
+            // of its two causes applies instead of always blaming the id.
+            sheetAccessResult("Google Sheet file  live", { ok, status, spreadsheetsScopeGranted: granted.includes(SHEETS_SCOPE) }),
+          ),
+        );
+      }
+    } else {
+      // No token was ever obtained — nothing downstream of one was checked, so (like the
+      // pre-module implementation) only this one line is reported, not five absent/blamed ones.
+      results.push(passthrough("Google auth  live", auth));
+    }
   }
+
+  const lark = byKey("lark");
+  if (lark) results.push(passthrough("Lark  live", lark));
+
+  const typefully = byKey("typefully");
+  if (typefully) {
+    results.push(
+      typefully.status === "ok" && typefully.quota
+        ? quotaResult("Typefully  live", {
+            used: typefully.quota.limit - typefully.quota.remaining,
+            remaining: typefully.quota.remaining,
+            resetsAt: typefully.quota.resetsAt ?? "",
+          })
+        : passthrough("Typefully  live", typefully),
+    );
+  }
+
+  // New — did not exist before this module: a gap in the old output, not a regression.
+  const telegram = byKey("telegram");
+  if (telegram) results.push(passthrough("Telegram  live", telegram));
 }
 
 console.log(formatReport(results, { live }));

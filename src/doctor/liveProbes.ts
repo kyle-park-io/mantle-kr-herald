@@ -19,6 +19,18 @@ export interface LiveProbeResult {
   status: ProbeStatus;
   /** Human-readable, English, and — enforced below — never containing a credential. */
   detail: string;
+  /** Google only: the scopes `tokeninfo` reported for the access token this probe obtained. */
+  grantedScopes?: string[];
+  /** The HTTP status a failed call actually answered with, so a caller can tell 403 from 404
+   *  (`sheetAccessResult` in `src/doctor/checks.ts` needs exactly this — a 404 means two different
+   *  things depending on whether the `spreadsheets` scope was granted). Absent when the probe never
+   *  reached the network at all (not configured, or blocked on a token that never came). */
+  httpStatus?: number;
+  /** Typefully only, from the social-set response's `publishing_quota`. `limit` is `used + remaining`
+   *  — the module doesn't forward `used` on its own, since the resend guard (`TypefullyQuota.ts`)
+   *  treats "absent" and "zero" as different answers for that field and callers here don't need it
+   *  raw, only combined into a total. */
+  quota?: { remaining: number; limit: number; resetsAt?: string };
 }
 
 export interface LiveProbeInput {
@@ -33,9 +45,19 @@ export interface LiveProbeInput {
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 
+/** A space-separated OAuth scope string → array (empties dropped). Duplicated from
+ *  `src/doctor/checks.ts`'s own `parseScopes` rather than imported: that module pulls in `../config`
+ *  and `../adapters/db/*` for its other exports, and this one is a leaf probe module that promises
+ *  never to grow a database dependency just to parse a header. */
+function parseScopes(scope: string | undefined): string[] {
+  return (scope ?? "").split(/\s+/).filter((s) => s.length > 0);
+}
+
+type ProbeExtras = Partial<Pick<LiveProbeResult, "grantedScopes" | "httpStatus" | "quota">>;
+
 const skipped = (key: string, why: string): LiveProbeResult => ({ key, status: "skipped", detail: `not configured — ${why}` });
-const dead = (key: string, detail: string): LiveProbeResult => ({ key, status: "dead", detail });
-const alive = (key: string, detail: string): LiveProbeResult => ({ key, status: "ok", detail });
+const dead = (key: string, detail: string, extras: ProbeExtras = {}): LiveProbeResult => ({ key, status: "dead", detail, ...extras });
+const alive = (key: string, detail: string, extras: ProbeExtras = {}): LiveProbeResult => ({ key, status: "ok", detail, ...extras });
 
 /**
  * Replaces every secret with `***`. Not belt-and-braces: the Telegram probe puts its bot token in
@@ -76,31 +98,59 @@ export async function runLiveProbes(
 ): Promise<LiveProbeResult[]> {
   const signal = (): AbortSignal => AbortSignal.timeout(timeoutMs);
 
+  // Result order (== the array order returned below), fixed and callers may rely on it:
+  //   google_auth, google_drive_review, google_drive_approved, google_sheets, lark, typefully, telegram
+  // Drive was a single "google_drive" key through 2026-08-10, covering both folders in one result.
+  // It split into a key per folder so a broken review folder and a broken approved folder are
+  // distinguishable by name — the way `doctor --live` told them apart before this module replaced
+  // its inline checks.
+
   // Google first and alone: Drive and Sheets both need the token this produces, so they cannot run
   // in parallel with it. Everything after this point does.
   let token: string | undefined;
   const googleAuth = input.googleToken
     ? await attempt("google_auth", [], async () => {
         token = await input.googleToken!();
-        return alive("google_auth", "token refreshed");
+        // Best-effort: which scopes actually ended up on the token matters to callers (a token
+        // missing `spreadsheets` scope is a different fix than a wrong GSHEET_ID — see
+        // `sheetAccessResult`), but `tokeninfo` failing must not fail this probe: the token itself
+        // still refreshed, which is what "ok" means here. The failure is discarded, not returned or
+        // rethrown, so it can never carry the token — which is literally in this call's URL — into a
+        // detail string or an exception `attempt()` would otherwise redact-and-report.
+        let grantedScopes: string[] | undefined;
+        try {
+          const info = (await fetchFn(
+            `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`,
+            { signal: signal() },
+          ).then((r) => r.json())) as { scope?: string };
+          grantedScopes = parseScopes(info.scope);
+        } catch {
+          /* tokeninfo unreachable — the token still refreshed; scopes just aren't known this run */
+        }
+        return alive("google_auth", "token refreshed", { grantedScopes });
       })
     : skipped("google_auth", "no Google OAuth credentials");
 
-  const googleDrive = async (): Promise<LiveProbeResult> => {
-    if (!input.googleDrive) return skipped("google_drive", "GDRIVE_REVIEW_FOLDER_ID / GDRIVE_APPROVED_FOLDER_ID unset");
-    if (!token) return dead("google_drive", "not checked — the Google token could not be refreshed");
-    for (const [label, id] of [
-      ["review", input.googleDrive.reviewFolderId],
-      ["approved", input.googleDrive.approvedFolderId],
-    ] as const) {
-      const res = await fetchFn(`https://www.googleapis.com/drive/v3/files/${id}?fields=id`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: signal(),
-      });
-      if (!res.ok) return dead("google_drive", `${label} folder unreachable — HTTP ${res.status}`);
-    }
-    return alive("google_drive", "review and approved folders reachable");
+  const DRIVE_NOT_CONFIGURED = "GDRIVE_REVIEW_FOLDER_ID / GDRIVE_APPROVED_FOLDER_ID unset";
+  /** One folder's reachability, parameterised by key/label/id — `input.googleDrive` is only ever
+   *  present with both ids set (`loadGoogleDriveConfig` requires both together), so the two probes
+   *  built from it only differ in which folder they name. */
+  const driveFolder = (key: string, label: string, id: string) => async (): Promise<LiveProbeResult> => {
+    if (!token) return dead(key, "not checked — the Google token could not be refreshed");
+    const res = await fetchFn(`https://www.googleapis.com/drive/v3/files/${id}?fields=id`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: signal(),
+    });
+    return res.ok
+      ? alive(key, `${label} folder reachable`)
+      : dead(key, `${label} folder unreachable — HTTP ${res.status}`, { httpStatus: res.status });
   };
+  const googleDriveReview = input.googleDrive
+    ? driveFolder("google_drive_review", "review", input.googleDrive.reviewFolderId)
+    : async () => skipped("google_drive_review", DRIVE_NOT_CONFIGURED);
+  const googleDriveApproved = input.googleDrive
+    ? driveFolder("google_drive_approved", "approved", input.googleDrive.approvedFolderId)
+    : async () => skipped("google_drive_approved", DRIVE_NOT_CONFIGURED);
 
   const googleSheets = async (): Promise<LiveProbeResult> => {
     if (!input.googleSheetId) return skipped("google_sheets", "GSHEET_ID unset");
@@ -109,7 +159,9 @@ export async function runLiveProbes(
       `https://sheets.googleapis.com/v4/spreadsheets/${input.googleSheetId}?fields=spreadsheetId`,
       { headers: { Authorization: `Bearer ${token}` }, signal: signal() },
     );
-    return res.ok ? alive("google_sheets", "spreadsheet reachable") : dead("google_sheets", `HTTP ${res.status}`);
+    return res.ok
+      ? alive("google_sheets", "spreadsheet reachable")
+      : dead("google_sheets", `HTTP ${res.status}`, { httpStatus: res.status });
   };
 
   const lark = async (): Promise<LiveProbeResult> => {
@@ -120,7 +172,7 @@ export async function runLiveProbes(
       body: JSON.stringify({ app_id: input.lark.appId, app_secret: input.lark.appSecret }),
       signal: signal(),
     });
-    if (!res.ok) return dead("lark", `HTTP ${res.status}`);
+    if (!res.ok) return dead("lark", `HTTP ${res.status}`, { httpStatus: res.status });
     // Lark answers 200 with a non-zero `code` for a bad secret — the status line alone would pass.
     const body = (await res.json()) as { code?: number; msg?: string };
     return body.code === 0
@@ -134,19 +186,34 @@ export async function runLiveProbes(
       headers: { Authorization: `Bearer ${input.typefully.apiKey}` },
       signal: signal(),
     });
-    return res.ok ? alive("typefully", "social set reachable") : dead("typefully", `HTTP ${res.status}`);
+    if (!res.ok) return dead("typefully", `HTTP ${res.status}`, { httpStatus: res.status });
+    // Same field names TypefullyQuota.ts reads off this response. `used` is required, not defaulted,
+    // there too — an absent `used` is a different (and untrustworthy) answer from a real zero, per
+    // that file's own comment — so a response missing either number is reported reachable with no
+    // quota, rather than guessing one.
+    const body = (await res.json()) as { publishing_quota?: { used?: number; remaining?: number; resets_at?: string } };
+    const q = body.publishing_quota;
+    if (!q || typeof q.remaining !== "number" || typeof q.used !== "number") {
+      return alive("typefully", "social set reachable");
+    }
+    return alive("typefully", "social set reachable", {
+      quota: { remaining: q.remaining, limit: q.used + q.remaining, resetsAt: q.resets_at },
+    });
   };
 
   const telegram = async (): Promise<LiveProbeResult> => {
     if (!input.telegramBotToken) return skipped("telegram", "TELEGRAM_BOT_TOKEN unset");
     // getMe validates the token and sends nothing. The token is in the path — see `redact`.
     const res = await fetchFn(`https://api.telegram.org/bot${input.telegramBotToken}/getMe`, { signal: signal() });
-    return res.ok ? alive("telegram", "bot token valid") : dead("telegram", `HTTP ${res.status}`);
+    return res.ok
+      ? alive("telegram", "bot token valid")
+      : dead("telegram", `HTTP ${res.status}`, { httpStatus: res.status });
   };
 
   const secrets = [input.lark?.appSecret, input.typefully?.apiKey, input.telegramBotToken, token];
   const rest = await Promise.all([
-    attempt("google_drive", secrets, googleDrive),
+    attempt("google_drive_review", secrets, googleDriveReview),
+    attempt("google_drive_approved", secrets, googleDriveApproved),
     attempt("google_sheets", secrets, googleSheets),
     attempt("lark", secrets, lark),
     attempt("typefully", secrets, typefully),

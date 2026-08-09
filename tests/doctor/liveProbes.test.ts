@@ -42,7 +42,15 @@ const byKey = (rs: LiveProbeResult[], key: string): LiveProbeResult => {
 describe("runLiveProbes", () => {
   it("reports every probe ok when each call succeeds", async () => {
     const results = await runLiveProbes(fullInput(), async () => ok({ code: 0, tenant_access_token: "t" }));
-    expect(results.map((r) => r.key)).toEqual(["google_auth", "google_drive", "google_sheets", "lark", "typefully", "telegram"]);
+    expect(results.map((r) => r.key)).toEqual([
+      "google_auth",
+      "google_drive_review",
+      "google_drive_approved",
+      "google_sheets",
+      "lark",
+      "typefully",
+      "telegram",
+    ]);
     expect(results.every((r) => r.status === "ok")).toBe(true);
   });
 
@@ -78,6 +86,28 @@ describe("runLiveProbes", () => {
     expect(byKey(results, "google_auth").detail).toContain("400");
   });
 
+  it("reports the scopes tokeninfo grants for the Google auth probe", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) =>
+      String(url).includes("tokeninfo")
+        ? ok({ scope: "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets" })
+        : ok({ code: 0 }),
+    );
+    expect(byKey(results, "google_auth").grantedScopes).toEqual([
+      "https://www.googleapis.com/auth/drive.file",
+      "https://www.googleapis.com/auth/spreadsheets",
+    ]);
+  });
+
+  it("still reports Google auth ok when tokeninfo itself fails — the token refreshed either way", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) => {
+      if (String(url).includes("tokeninfo")) throw new Error("tokeninfo unreachable");
+      return ok({ code: 0 });
+    });
+    const auth = byKey(results, "google_auth");
+    expect(auth.status).toBe("ok");
+    expect(auth.grantedScopes).toBeUndefined();
+  });
+
   it("does not claim Drive and Sheets are dead on their own merits when the token never came", async () => {
     // They were never reached. Saying "folder unreachable" would send the operator after a folder id
     // that is fine — the same mis-blame tests/doctor/checks.test.ts already guards for the Sheet 404.
@@ -85,10 +115,50 @@ describe("runLiveProbes", () => {
       fullInput({ googleToken: async () => { throw new Error("refresh failed"); } }),
       async () => ok({ code: 0 }),
     );
-    for (const key of ["google_drive", "google_sheets"]) {
+    for (const key of ["google_drive_review", "google_drive_approved", "google_sheets"]) {
       expect(byKey(results, key).status).toBe("dead");
       expect(byKey(results, key).detail).toMatch(/token/i);
+      // Never reached the network, so there is no HTTP status to report either.
+      expect(byKey(results, key).httpStatus).toBeUndefined();
     }
+  });
+
+  it("reports the review and approved Drive folders as separate results, each carrying its own HTTP status on failure", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) => {
+      if (String(url).includes("revfolder")) return status(404);
+      if (String(url).includes("appfolder")) return status(403);
+      return ok({ code: 0 });
+    });
+    const review = byKey(results, "google_drive_review");
+    const approved = byKey(results, "google_drive_approved");
+    expect(review.status).toBe("dead");
+    expect(review.httpStatus).toBe(404);
+    expect(approved.status).toBe("dead");
+    expect(approved.httpStatus).toBe(403);
+  });
+
+  it("carries the HTTP status on a Sheets failure, so a caller can distinguish 403 from 404", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) =>
+      String(url).includes("sheets.googleapis.com") ? status(403) : ok({ code: 0 }),
+    );
+    expect(byKey(results, "google_sheets").status).toBe("dead");
+    expect(byKey(results, "google_sheets").httpStatus).toBe(403);
+  });
+
+  it("reports the Typefully publishing quota from the social-set response", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) =>
+      String(url).includes("typefully")
+        ? ok({ publishing_quota: { used: 1, remaining: 14, resets_at: "2026-09-01T00:00:00+09:00" } })
+        : ok({ code: 0 }),
+    );
+    expect(byKey(results, "typefully").quota).toEqual({ remaining: 14, limit: 15, resetsAt: "2026-09-01T00:00:00+09:00" });
+  });
+
+  it("reports Typefully reachable with no quota when the response carries none", async () => {
+    const results = await runLiveProbes(fullInput(), async (url) => (String(url).includes("typefully") ? ok({}) : ok({ code: 0 })));
+    const t = byKey(results, "typefully");
+    expect(t.status).toBe("ok");
+    expect(t.quota).toBeUndefined();
   });
 
   it("reports Lark dead when the API answers 200 with a non-zero code", async () => {
