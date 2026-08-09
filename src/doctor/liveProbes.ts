@@ -8,9 +8,26 @@
  * `GET /api/diagnostics/live`. A second implementation would drift from the first, and the drifted
  * one would be the copy running in production.
  *
- * Config comes in already loaded — this module never reads `process.env`. That keeps it honest
- * under test and lets the caller decide what "configured" means.
+ * **Two exports, and the split is the point.** `runLiveProbes` takes config already loaded and an
+ * injected `fetch`, and never reads `process.env` — that keeps it honest under test and lets a
+ * caller decide what "configured" means. `buildLiveProbeInput` is the one place that DOES read the
+ * environment, and it lives here rather than in each caller for the same reason the probes do: it
+ * was copied verbatim into `src/cli/doctor.ts` and `src/app/createDeps.ts`, ~35 lines differing only
+ * in a variable name, and the drift that shape invites is concrete — one copy regressing to
+ * `loadLarkConfig()` (which additionally requires LARK_CHAT_IDS, deliberately unset on the
+ * deployment) makes the deployment's Lark probe report `skipped` forever, and `checkLiveness`
+ * grades `skipped` as ok. The check quietly never running is the exact failure this module exists
+ * to remove.
  */
+import {
+  loadGoogleAuthConfig,
+  loadGoogleDriveConfig,
+  loadGoogleSheetConfig,
+  loadLarkAppConfig,
+  loadTypefullyConfig,
+  type GoogleAuthConfig,
+} from "../config";
+import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 
 export type ProbeStatus = "ok" | "dead" | "skipped";
 
@@ -67,7 +84,10 @@ export interface LiveProbeResult {
 
 export interface LiveProbeInput {
   /**
-   * Refreshes an access token. Absent when Google auth is not configured.
+   * Refreshes an access token. Absent when Google auth is not configured — note "not configured",
+   * not "could not be built": `buildLiveProbeInput` deliberately defers constructing the auth object
+   * into this closure so that a present-but-unreadable service-account key file reports `dead` (a
+   * real failure) rather than `skipped` (nothing to check).
    *
    * The `AbortSignal` is the run's own deadline, and a closure that reaches the network is expected
    * to forward it. Ignoring it is safe for the caller — `attempt()` bounds every probe regardless —
@@ -96,9 +116,11 @@ export interface LiveProbeInput {
 const DEFAULT_TIMEOUT_MS = 5_000;
 
 /** A space-separated OAuth scope string → array (empties dropped). Duplicated from
- *  `src/doctor/checks.ts`'s own `parseScopes` rather than imported: that module pulls in `../config`
- *  and `../adapters/db/*` for its other exports, and this one is a leaf probe module that promises
- *  never to grow a database dependency just to parse a header. */
+ *  `src/doctor/checks.ts`'s own `parseScopes` rather than imported: that module pulls in
+ *  `../adapters/db/*` for its other exports, and this one promises never to grow a database
+ *  dependency just to parse a header. (`../config` is no longer part of that argument —
+ *  `buildLiveProbeInput` at the foot of this file imports it deliberately. The db adapters were
+ *  always the weight worth refusing.) */
 function parseScopes(scope: string | undefined): string[] {
   return (scope ?? "").split(/\s+/).filter((s) => s.length > 0);
 }
@@ -493,3 +515,80 @@ export async function runLiveProbes(
   ]);
 }
 
+/**
+ * The one place the environment is turned into a `LiveProbeInput`. Both callers of `runLiveProbes`
+ * use it: `pnpm doctor --live` (`src/cli/doctor.ts`) and the deployment's `probeLiveness`
+ * (`src/app/createDeps.ts`).
+ *
+ * It exists because those two used to hold the same ~35 lines each, differing only in a local
+ * variable name and the wording of a comment — the exact duplication this module's own header
+ * forbids, one file below the sentence forbidding it. The drift it invites is not hypothetical: a
+ * copy regressing from `loadLarkAppConfig()` to `loadLarkConfig()` (below) makes the deployment's
+ * Lark probe report `skipped` on every hosted run, and `checkLiveness` grades `skipped` as ok, so
+ * the check disappears while the report stays green.
+ *
+ * Every loader is tried in its own try/catch and a throw means "not configured", which is the whole
+ * of what these loaders signal — the offline half of `pnpm doctor` already reports presence, with
+ * the mode-awareness this cannot have (a missing Google credential is a `fail` in cloud mode and an
+ * explicit "not needed" in local mode). Absence here only decides whether a probe runs.
+ */
+export function buildLiveProbeInput(): LiveProbeInput {
+  const input: LiveProbeInput = {};
+
+  let googleAuthConfig: GoogleAuthConfig | undefined;
+  try {
+    googleAuthConfig = loadGoogleAuthConfig();
+  } catch {
+    /* not configured — the probe reports skipped, and doctor's offline check already said so */
+  }
+  if (googleAuthConfig) {
+    const cfg = googleAuthConfig;
+    /**
+     * Built inside the closure rather than here, for two reasons that both bite on the unhappy path:
+     * `createGoogleAuth` reads a service-account key file, so a present-but-corrupt one must report
+     * `dead` (a real failure the operator has to fix) instead of `skipped` (nothing configured, so
+     * nothing checked) — and doing that read out here would also put it outside `runLiveProbes`'
+     * deadline, where nothing bounds it.
+     *
+     * The signal is forwarded into `fetch` so a hanging token endpoint is actually cancelled rather
+     * than merely stopped being waited on: `GoogleOAuthAuth.getToken` has no timeout of its own.
+     */
+    input.googleToken = async (signal: AbortSignal): Promise<string> => {
+      const auth = await createGoogleAuth(cfg, (url, init) => fetch(url, { ...init, signal }));
+      return auth.getToken();
+    };
+  }
+
+  try {
+    const g = loadGoogleDriveConfig();
+    input.googleDrive = { reviewFolderId: g.reviewFolderId, approvedFolderId: g.approvedFolderId };
+  } catch {
+    /* same */
+  }
+  try {
+    input.googleSheetId = loadGoogleSheetConfig().spreadsheetId;
+  } catch {
+    /* same */
+  }
+  try {
+    // `loadLarkAppConfig`, NOT `loadLarkConfig`: the latter additionally requires LARK_CHAT_IDS,
+    // which is a collection variable deliberately absent from the deployment. Using it here would
+    // make the Lark probe report `skipped` on every hosted run — a check quietly never running,
+    // graded ok, which is the failure this whole module exists to remove.
+    const l = loadLarkAppConfig();
+    input.lark = { appId: l.appId, appSecret: l.appSecret, baseUrl: l.baseUrl };
+  } catch {
+    /* same */
+  }
+  try {
+    const t = loadTypefullyConfig();
+    input.typefully = { apiKey: t.apiKey, socialSetId: t.socialSetId };
+  } catch {
+    /* same */
+  }
+  // Read directly: there is no `load*Config` that returns the bot token on its own, and the probe
+  // needs nothing else (`getMe` takes no chat id).
+  input.telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || undefined;
+
+  return input;
+}

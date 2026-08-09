@@ -3,7 +3,6 @@ import { join } from "node:path";
 import {
   loadConfig,
   loadLarkConfig,
-  loadLarkAppConfig,
   loadLarkDriveConfig,
   loadGoogleAuthConfig,
   loadGoogleDriveConfig,
@@ -14,7 +13,6 @@ import {
   type DbConfig,
 } from "../config";
 import { createDb } from "../adapters/db/createDb";
-import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { paths, OUTPUT_DIR } from "../paths";
 import { steeringFiles, missingSteeringFiles, skeletonSteeringFiles } from "../doctor/steering";
 import {
@@ -32,7 +30,7 @@ import {
 } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
-import { runLiveProbes, type LiveProbeInput, type LiveProbeResult } from "../doctor/liveProbes";
+import { runLiveProbes, buildLiveProbeInput, type LiveProbeResult } from "../doctor/liveProbes";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -127,48 +125,38 @@ results.push(
 
 // --- live checks (network, read-only) ---
 if (live) {
-  const probeInput: LiveProbeInput = {};
-  try {
-    const auth = await createGoogleAuth(loadGoogleAuthConfig());
-    probeInput.googleToken = () => auth.getToken();
-  } catch {
-    /* not configured — the offline check already reported it, and the probe reports skipped */
-  }
-  try {
-    const g = loadGoogleDriveConfig();
-    probeInput.googleDrive = { reviewFolderId: g.reviewFolderId, approvedFolderId: g.approvedFolderId };
-  } catch {
-    /* same */
-  }
-  try {
-    probeInput.googleSheetId = loadGoogleSheetConfig().spreadsheetId;
-  } catch {
-    /* same */
-  }
-  try {
-    // `loadLarkAppConfig`, NOT `loadLarkConfig`: the latter also requires LARK_CHAT_IDS, which is a
-    // collection variable deliberately absent from the deployment. Using it here would make the Lark
-    // probe report `skipped` on every hosted run — the check quietly never running is the failure
-    // this whole plan exists to remove.
-    const l = loadLarkAppConfig();
-    probeInput.lark = { appId: l.appId, appSecret: l.appSecret, baseUrl: l.baseUrl };
-  } catch {
-    /* same */
-  }
-  try {
-    const t = loadTypefullyConfig();
-    probeInput.typefully = { apiKey: t.apiKey, socialSetId: t.socialSetId };
-  } catch {
-    /* same */
-  }
-  probeInput.telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || undefined;
-
-  const probes = await runLiveProbes(probeInput);
+  // The environment → `LiveProbeInput` step lives in the probe module, not here: `createDeps.ts`
+  // needs the identical thing for `GET /api/diagnostics/live`, and this block used to be its
+  // verbatim twin.
+  const probes = await runLiveProbes(buildLiveProbeInput());
   const byKey = (key: string): LiveProbeResult | undefined => probes.find((p) => p.key === key);
-  // For a probe that never reached the network at all — not configured (`skipped`), or blocked on a
-  // Google token that never came (`dead` with no `httpStatus`) — there is no HTTP response for
-  // accessResult/sheetAccessResult to interpret, so fall back to the probe's own status and detail
-  // verbatim rather than inventing one.
+  /**
+   * For a probe that never reached the network at all — not configured (`skipped`), or blocked on a
+   * Google token that never came (`dead` with no `httpStatus`) — there is no HTTP response for
+   * accessResult/sheetAccessResult to interpret, so fall back to the probe's own status and detail
+   * verbatim rather than inventing one.
+   *
+   * **`skipped` maps to `warn`, where the pre-module code pushed a `fail` from its catch.** That is
+   * deliberate, and it is the one live-block verdict this branch changed on the unhappy path:
+   *
+   * - Presence is graded once already, offline, and with the mode-awareness this line cannot have.
+   *   `cloudCheck("Google auth", …)` above fails a missing Google credential in cloud mode and
+   *   reports "not needed in local mode" in local mode; `optionalCheck` grades a missing Lark app or
+   *   Typefully key a `warn` because a Google+X operator has no Lark and a Telegram-only operator
+   *   has no Typefully. The old live `fail` contradicted every one of those judgements — including
+   *   itself: `pnpm doctor --live` in local mode exited 1 over a credential the same report, four
+   *   lines earlier, called not needed.
+   * - It cannot turn a red into a green. Every configuration where a probe reports `skipped` is one
+   *   where the offline check above has already graded the same absence, so nothing that used to
+   *   fail now passes silently — only the double-count is gone.
+   * - "Not configured" and "configured but dead" are different findings with different remedies, and
+   *   `liveProbes.ts` returns them as different statuses precisely so a reader can tell them apart.
+   *   `checkLiveness` (`smokeChecks.ts`) draws the same line for the same reason.
+   *
+   * A `dead` probe is still a `fail`, unchanged — including the case the old code could not
+   * distinguish at all: Google auth configured but its service-account key file unreadable, which
+   * `buildLiveProbeInput` now surfaces as `dead` rather than as an absent probe.
+   */
   const passthrough = (name: string, probe: LiveProbeResult): CheckResult => ({
     name,
     status: probe.status === "ok" ? "ok" : probe.status === "skipped" ? "warn" : "fail",

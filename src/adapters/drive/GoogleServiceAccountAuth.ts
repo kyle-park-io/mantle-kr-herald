@@ -29,12 +29,12 @@ export class GoogleServiceAccountAuth implements TokenSource {
     private readonly fetchFn: typeof fetch = fetch,
   ) {}
 
-  static async fromKeyFile(path: string): Promise<GoogleServiceAccountAuth> {
+  static async fromKeyFile(path: string, fetchFn: typeof fetch = fetch): Promise<GoogleServiceAccountAuth> {
     const raw = JSON.parse(await readFile(path, "utf8")) as ServiceAccountKey;
     if (!raw.client_email || !raw.private_key) {
       throw new Error(`Invalid Google service account key file: ${path}`);
     }
-    return new GoogleServiceAccountAuth(raw);
+    return new GoogleServiceAccountAuth(raw, Date.now, fetchFn);
   }
 
   async getToken(force = false): Promise<string> {

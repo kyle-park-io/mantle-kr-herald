@@ -65,7 +65,7 @@ import { ReconcilePublished } from "./ReconcilePublished";
 import { TypefullyDraftLookup } from "../adapters/send/TypefullyDraftLookup";
 import type { DraftLookup } from "../ports/DraftLookup";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
-import { runLiveProbes, type LiveProbeInput, type LiveProbeResult } from "../doctor/liveProbes";
+import { runLiveProbes, buildLiveProbeInput, type LiveProbeResult } from "../doctor/liveProbes";
 
 /** Which route set an entry point serves. See `prepareConversionRun`'s construction below — this is
  *  the one axis the route set currently varies on. */
@@ -282,44 +282,14 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     ];
   })();
 
-  /** Live credential checks — the counterpart to `integrations` above, which only reports presence. */
-  const probeLiveness = async (): Promise<LiveProbeResult[]> => {
-    const input: LiveProbeInput = {};
-    try {
-      const auth = await createGoogleAuth(loadGoogleAuthConfig());
-      input.googleToken = () => auth.getToken();
-    } catch {
-      /* not configured — the probe reports skipped */
-    }
-    try {
-      const g = loadGoogleDriveConfig();
-      input.googleDrive = { reviewFolderId: g.reviewFolderId, approvedFolderId: g.approvedFolderId };
-    } catch {
-      /* same */
-    }
-    try {
-      input.googleSheetId = loadGoogleSheetConfig().spreadsheetId;
-    } catch {
-      /* same */
-    }
-    try {
-      // `loadLarkAppConfig`, NOT `loadLarkConfig` — see `src/cli/doctor.ts`'s own note: the latter
-      // requires LARK_CHAT_IDS, which the deployment deliberately does not have, so it would make this
-      // probe report `skipped` on every hosted run.
-      const l = loadLarkAppConfig();
-      input.lark = { appId: l.appId, appSecret: l.appSecret, baseUrl: l.baseUrl };
-    } catch {
-      /* same */
-    }
-    try {
-      const t = loadTypefullyConfig();
-      input.typefully = { apiKey: t.apiKey, socialSetId: t.socialSetId };
-    } catch {
-      /* same */
-    }
-    input.telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || undefined;
-    return runLiveProbes(input);
-  };
+  /**
+   * Live credential checks — the counterpart to `integrations` above, which only reports presence.
+   *
+   * Both halves come from `src/doctor/liveProbes.ts`, including the environment-reading half. This
+   * used to be a verbatim copy of `src/cli/doctor.ts`'s block, and a copy is exactly what that
+   * module's header rules out: the drifted one would be this one, the one running in production.
+   */
+  const probeLiveness = async (): Promise<LiveProbeResult[]> => runLiveProbes(buildLiveProbeInput());
 
   const linkCfg: PublishLinkConfig = {};
   if (storageMode === "cloud") {
