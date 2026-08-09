@@ -33,8 +33,25 @@ describe("GET /api/diagnostics/live", () => {
     expect(res.json).toEqual({ probes: ALL_DEAD });
   });
 
-  it("requires a session", async () => {
-    const res = await handleApi(deps({ session: undefined }), "GET", "/api/diagnostics/live", undefined);
+  /**
+   * The 401 alone is half the assertion. What must not happen is the probes RUNNING for an
+   * unauthenticated caller — every one of them spends a live credential against a third-party API,
+   * and a gate that answers 401 after doing the work is a free way to make the deployment refresh
+   * its Google token and hit Typefully's rate limit on demand. `probeLiveness` throwing is the only
+   * way to see the difference from out here: the 401 is identical either way.
+   */
+  it("requires a session, and does not run a single probe without one", async () => {
+    const res = await handleApi(
+      deps({
+        session: undefined,
+        probeLiveness: async () => {
+          throw new Error("must not run");
+        },
+      }),
+      "GET",
+      "/api/diagnostics/live",
+      undefined,
+    );
     expect(res.status).toBe(401);
   });
 

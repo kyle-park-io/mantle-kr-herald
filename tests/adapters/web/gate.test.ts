@@ -20,10 +20,14 @@ const writeRoutes: [string, string][] = [
 ];
 
 // Every read (GET) route in the API. The brief only spot-checked one of these; the board is not
-// public for any of them, so all nine are covered the same way the write routes are.
+// public for any of them, so all ten are covered the same way the write routes are.
 const readRoutes: [string, string][] = [
   ["GET", "/api/config"],
   ["GET", "/api/status"],
+  // The most secret-bearing route in the list, and the last one added to it. `probeLiveness` reaches
+  // Google, Lark, Typefully and Telegram with the deployment's live credentials and serialises the
+  // whole report back; a gate regression here leaks a live credential audit to anyone who asks.
+  ["GET", "/api/diagnostics/live"],
   ["GET", "/api/typefully/quota"],
   ["GET", "/api/publish/state"],
   ["GET", "/api/translations"],
