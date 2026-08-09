@@ -35,9 +35,11 @@ Type=oneshot
 # have, which exited non-zero and fired the OnFailure= Telegram hook below. Nothing was wrong
 # with that branch — it simply was not merged yet.
 #
-# Updated only by deploy/herald-deploy.sh (fetch, hard reset to origin/main, install, relink
-# the git-ignored steering config, migrate). tests/deploy/workingDirectory.test.ts fails if
-# this line ever names a development checkout again.
+# Updated only by deploy/herald-deploy.sh (fetch, hard reset to origin/main, install, copy in
+# the git-ignored steering config, migrate). That config was symlinked into the development
+# checkout until 2026-08-09; it is a deploy-time copy now, so editing the development .env or
+# glossary no longer reaches this directory until someone deploys.
+# tests/deploy/workingDirectory.test.ts fails if this line ever names a development checkout again.
 WorkingDirectory=%h/.herald/app
 
 # pnpm, node, and claude — none of them are on a systemd user unit's default PATH. node must be

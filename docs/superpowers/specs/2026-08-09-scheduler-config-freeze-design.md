@@ -134,9 +134,12 @@ does not read environment configuration, it moves it.
 - `--check` — read-only. Prints the diff. Exits `2` if anything changed and `--yes` was not passed.
   Exits `1` if `<dev>/.env` is missing, naming the remedy.
 - `--apply` — writes each file to a temporary name in the destination directory, sets its mode, then
-  renames. `.env` and anything under `keys/` get `chmod 600`; steering files keep their source mode,
-  since a glossary is a team document and not a secret. Deletes files in the deploy checkout that
-  are git-ignored in the development checkout but no longer present there.
+  renames. `.env` and anything under `keys/` get `chmod 600`; steering files get a flat `0644` rather
+  than their source mode, since a glossary is a team document and not a secret — a mode carried over
+  from the development checkout would mean a stray `chmod` on a glossary there silently decides what
+  production's copy is, which is a way for configuration to move without a deploy, the exact thing
+  this spec exists to close. Deletes files in the deploy checkout that are git-ignored in the
+  development checkout but no longer present there.
 
 The file list stays **derived**, never hardcoded: `git -C <dev> check-ignore` selects exactly what
 `link_ignored_config` selects today, so a steering file added later is picked up with no edit here.
@@ -180,8 +183,11 @@ does not leave configuration ahead of code.
 - `tests/deploy/heraldDeploy.test.ts` — regex over the script text, the same technique
   `workingDirectory.test.ts` uses. Asserts: no `ln -sfn` for `.env`; `deploy:freeze --check` appears
   before the `git reset --hard` line; `--apply` appears after `pnpm install`.
-- `tests/deploy/workingDirectory.test.ts` — extended to pin the freeze target equal to `APP_DIR` and
-  to all three units' `WorkingDirectory=`, so the three cannot drift apart.
+- `tests/deploy/workingDirectory.test.ts` — **not extended, on purpose.** The property this planned
+  to add is already pinned transitively and a second assertion of it would only be a second thing to
+  update: `heraldDeploy.test.ts` asserts the literal `--app "$APP_DIR"` in the gate and apply lines,
+  and `workingDirectory.test.ts` already pins `APP_DIR` to all three units' `WorkingDirectory=`. The
+  freeze target therefore cannot drift from the units without one of those two failing.
 
 - `tests/deploy/deployFreeze.test.ts` — the CLI against temporary directories: exit 2 when changed
   without `--yes`, exit 0 with it, exit 1 on a missing `<dev>/.env`, `chmod 600` on the written
