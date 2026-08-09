@@ -790,6 +790,28 @@ bash deploy/herald-deploy.sh
 한 번만 하면 되는 절차이고, 팀 자격 증명이 아니라 **프로덕션 DB 접속 정보**가 필요하므로 아무것도
 자동으로 만들지 않습니다 — 아래는 전부 사람이 손으로 하는 절차입니다.
 
+0. **`~/.herald`를 만들고, 배포 체크아웃을 클론하고, 도구 심볼릭 링크를 겁니다.** 이 세 가지가
+   없으면 뒤 단계가 전부 실패합니다. 유닛의 `WorkingDirectory=`가 `~/.herald/app`이고, `PATH=`가
+   `~/.herald/bin`이며, `herald-deploy.sh`는 이미 클론된 저장소를 전제로 `git fetch`부터 시작합니다.
+
+   ```bash
+   mkdir -p ~/.herald && chmod 700 ~/.herald
+   git clone --branch main git@github.com:kyle-park-io/mantle-kr-herald.git ~/.herald/app
+
+   mkdir -p ~/.herald/bin
+   ln -sfn "$(which node)" ~/.herald/bin/node
+   ln -sfn "$(which pnpm)" ~/.herald/bin/pnpm
+   ```
+
+   **심볼릭 링크가 왜 필요한가.** 유닛은 node와 pnpm을 절대 경로로 지목해야 합니다(systemd 사용자
+   유닛에는 쓸 만한 PATH가 없습니다). 2026-08-09까지는 nvm 버전 디렉터리를 그대로 적어뒀는데,
+   nvm은 업그레이드할 때 옛 디렉터리를 **지웁니다**. 그러면 유닛은 다음 발화에서 `203/EXEC`로
+   죽습니다 — 파이프라인 코드가 한 줄도 안 돌고, 타이머는 계속 발화하고, 유일한 신호는 주기적으로
+   오는 실패 알림뿐입니다. 그날 이 머신을 재구성했더니 node가 v24.19.0으로 올라와 있고 유닛 셋은
+   여전히 v24.14.0을 가리키고 있었습니다. 지금은 유닛이 `%h/.herald/bin`만 보므로, **node를 올린
+   뒤에는 위 `ln -sfn` 두 줄만 다시 돌리면 되고 유닛은 건드리지 않습니다.**
+   `tests/deploy/unitToolPaths.test.ts`가 버전 박힌 경로가 다시 들어오는 것을 막습니다.
+
 1. **`~/.herald/prod.env`를 만듭니다.** 이 디렉터리는 기본적으로 존재하지 않고,
    `herald-watch.service`의 `EnvironmentFile=%h/.herald/prod.env`는 접두사(`-`) 없이 걸려 있어서
    이 파일이 없으면 유닛이 첫 실행부터 그대로 실패합니다.
@@ -888,6 +910,17 @@ bash deploy/herald-deploy.sh
    ```bash
    systemctl --user enable --now herald-watch.timer
    ```
+
+7. **로그인 세션이 없어도 돌게 만듭니다 — `loginctl enable-linger`.** 기본값은 꺼짐이고, 꺼져 있으면
+   사용자 유닛은 **로그인해 있는 동안만** 삽니다. 마지막 셸을 닫는 순간 systemd가 사용자 인스턴스를
+   내리고 타이머도 같이 사라집니다. WSL에서는 특히 눈에 안 띕니다 — 창을 닫으면 그걸로 끝입니다.
+
+   ```bash
+   loginctl show-user "$USER" -p Linger    # Linger=no 이면 아래를 실행
+   sudo loginctl enable-linger "$USER"
+   ```
+
+   증상이 "타이머를 분명히 켰는데 `list-timers`가 비어 있다"라면 대개 이것입니다.
 
 ### 확인
 
