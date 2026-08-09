@@ -178,25 +178,49 @@ done
 
 로그인까지 포함한 전체 확인입니다. **비밀번호를 프롬프트로 받으므로 사람이 직접 실행합니다.**
 
-정상이면 `21 ok · 2 warn · 0 fail`. warn 2개는 둘 다 의도된 것입니다 —
+정상이면 `28 ok · 2 warn · 0 fail`. warn 2개는 둘 다 의도된 것입니다 —
 `TWITTERAPI_IO_KEY` 미등록(호스팅은 수집하지 않음)과 `--lockout` 건너뜀.
 
 확인하는 것: 익명 401 · 외부 Origin 403 · 로그인 200 · `storageMode: cloud` ·
 `dbEnv: production` · `sendsEnabled: false` · `conversionEnabled: false` · google/lark 타깃 ·
-통합별 configured · `convert-prepare` 404 · 로그아웃이 세션 쿠키 삭제.
+통합별 configured · **자격 증명 7개가 실제로 살아 있는지(`live:` 줄)** · `convert-prepare` 404 ·
+로그아웃이 세션 쿠키 삭제.
+
+`live:` 줄 7개(`google_auth` · `google_drive_review` · `google_drive_approved` ·
+`google_sheets` · `lark` · `typefully` · `telegram`)가 곧 아래 "두 명령이 못 보던 것"의 답입니다.
+등급은 그 자격 증명이 **무엇에 쓰이는지**로 갈립니다 — 발행용(Google 인증·Drive 두 폴더·Lark)이
+죽으면 **fail**, 발송용(Typefully·Telegram)은 `sendsEnabled`가 열려 있을 때만 fail(닫혀 있으면
+warn), Sheet는 헤더 링크뿐이라 언제나 warn. **미설정(`skipped`)은 fail도 warn도 아닙니다** —
+존재 여부는 `deploy:check`의 몫이고, Telegram만 쓰는 설치가 Lark가 없다고 빨개지면 안 됩니다.
+
+> **`live:` 줄이 하나도 없고 `credential liveness`가 fail이면** 배포본이 `GET
+> /api/diagnostics/live`를 모르는 옛 버전이거나, 라우트가 에러를 답한 것입니다. detail에 실제 HTTP
+> 코드가 찍히니 그것부터 보세요 — 401이면 배포본이 아니라 `deploy:smoke`가 세션을 안 보낸 것이고,
+> 그건 2026-08-10에 실제로 있었던 버그입니다(`tests/deploy/smokeSession.test.ts`가 막습니다).
+> 보고서가 **비어 있거나 7개가 안 되어도** fail입니다. 아무도 묻지 않은 자격 증명은 살아 있다고
+> 확인된 자격 증명이 아닙니다.
 
 > **로그인 401이 나오면** 아이디·비밀번호가 틀린 것입니다. 배포 문제가 아닙니다. 빈 값·한 글자·
 > 틀린 12자가 **전부 같은 401**이라 화면만 봐서는 구분되지 않습니다. 그리고 **IP당 5회 실패면
 > 60초 잠깁니다**(그때는 429).
 
-### 두 명령이 못 보는 것
+### 두 명령이 못 보던 것 — 이제 `deploy:smoke`가 봅니다
 
-**배포본의 Google 리프레시 토큰이 살아 있는지는 둘 다 모릅니다.** 앱이 존재 여부만 보기
+**배포본의 Google 리프레시 토큰이 살아 있는지를 둘 다 몰랐습니다.** 앱이 존재 여부만 보기
 때문입니다 — `createDeps`가 Google 설정을 try/catch로 확인하고 던지면 타깃을 빼는데, 폐기된
 토큰도 설정은 멀쩡해 보입니다. 2026-08-04에 실제로 한 시간 동안 그 상태였습니다
-(`doctor`는 `✓ Google Drive configured`, 모든 refresh는 `invalid_grant`).
+(`doctor`는 `✓ Google Drive configured`, 모든 refresh는 `invalid_grant`). 2026-08-10에는
+`deploy:check`도 `deploy:smoke`도 초록이었는데 배포본의 토큰은 이미 몇 분 전에 죽어 있었습니다.
 
-`deploy:check`가 확인하는 건 **로컬** 토큰입니다. 토큰 교체는 항상 두 곳입니다.
+**`deploy:smoke`가 이제 그 자리를 메웁니다.** 살아 있는지는 자격 증명이 있는 곳 — 배포본 안 —
+에서만 보이므로, 배포본이 세션 뒤의 `GET /api/diagnostics/live`에서 직접 호출해 보고 그 결과를
+돌려줍니다(`src/doctor/liveProbes.ts`, `pnpm doctor --live`와 **같은 코드**). 전체 호출에
+5초 예산이 하나 걸려 있어서, 외부 API가 멈춰 있어도 라우트는 5초 안에 답합니다.
+
+**그래도 남는 것 두 가지.** ① `deploy:check`가 확인하는 건 여전히 **로컬** 토큰입니다 — 토큰
+교체는 항상 두 곳입니다. ② `deploy:smoke`는 **배포 시점**만 봅니다. 2026-08-10처럼 배포와 배포
+**사이**에 죽는 건 다음 배포 때까지 아무도 모릅니다. 그건 별도의 주기적 점검이 필요하고, 아직
+없습니다.
 
 ---
 

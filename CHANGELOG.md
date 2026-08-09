@@ -9,6 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm deploy:smoke` now proves the deployment's credentials are still ALIVE, not merely present
+  — and `pnpm doctor --live` and the deployment run the identical probe code to do it.** Nothing in
+  the repo could tell a revoked token from a live one, and the gap produced two incidents rather than
+  one. On 2026-08-04 a rehearsal ran for an hour with `pnpm doctor` reporting `✓ Google Drive
+  configured` while every refresh returned `invalid_grant`. On 2026-08-10 revoking a leaked refresh
+  token revoked the grant with it, so the deployment's own copy died too — `deploy:check` passed
+  (40 ok · 1 warn · 0 fail), `deploy:smoke` passed (21 ok · 2 warn · 0 fail) and reported
+  `availableTargets: google — present`, and both were correct and both were useless. The failure was
+  found only because we had caused it. Neither command could have seen it, and not by oversight:
+  `deploy:check` reads variable *names* out of `vercel env ls` (`--sensitive` values cannot be read
+  back at all, and reading the rest would write production secrets to disk), the deployment's status
+  payload is presence by construction (`createDeps.ts`: "env only, no live calls"), and `deploy:smoke`
+  reads that payload. Liveness is observable from exactly one place — inside the deployment, where the
+  credential is — so it is now probed there and asked for from outside.
+  - **One module, two callers, no second copy.** `src/doctor/liveProbes.ts` holds every probe and the
+    environment→input step both callers need; `pnpm doctor --live` and the deployment's
+    `probeLiveness` each call it in one line. A second implementation would drift from the first and
+    the drifted one would be the copy running in production — concretely, a copy regressing from
+    `loadLarkAppConfig()` to `loadLarkConfig()` (which additionally wants LARK_CHAT_IDS, deliberately
+    unset on the deployment) makes the hosted Lark probe report `skipped` forever, and a skipped probe
+    grades ok. Seven probes: the Google token refresh, the review and approved Drive folders
+    separately, the Sheet, Lark's tenant token *and* whether the bot is still in a room, Typefully,
+    and Telegram's `getMe`. `twitterapi` is deliberately not probed — the deployment never collects
+    and its key is intentionally absent, so probing it would manufacture a failure out of a correct
+    setup.
+  - **`GET /api/diagnostics/live`, behind the session like every route but login.** Deliberately not
+    a field on `/api/status`: the dashboard calls that on every load, and six external calls per board
+    render would be a different bug. It answers **200 with the report even when every probe is dead**
+    — a diagnostic that 500s when something is wrong is no diagnostic — and the caller judges.
+    Severity is by what the credential is FOR, not by which API answered: a dead publishing credential
+    (Google auth, either Drive folder, Lark) is a **fail**, a dead send credential (Typefully,
+    Telegram) follows the `sendsEnabled` flag the same payload already carries, and the Sheet is
+    header links so it only ever warns. An unconfigured integration is neither — presence is
+    `deploy:check`'s job, and a Telegram-only install must not go red because Lark Drive is absent.
+  - **No probe's output can carry a credential, and that is enforced by walk rather than by
+    discipline.** Every string leaf of every result — `detail`, each granted scope, a Drive folder's
+    name, Typefully's `resets_at`, Lark's `msg` — is redacted before it leaves the module, on the
+    return path as well as on throw, against a secret set that includes the two tokens obtained
+    mid-run (Google's access token, Lark's tenant token). This is load-bearing rather than tidy: the
+    route holds every live secret the deployment has, its body crosses the network into a terminal and
+    a CI log, and the Telegram bot token is in a URL path that `fetch`'s own error messages quote.
+  - **One 5-second deadline for the whole run**, not one per request. Per-request timeouts bound
+    nothing a caller can promise — the probes that take a signal each got a fresh one, and the Google
+    token closure took none at all (measured still hanging at 6009 ms against a budget of 1000). All
+    seven now start together under one deadline, every `fetch` gets a signal for what is left of it,
+    and each probe is bounded by the same remainder, so a function that ignores its signal cannot hold
+    the run open either. On the deployment that is the difference between a 5-second answer and a
+    platform 504, which reads to the caller as "an old deployment without the route".
+
 - **`pnpm deploy:freeze --check|--apply` — the scheduler's configuration is now a snapshot taken at
   deploy time, not a live window into the development checkout.** The 2026-08-07 outage was fixed by
   giving the scheduled units their own code checkout; configuration never got the same treatment.
