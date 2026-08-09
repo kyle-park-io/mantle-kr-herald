@@ -13,7 +13,6 @@ import {
   checkLiveness,
   type StatusPayload,
 } from "../deploy/smokeChecks";
-import type { LiveProbeResult } from "../doctor/liveProbes";
 
 /**
  * `pnpm deploy:smoke <url>` — run against a deployment once it is up, to prove the thing that
@@ -139,16 +138,34 @@ if (cookie) {
   results.push(...checkStatus(payload));
 
   // The one thing checkStatus cannot tell you: whether the credentials behind those `present` flags
-  // still work. Read through the same session the status call used. `.catch(() => undefined)` on the
-  // parse, same as the `/api/status` call above: a non-JSON body (a gateway error page, say) must fall
-  // into checkLiveness's "route unreadable" path, not crash the whole script via registerErrorHandler.
-  const liveRes = await request("/api/diagnostics/live");
+  // still work.
+  //
+  // `{ headers: { cookie } }` is not optional decoration. The route is session-gated like every
+  // route but `/api/login` (`apiHandlers.ts`'s one gate, before any route is matched), so a call
+  // without it answers 401, `probes` comes back `undefined`, and `checkLiveness` reports its "route
+  // unreadable" FAIL on every run — including one where every credential is perfectly alive. That
+  // was this file's state from the commit that added the call until 2026-08-10: the feature had
+  // never once executed, and its failure looked exactly like the "old deployment without the route"
+  // message it prints. Every authenticated call in this block carries the cookie; there is no
+  // exception, and adding one is how this returns.
+  //
+  // `.catch(() => undefined)` on the parse, same as the `/api/status` call above: a non-JSON body (a
+  // gateway error page, say) must fall into checkLiveness's "route unreadable" path, not crash the
+  // whole script via registerErrorHandler.
+  const liveRes = await request("/api/diagnostics/live", { headers: { cookie } });
   const liveBody = liveRes && liveRes.ok ? await liveRes.json().catch(() => undefined) : undefined;
-  const probes = (liveBody as { probes?: LiveProbeResult[] } | undefined)?.probes;
+  // Deliberately NOT cast to `LiveProbeResult[]`: this is an unvalidated HTTP body, a 200 can carry
+  // any shape at all, and `checkLiveness` is the thing that judges it. The cast that used to be here
+  // told the type system a lie that made `probes.map(...)` look safe — a `{"probes": "x"}` body
+  // threw a TypeError out of a pure judging function and ended the script in a stack trace.
+  const probes: unknown = (liveBody as { probes?: unknown } | undefined)?.probes;
   // Same null/undefined guard checkStatus itself applies to `payload` before reading a field off it —
   // a malformed body parses to `undefined` here despite the `as StatusPayload` cast.
   const sendsEnabled = payload !== null && typeof payload === "object" && payload.sendsEnabled === true;
-  results.push(...checkLiveness(probes, sendsEnabled));
+  // The status code is passed so an unreadable route can say WHICH way it was unreadable. A 401 here
+  // means this script's own session handling regressed, and it must never again be indistinguishable
+  // from a deployment that predates the route.
+  results.push(...checkLiveness(probes, sendsEnabled, liveRes?.status));
 
   const convertPrepareCode = await statusOf("/api/items/deploy-smoke-probe/convert-prepare", {
     method: "POST",
