@@ -77,12 +77,17 @@
 //     than being patched to be "safer".
 //   - This file's checks stay — they are still real, still catch the literal-call-through-the-wrong-
 //     helper case cheaply, in milliseconds, with no server or subprocess — but they are now a first,
-//     fast signal, not the property's only guard. `tests/deploy/smokeSessionRuntime.test.ts` is the
-//     one that actually holds the property: it runs the real `deploy-smoke.ts` as a subprocess against
-//     a hostile local server that 401s any gated route reached without a real `herald_session` cookie,
-//     so a bypass under any spelling — alias, destructure, or one nobody has written yet — produces a
-//     real unauthenticated request, a real 401, and a real failing check, without this file needing to
-//     know how the call was written.
+//     fast signal, not the property's only guard. `tests/deploy/smokeSessionRuntime.test.ts` runs the
+//     real `deploy-smoke.ts` as a subprocess against a hostile local server that 401s any gated route
+//     reached without a real `herald_session` cookie — but it only sees a bypass whose response is
+//     read by one of `smokeChecks.ts`'s judging functions; a bypassed call whose result nothing
+//     consumes (`await client.request(path);` with no consumer) still gets a real 401 back but leaves
+//     the printed report, and that test, unaffected. This file catches that case instead: it scans
+//     source syntactically, so it flags a bypass call the moment it is written, whether or not its
+//     result is ever consumed — but it is blind to a spelling it has not been taught (alias,
+//     destructure, indirection), which the runtime test catches regardless of spelling. Neither guard
+//     subsumes the other; deleting either because "the other one covers this" reopens exactly the hole
+//     the deleted one closed.
 //
 // So this file still reads the source, for what source-reading can still usefully catch quickly. It
 // is the same approach `tests/deploy/apiRouting.test.ts` takes to the routing table and

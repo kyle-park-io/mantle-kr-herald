@@ -18,13 +18,22 @@
 // `tsx`, the same binary `pnpm deploy:smoke` uses — as a subprocess, pointed at a *hostile* local
 // stub server: one that does not trust the caller to have attached a session correctly, and answers
 // every gated route with a real 401 unless a request actually carries a real `herald_session` cookie.
-// Whatever a bypass is spelled like, the request it sends either carries that cookie or it does not;
-// the stub does not care how the caller's source got there. A bypass under any spelling — a variable,
-// an alias, a destructured reference, one nobody has thought of yet — produces a real unauthenticated
-// request, a real 401 from the stub, and a real failing check in the report `deploy-smoke.ts` prints,
-// because that is what a 401 on a gated route has always meant to `smokeChecks.ts`'s judging
-// functions (`checkStatus`, `checkLiveness`, `checkConvertPrepare`, `checkLogout`) — see that module
-// for how each one grades it.
+//
+// What this actually proves, precisely: a bypassed call whose response is read by one of
+// `smokeChecks.ts`'s judging functions (`checkStatus`, `checkLiveness`, `checkConvertPrepare`,
+// `checkLogout`) produces a real 401 and a real failing check, under any spelling — variable, alias,
+// destructured reference, or one nobody has thought of yet. What it does NOT catch: a bypassed call
+// whose response nothing reads — `await client.request("/api/status");` added with no consumer — hits
+// the same hostile stub and gets the same 401 back, but since nothing turns that response into a
+// `CheckResult`, the printed report is byte-for-byte unchanged and this test still passes. A
+// discarded-response bypass is real, and invisible to this file.
+//
+// `smokeSession.test.ts` is what catches that case: it scans `deploy-smoke.ts`'s source for calls
+// syntactically, so it flags a bypass the moment it is written, whether or not anything ever consumes
+// its result. Neither guard subsumes the other — this one is blind to a discarded response, that one
+// is blind to a spelling it has not been taught (alias, destructure, indirection). Deleting either
+// file because "the other one already covers this" reopens exactly the hole the deleted one closed.
+// Keep both.
 import { describe, it, expect, afterEach } from "vitest";
 import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
