@@ -12,8 +12,8 @@ import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/boa
 import type { FormatWarning } from "../../src/app/FormatVariants";
 import type { CollectedTally, FunnelCounts } from "../../src/status/pipeline";
 import type { LivenessSummary, DeadProbe } from "../../src/status/liveness";
-import { EXPECTED_PROBE_KEYS } from "../../src/doctor/liveSeverity";
-import { PROBE_LABEL } from "../../web/src/liveness";
+import { EXPECTED_PROBE_KEYS, PROBE_TIER, type ProbeTier } from "../../src/doctor/liveSeverity";
+import { PROBE_LABEL, TIER_LABEL, TIER_ORDER } from "../../web/src/liveness";
 import {
   FLOOR_VAR,
   WATCH_UNIT,
@@ -428,6 +428,23 @@ describe("web type mirror", () => {
       expect(PROBE_LABEL[key], `Korean label for ${key}`).toBeTruthy();
     }
     expect(Object.keys(PROBE_LABEL).sort()).toEqual([...EXPECTED_PROBE_KEYS].sort());
+  });
+
+  /**
+   * Fix round 1: the pin above checks probe *keys* but had nothing checking probe *tiers* — which is
+   * exactly what let `livenessChip` default an unrecognised tier to `"publish"` and then filter
+   * `dead` for zero matching entries, rendering a self-contradictory chip (red tone, a claimed
+   * publish failure, and a count of zero). `PROBE_TIER`'s value set is `ProbeTier` in practice, but
+   * `SameUnion` pins the *type* — a `ProbeTier` added in `src/doctor/liveSeverity.ts` with no probe
+   * using it yet still fails this test, the same exhaustiveness argument `PROBE_TIER`'s own doc
+   * comment makes for why it is a `Record` rather than two arrays.
+   */
+  it("mirrors every tier the server can grade into, and labels each of them", () => {
+    const tierUnion: SameUnion<(typeof TIER_ORDER)[number], ProbeTier> = true;
+    expect(tierUnion).toBe(true);
+    // Every tier actually assigned to a probe today has a Korean label — the runtime half of the
+    // same check, since a compile-time union match says nothing about a table's own keys.
+    expect(Object.keys(TIER_LABEL).sort()).toEqual([...new Set(Object.values(PROBE_TIER))].sort());
   });
 
   /** [복사] hands a human the `_paste` spelling; the canonical text would paste raw markdown. */

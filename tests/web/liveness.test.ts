@@ -100,6 +100,32 @@ describe("livenessChip", () => {
     expect(livenessChip(summary({ observedAt: "2026-08-11T09:00:30.000Z" }), NOW)).toBeUndefined();
   });
 
+  it("words a tier this build does not know generically, rather than a false publish count", () => {
+    // A deployment one probe (and one tier) ahead of this bundle. The old bug: `TIER_ORDER.find`
+    // matches nothing, defaults to "publish", then filters `dead` for "publish" — zero results, so
+    // the chip claimed a dead publish key while showing a count of zero. This must never happen: the
+    // count has to be real, and a tier this bundle cannot name must not be misnamed as one it can.
+    const chip = livenessChip(
+      summary({ worst: "fail", dead: [{ key: "new_thing", tier: "config", severity: "fail", detail: "500" }] }),
+      NOW,
+    );
+    expect(chip).toEqual({ text: "키 1개 응답 없음", tone: "red" });
+  });
+
+  it("counts every entry when several unknown-tier credentials die together", () => {
+    const chip = livenessChip(
+      summary({
+        worst: "fail",
+        dead: [
+          { key: "new_thing", tier: "config", severity: "fail", detail: "500" },
+          { key: "other_thing", tier: "config", severity: "fail", detail: "500" },
+        ],
+      }),
+      NOW,
+    );
+    expect(chip).toEqual({ text: "키 2개 응답 없음", tone: "red" });
+  });
+
   it("is one missed daily fire plus margin", () => {
     expect(LIVENESS_STALE_AFTER_MS).toBe(26 * 60 * 60 * 1000);
   });
