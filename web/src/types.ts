@@ -312,6 +312,25 @@ export interface AppStatus {
    * what every deployment that predates this field was.
    */
   conversionEnabled?: boolean;
+  /**
+   * How the deployment's credentials answered the last time anything probed them — mirrors the
+   * server's `StatusView.liveness` (`apiHandlers.ts`), graded there. Optional for the same reason as
+   * `dbEnv` above, and absent also means "nothing has ever looked", which the badge renders as
+   * silence rather than as a green claim.
+   */
+  liveness?: LivenessSummary;
+}
+
+/**
+ * Mirror of `src/status/liveness.ts`'s `LivenessSummary`. `key` and `tier` are plain strings here:
+ * the browser has no `ProbeKey` union, and an unrecognised key must render (as its raw name) rather
+ * than fail to type.
+ */
+export interface LivenessSummary {
+  observedAt: string;
+  worst: "ok" | "warn" | "fail";
+  dead: { key: string; tier: string; severity: "warn" | "fail"; detail: string }[];
+  total: number;
 }
 
 export interface PublishStateRow {
