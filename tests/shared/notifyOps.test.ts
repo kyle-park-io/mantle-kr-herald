@@ -97,10 +97,11 @@ describe("notifyOps", () => {
   });
 
   it("sends HTML and retries once as plain text when Telegram rejects it", async () => {
-    // Reject-then-accept, not reject-then-reject: the bash side's own test for this shape
-    // (tests/deploy/notifyFailure.test.ts) rejects both attempts, which proves only that the retry
-    // FIRES, not that it DELIVERS. Driving the second call to succeed and asserting on its shape is
-    // what proves the retry lands.
+    // Reject-then-accept, not reject-then-reject: a fetchFn that rejects every call proves only that
+    // the retry is ATTEMPTED, not that it DELIVERS — the same distinction
+    // tests/deploy/notifyFailure.test.ts's own "lands the retry: rejects the HTML attempt, accepts
+    // the plain one" test draws on the bash side, via STUB_CURL_EXITS="22 0". Driving the second
+    // call to succeed here and asserting on its shape is what proves the retry lands on this side too.
     process.env.TELEGRAM_BOT_TOKEN = "t";
     process.env.TELEGRAM_CHAT_ID_OPS = "c";
     const calls: Array<Record<string, unknown>> = [];

@@ -43,8 +43,23 @@ describe("the two ops senders agree on one grammar", () => {
   });
 
   it("both wrap the detail block in <pre> and lead the pointer with ↳", () => {
-    expect(hook).toContain("<pre>");
-    expect(hook).toContain("↳ ");
+    // A bare `hook.toContain("<pre>")` matches the *assembly line* (deploy/herald-notify-failure.sh:651)
+    // and nothing else — but it ALSO matches the word "<pre>" inside two comments (:642, :712) and the
+    // retry's own tag-stripping (`PLAIN=${TEXT//<pre>/}`, :723). Removing the wrapping from the
+    // assembly line alone (`<pre>$(html_escape "$LOG_EXCERPT")</pre>"` → `$(html_escape "$LOG_EXCERPT")`)
+    // leaves all three of those other occurrences intact, so that check would stay green while the
+    // actual behaviour it claims to guard broke — the exact "incidental substring" failure mode this
+    // suite exists to avoid. Matched against the literal assembly expression instead, the same way the
+    // escape-order check above matches html_escape's actual lines rather than the word "escape".
+    expect(hook).toContain('<pre>$(html_escape "$LOG_EXCERPT")</pre>"');
+    // The pointer expression is identical text in BOTH branches of the assembly's if/else (the
+    // excerpt branch at :653 and the nothing-captured fallback at :660) — a plain `toContain` is
+    // satisfied by either one alone, so dropping the pointer from the excerpt branch specifically
+    // (the branch every ordinary alert takes) would stay green as long as the rarer fallback branch
+    // still had it. Counted rather than merely found, so both sites are required.
+    const pointerExpr = '↳ $(html_escape "$LOG_POINTER")"';
+    const pointerCount = hook.split(pointerExpr).length - 1;
+    expect(pointerCount, "the pointer must be assembled in both the excerpt branch and the fallback branch").toBe(2);
     const notice = opsNotice({ icon: "ℹ", title: "x-reconcile — 번역 2건 은퇴", lines: ["x:1", "x:2"] });
     expect(notice).toContain("<pre>x:1\nx:2</pre>");
     expect(notice.startsWith("ℹ ")).toBe(true);
