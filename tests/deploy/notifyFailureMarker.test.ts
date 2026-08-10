@@ -34,6 +34,22 @@ const CURL_STUB_LINES = [
   "done",
   "exit 0",
 ];
+/**
+ * systemctl stub, defaulting to what a real `systemctl --user show` prints for a unit it has never
+ * heard of: `ExecMainCode=0`, `ExecMainStatus=0`, exit 0. It never returns empty, which is the
+ * whole reason the script reads ExecMainCode as well — see tests/deploy/notifyFailure.test.ts,
+ * which drives every branch of that lookup.
+ *
+ * Needed HERE because this file's TEST_UNIT is `herald-creds.service`, a unit that is genuinely
+ * installed on the development box (measured: it reports ExecMainStatus=2 right now). Without the
+ * stub, the byte-for-byte equality assertion below would compare against a header carrying whatever
+ * that real unit last did, and would say something different again on CI. The marker mechanism is
+ * what this file is about; the exit code must be a constant here, not a reading of the host.
+ */
+const SYSTEMCTL_STUB_LINES = [
+  "#!/usr/bin/env bash",
+  'printf "ExecMainStatus=%s\\nExecMainCode=%s\\n" "${STUB_EXEC_MAIN_STATUS:-0}" "${STUB_EXEC_MAIN_CODE:-0}"',
+];
 // Honours `-n`, like the real thing and like the (now fixed) stub in notifyFailure.test.ts. Without
 // that, "the marked line is outside the tail" is a premise no test actually establishes.
 const JOURNALCTL_STUB_LINES = [
@@ -84,6 +100,11 @@ function sentText(journal: string): string | undefined {
       HOME: process.env.HOME,
       HERALD_LOG_DIR: logRoot,
       STUB_JOURNAL_OUTPUT: journal,
+      // The user bus, so `systemctl --user` is able to work here the way it does under systemd —
+      // its absence, not the assertions, used to be what kept the exit code out of these headers.
+      // The stub above is what answers; these are here so nothing passes by a missing bus.
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
+      DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS,
     },
     encoding: "utf8",
     timeout: 10_000,
@@ -113,6 +134,7 @@ beforeEach(async () => {
   await writeExecutable(scriptPath, real.replace(REAL_REPO_DIR_LINE, `REPO_DIR="${repoDir}"`).split("\n"));
   await writeExecutable(join(stubDir, "curl"), CURL_STUB_LINES);
   await writeExecutable(join(stubDir, "journalctl"), JOURNALCTL_STUB_LINES);
+  await writeExecutable(join(stubDir, "systemctl"), SYSTEMCTL_STUB_LINES);
 });
 
 afterEach(async () => {

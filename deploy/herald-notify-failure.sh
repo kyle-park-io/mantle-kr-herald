@@ -105,20 +105,54 @@ ENV_FILE="$REPO_DIR/.env"
 # reached a message. tests/cli/credsCheck.test.ts reads this number out of this file and tails a real
 # run log with it, so lowering it fails there rather than silently emptying an alert.
 LOG_TAIL_LINES=5
-# Both journalctl reads are wrapped, because this unit's TimeoutStartSec= is 30s and was sized when
-# there was one. Measured at exactly 2.00x: a journalctl that sleeps 20s delivered an alert when
-# there was a single read and is SIGTERMed by systemd when there are two — losing the alert
-# entirely, which is worse than losing the marked line. 6s each leaves 30 - 12 - 10 (curl's own -m)
-# = 8s of margin. `timeout` returns 124 on expiry, which the `|| VAR=""` on each read turns into
-# "no lines from this source" — the same degradation an unreadable journal already takes.
+# ── The 30-second budget, and every command that can spend it ────────────────────────────────────
+#
+# This hook's own wrapper unit sets TimeoutStartSec=30 (deploy/herald-notify-failure@.service).
+# Overrunning it is not a slow alert, it is NO alert plus a second failed unit: systemd SIGTERMs the
+# hook mid-send, the message is lost, and herald-notify-failure@<unit>.service itself enters
+# `failed` — precisely the "a failure-handler that can itself fail is a loop, not a safety net"
+# outcome this file's header refuses.
+#
+# So every external command here that can block is wrapped, and the wrappers are sized as ONE SUM,
+# not one at a time. That arithmetic has already been wrong once: it was written for a single curl,
+# then the plain-text retry added a second one without redoing it, and the worst case — the
+# journal-fallback branch with api.telegram.org unreachable — was MEASURED at 32.04s against the 30s
+# deadline. Two seconds past it, so the hook was SIGTERMed mid-retry: alert lost, hook unit failed.
+#
+#   2 × journalctl  @ JOURNAL_READ_TIMEOUT=6   = 12s   excerpt read + marked-line scan
+#   1 × systemctl   @ SYSTEMCTL_READ_TIMEOUT=2 =  2s   the exit-code fallback, far below
+#   2 × curl        @ `-m 6` in send_telegram  = 12s   the HTML attempt + the plain-text retry
+#                                              ─────
+#                                                26s   leaving 4s of margin against 30s.
+#
+# All three co-occur on one real path: no run log means both journal reads AND the systemctl
+# fallback AND, if Telegram is unreachable, both curls. Everything else this script does is local
+# text processing, measured end to end at 0.07s against an oversized 256 KiB journal window — so
+# that 4s of margin is some fifty times the whole rest of the script.
+#
+# Any change to any of these three numbers, to the retry count, or to TimeoutStartSec= is a change
+# to this sum. Redo it here, and in the unit file's own comment, which states it too.
+#
+# Measured at exactly 2.00x when the journal reads went from one to two: a journalctl that sleeps
+# 20s delivered an alert when there was a single read and is SIGTERMed by systemd when there are
+# two — losing the alert entirely, which is worse than losing the marked line. `timeout` returns 124
+# on expiry, which the `|| VAR=""` on each read turns into "no lines from this source" — the same
+# degradation an unreadable journal already takes.
 #
 # Resolved rather than assumed present: on a box without `timeout` the reads run unwrapped, exactly
 # as they did before, instead of the script dying on a missing command.
 JOURNAL_READ_TIMEOUT=6
+# `systemctl --user show` talks to the user manager over D-Bus. That manager is alive by definition
+# while this hook runs — it is what started it — but it can be busy, and an unbounded third blocking
+# command sitting on the same worst-case path is exactly how the sum above went negative the first
+# time. 2s against a call measured at 0.007s.
+SYSTEMCTL_READ_TIMEOUT=2
 if command -v timeout >/dev/null 2>&1; then
   journal_read() { timeout "$JOURNAL_READ_TIMEOUT" journalctl "$@" 2>/dev/null; }
+  systemctl_show() { timeout "$SYSTEMCTL_READ_TIMEOUT" systemctl --user show "$@" 2>/dev/null; }
 else
   journal_read() { journalctl "$@" 2>/dev/null; }
+  systemctl_show() { systemctl --user show "$@" 2>/dev/null; }
 fi
 
 # ── Where the excerpt comes from, and why the run log wins ───────────────────────────────────────
@@ -428,18 +462,91 @@ html_escape() {
 # timer is installed). Exiting 0 with nothing sent is the same fail-safe posture as a Telegram
 # outage below — this hook never turns "not configured yet" into a failed systemd unit.
 if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
+  # ── Which exit code the header names, and who gets asked ───────────────────────────────────────
+  #
   # The exit code separates a dead credential (1) from a machine-configuration error (2), and the
-  # operator should not have to infer which from the body. ExecMainStatus survives into the failed
-  # state, which is when this hook runs. `--value` needs systemd 246+; the wrapper's own footer is
-  # the fallback, and an unknown code degrades to a header with no code rather than a wrong one.
+  # operator should not have to infer which from the body. Two sources can answer, and the order is
+  # the same judgment the excerpt makes above: OUR OWN ARTIFACT FIRST, systemd's account of it
+  # second.
+  #
+  # 1. The run log's footer — `=== <unit> exited <n> at … ===`, written by
+  #    deploy/herald-run-logged.sh from ${PIPESTATUS[0]}, i.e. the status the wrapper actually saw,
+  #    in shell convention (a signalled command is already 128+N there). All four units this hook
+  #    serves run through that wrapper, so in production this is the branch that answers.
+  #
+  #    $RUN_LOG is the same single file the excerpt is quoting whenever the excerpt came from a run
+  #    log at all — there is only ever one, the newest by name — so no separate "is this the source
+  #    that answered" gate is needed here, and one would be unreachable code. The one way the two
+  #    can be stale together is a run that never reached the wrapper, leaving yesterday's file
+  #    newest: then the body is yesterday's as well, which is a Task-1-level property of the excerpt
+  #    and not something a second opinion about the exit code would improve.
+  #
+  # 2. systemd, and only as the FALLBACK, because `systemctl --user show <unit> -p ExecMainStatus`
+  #    NEVER returns empty. For a unit it has never heard of it prints `0` and exits 0 — measured on
+  #    this box:
+  #        $ systemctl --user show herald-nope.service -p ExecMainCode -p ExecMainStatus
+  #        ExecMainCode=0
+  #        ExecMainStatus=0
+  #    A guard that only rejected a NON-NUMERIC value therefore accepted that `0`, and the alert
+  #    read `⚠ <unit> 실패 (exit 0)` — a header contradicting itself about a real failure — while
+  #    `[ -z "$EXIT_CODE" ]` was never true, making the run-log branch dead code in production.
+  #    Reproduced end to end before this was rewritten, not reasoned about.
+  #
+  #    ExecMainCode is what separates the cases. It is the waitid(2) si_code, so:
+  #        0    → no main process was ever reaped. Nothing is known; NO code in the header.
+  #        1    → CLD_EXITED. ExecMainStatus is a genuine exit status.
+  #        2, 3 → CLD_KILLED / CLD_DUMPED. ExecMainStatus is a SIGNAL NUMBER, not a status: a unit
+  #               killed on its own TimeoutStartSec= reports 15, and `(exit 15)` names a code the
+  #               command never returned — while the wrapper's own footer, for the same run, says
+  #               143. Converted to 128+N here so the two agree whichever one answers.
+  #
+  #    Asked for as `Name=Value` pairs rather than with `--value`: systemctl prints properties in
+  #    ITS order, not the order they were requested (verified — `-p ActiveState -p SubState -p
+  #    LoadState --value` prints LoadState first), so reading two `--value` lines positionally is
+  #    wrong by construction. Parsing by name also drops the systemd 246+ requirement `--value` had.
   EXIT_CODE=""
-  if command -v systemctl >/dev/null 2>&1; then
-    EXIT_CODE="$(systemctl --user show "$UNIT" -p ExecMainStatus --value 2>/dev/null)" || EXIT_CODE=""
+  if [ -n "$RUN_LOG" ]; then
+    # Through `tail`, not straight at the file: the footer is the LAST thing herald-run-logged.sh
+    # writes, and every other read of this file is capped for a reason — a wedged run under an
+    # 1800s TimeoutStartSec= can leave a very large log. Measured on a 100 MB one: 0.004s this way
+    # against 0.232s reading the whole thing, and unlike the 0.232s this one does not grow.
+    #
+    # awk with `-v`, not `sed` with an interpolated "$UNIT": in a BRE the dots of
+    # `herald-creds.service` are wildcards and a `/` would close the `s///` delimiter early. awk's
+    # index() against a -v variable is a literal comparison with no metacharacters at all — the same
+    # reason the run-scoping awk further up takes its marker that way. Last footer wins; the ` at `
+    # suffix is matched so a line that merely starts the same way cannot contribute a number.
+    EXIT_CODE="$(tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null | awk -v marker="=== ${UNIT} exited " '
+      index($0, marker) == 1 {
+        rest = substr($0, length(marker) + 1)
+        if (match(rest, /^[0-9]+ at /)) code = substr(rest, 1, RLENGTH - 4)
+      }
+      END { if (code != "") print code }
+    ')" || EXIT_CODE=""
   fi
-  case "$EXIT_CODE" in ''|*[!0-9]*) EXIT_CODE="" ;; esac
-  if [ -z "$EXIT_CODE" ] && [ -n "$RUN_LOG" ]; then
-    EXIT_CODE="$(sed -n "s/^=== ${UNIT} exited \([0-9][0-9]*\) at .*$/\1/p" "$RUN_LOG" 2>/dev/null | tail -n 1)" || EXIT_CODE=""
+
+  if [ -z "$EXIT_CODE" ] && command -v systemctl >/dev/null 2>&1; then
+    EXEC_MAIN_CODE=""
+    EXEC_MAIN_STATUS=""
+    while IFS='=' read -r _k _v; do
+      case "$_k" in
+        ExecMainCode) EXEC_MAIN_CODE="$_v" ;;
+        ExecMainStatus) EXEC_MAIN_STATUS="$_v" ;;
+      esac
+    done <<< "$(systemctl_show "$UNIT" -p ExecMainCode -p ExecMainStatus)"
+    case "$EXEC_MAIN_STATUS" in ''|*[!0-9]*) EXEC_MAIN_STATUS="" ;; esac
+    if [ -n "$EXEC_MAIN_STATUS" ]; then
+      case "$EXEC_MAIN_CODE" in
+        1) EXIT_CODE="$EXEC_MAIN_STATUS" ;;
+        2|3) EXIT_CODE="$((128 + EXEC_MAIN_STATUS))" ;;
+      esac
+    fi
   fi
+
+  # Whichever source answered: `⚠ <unit> 실패 (exit 0)` is a sentence that contradicts itself, and 0
+  # is exactly what an unknown unit reports. Unknown degrades to a header with NO code — which is
+  # what this block has always claimed to do and, until this was fixed, did not.
+  [ "$EXIT_CODE" = "0" ] && EXIT_CODE=""
 
   HEADER="⚠ ${UNIT} 실패"
   [ -n "$EXIT_CODE" ] && HEADER="${HEADER} (exit ${EXIT_CODE})"
@@ -470,15 +577,21 @@ $(html_escape "$ALERT_NOTE")"
 ↳ $(html_escape "$LOG_POINTER")"
   fi
 
-  # One attempt as HTML, and if Telegram rejects it, one as plain text with the tags stripped.
+  # One attempt as HTML, and — only if Telegram REJECTED it — one as plain text with the tags
+  # stripped.
   #
   # -4: this machine's IPv6 route to api.telegram.org is known broken while the AAAA record still
   # resolves (see src/cli/preferIpv4.ts) — curl itself is unaffected by that bug, but there is no
-  # reason to let Happy Eyeballs race a dead route on every failure notice. -m 10: a hung request
-  # must not hold the unit open. -fsS: non-zero exit on an HTTP error, quiet on stdout, but -S
-  # still prints the error to stderr — deliberately NOT redirected, so a 401 on a stale token or a
-  # 400 on malformed HTML lands in `journalctl --user -u herald-notify-failure@${UNIT}.service`
-  # instead of vanishing along with the message that never sent.
+  # reason to let Happy Eyeballs race a dead route on every failure notice. -fsS: non-zero exit on
+  # an HTTP error, quiet on stdout, but -S still prints the error to stderr — deliberately NOT
+  # redirected, so a 401 on a stale token or a 400 on malformed HTML lands in `journalctl --user -u
+  # herald-notify-failure@${UNIT}.service` instead of vanishing along with the message that never
+  # sent.
+  #
+  # `-m 6`, not the 10 this used to be, and the difference is the retry: this function is now called
+  # TWICE on the worst path, so its budget is spent twice. See "The 30-second budget" at the top —
+  # 2×6 is the largest per-attempt value that keeps the whole hook inside TimeoutStartSec=30 with
+  # margin. A hung request must not hold the unit open; two hung requests must not either.
   send_telegram() {
     local text=$1 mode=$2 payload
     if [ -n "$mode" ]; then
@@ -488,14 +601,31 @@ $(html_escape "$ALERT_NOTE")"
       payload="$(printf '{"chat_id":"%s","text":"%s"}' \
         "$TELEGRAM_CHAT_ID_OPS" "$(json_escape "$text")")"
     fi
-    curl -4 -fsS -m 10 \
+    curl -4 -fsS -m 6 \
       -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
       -H "Content-Type: application/json" \
       -d "$payload" \
       >/dev/null
   }
 
-  if ! send_telegram "$TEXT" "HTML"; then
+  # Nothing may run between these two lines: $? is clobbered by the next command, and the retry
+  # decision below is about WHICH failure this was, not merely that there was one.
+  send_telegram "$TEXT" "HTML"
+  SEND_RC=$?
+
+  # 22, and nothing else. `curl -f` exits 22 on an HTTP status >= 400, which is the only failure
+  # class a plain-text resend can fix — a 400 on malformed HTML. Retrying any other class is
+  # actively harmful, not merely useless:
+  #   6   (DNS) and 28 (`-m` expired) spend the whole curl budget a second time against the deadline
+  #       above; the 32.04s overrun that budget comment describes was exactly this, an unreachable
+  #       api.telegram.org retried for no reason that could ever have worked.
+  #   28  can also DUPLICATE the alert: `-m` expiring after Telegram already accepted the message
+  #       means the retry posts the same content again, and the operator gets it twice.
+  #   127 (curl not installed) cannot succeed on a second call either.
+  #   A 401 on a stale token is a 22, and re-sending identical content earns the identical 401 —
+  #       one wasted call, bounded, and the price of not special-casing status codes curl does not
+  #       hand back separately.
+  if [ "$SEND_RC" -eq 22 ]; then
     # Formatting cost us the message. Send the content unformatted rather than nothing: `<pre>` tags
     # out, entities back to their characters, no parse_mode. One retry, not a loop — the second
     # attempt uses the encoding that worked before this change, so a second failure is not about
