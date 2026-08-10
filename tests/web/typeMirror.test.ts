@@ -416,7 +416,7 @@ describe("web type mirror", () => {
       observedAt: "2026-08-11T06:23:04.000Z",
       worst: "fail",
       dead: [{ key: "google_auth", tier: "publish", severity: "fail", detail: "401" }],
-      total: 7,
+      contacted: 7,
     };
     // The direction that matters at runtime: a real `/api/status` response has to type-check as the
     // web mirror. The reverse assignment does not compile, on purpose — see the comment above.

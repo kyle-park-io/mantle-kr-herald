@@ -13,7 +13,7 @@ const summary = (over: Partial<LivenessSummary> = {}): LivenessSummary => ({
   observedAt: fresh,
   worst: "ok",
   dead: [],
-  total: 7,
+  contacted: 7,
   ...over,
 });
 
@@ -143,6 +143,13 @@ describe("livenessHeadline", () => {
         NOW,
       ),
     ).toBe("7개 중 1개 응답 없음 · 2시간 전 확인");
+  });
+
+  it("prints the number actually contacted, not the number of probe keys this build knows about", () => {
+    // A Telegram-only install: three probes contacted, four skipped. The server already excludes
+    // `skipped` from `contacted` (`src/status/liveness.ts`) — this only checks the headline reads
+    // that field rather than hard-coding "7" or re-deriving a count of its own.
+    expect(livenessHeadline(summary({ contacted: 3 }), NOW)).toBe("3개 모두 응답 · 2시간 전 확인");
   });
 });
 

@@ -528,10 +528,23 @@ describe("App's liveness chip", () => {
   });
 
   it("shows no liveness chip when the last observation found everything alive", async () => {
-    stubFetchWithStatus({ liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], total: 7 } });
+    stubFetchWithStatus({ liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 7 } });
     render(<App onSignOut={() => {}} authEpoch={0} />);
     expect(await screen.findByRole("button", { name: "지금 확인" })).toBeTruthy();
     expect(screen.queryByText(/응답 없음/)).toBeNull();
+  });
+
+  /**
+   * A Telegram-only install: three probes contacted, four skipped for missing config. Before this
+   * fix, `contacted` (then `total`) was `observation.probes.length`, so the hover card would have
+   * printed "7개 모두 응답" here — a false green one line below the false green this whole feature
+   * exists to remove. The card must report what was actually asked.
+   */
+  it("counts only the probes actually contacted, not every probe key this build knows about", async () => {
+    stubFetchWithStatus({ liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 3 } });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    expect(await screen.findByText(/3개 모두 응답/)).toBeTruthy();
+    expect(screen.queryByText(/7개 모두 응답/)).toBeNull();
   });
 
   it("shows a red chip naming the tier when a publishing credential is dead", async () => {
@@ -540,7 +553,7 @@ describe("App's liveness chip", () => {
         observedAt: new Date().toISOString(),
         worst: "fail",
         dead: [{ key: "google_auth", tier: "publish", severity: "fail", detail: "400 invalid_grant" }],
-        total: 7,
+        contacted: 7,
       },
     });
     render(<App onSignOut={() => {}} authEpoch={0} />);
@@ -553,7 +566,7 @@ describe("App's liveness chip", () => {
         observedAt: new Date().toISOString(),
         worst: "fail",
         dead: [{ key: "google_auth", tier: "publish", severity: "fail", detail: "400 invalid_grant" }],
-        total: 7,
+        contacted: 7,
       },
     });
     render(<App onSignOut={() => {}} authEpoch={0} />);
@@ -563,7 +576,7 @@ describe("App's liveness chip", () => {
 
   it("re-probes and re-reads the status when [지금 확인] is clicked", async () => {
     const fetchMock = stubFetchWithStatus({
-      liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], total: 7 },
+      liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 7 },
     });
     render(<App onSignOut={() => {}} authEpoch={0} />);
     await screen.findByRole("button", { name: "지금 확인" });
@@ -656,7 +669,7 @@ describe("App's liveness chip", () => {
             integrations: [],
             sheetLinks: {},
             dbEnv: "development",
-            liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], total: 7 },
+            liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 7 },
           }),
           { status: 200 },
         );

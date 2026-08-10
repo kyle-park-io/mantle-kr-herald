@@ -12,7 +12,7 @@ const dead = (key: string, detail = "answered 401") => ({ key, status: "dead", d
 describe("summarizeLiveness", () => {
   it("reports ok with no dead probes when everything answered", () => {
     const summary = summarizeLiveness({ observedAt: AT, probes: [ok("google_auth"), ok("telegram")] }, true);
-    expect(summary).toEqual({ observedAt: AT, worst: "ok", dead: [], total: 2 });
+    expect(summary).toEqual({ observedAt: AT, worst: "ok", dead: [], contacted: 2 });
   });
 
   it("counts a skipped probe as ok — presence is deploy:check's job", () => {
@@ -23,6 +23,29 @@ describe("summarizeLiveness", () => {
     );
     expect(summary.worst).toBe("ok");
     expect(summary.dead).toEqual([]);
+  });
+
+  it("excludes a skipped probe from `contacted` — it was never dialed, so it must not inflate the headline's count", () => {
+    // The gap this closes: `runLiveProbes` always returns all seven results, emitting `skipped` for
+    // anything unconfigured, so a Telegram-only install's observation still carries seven entries.
+    // Before this test existed, nothing connected a `skipped` probe to the number `livenessHeadline`
+    // prints, and `contacted` (then `total`) was `observation.probes.length` — every unconfigured
+    // integration silently counted as an answer.
+    const summary = summarizeLiveness(
+      {
+        observedAt: AT,
+        probes: [
+          ok("telegram"),
+          dead("google_auth"),
+          { key: "lark", status: "skipped", detail: "not configured" } as never,
+          { key: "google_drive_review", status: "skipped", detail: "not configured" } as never,
+        ],
+      },
+      true,
+    );
+    // Two probes were actually contacted (telegram, google_auth); the two skipped ones must not
+    // count even though the observation carries four entries in total.
+    expect(summary.contacted).toBe(2);
   });
 
   it("fails on a dead publishing credential and names it with its tier and reason", () => {
@@ -66,8 +89,8 @@ describe("summarizeLiveness", () => {
     expect(summary.dead[0].tier).toBe("publish");
   });
 
-  it("carries the total so the card can say how many probes answered", () => {
+  it("carries contacted so the card can say how many probes answered", () => {
     const summary = summarizeLiveness({ observedAt: AT, probes: [ok("google_auth"), ok("lark"), dead("telegram")] }, true);
-    expect(summary.total).toBe(3);
+    expect(summary.contacted).toBe(3);
   });
 });

@@ -330,7 +330,11 @@ export interface LivenessSummary {
   observedAt: string;
   worst: "ok" | "warn" | "fail";
   dead: { key: string; tier: string; severity: "warn" | "fail"; detail: string }[];
-  total: number;
+  /** How many probes were actually contacted (`status !== "skipped"`) — see the server's own
+   *  `LivenessSummary.contacted` doc comment in `src/status/liveness.ts` for why `skipped` is
+   *  excluded: an unconfigured integration was never dialed, and the headline must not count it as
+   *  an answer. */
+  contacted: number;
 }
 
 export interface PublishStateRow {

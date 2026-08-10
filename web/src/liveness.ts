@@ -95,10 +95,17 @@ export function livenessChip(
   return undefined;
 }
 
-/** The hover card's one-line summary. */
+/**
+ * The hover card's one-line summary.
+ *
+ * `summary.contacted` is how many probes were actually dialed — the server already excludes
+ * `skipped` from it (`src/status/liveness.ts`'s own doc comment on `contacted`) — so this never
+ * re-derives that count from anything and never prints "7개 모두 응답" on an install where some
+ * integrations were never contacted.
+ */
 export function livenessHeadline(summary: LivenessSummary, now: Date): string {
   const age = `${reportAge(summary.observedAt, now)} 확인`;
   return summary.dead.length === 0
-    ? `${summary.total}개 모두 응답 · ${age}`
-    : `${summary.total}개 중 ${summary.dead.length}개 응답 없음 · ${age}`;
+    ? `${summary.contacted}개 모두 응답 · ${age}`
+    : `${summary.contacted}개 중 ${summary.dead.length}개 응답 없음 · ${age}`;
 }
