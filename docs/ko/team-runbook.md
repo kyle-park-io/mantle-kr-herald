@@ -783,7 +783,7 @@ pnpm x:link --item x:2081711456320655644 --post https://x.com/0xMantleKR/status/
 
 ### 배포 체크아웃 — 스케줄러는 개발 트리에서 돌지 않습니다
 
-**두 스케줄 유닛과 실패 훅은 `~/.herald/app`에서 돕니다.** 이건 머지된 `main`만 들어 있는 별도
+**네 스케줄 유닛과 실패 훅은 `~/.herald/app`에서 돕니다.** 이건 머지된 `main`만 들어 있는 별도
 체크아웃이고, 아무도 여기서 편집하지 않습니다. 개발 체크아웃(`~/code/mantle-kr-herald`)은 브랜치를
 자유롭게 오갈 수 있습니다.
 
@@ -952,8 +952,12 @@ bash deploy/herald-deploy.sh
    죽었는데 아무도 모른다"가 됩니다 — 이 기능이 막으려던 바로 그 상황입니다. 개발용 방을 그대로
    써도 되고, 그 경우 `.env`의 `TELEGRAM_CHAT_ID_DEV` 값을 복사해 한 줄 추가하면 됩니다.
 
-4. **세 유닛 파일을 `~/.config/systemd/user/`로 복사합니다** (`.sh`는 복사하지 않습니다 — 바로
-   아래 참고):
+4. **유닛 파일을 `~/.config/systemd/user/`로 복사합니다 — 단, 바로 아래 블록은 2026-08-06의
+   기록이고 지금 그대로 돌리면 실패합니다.** `deploy/herald-notify-failure.service`는 더는
+   존재하지 않아서, 이 `cp`는 앞의 두 파일만 복사한 뒤 그 자리에서 멈춥니다 — **알림 훅이 없는
+   반쪽 설치**이고, 실패해도 아무 데도 알리지 않는 상태입니다. **지금 설치하는 사람은 아래
+   "X 발행 재확인" 절의 아홉 개짜리 목록을 쓰세요.** 아래 블록은 그때 무엇이 깔렸는지를 남겨 둔
+   것이고, 이어지는 설명(`.sh`는 왜 복사하지 않는지 등)은 지금도 그대로 유효합니다:
    ```bash
    cp deploy/herald-watch.service deploy/herald-watch.timer \
       deploy/herald-notify-failure.service \
@@ -975,14 +979,11 @@ bash deploy/herald-deploy.sh
    실패하지만, **실패 훅이 머지 안 된 코드를 돌리면 조용히 실패합니다** — 그 훅이 할 말이라곤
    "다른 게 실패했다" 하나뿐이니까요.
 
-   **위 목록은 2026-08-06 그날 실제로 설치된 파일 이름이고, 지금은 따라 하면 안 됩니다.** 이후 이
-   훅이 다른 스케줄 유닛과 공유되도록 템플릿화되면서 `herald-notify-failure.service`는
-   `herald-notify-failure@.service`로 이름이 바뀌었고, 그 사이 타이머도 넷으로 늘었습니다. 저장소의
-   `deploy/herald-notify-failure.service`는 더는 존재하지 않아서 위 `cp` 명령은 그대로 돌리면 그
-   자리에서 실패합니다. **지금 설치하는 사람은 이 목록이 아니라 아래 "X 발행 재확인" 절의 파일 아홉
-   개짜리 목록을 쓰세요** — 그게 네 스케줄러(`herald-watch`·`herald-convert`·`herald-x-reconcile`·
-   `herald-creds`)와 공용 실패 훅을 한 번에 까는 유일한 완전한 목록입니다. 이 절의 나머지 단계(1~3,
-   5~7)는 그대로 유효합니다.
+   **왜 저 목록이 낡았는지** — 이후 이 훅이 다른 스케줄 유닛과 공유되도록 템플릿화되면서
+   `herald-notify-failure.service`는 `herald-notify-failure@.service`로 이름이 바뀌었고, 그 사이
+   타이머도 넷으로 늘었습니다. 아래 아홉 개짜리 목록이 네 스케줄러
+   (`herald-watch`·`herald-convert`·`herald-x-reconcile`·`herald-creds`)와 공용 실패 훅을 한 번에
+   까는 유일한 완전한 목록입니다. 이 절의 나머지 단계(1~3, 5~7)는 그대로 유효합니다.
 
 5. **타이머를 켜기 전에 손으로 한 번 돌려봅니다.** `daemon-reload`만 하고, `enable`은 아직입니다:
    ```bash
@@ -1548,14 +1549,51 @@ set -a && . ~/.herald/prod.env && set +a && pnpm db:migrate
 `EnvironmentFile=%h/.herald/prod.env`를 걸지 **않습니다** — 데이터베이스를 열지 않고 배포본에
 HTTP로 묻기만 하므로, 걸어 두면 없는 의존성을 있는 것처럼 적는 셈이 됩니다.
 
-손으로 한 번 돌려 확인한 뒤 켜세요 — **아무것도 쓰지 않는 읽기 전용 명령**이라, 여기서는
-`herald-x-reconcile`처럼 "첫 실행이 곧 첫 프로덕션 쓰기"인 함정이 없습니다. 타이머의
-`Persistent=true` 때문에 `enable --now`가 곧바로 한 번 돌 수 있다는 점도 그래서 안전합니다:
+**켜기 전에 유닛을 손으로 한 번 돌립니다 — `pnpm creds:check`가 아니라
+`systemctl --user start herald-creds.service`로.** 개발 트리에서 `pnpm creds:check`를 돌리는 건
+명령 자체는 확인해 주지만 **이 유닛에 대해서는 아무것도 확인해 주지 않습니다** — `%h` 치환,
+`%h/.herald/bin/pnpm`이 유닛의 `PATH`에서 잡히는지, 래퍼(`herald-run-logged.sh`)가 도는지,
+`WorkingDirectory=%h/.herald/app`이 맞는지, 배포 체크아웃의 **얼어붙은 `.env`**를 읽는지 — 전부
+한 번도 실행된 적 없는 경로이고, 개발 트리 실행은 그중 어느 것도 지나가지 않습니다. watch
+스케줄러의 설치 5번이 하는 것과 같은 게이트를 여기서도 씁니다:
 
 ```bash
-pnpm creds:check                                   # HERALD_DEPLOYMENT_ORIGIN을 씁니다
+bash deploy/herald-deploy.sh                       # 유닛 복사 전에 먼저 — 아래 경고 참고
+systemctl --user start herald-creds.service        # Type=oneshot이라 끝날 때까지 붙잡습니다
+systemctl --user show herald-creds.service -p Result -p ExecMainStatus
+journalctl --user -u herald-creds --no-pager -n 30
+```
+
+`Result=success` / `ExecMainStatus=0`이면 배포본의 크레덴셜이 전부 살아 있다는 뜻입니다.
+`ExecMainStatus=2`는 크레덴셜 문제가 아니라 **이 머신의 설정 문제**이고(위 종료 코드 표),
+`ExecMainStatus=1`이면 마지막 줄의 `✗ FAILED:`가 어느 크레덴셜인지 말해 줍니다.
+
+> **`bash deploy/herald-deploy.sh`를 먼저 돌리지 않으면 이 단계는 `ERR_PNPM_NO_SCRIPT`로
+> 실패합니다.** 유닛은 배포 체크아웃(`~/.herald/app`)에서 `pnpm creds:check`를 돌리는데, 그쪽
+> `package.json`은 이 변경이 배포되기 전까지 `creds:check`를 **모릅니다**(이 문서를 쓰는 지금도
+> 그렇습니다). 확인은 한 줄입니다:
+>
+> ```bash
+> grep -c 'creds:check' ~/.herald/app/package.json    # 0이면 아직 배포 전입니다
+> ```
+>
+> 같은 이유로 래퍼도 배포 체크아웃 안에 있어야 합니다 — 위 `cp` 절의 "먼저 배포, 그다음 유닛
+> 설치"와 같은 제약입니다.
+
+목록이 납득되면 켭니다. **여기에는 `herald-x-reconcile`처럼 "첫 실행이 곧 첫 프로덕션 쓰기"인
+함정이 없습니다** — 이 명령에는 발행·쓰기 작업이 없고, 배포본에 묻고 판정만 합니다. 타이머의
+`Persistent=true` 때문에 `enable --now`가 곧바로 한 번 돌 수 있다는 점도 그래서 안전합니다.
+(엄밀히 말하면 완전한 읽기 전용은 아닙니다: 대시보드 로그인에 성공하면 배포본이 로그인 시도
+기록 테이블(`auth_attempts`)에 성공을 남기고 오래된 행을 정리합니다. 파이프라인 데이터에는
+아무 영향이 없습니다.)
+
+```bash
 systemctl --user enable --now herald-creds.timer
 ```
+
+손으로 명령만 따로 확인하고 싶을 때는 개발 트리에서 `pnpm creds:check`도 됩니다 — 인자 없이
+돌리면 `.env`의 `HERALD_DEPLOYMENT_ORIGIN`을 씁니다. 다만 위에 적은 이유로, 그건 타이머가 실제로
+밟는 경로를 확인해 주지 않습니다.
 
 확인·정지 명령은 위 watch 스케줄러와 같고 유닛 이름만 `herald-creds`로 바꾸면 됩니다
 (`systemctl --user list-timers`, `journalctl --user -u herald-creds`,

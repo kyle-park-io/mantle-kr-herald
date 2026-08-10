@@ -120,12 +120,20 @@ describe("herald-creds.timer", () => {
     // Units sharing a minute buy nothing and invite two pnpm processes starting at once on a cold
     // store — herald-x-reconcile.timer's own header makes this argument. Derived from the directory
     // so a timer added later is included without editing a list here.
+    //
+    // Both sides derived. Writing the minute out here as a literal — `expect(others).not.toContain
+    // ("23")` — makes the check a comparison between two copies of the same decision: moving the
+    // timer to `06:41:00` and updating the literal in "fires once a day" but not this one leaves the
+    // suite green with a real collision against herald-x-reconcile.
     const others = timerFiles
       .filter((f) => f !== "herald-creds.timer")
       .flatMap((f) => onCalendarSpecs(read(f)).flatMap((spec) => minutesOf(spec) ?? []));
+    const mine = onCalendarSpecs(timer).flatMap((spec) => minutesOf(spec) ?? []);
     expect(others.length, "no other timers found — the check would pass vacuously").toBeGreaterThan(0);
-    expect(minutesOf(onCalendarSpecs(timer)[0])).toEqual(["23"]);
-    expect(others).not.toContain("23");
+    expect(mine.length, "this timer's own minute could not be read").toBeGreaterThan(0);
+    for (const minute of mine) {
+      expect(others, `herald-creds.timer fires at :${minute}, and so does another timer`).not.toContain(minute);
+    }
   });
 
   it("reads every OnCalendar= in deploy/, so the check above cannot pass by understanding none", () => {

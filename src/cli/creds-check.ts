@@ -99,6 +99,53 @@ function unreadableStatus(res: Response | undefined, parsed: unknown): string {
   );
 }
 
+/**
+ * The names of everything that failed, on one bounded line, printed after `formatReport`'s counts.
+ *
+ * **This line is the only part of the report an alert is guaranteed to carry.**
+ * `deploy/herald-notify-failure.sh` sends a five-line tail (`LOG_TAIL_LINES`) of the failing unit's
+ * output, and `formatReport` puts the counts last, so with seven probes the `✗` line sits nine rows
+ * from the end. Replaying the 2026-08-10 incident — only `google_auth` dead — through the real
+ * wrapper and a copy of the real hook produced exactly this, and nothing else:
+ *
+ *     ⚠ herald-creds.service failed
+ *       ✓ live: telegram               alive
+ *       ✓ live: google_sheets          alive
+ *
+ *     6 ok · 0 warn · 1 fail
+ *
+ * Two green ticks and a count. With a mixed report it does not merely omit the cause, it misreports
+ * it: the tail lands on whichever probes happen to be last and points the operator at those. The
+ * spec's own sentence — "an alert that misreports its own cause is worse than no alert" — landing on
+ * the path where every piece works.
+ *
+ * `deploy/herald-creds.service` is the first unit to hit this because the other three fail with a
+ * stack trace at the END of their output, which is where a five-line tail looks.
+ *
+ * Fixed here rather than by widening `LOG_TAIL_LINES`: that tail is shared with three units whose
+ * alerts are shaped around it, and one command's layout is not a reason to re-cut everyone's. One
+ * line, last, under this command's control, survives any tail.
+ *
+ * Names only, no details — the details are three rows up in the same log, and the alert links it.
+ * Bounded for the reason `describeValue` is bounded: seven dead probes, or a hostile body that
+ * produces one `fail` per entry, must not put the whole report back on the last line. Whole names
+ * are dropped rather than the line cut mid-word, because half a name is not a name anyone can grep.
+ */
+const FAILED_LINE_MAX = 200;
+function failedLine(results: CheckResult[]): string | undefined {
+  const names = results.filter((r) => r.status === "fail").map((r) => r.name);
+  if (names.length === 0) return undefined;
+  for (let shown = names.length; shown >= 1; shown--) {
+    const dropped = names.length - shown;
+    const line = `✗ FAILED: ${names.slice(0, shown).join(", ")}${dropped > 0 ? ` (+${dropped} more)` : ""}`;
+    if (line.length <= FAILED_LINE_MAX) return line;
+  }
+  // Even one name is over budget — a probe key long enough to be pathological. Still answer, still
+  // bounded, and still say how many went unnamed rather than silently dropping them.
+  const suffix = names.length > 1 ? ` (+${names.length - 1} more)` : "";
+  return `${`✗ FAILED: ${names[0]}`.slice(0, FAILED_LINE_MAX - suffix.length - 1)}…${suffix}`;
+}
+
 const results: CheckResult[] = [];
 
 try {
@@ -208,4 +255,11 @@ try {
 }
 
 console.log(formatReport(results, { title: `Mantle KR Herald — credential liveness (${client.origin})` }));
-if (results.some((r) => r.status === "fail")) process.exitCode = 1;
+
+// One computation drives both, so "exit 1" and "the alert names what died" cannot come apart: the
+// line is printed exactly when the exit code is 1, and nothing extra is printed when it is 0.
+const failed = failedLine(results);
+if (failed !== undefined) {
+  console.log(failed);
+  process.exitCode = 1;
+}

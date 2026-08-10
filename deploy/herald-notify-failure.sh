@@ -65,6 +65,12 @@ ENV_FILE="$REPO_DIR/.env"
 # budget below goes entirely to the actual message text. Never fatal on its own: an unreadable
 # journal (permissions, journald down) degrades to an empty excerpt via `|| true`, not a script
 # failure — this hook still has to reach `exit 0` regardless.
+# Five lines is a phone-readable budget, and it is a CONTRACT with the commands these units run, not
+# just a display choice: a command whose important output is not in its last five lines does not
+# appear in the alert at all. `pnpm creds:check` prints a one-line `✗ FAILED: <names>` summary after
+# its report for exactly this reason — its report's own `✗` sits nine rows from the end and never
+# reached a message. tests/cli/credsCheck.test.ts reads this number out of this file and tails a real
+# run log with it, so lowering it fails there rather than silently emptying an alert.
 LOG_TAIL_LINES=5
 LOG_EXCERPT="$(journalctl --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat 2>/dev/null)" || LOG_EXCERPT=""
 # Where the reader is pointed for more, once they open the alert. Replaced below if the excerpt

@@ -42,7 +42,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { REPO_ROOT } from "../../src/paths";
@@ -146,6 +147,15 @@ interface Run {
  * not happen. Closing stdin instead would hand a prompt an immediate EOF and hide the regression.
  */
 function run(env: Record<string, string | undefined> = {}, args: string[] = [origin], timeoutMs = 15_000): Promise<Run> {
+  return spawnCli(TSX_BIN, [ENTRY, ...args], env, timeoutMs);
+}
+
+function spawnCli(
+  command: string,
+  args: string[],
+  env: Record<string, string | undefined> = {},
+  timeoutMs = 15_000,
+): Promise<Run> {
   const merged: Record<string, string | undefined> = {
     PATH: process.env.PATH ?? "",
     HERALD_SMOKE_USERNAME: "probe",
@@ -156,7 +166,7 @@ function run(env: Record<string, string | undefined> = {}, args: string[] = [ori
   for (const [key, value] of Object.entries(merged)) if (value !== undefined) childEnv[key] = value;
 
   return new Promise<Run>((resolve, reject) => {
-    const child = spawn(TSX_BIN, [ENTRY, ...args], { cwd: REPO_ROOT, env: childEnv });
+    const child = spawn(command, args, { cwd: REPO_ROOT, env: childEnv });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -441,5 +451,106 @@ describe("pnpm creds:check", () => {
       scripts?: Record<string, string>;
     };
     expect(pkg.scripts?.["creds:check"]).toBe("tsx --env-file-if-exists=.env src/cli/creds-check.ts");
+  });
+});
+
+/**
+ * The alert, not the report.
+ *
+ * `deploy/herald-notify-failure.sh` sends a `LOG_TAIL_LINES`-line tail of the failing unit's output.
+ * `formatReport` ends with a blank line and the counts, so a `✗` among seven probes sits nine rows
+ * from the end and never reaches the message: replaying the 2026-08-10 shape through the real
+ * wrapper and a copy of the real hook produced two green ticks and `6 ok · 0 warn · 1 fail`, with
+ * `google_auth` — the corpse — nowhere in it.
+ *
+ * Asserting that a line naming the failure exists somewhere in stdout would have passed before the
+ * fix as well. The property is that it survives the tail, so the second test below runs the real
+ * `deploy/herald-run-logged.sh` and tails the file it actually wrote, with the tail depth read out
+ * of the hook script rather than written here — two files, one decision.
+ */
+describe("the last line — what a five-line tail actually carries", () => {
+  const hookTailLines = async (): Promise<number> => {
+    const hook = await readFile(join(REPO_ROOT, "deploy", "herald-notify-failure.sh"), "utf8");
+    const n = /^LOG_TAIL_LINES=(\d+)$/m.exec(hook)?.[1];
+    expect(n, "deploy/herald-notify-failure.sh no longer sets LOG_TAIL_LINES=<n>").toBeDefined();
+    return Number(n);
+  };
+
+  const lastLine = (stdout: string): string => stdout.trimEnd().split("\n").at(-1) ?? "";
+
+  it("names what died, after the counts", async () => {
+    stub.probes = dead("google_auth");
+    const r = await run();
+    expect(r.exitCode).toBe(1);
+    expect(lastLine(r.stdout)).toBe("✗ FAILED: live: google_auth");
+    // After the counts, not instead of them — the report is still the report.
+    expect(r.stdout.trimEnd().split("\n").at(-2)).toMatch(/\d+ ok · \d+ warn · \d+ fail/);
+  });
+
+  it("survives the tail the hook actually sends, through the real wrapper", async () => {
+    stub.probes = dead("google_auth");
+    const logDir = await mkdtemp(join(tmpdir(), "herald-creds-tail-"));
+    try {
+      const r = await spawnCli(
+        join(REPO_ROOT, "deploy", "herald-run-logged.sh"),
+        ["herald-creds.service", TSX_BIN, ENTRY, origin],
+        { HERALD_LOG_DIR: logDir },
+      );
+      // The wrapper hands the command's status back unchanged, which is what makes the unit fail
+      // and the hook fire at all.
+      expect(r.exitCode, r.stdout + r.stderr).toBe(1);
+
+      const runDir = join(logDir, "herald-creds");
+      const files = await readdir(runDir);
+      expect(files, "the wrapper wrote no durable run log for the hook to tail").toHaveLength(1);
+      const log = await readFile(join(runDir, files[0]), "utf8");
+
+      const tail = log.trimEnd().split("\n").slice(-(await hookTailLines()));
+      expect(
+        tail.join("\n"),
+        `the alert would not name the dead credential. What the operator receives:\n${tail.join("\n")}`,
+      ).toContain("google_auth");
+    } finally {
+      await rm(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prints no such line, and nothing after the counts, when nothing failed", async () => {
+    stub.probes = ALL_OK;
+    const r = await run();
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).not.toContain("FAILED");
+    expect(lastLine(r.stdout)).toMatch(/^\d+ ok · \d+ warn · 0 fail$/);
+  });
+
+  it("fits every failure on the line when the whole deployment is dead, and names only failures", async () => {
+    // The realistic worst case, and the one that must NOT be abbreviated: a whole-deployment outage
+    // should name every dead credential. With sends open that is six of the seven probes —
+    // `google_sheets` is the `data` tier, a warn even when dead (`PROBE_TIER` in smokeChecks.ts), and
+    // it must stay off this line. A line that named warnings too would point at a credential the
+    // report did not fail over, which is the misdirection this whole line exists to remove.
+    stub.probes = ALL_OK.map((p) => ({ ...p, status: "dead", detail: "HTTP 401" }));
+    stub.sendsEnabled = true;
+    const r = await run();
+    const line = lastLine(r.stdout);
+    expect(line.length).toBeLessThanOrEqual(200);
+    for (const probe of ALL_OK.filter((p) => p.key !== "google_sheets")) expect(line).toContain(probe.key);
+    expect(line, "google_sheets is a warn, not a fail").not.toContain("google_sheets");
+    expect(r.stdout, "…and the report above still reports it").toContain("live: google_sheets");
+    expect(line).not.toContain("more)");
+  });
+
+  it("drops whole names and counts them when a hostile body produces too many failures", async () => {
+    // One `fail` per unparseable entry. Unbounded, this would put the entire report back on the one
+    // line that was supposed to be the summary of it.
+    stub.liveRawBody = JSON.stringify({ probes: Array.from({ length: 40 }, (_, i) => i) });
+    const r = await run();
+    const line = lastLine(r.stdout);
+    expect(r.exitCode).toBe(1);
+    expect(line.length).toBeLessThanOrEqual(200);
+    expect(line).toMatch(/\(\+\d+ more\)$/);
+    // Whole names, never a name cut in half: what is shown must still be greppable in the log above.
+    expect(line).toContain("credential liveness (entry 0)");
+    expect(line).not.toContain("…");
   });
 });

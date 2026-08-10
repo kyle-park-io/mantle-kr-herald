@@ -165,6 +165,10 @@ say() {
   return 0   # the `[ -n ]` test above is the last command; without this, an empty LOG_FILE returns 1
 }
 
+# NOTE for whoever changes what goes around the command: deploy/herald-notify-failure.sh sends only
+# the last LOG_TAIL_LINES lines of this file, so every line printed after the command's own output
+# costs one line of the alert. The footer below is deliberately the only one.
+#
 # Names the unit and the exact command line, which is what makes a run log answerable months later:
 # whether `--yes` was passed, which pnpm was on PATH, which subcommand ran.
 say "=== $UNIT started $(date -u +%Y-%m-%dT%H:%M:%SZ) — $* ==="
