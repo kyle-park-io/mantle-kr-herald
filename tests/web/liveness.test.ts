@@ -151,6 +151,15 @@ describe("livenessHeadline", () => {
     // that field rather than hard-coding "7" or re-deriving a count of its own.
     expect(livenessHeadline(summary({ contacted: 3 }), NOW)).toBe("3개 모두 응답 · 2시간 전 확인");
   });
+
+  it("says nothing was configured, not that zero-of-zero answered, when every probe was skipped", () => {
+    // A fresh install, or any local `pnpm serve` dashboard — `tests/app/createDeps.test.ts` pins
+    // that every probe reports `skipped` there, so `contacted` is 0 and `dead` is empty. "0개 모두
+    // 응답" would be vacuously true but reads as a clean bill from zero evidence, the same false
+    // green this feature exists to remove. The age clause still runs — it still answers when the
+    // deployment last looked.
+    expect(livenessHeadline(summary({ contacted: 0 }), NOW)).toBe("설정된 키 없음 · 2시간 전 확인");
+  });
 });
 
 describe("probeLabel", () => {

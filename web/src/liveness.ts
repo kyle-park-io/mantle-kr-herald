@@ -102,9 +102,18 @@ export function livenessChip(
  * `skipped` from it (`src/status/liveness.ts`'s own doc comment on `contacted`) — so this never
  * re-derives that count from anything and never prints "7개 모두 응답" on an install where some
  * integrations were never contacted.
+ *
+ * `contacted === 0` is its own branch rather than falling into the "all answered" wording below:
+ * zero probes dialed means nothing was configured to dial (a fresh install, or any local
+ * `pnpm serve` dashboard — `tests/app/createDeps.test.ts` pins that every probe reports `skipped`
+ * there), and "0개 모두 응답" is technically vacuous-true but reads as a clean bill from zero
+ * evidence — the same false-green shape as the constant "7개 모두 응답" this feature replaced,
+ * just smaller. `설정된 키 없음` says what actually happened; the age clause still runs, since it
+ * still answers a real question (when did this deployment last look).
  */
 export function livenessHeadline(summary: LivenessSummary, now: Date): string {
   const age = `${reportAge(summary.observedAt, now)} 확인`;
+  if (summary.contacted === 0) return `설정된 키 없음 · ${age}`;
   return summary.dead.length === 0
     ? `${summary.contacted}개 모두 응답 · ${age}`
     : `${summary.contacted}개 중 ${summary.dead.length}개 응답 없음 · ${age}`;
