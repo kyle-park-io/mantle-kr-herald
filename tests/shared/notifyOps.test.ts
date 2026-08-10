@@ -3,6 +3,7 @@
 // (tests/adapters/send/telegramBotSender.test.ts's own fakeFetch).
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { notifyOps } from "../../src/shared/notifyOps";
+import { escapeTelegramHtml } from "../../src/shared/opsAlertGrammar";
 
 function fakeFetch(responses: { ok: boolean; status: number; body?: unknown }[]) {
   const calls: { url: string; body: unknown }[] = [];
@@ -93,6 +94,76 @@ describe("notifyOps", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/TELEGRAM_CHAT_ID_OPS/);
     expect(lines[0]).toMatch(/not sent/);
+  });
+
+  it("sends HTML and retries once as plain text when Telegram rejects it", async () => {
+    // Reject-then-accept, not reject-then-reject: the bash side's own test for this shape
+    // (tests/deploy/notifyFailure.test.ts) rejects both attempts, which proves only that the retry
+    // FIRES, not that it DELIVERS. Driving the second call to succeed and asserting on its shape is
+    // what proves the retry lands.
+    process.env.TELEGRAM_BOT_TOKEN = "t";
+    process.env.TELEGRAM_CHAT_ID_OPS = "c";
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      calls.push(body);
+      return { ok: calls.length > 1, status: calls.length > 1 ? 200 : 400 } as Response;
+    }) as unknown as typeof fetch;
+
+    await notifyOps("ℹ t\n<pre>a &lt;b&gt;</pre>", fetchFn);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0].parse_mode).toBe("HTML");
+    expect(calls[1].parse_mode).toBeUndefined();
+    expect(String(calls[1].text)).not.toContain("<pre>");
+    expect(String(calls[1].text)).toContain("a <b>");
+  });
+
+  it("round-trips a fixture carrying <, >, & and a literal &lt; through escape then retry-unescape, exactly", async () => {
+    // The escape order is load-bearing in both directions. escapeTelegramHtml (opsAlertGrammar.ts)
+    // must run & first; notifyOps's plain-text retry must un-escape in the REVERSE order (&lt;/&gt;
+    // before &amp;), or a source string that literally contained "&lt;" comes back wrong. A fixture
+    // without entities in it cannot catch either direction being wrong — this one has all three
+    // escaped characters plus a literal "&lt;" to catch exactly that.
+    process.env.TELEGRAM_BOT_TOKEN = "t";
+    process.env.TELEGRAM_CHAT_ID_OPS = "c";
+    const fixture = "<x> & &lt; <y>";
+    const escaped = escapeTelegramHtml(fixture);
+    expect(escaped).toBe("&lt;x&gt; &amp; &amp;lt; &lt;y&gt;"); // sanity: the escape direction itself
+    const text = `ℹ 제목\n<pre>${escaped}</pre>`;
+
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      calls.push(body);
+      return { ok: calls.length > 1, status: calls.length > 1 ? 200 : 400 } as Response;
+    }) as unknown as typeof fetch;
+
+    await notifyOps(text, fetchFn);
+
+    expect(calls).toHaveLength(2);
+    // Exact equality, not a substring check: a partial round trip (e.g. the literal &lt; surviving
+    // as &lt; instead of coming back to <) would still pass a toContain("<x>") check.
+    expect(calls[1].text).toBe(`ℹ 제목\n${fixture}`);
+  });
+
+  it("does not retry a thrown network error — only an HTTP-level rejection from Telegram", async () => {
+    // The bash side gates its retry on curl exit 22 specifically (an HTTP status >= 400 — a response
+    // was received and Telegram said no), never on exit 6 (DNS), 28 (timeout) or 127 (curl missing):
+    // retrying those doubles the hang against the hook's own deadline and can duplicate an alert
+    // Telegram already accepted. The fetch equivalent of exit 22 is `res.ok === false`; the
+    // equivalent of 6/28/127 is fetchFn's promise REJECTING rather than resolving. This pins that a
+    // thrown/rejected fetchFn — a network failure, not an HTTP rejection — gets exactly one attempt.
+    process.env.TELEGRAM_BOT_TOKEN = "t";
+    process.env.TELEGRAM_CHAT_ID_OPS = "c";
+    let callCount = 0;
+    const fetchFn = (async () => {
+      callCount++;
+      throw new Error("getaddrinfo ENOTFOUND api.telegram.org");
+    }) as unknown as typeof fetch;
+
+    await expect(notifyOps("ℹ t", fetchFn)).resolves.toBeUndefined();
+    expect(callCount).toBe(1);
   });
 
   it("swallows a failing request", async () => {

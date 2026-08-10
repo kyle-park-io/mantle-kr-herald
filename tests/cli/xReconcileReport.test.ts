@@ -144,12 +144,18 @@ describe("retireNotification", () => {
 
   // The rest of this block asserts against the exported constant rather than a hardcoded "3", so a
   // future deliberate change to NOTIFY_RETIRE_THRESHOLD updates these expectations along with it.
-  it("fires at the threshold", () => {
+  it("fires at the threshold, one id per line in the shared grammar's <pre> block", () => {
+    // Used to be a comma-run in one paragraph — 14 ids, unreadable on a phone, in a real
+    // 2026-08-07 alert. This pins the grammar it now goes through (opsAlertGrammar.ts's
+    // `opsNotice`), not just the old English sentence, so a regression back to a comma-run fails
+    // here rather than only in opsAlertGrammar's own tests.
     const message = retireNotification(NOTIFY_RETIRE_THRESHOLD, ["x:1", "x:2", "x:3"], "0xMantleKR");
     expect(message).toBeDefined();
     expect(message).toContain(String(NOTIFY_RETIRE_THRESHOLD));
     expect(message).toContain("@0xMantleKR");
-    expect(message).toContain("x:1, x:2, x:3");
+    expect(message).toContain("<pre>x:1\nx:2\nx:3</pre>");
+    expect(message).not.toContain("x:1, x:2, x:3");
+    expect(message!.startsWith("ℹ ")).toBe(true);
   });
 
   it("does not fire one below the threshold", () => {
@@ -157,8 +163,9 @@ describe("retireNotification", () => {
     expect(message).toBeUndefined();
   });
 
-  it("fires above the threshold too, naming the real count", () => {
+  it("fires above the threshold too, naming the real count and every id", () => {
     const message = retireNotification(NOTIFY_RETIRE_THRESHOLD + 2, ["x:1", "x:2", "x:3", "x:4", "x:5"], "0xMantleKR");
     expect(message).toContain(String(NOTIFY_RETIRE_THRESHOLD + 2));
+    expect(message).toContain("<pre>x:1\nx:2\nx:3\nx:4\nx:5</pre>");
   });
 });

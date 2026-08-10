@@ -2,6 +2,7 @@ import { tryDescribeDbTarget, INVALID_DB_URL } from "../config";
 import type { DbConfig } from "../config";
 import { isXCandidateRendering, type CandidateReason } from "../app/ReconcileXPublished";
 import type { ChannelRendering } from "../domain/formatting/models";
+import { opsNotice } from "../shared/opsAlertGrammar";
 
 /**
  * The lines `x-reconcile.ts` decides rather than merely prints, pulled out of the script for the
@@ -125,5 +126,11 @@ export const NOTIFY_RETIRE_THRESHOLD = 3;
  */
 export function retireNotification(retiredCount: number, retiredItemIds: string[], handle: string): string | undefined {
   if (retiredCount < NOTIFY_RETIRE_THRESHOLD) return undefined;
-  return `x:reconcile retired ${retiredCount} translation(s) already posted by hand on @${handle}: ${retiredItemIds.join(", ")}`;
+  // The IDs were a comma-run in one paragraph — 14 of them in a real 2026-08-07 alert, unreadable
+  // on a phone. One per line inside the shared <pre> block instead.
+  return opsNotice({
+    icon: "ℹ",
+    title: `x:reconcile — 손으로 이미 올라가 있던 번역 ${retiredCount}건 은퇴 (@${handle})`,
+    lines: retiredItemIds,
+  });
 }
