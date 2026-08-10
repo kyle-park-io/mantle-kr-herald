@@ -122,16 +122,16 @@ if (client.loggedIn) {
   // The one thing checkStatus cannot tell you: whether the credentials behind those `present` flags
   // still work.
   //
-  // `client.authed()` is not optional decoration. The route is session-gated like every route but
-  // `/api/login` (`apiHandlers.ts`'s one gate, before any route is matched), so a call that bypassed
-  // it and used `client.request()` instead would answer 401, `probes` would come back `undefined`,
-  // and `checkLiveness` would report its "route unreadable" FAIL on every run — including one where
-  // every credential is perfectly alive. That was this file's state, with the cookie attached by
-  // hand instead of by `authed()`, from the commit that added this call until 2026-08-10: the
-  // feature had never once executed, and its failure looked exactly like the "old deployment without
-  // the route" message it prints. `authed()` makes an authenticated call without the session
-  // impossible by construction; a call site is held to using it for a gated route by
-  // `tests/deploy/smokeSession.test.ts`.
+  // Going through `client.authed` here is not optional decoration. The route is session-gated like
+  // every route but `/api/login` (`apiHandlers.ts`'s one gate, before any route is matched), so a
+  // call that bypassed it and used the plain, unauthenticated `client.request` call instead would
+  // answer 401, `probes` would come back `undefined`, and `checkLiveness` would report its "route
+  // unreadable" FAIL on every run — including one where every credential is perfectly alive. That was
+  // this file's state, with the cookie attached by hand instead of by `authed()`, from the commit
+  // that added this call until 2026-08-10: the feature had never once executed, and its failure
+  // looked exactly like the "old deployment without the route" message it prints. `authed()` makes
+  // an authenticated call without the session impossible by construction; a call site is held to
+  // using it for a gated route by `tests/deploy/smokeSession.test.ts`.
   //
   // `.catch(() => undefined)` on the parse, same as the `/api/status` call above: a non-JSON body (a
   // gateway error page, say) must fall into checkLiveness's "route unreadable" path, not crash the

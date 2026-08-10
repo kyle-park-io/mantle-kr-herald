@@ -37,18 +37,58 @@
 // scoped authenticated block, so a brand-new authenticated route added later was covered
 // automatically; a hardcoded list of four paths is not.
 //
-// The fix drops path matching entirely. The property that actually matters is not "these four routes
-// use `authed()`" but "nothing inside the authenticated block bypasses `authed()`" — so this guard
-// finds that block the same way the pre-refactor version did (textually, since `deploy-smoke.ts`
-// cannot be imported and driven like an ordinary module — see below) and then asserts every call
-// inside it, regardless of what path expression it was given, is spelled `client.authed(`. An
-// indirection like the reviewer's no longer matters: `client.request(statusPath)` is caught because
-// it is `client.request(`, not because of what `statusPath` holds.
+// The round-1 fix dropped path matching entirely. The property that actually matters is not "these
+// four routes use `authed()`" but "nothing inside the authenticated block bypasses `authed()`" — so
+// it finds that block the same way the pre-refactor version did (textually, since `deploy-smoke.ts`
+// cannot be imported and driven like an ordinary module — see below) and asserts every call inside
+// it, regardless of what path expression it was given, is spelled `client.authed(`. That closed the
+// reviewer's `client.request(statusPath)` bypass: caught because it is `client.request(`, not because
+// of what `statusPath` holds.
 //
-// So this file still reads the source. It is the same approach `tests/deploy/apiRouting.test.ts`
-// takes to the routing table and `tests/deploy/heraldDeploy.test.ts` takes to the deploy script, for
-// the same reason: the thing being asserted is not reachable any other way — `deploy-smoke.ts` cannot
-// be imported and driven like an ordinary module.
+// Two more bypasses followed, both silent 3/3 passes against that version:
+//
+//   const { request: rawRequest } = client;
+//   const statusRes = await rawRequest("/api/status");                  <- not `client.request(` or
+//                                                                           `client.authed(` textually
+//
+//   const decoyUrl = "http://example.com";
+//   const statusRes = await client.request("/api/status");              <- a real, un-aliased bypass,
+//                                                                           deleted from what this file
+//                                                                           ever saw
+// The first is a spelling this file's regex-driven `callsIn` cannot enumerate its way out of — a
+// destructured reference calls the same function under a name this file never looks for, and there is
+// no finite list of names to check against. The second is sharper: it is not an indirection at all,
+// it is `client.request("/api/status")` written directly, but round 1's `stripLineComments` (added so
+// this file's own narrative prose — which names `client.request(` while explaining what NOT to do —
+// would not flag itself) truncated at the *first* `//` on the line, which was inside the decoy URL
+// string, not at the start of an actual comment. The real, un-aliased bypass sat after that `//` and
+// was cut from the text before `callsIn` ever ran, producing a false PASS from round 1's own
+// mitigation.
+//
+// Two rounds each closing one textual bypass and revealing another is the signature of the wrong
+// tool, not of an insufficiently clever regex: the property being guarded — no authenticated request
+// leaves without a session — is a runtime fact, and source text cannot decide it, because the same
+// request can always be spelled another way `callsIn` has not seen yet. The fix is not a third regex:
+//
+//   - `stripLineComments` is gone. It existed only because `deploy-smoke.ts`'s own comments spelled
+//     out `client.request(`/`client.authed(` in prose; those comments were reworded (dropping the
+//     trailing `(` — "the plain, unauthenticated `client.request` call" instead of "`client.request()`")
+//     so they no longer look like the calls they describe, and the truncation bug goes with it rather
+//     than being patched to be "safer".
+//   - This file's checks stay — they are still real, still catch the literal-call-through-the-wrong-
+//     helper case cheaply, in milliseconds, with no server or subprocess — but they are now a first,
+//     fast signal, not the property's only guard. `tests/deploy/smokeSessionRuntime.test.ts` is the
+//     one that actually holds the property: it runs the real `deploy-smoke.ts` as a subprocess against
+//     a hostile local server that 401s any gated route reached without a real `herald_session` cookie,
+//     so a bypass under any spelling — alias, destructure, or one nobody has written yet — produces a
+//     real unauthenticated request, a real 401, and a real failing check, without this file needing to
+//     know how the call was written.
+//
+// So this file still reads the source, for what source-reading can still usefully catch quickly. It
+// is the same approach `tests/deploy/apiRouting.test.ts` takes to the routing table and
+// `tests/deploy/heraldDeploy.test.ts` takes to the deploy script, for the same reason: `deploy-smoke.ts`
+// cannot be imported and driven like an ordinary module, so reading it is the only way to check
+// anything about it without actually running it — which is exactly what the runtime test now also does.
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -86,29 +126,21 @@ function authenticatedBlock(source: string): string {
   return source.slice(braceStart + 1, i);
 }
 
-/** Drops `//` line comments before the block is scanned for calls — this file's house style
- *  narrates exactly the failure mode these tests guard against ("a call that bypassed it and used
- *  `client.request()` instead"), so the raw text of the authenticated block contains the string
- *  `client.request(` in prose, not code. Without this, `callsIn` below would flag the comment
- *  explaining the bug as an instance of the bug. Line comments only — this file has no block-comment
- *  style inside the region this ever scans, and no string literal in that region contains `//`. */
-function stripLineComments(source: string): string {
-  return source
-    .split("\n")
-    .map((line) => {
-      const at = line.indexOf("//");
-      return at === -1 ? line : line.slice(0, at);
-    })
-    .join("\n");
-}
-
 /** Every `client.request(...)` / `client.authed(...)` / `statusOf(...)` call in a chunk of source, as
  *  whole call expressions. Balanced-paren scan rather than a regex, because these calls contain
  *  nested object literals and calls of their own. Deliberately does not look at the argument each
  *  call was given — the point of this guard is that the *helper* used inside the authenticated block
- *  is what matters, not what path expression (literal, variable, or otherwise) was passed to it. */
-function callsIn(rawSource: string): string[] {
-  const source = stripLineComments(rawSource);
+ *  is what matters, not what path expression (literal, variable, or otherwise) was passed to it.
+ *
+ *  Scans raw source, comments included. This file used to strip `//` comments first, to keep its own
+ *  prose about `client.request(` from matching; that stripping was naive (`indexOf("//")` cuts at the
+ *  first occurrence, including one inside a string literal earlier on the same line) and produced a
+ *  false PASS by deleting a real bypass from the text before this function ever ran it. The fix was
+ *  to stop needing to strip anything: `deploy-smoke.ts`'s own comments were reworded so none of them
+ *  contain the literal substring `client.request(` / `client.authed(` / `statusOf(` — see that file's
+ *  authenticated block. A comment that merely mentions "the plain, unauthenticated `client.request`
+ *  call" (no trailing paren) does not match the regex below and needs no stripping to stay that way. */
+function callsIn(source: string): string[] {
   const found: string[] = [];
   for (const match of source.matchAll(/\b(?:client\.request|client\.authed|statusOf)\(/g)) {
     let depth = 0;
