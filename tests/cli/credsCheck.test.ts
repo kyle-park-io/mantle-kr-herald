@@ -414,9 +414,33 @@ describe("pnpm creds:check", () => {
       const r = await run({}, [url]);
       expect(r.exitCode, r.stdout + r.stderr).toBe(2);
       expect(r.stderr).toContain(url);
-      expect(r.stdout, "a configuration error must not print a credential report").toBe("");
+      // Not the empty string any more: `refuse()` (below) now prints exactly one marked line to
+      // stdout so `deploy/herald-notify-failure.sh` can promote it into the alert. Still not a
+      // credential report — no probe names, no "ok · warn · fail" counts — which is what this
+      // assertion actually protects, so it is pinned to the exact marked line rather than merely
+      // loosened to "not empty".
+      expect(r.stdout, "a configuration error must not print a credential report").toBe(
+        `${MARKER}✗ Not an http(s) URL: ${url} — this command talks to a deployment over HTTP.\n`,
+      );
     },
   );
+
+  /**
+   * A real 2026-08-10 alert for an exit-2 run carried the wrapper footer and four systemd lines, and
+   * nowhere in it the reason. `failedLine()` fires only for failed CHECKS, so these paths printed
+   * nothing marked and the alert had nothing to promote — see `refuse()` in creds-check.ts.
+   */
+  it.each([
+    ["no origin anywhere", [] as string[], {}, "HERALD_DEPLOYMENT_ORIGIN"],
+    ["a malformed URL", ["not a url"], {}, "not a url"],
+    ["a non-http scheme", ["ftp://example.com"], {}, "ftp://example.com"],
+  ])("marks the refusal so the alert can carry it: %s", async (_name, args, env, needle) => {
+    const r = await run({ HERALD_DEPLOYMENT_ORIGIN: undefined, ...env }, args);
+    expect(r.exitCode).toBe(2);
+    const marked = (r.stdout + r.stderr).split("\n").filter((l) => l.startsWith(MARKER));
+    expect(marked, "exactly one marked line").toHaveLength(1);
+    expect(marked[0]).toContain(needle);
+  });
 
   it("reports a login that returns 200 with no session as a failed check, not a stack trace", async () => {
     // `createDeploymentClient.authed()` THROWS when there is no session, and a 200 carrying no
@@ -443,6 +467,14 @@ describe("pnpm creds:check", () => {
     expect(r.timedOut, "the process must return, not hang until the watchdog kills it").toBe(false);
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("HERALD_SMOKE_USERNAME");
+  });
+
+  it("marks the refusal when HERALD_SMOKE_* is unset", async () => {
+    const r = await run({ HERALD_SMOKE_USERNAME: undefined, HERALD_SMOKE_PASSWORD: undefined });
+    expect(r.exitCode).toBe(2);
+    const marked = (r.stdout + r.stderr).split("\n").filter((l) => l.startsWith(MARKER));
+    expect(marked).toHaveLength(1);
+    expect(marked[0]).toContain("HERALD_SMOKE_USERNAME");
   });
 
   it("is wired into package.json as the command the timer will run", async () => {

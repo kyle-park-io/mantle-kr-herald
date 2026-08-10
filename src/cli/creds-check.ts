@@ -31,17 +31,55 @@ import { formatReport, type CheckResult } from "../doctor/report";
 const positional = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
 const rawUrl = positional[0] ?? process.env.HERALD_DEPLOYMENT_ORIGIN?.trim();
 
-if (!rawUrl) {
-  console.error("Usage: pnpm creds:check <url>   (or set HERALD_DEPLOYMENT_ORIGIN)");
+/**
+ * A configuration refusal, marked so `deploy/herald-notify-failure.sh` promotes it into the alert.
+ *
+ * Without this the operator got the 2026-08-10 message: a wrapper footer, four systemd lines, and no
+ * reason anywhere. `failedLine()` covers a failed *check*; exit 2 is not a failed check, and it is the
+ * case where the alert most needs to say what happened — a credential failure at least names a
+ * credential, while `status=2/INVALIDARGUMENT` names nothing.
+ *
+ * **On stdout, matching `failedLine()`, not because of which stream `deploy/herald-run-logged.sh`
+ * tees.** It tees both (`"$@" 2>&1 | tee -a`), so either stream reaches the run log the marker scan
+ * reads, and journald keeps both too — this is not what decides the placement. It is on stdout so a
+ * human tailing the log sees the same summary-first shape `failedLine()` already established, and
+ * because putting it on stderr would put the *only* copy of the reason on the stream the "exits 2"
+ * tests assert stays free of report content — this line is not a report, but a second convention for
+ * the same information would be one more thing for the next reader to reconcile.
+ *
+ * Run through `sanitizeWireText`, same as `failedLine()`'s names: `message` embeds `rawUrl`, which is
+ * an operator-supplied CLI argument or environment variable, not deployment-controlled — but it is
+ * still a string this process did not choose the bytes of. A stray newline in it would print as a
+ * second physical line, and if that line happened to start with `HERALD_ALERT: ` it would forge its
+ * own entry in the alert exactly as an unsanitized wire string could (see `describeValue.ts`'s
+ * header); a raw control or bidi character would reach a phone the same way.
+ *
+ * **Both lines are sanitized, not only the marked one.** Reproduced end to end: an unsanitized
+ * `console.error` alone forges the line, because `deploy/herald-run-logged.sh` tees stdout AND
+ * stderr into the same run log, and `deploy/herald-notify-failure.sh` scans that log for anything
+ * starting with the marker regardless of which stream wrote it — a raw newline in `message` followed
+ * by text shaped like `HERALD_ALERT: …` promoted a second, forged line into the alert even with the
+ * console.log half already escaped. Escaped rather than stripped, so the misconfiguration itself
+ * remains visible; for every message this file actually sends today — none contain an unsafe code
+ * point — sanitizing is a no-op, so `r.stderr` keeps reading exactly as before for a well-formed
+ * input.
+ */
+function refuse(message: string): never {
+  const safe = sanitizeWireText(message);
+  console.error(safe);
+  console.log(`${ALERT_MARKER}✗ ${safe}`);
   process.exit(2);
+}
+
+if (!rawUrl) {
+  refuse("Usage: pnpm creds:check <url>   (or set HERALD_DEPLOYMENT_ORIGIN)");
 }
 
 let deployment: URL;
 try {
   deployment = new URL(rawUrl);
 } catch {
-  console.error(`Not a valid URL: ${rawUrl}`);
-  process.exit(2);
+  refuse(`Not a valid URL: ${rawUrl}`);
 }
 
 /**
@@ -53,8 +91,7 @@ try {
  * exit codes are a contract (`deploy/herald-creds.service`): 1 must mean go look at a credential.
  */
 if (deployment.protocol !== "http:" && deployment.protocol !== "https:") {
-  console.error(`Not an http(s) URL: ${rawUrl} — this command talks to a deployment over HTTP.`);
-  process.exit(2);
+  refuse(`Not an http(s) URL: ${rawUrl} — this command talks to a deployment over HTTP.`);
 }
 
 // Scheme + host only, the shape the deployment's CSRF guard compares an `Origin` against.
@@ -68,12 +105,11 @@ const source = smokeCredentials({
   HERALD_SMOKE_PASSWORD: process.env.HERALD_SMOKE_PASSWORD,
 });
 if (source.kind !== "env") {
-  console.error(
+  refuse(
     source.kind === "refuse"
       ? source.reason
       : "HERALD_SMOKE_USERNAME and HERALD_SMOKE_PASSWORD must both be set — this command runs unattended and never prompts.",
   );
-  process.exit(2);
 }
 
 /**
