@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The dashboard's `local`/`cloud` badge now says whether the deployment's credentials still ANSWER,
+  not merely that they exist — and a ⚠ chip appears beside it only when one of them does not.** On
+  2026-08-10 the deployment's Google, Typefully and Telegram credentials answered 401 for four days
+  while the header showed every key `설정됨`, and that display was correct rather than broken: presence
+  is all `/api/status` could see (`createDeps.ts`: "env only, no live calls"). `pnpm deploy:smoke`
+  learned to catch this at deploy time and `pnpm creds:check` under `herald-creds.timer` learned to
+  catch it between deploys, but both answers ended in a terminal and in a systemd journal this box
+  rotates every eight minutes — never on the screen the team actually watches. This is the same fact,
+  on that screen. **Existing installs need `pnpm db:migrate`** for the new `credential_liveness` table;
+  `deploy/herald-deploy.sh` already runs it on every deploy, and the read degrades to showing nothing
+  rather than to a 500, so a database that has not been migrated costs this feature and nothing else.
+  - **The route that probes is the only thing that writes**, so every caller that already existed fills
+    the row for free — no new unit, no new command, no change to `herald-creds.service`. `GET
+    /api/diagnostics/live` records the seven results it just took into one upserted row
+    (`credential_liveness`: `id`, `probes`, `observed_at`), which makes the badge show whatever asked
+    last: the daily `creds:check`, any `pnpm deploy:smoke`, or the card's own `[지금 확인]`.
+    `creds:check` deliberately does not write it itself — that command talks to the deployment over
+    HTTP precisely because the deployment's credentials cannot be read from outside (`--sensitive`
+    values never come back), and a CLI reaching into production Postgres to record what it learned over
+    HTTP would re-open the coupling the HTTP call exists to avoid, writing with whatever `DATABASE_URL`
+    the operator's `.env` happened to hold. `pnpm doctor --live` writes nothing at all: it probes this
+    machine's `.env`, which has no business landing in a row that claims to describe the deployment.
+  - **The write is best-effort and bounded at two seconds**, because a diagnostic that fails to answer
+    because it could not record its own answer is the same mistake as one that 500s because a probe
+    failed. A try/catch alone was not enough: the `pg` pool behind it sets no `connectionTimeoutMillis`
+    or `statement_timeout`, so a database that stalls rather than errors — pool exhaustion, a
+    blackholed connection, Neon mid-restart — would have held the route open past `runLiveProbes`' own
+    5-second deadline, and an unbounded hang is precisely what `deploy:smoke` cannot tell apart from a
+    deployment too old to have the route. Two seconds is one indexed single-row upsert plus the "few
+    hundred milliseconds" Neon's own docs give for waking a suspended compute, with the function
+    (`sin1`) and the database (`ap-southeast-1`) in the same city.
+  - **`/api/status` gained one single-row read and no outbound call of its own.** The refusal written
+    into `apiHandlers.ts` stands — the board calls that route on every load and after each 1차
+    mutation, and "six external calls per board render would be a different bug" — so the payload
+    carries a summary of what was *already* observed, beside the seven reads `loadStatus` already
+    makes. `liveness` is optional the way `dbEnv` and `sendsEnabled` are: absent means nothing has ever
+    probed this database, or the table is not there yet, and both render as the header did yesterday
+    rather than as an error or as an all-clear.
+  - **Severity is the same table `deploy:smoke` prints, applied once and on the server.** A dead
+    publishing credential (Google auth, either Drive folder, Lark) is red, a dead send credential
+    (Typefully, Telegram) follows `HERALD_SENDS_ENABLED` — red when sends are open, amber when they are
+    closed — the Sheet is header links so it only ever ambers, and an unconfigured integration is
+    neither. `PROBE_TIER`/`liveSeverity` moved out of `src/deploy/smokeChecks.ts` into
+    `src/doctor/liveSeverity.ts`, beside the `ProbeKey` they are keyed on, and `src/deploy` and
+    `src/adapters/web` now both import them from there rather than one importing out of the other. The
+    browser re-derives none of it: it is handed `worst`, and `tier`/`severity` per dead credential, and
+    only picks the wording and the colour — a card that did its own arithmetic is exactly how the CLI
+    and the header drifted apart the last time. So a credential that fails a deploy and the same
+    credential on the board cannot disagree about how serious it is.
+  - **Nothing renders at all when a fresh observation found everything alive**, and the header stays
+    byte-identical to before: an indicator that is green 364 days a year is one nobody reads on the
+    365th. When something is wrong the chip names the worst tier and how many of it died
+    (`⚠ 발행 키 1개 응답 없음`), and the hover card gains a `키 응답` section under its existing
+    `설정됨`/`키 없음` list — a headline (`7개 모두 응답 · 2시간 전 확인`, or `7개 중 1개 응답 없음 ·
+    …`), a line per dead credential naming it in Korean beside the reason, and a `[지금 확인]` button
+    that re-probes the deployment and re-reads the status. The reason is carried rather than summarised
+    because it is the distinction that mattered on 2026-08-10: `400 invalid_grant` means the token is
+    dead, `401` means the client credentials do not match, and re-minting on a 401 loops forever. A
+    failed check appears inline in the card and leaves the stored observation on screen — the last
+    known truth being more useful than a blank — and it appears there on a deployment that has never
+    been probed too, which is the install this button helps most and the one where an unreported
+    failure would have been silent.
+  - **A stale observation reads amber with a time, never red with a key name.** Twenty-six hours,
+    derived from `herald-creds.timer`'s daily 06:23 fire the way `REPORT_STALE_AFTER_MS` is derived
+    from `herald-watch.timer`: one missed fire plus margin. Worth showing because the unit's own
+    `OnFailure=` hook cannot cover the case that matters — when this machine is simply off nothing
+    fails, no Telegram arrives, and the board is the only place the silence shows. Stale is not
+    evidence that anything is wrong; it is evidence that nothing has looked, which is why it never
+    borrows the colour a dead credential uses. Ages past a day read coarsely (`⚠ 확인 1일 전`), since
+    the age formatter the 수집 card already uses buckets by whole days rather than growing a second one.
+
 ## [0.5.0] - 2026-08-11
 
 ### Upgrading — action required for existing installs
