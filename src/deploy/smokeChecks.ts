@@ -1,4 +1,12 @@
 import type { CheckResult } from "../doctor/report";
+/**
+ * Every `detail` below describes its input with `describeValue`, never `JSON.stringify`. Do not swap
+ * it back: `JSON.stringify` is recursive and throws `RangeError` on a body nested past ~3,000-5,000
+ * levels, which `JSON.parse` accepts happily — so a deployment could make these functions throw
+ * while describing the very input they promise to judge without throwing, and it printed unbounded
+ * bodies into a log file with no cap. Both measured; see `describeValue.ts`'s header.
+ */
+import { boundedWireText, describeValue } from "./describeValue";
 import { SESSION_COOKIE_NAME } from "../adapters/web/sessionCookie";
 import type { LiveProbeResult, ProbeKey } from "../doctor/liveProbes";
 
@@ -46,7 +54,7 @@ export function checkAnonymous(codes: {
   foreignOrigin: number;
 }): CheckResult[] {
   if (codes === null || typeof codes !== "object") {
-    const detail = `Expected an object of status codes, got ${JSON.stringify(codes)}.`;
+    const detail = `Expected an object of status codes, got ${describeValue(codes)}.`;
     return [
       { name: "GET /", status: "fail", detail },
       { name: "GET /api/status (anonymous)", status: "fail", detail },
@@ -165,7 +173,7 @@ export function checkCredentials(username: string, password: string): CheckResul
  */
 export function checkStatus(payload: StatusPayload): CheckResult[] {
   if (payload === null || typeof payload !== "object") {
-    const detail = `Expected a status object, got ${JSON.stringify(payload)} — the response body did not parse into the expected shape.`;
+    const detail = `Expected a status object, got ${describeValue(payload)} — the response body did not parse into the expected shape.`;
     return [
       { name: "storageMode", status: "fail", detail },
       { name: "dbEnv", status: "fail", detail },
@@ -185,7 +193,7 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
       : {
           name: "storageMode",
           status: "fail",
-          detail: `Expected "cloud", got ${JSON.stringify(payload.storageMode)} — local mode writes to an ephemeral filesystem.`,
+          detail: `Expected "cloud", got ${describeValue(payload.storageMode)} — local mode writes to an ephemeral filesystem.`,
         },
   );
 
@@ -195,7 +203,7 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
       : {
           name: "dbEnv",
           status: "fail",
-          detail: `Expected "production", got ${JSON.stringify(payload.dbEnv)} — this deployment points at a non-production database.`,
+          detail: `Expected "production", got ${describeValue(payload.dbEnv)} — this deployment points at a non-production database.`,
         },
   );
 
@@ -205,7 +213,7 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
       : {
           name: "sendsEnabled",
           status: "fail",
-          detail: `Expected false, got ${JSON.stringify(payload.sendsEnabled)} — sends should ship closed on first deploy.`,
+          detail: `Expected false, got ${describeValue(payload.sendsEnabled)} — sends should ship closed on first deploy.`,
         },
   );
 
@@ -215,7 +223,7 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
       : {
           name: "conversionEnabled",
           status: "fail",
-          detail: `Expected false, got ${JSON.stringify(payload.conversionEnabled)} — the hosted route set has no local conversion agent.`,
+          detail: `Expected false, got ${describeValue(payload.conversionEnabled)} — the hosted route set has no local conversion agent.`,
         },
   );
 
@@ -256,7 +264,12 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
     // like `requirements.ts` already grades their env vars (`warn`, not `fail`); grading them `fail`
     // here would make a correct, intentionally-minimal deployment exit 1.
     for (const integration of integrations) {
-      const label = typeof integration?.label === "string" ? integration.label : "(unnamed)";
+      // Sanitized and bounded like every other wire string that reaches a report line. This one
+      // went through neither `describeValue` nor `sanitizeWireText` until 2026-08-10: a label of
+      // `"Telegram\nHERALD_ALERT: everything is fine"` produced two physical lines with the marker
+      // at column 0. `deploy:smoke` is the only caller today, so it was never on the alert path —
+      // but "not on the alert path today" is not a property of this function.
+      const label = typeof integration?.label === "string" ? boundedWireText(integration.label, 80) : "(unnamed)";
       const key = typeof integration?.key === "string" ? integration.key : undefined;
       if (integration?.configured === true) {
         results.push({ name: `integration: ${label}`, status: "ok", detail: "configured" });
@@ -319,7 +332,7 @@ export function checkLogout(statusCode: number, setCookieHeader: string | undefi
       status: cleared ? "ok" : "fail",
       detail: cleared
         ? `Set-Cookie clears ${SESSION_COOKIE_NAME}`
-        : `Expected a Set-Cookie clearing ${SESSION_COOKIE_NAME}, got ${JSON.stringify(setCookieHeader)} — the browser was not told to drop its session cookie.`,
+        : `Expected a Set-Cookie clearing ${SESSION_COOKIE_NAME}, got ${describeValue(setCookieHeader)} — the browser was not told to drop its session cookie.`,
     },
   ];
 }
@@ -403,6 +416,9 @@ function liveSeverity(key: ProbeKey, sendsEnabled: boolean): CheckResult["status
  */
 const EXPECTED_PROBE_KEYS = Object.keys(PROBE_TIER) as ProbeKey[];
 
+/** Longest probe key that can reach a report line. Every real one is under twenty characters. */
+const PROBE_KEY_MAX = 80;
+
 /** The one probe entry shape this function can judge, narrowed off an unvalidated HTTP body. */
 interface ParsedProbe {
   key: ProbeKey;
@@ -412,13 +428,33 @@ interface ParsedProbe {
 
 /** `entry` as a probe result, or `undefined` if it is not one. `key` is accepted as any string and
  *  cast: an unknown key is a real possibility (a deployment one probe ahead of this build), and
- *  `liveSeverity` already grades an unclassifiable key as `fail` rather than guessing. */
+ *  `liveSeverity` already grades an unclassifiable key as `fail` rather than guessing.
+ *
+ *  **Both strings are sanitized here, at the one place they enter this module.** They are the only
+ *  wire values in it that reach a report line without passing through `describeValue` (whose
+ *  `JSON.stringify` escapes control characters as a side effect), and `checkLiveness` interpolates
+ *  them into `name` and `detail` directly. A key containing a newline split one report line into
+ *  two, which broke `creds:check`'s one-line `✗ FAILED:` guarantee and could inject a line matching
+ *  the marker `deploy/herald-notify-failure.sh` selects on. Sanitizing at the boundary rather than
+ *  at each interpolation is what makes that true for `deploy:smoke` as well, and for the next reader
+ *  of these fields — see `sanitizeWireText`.
+ *
+ *  Sanitizing `key` does not change any lookup: `PROBE_TIER` and `EXPECTED_PROBE_KEYS` hold plain
+ *  identifiers, so a key that needed escaping was never going to match one, and `liveSeverity`
+ *  already grades an unmatched key as `fail`. */
 function parseProbe(entry: unknown): ParsedProbe | undefined {
   if (entry === null || typeof entry !== "object") return undefined;
   const { key, status, detail } = entry as { key?: unknown; status?: unknown; detail?: unknown };
   if (typeof key !== "string" || key === "") return undefined;
   if (status !== "ok" && status !== "dead" && status !== "skipped") return undefined;
-  return { key: key as ProbeKey, status, detail: typeof detail === "string" ? detail : "(no detail reported)" };
+  return {
+    // Bounded as well as sanitized. Escaping quadruples, and neither field had any length limit: a
+    // 50,000-character key wrote 1.6 MB into a run log that keeps sixty of them per unit. PROBE_KEY_MAX
+    // is generous for an identifier and still keeps `live: <key>` inside a report line.
+    key: boundedWireText(key, PROBE_KEY_MAX) as ProbeKey,
+    status: status,
+    detail: typeof detail === "string" ? boundedWireText(detail) : "(no detail reported)",
+  };
 }
 
 /**
@@ -460,7 +496,7 @@ export function checkLiveness(probes: unknown, sendsEnabled: boolean, httpStatus
         status: "fail",
         detail:
           `GET /api/diagnostics/live answered (${describeStatus(httpStatus)}) with a \`probes\` field that is not an ` +
-          `array: ${JSON.stringify(probes)}. Nothing in it can be judged, so this is a failure rather than a pass.`,
+          `array: ${describeValue(probes)}. Nothing in it can be judged, so this is a failure rather than a pass.`,
       },
     ];
   }
@@ -473,7 +509,7 @@ export function checkLiveness(probes: unknown, sendsEnabled: boolean, httpStatus
       results.push({
         name: `credential liveness (entry ${index})`,
         status: "fail",
-        detail: `Not a probe result: ${JSON.stringify(entry)} — expected { key, status: ok|dead|skipped, detail }.`,
+        detail: `Not a probe result: ${describeValue(entry)} — expected { key, status: ok|dead|skipped, detail }.`,
       });
       return;
     }

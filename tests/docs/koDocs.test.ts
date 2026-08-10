@@ -81,6 +81,45 @@ describe("docs/ko", () => {
   });
 
   /**
+   * The runbook's `cp … ~/.config/systemd/user/` block is the only place that says which unit files
+   * a working install needs — nothing in `deploy/` installs anything, by design. So that block is
+   * code with no compiler, and it has already rotted once: it listed four files while a working
+   * install needed seven, omitting `herald-watch.timer` and both `herald-convert.*`, which are a
+   * service with no timer — a scheduler that looks installed and never runs.
+   *
+   * Derived from `deploy/` in both directions: every unit file must appear in the block, and every
+   * path the block names must exist. Neither half is redundant — the first catches a unit added
+   * without touching the doc, the second catches a doc naming a file that was renamed or deleted.
+   *
+   * Identified as "the block that names every unit" rather than by position or by a marker, because
+   * the runbook deliberately keeps an older, deliberately-incomplete `cp` block as a historical
+   * record of what was installed on 2026-08-06 (its own heading says not to run it). Requiring
+   * exactly one complete block is what distinguishes them without either being fragile.
+   */
+  it("has exactly one complete systemd install list, and it names only files that exist", async () => {
+    const runbook = await readFile(join(REPO_ROOT, "docs", "ko", "team-runbook.md"), "utf8");
+    const unitFiles = (await readdir(join(REPO_ROOT, "deploy")))
+      .filter((f) => /^herald-.*\.(service|timer)$/.test(f))
+      .sort();
+    expect(unitFiles.length, "no unit files found — every check below would pass vacuously").toBeGreaterThan(0);
+
+    const installBlocks = codeBlocks(runbook).filter(
+      (b) => b.includes("~/.config/systemd/user/") && /\bcp\s+deploy\//.test(b),
+    );
+    const complete = installBlocks.filter((b) => unitFiles.every((u) => b.includes(`deploy/${u}`)));
+
+    expect(
+      complete.length,
+      `docs/ko/team-runbook.md needs exactly one \`cp\` block naming all ${unitFiles.length} unit ` +
+        `files (${unitFiles.join(", ")}); found ${complete.length} of ${installBlocks.length} candidate blocks`,
+    ).toBe(1);
+
+    const named = [...complete[0].matchAll(/\bdeploy\/[\w@.-]+/g)].map((m) => m[0]);
+    const missing = named.filter((p) => !existsSync(join(REPO_ROOT, p)));
+    expect([...new Set(missing)], "the install block names files that do not exist").toEqual([]);
+  });
+
+  /**
    * The index is how a reader finds anything here at all; a document missing from it is a document
    * nobody opens. Checked against the directory rather than a hand-kept list, so adding a file to
    * `docs/ko/` is what makes this fail.

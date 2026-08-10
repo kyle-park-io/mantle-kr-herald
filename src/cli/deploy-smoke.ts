@@ -3,6 +3,7 @@ import { stdin, stderr } from "node:process";
 import { ask } from "./prompt";
 import { smokeCredentials } from "./smokeCredentials";
 import { formatReport, type CheckResult } from "../doctor/report";
+import { createDeploymentClient } from "../deploy/deploymentSession";
 import {
   checkAnonymous,
   checkLogin,
@@ -26,6 +27,10 @@ import {
  * **Calls no outlet route.** The only POSTs this file ever makes are `/api/login`, `/api/logout`,
  * and a `convert-prepare` probe the hosted route set answers 404 to before touching anything — see
  * the spec's "What it does not do".
+ *
+ * The session itself belongs to `../deploy/deploymentSession.ts`, not this file — see that module's
+ * header for the 2026-08-10 incident that made owning the session a dedicated client rather than a
+ * local `cookie` variable a caller could forget to pass.
  */
 
 const positional = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
@@ -56,24 +61,15 @@ try {
  */
 const origin = deployment.origin;
 
+const client = createDeploymentClient(origin);
+
 const results: CheckResult[] = [];
 
-/** One HTTP call, or `undefined` on a network failure (deployment unreachable, DNS, connection
- *  refused) — printed once here rather than thrown, so a dead deployment produces a report with
- *  clearly-failing checks instead of a stack trace partway through this file. */
-async function request(path: string, init?: RequestInit): Promise<Response | undefined> {
-  try {
-    return await fetch(`${origin}${path}`, init);
-  } catch (err) {
-    console.error(`  (request to ${path} failed: ${err instanceof Error ? err.message : String(err)})`);
-    return undefined;
-  }
-}
-
-/** `request`, reduced to a status code — `-1` on a network failure, a code none of `smokeChecks.ts`'s
- *  functions ever treat as a pass, so the failure still shows up in the report rather than vanishing. */
+/** `client.request`, reduced to a status code — `-1` on a network failure, a code none of
+ *  `smokeChecks.ts`'s functions ever treat as a pass, so the failure still shows up in the report
+ *  rather than vanishing. */
 async function statusOf(path: string, init?: RequestInit): Promise<number> {
-  const res = await request(path, init);
+  const res = await client.request(path, init);
   return res?.status ?? -1;
 }
 
@@ -111,48 +107,36 @@ const password = source.kind === "env" ? source.password : await prompt("Passwor
 const credentials = checkCredentials(username, password);
 results.push(credentials);
 
-const loginRes =
-  credentials.status === "ok"
-    ? await request("/api/login", {
-        method: "POST",
-        headers: { origin, "content-type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      })
-    : undefined;
-if (credentials.status === "ok") results.push(checkLogin(loginRes?.status ?? -1));
-
-// The session cookie, carried through every authenticated request below and dropped the moment
-// logout is called — never re-derived, so this file can never accidentally send a stale one.
-let cookie: string | undefined;
-if (loginRes?.status === 200) {
-  cookie = loginRes.headers.get("set-cookie")?.split(";")[0];
-}
+const loginStatus = credentials.status === "ok" ? await client.logIn(username, password) : -1;
+if (credentials.status === "ok") results.push(checkLogin(loginStatus));
 
 // --- after logging in (spec: "After logging in") ---
 //
-// Skipped entirely without a cookie — a wrong password or a 403 already failed `checkLogin` above,
+// Skipped entirely without a session — a wrong password or a 403 already failed `checkLogin` above,
 // and every check below needs a real session to mean anything.
-if (cookie) {
-  const statusRes = await request("/api/status", { headers: { cookie } });
+if (client.loggedIn) {
+  const statusRes = await client.authed("/api/status");
   const payload = (statusRes ? await statusRes.json().catch(() => undefined) : undefined) as StatusPayload;
   results.push(...checkStatus(payload));
 
   // The one thing checkStatus cannot tell you: whether the credentials behind those `present` flags
   // still work.
   //
-  // `{ headers: { cookie } }` is not optional decoration. The route is session-gated like every
-  // route but `/api/login` (`apiHandlers.ts`'s one gate, before any route is matched), so a call
-  // without it answers 401, `probes` comes back `undefined`, and `checkLiveness` reports its "route
-  // unreadable" FAIL on every run — including one where every credential is perfectly alive. That
-  // was this file's state from the commit that added the call until 2026-08-10: the feature had
-  // never once executed, and its failure looked exactly like the "old deployment without the route"
-  // message it prints. Every authenticated call in this block carries the cookie; there is no
-  // exception, and adding one is how this returns.
+  // Going through `client.authed` here is not optional decoration. The route is session-gated like
+  // every route but `/api/login` (`apiHandlers.ts`'s one gate, before any route is matched), so a
+  // call that bypassed it and used the plain, unauthenticated `client.request` call instead would
+  // answer 401, `probes` would come back `undefined`, and `checkLiveness` would report its "route
+  // unreadable" FAIL on every run — including one where every credential is perfectly alive. That was
+  // this file's state, with the cookie attached by hand instead of by `authed()`, from the commit
+  // that added this call until 2026-08-10: the feature had never once executed, and its failure
+  // looked exactly like the "old deployment without the route" message it prints. `authed()` makes
+  // an authenticated call without the session impossible by construction; a call site is held to
+  // using it for a gated route by `tests/deploy/smokeSession.test.ts`.
   //
   // `.catch(() => undefined)` on the parse, same as the `/api/status` call above: a non-JSON body (a
   // gateway error page, say) must fall into checkLiveness's "route unreadable" path, not crash the
   // whole script via registerErrorHandler.
-  const liveRes = await request("/api/diagnostics/live", { headers: { cookie } });
+  const liveRes = await client.authed("/api/diagnostics/live");
   const liveBody = liveRes && liveRes.ok ? await liveRes.json().catch(() => undefined) : undefined;
   // Deliberately NOT cast to `LiveProbeResult[]`: this is an unvalidated HTTP body, a 200 can carry
   // any shape at all, and `checkLiveness` is the thing that judges it. The cast that used to be here
@@ -167,14 +151,14 @@ if (cookie) {
   // from a deployment that predates the route.
   results.push(...checkLiveness(probes, sendsEnabled, liveRes?.status));
 
-  const convertPrepareCode = await statusOf("/api/items/deploy-smoke-probe/convert-prepare", {
+  const convertPrepareRes = await client.authed("/api/items/deploy-smoke-probe/convert-prepare", {
     method: "POST",
-    headers: { origin, "content-type": "application/json", cookie },
+    headers: { origin, "content-type": "application/json" },
   });
-  results.push(checkConvertPrepare(convertPrepareCode));
+  results.push(checkConvertPrepare(convertPrepareRes?.status ?? -1));
 
-  const logoutRes = await request("/api/logout", { method: "POST", headers: { origin, cookie } });
-  cookie = undefined; // the whole point of logging out: nothing sent after this line carries it
+  const logoutRes = await client.authed("/api/logout", { method: "POST", headers: { origin } });
+  client.forgetSession(); // the whole point of logging out: nothing sent after this line carries a session
   results.push(...checkLogout(logoutRes?.status ?? -1, logoutRes?.headers.get("set-cookie") ?? undefined));
 }
 

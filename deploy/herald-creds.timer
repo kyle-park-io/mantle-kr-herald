@@ -1,0 +1,33 @@
+# deploy/herald-creds.timer
+#
+# Fires herald-creds.service once a day at 06:23, before the working day.
+#
+# Daily, not hourly. The failure is rare and slow-moving — the incident this responds to ran four
+# days — and a dead credential alerts on EVERY fire until it is fixed. Hourly would mean 24 Telegram
+# messages a day for one problem, which is how an alert channel becomes noise people stop reading.
+#
+# :23 is off :00 for the reason herald-watch.timer's :17 is, and off :07/:37 (convert), :17 (watch)
+# and :41 (x-reconcile) specifically: units sharing a minute buy nothing and invite two pnpm
+# processes starting at once on a cold store. tests/deploy/credsTiming.test.ts derives the other
+# timers' minutes from deploy/ and asserts this one differs, so a later edit cannot collide
+# unnoticed — and it fails rather than shrugging if it meets an OnCalendar= shape it cannot read,
+# because a collision check fed no minutes passes.
+#
+# Verified before committing: `systemd-analyze calendar '*-*-* 06:23:00'` parses cleanly and
+# normalises to itself, next elapse Tue 2026-08-11 06:23:00 KST (see task-4-report.md for the
+# captured output).
+#
+# NOT installed by any committed script — see herald-creds.service's header.
+
+[Unit]
+Description=Timer for herald-creds.service — daily credential liveness check against the deployment
+
+[Timer]
+OnCalendar=*-*-* 06:23:00
+# Runs once on the next boot/login if the machine was off (or the user manager wasn't running —
+# WSL2's usual failure mode) through a scheduled fire, instead of silently skipping the day. Same
+# reasoning as the other three timers.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
