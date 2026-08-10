@@ -43,6 +43,7 @@
     "deploy:check": "tsx --env-file-if-exists=.env src/cli/deploy-check.ts",
     "deploy:smoke": "tsx --env-file-if-exists=.env src/cli/deploy-smoke.ts",
     "creds:check": "tsx --env-file-if-exists=.env src/cli/creds-check.ts",
+    "check:pr-title": "tsx src/cli/check-pr-title.ts",
     "deploy:freeze": "tsx src/cli/deploy-freeze.ts",
     "status": "tsx --env-file-if-exists=.env src/cli/status.ts",
     "lineage": "tsx --env-file-if-exists=.env src/cli/lineage.ts",

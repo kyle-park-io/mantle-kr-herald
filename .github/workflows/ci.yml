@@ -23,6 +23,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # This repo squash-merges, so the pull request title becomes the commit subject on main. That
+      # made the title the one piece of text nothing checked, and on 2026-08-11 two Korean subjects
+      # landed through it against four hundred English ones — every commit on those branches was
+      # English; only the titles were not. Checked here, inside the `test` job, rather than as a job
+      # of its own: `test` is the single required status check on main, so a new job would not be
+      # enforced until someone remembered to add it to the required list.
+      #
+      # The title goes through the environment, never interpolated into a shell command — a title
+      # containing a backtick or `$(...)` would otherwise run on the runner.
+      - name: Check the PR title makes a usable commit subject
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: pnpm check:pr-title
+
       - name: Type-check
         run: pnpm typecheck
 
