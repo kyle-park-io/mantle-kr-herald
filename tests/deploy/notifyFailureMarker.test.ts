@@ -224,12 +224,14 @@ describe("purely additive — a unit that marks nothing is unaffected", () => {
     // this is the in-suite form of the same guarantee.)
     const journal = ["collect: 3 new", "Error: ECONNREFUSED", "=== exited 1 ==="].join("\n");
     const text = sentText(journal);
-    expect(text).toBe(`⚠ ${TEST_UNIT} failed\n${journal}\n— journalctl --user -u ${TEST_UNIT} -n 50 --no-pager`);
+    expect(text).toBe(
+      `⚠ ${TEST_UNIT} 실패\n<pre>${journal}</pre>\n↳ journalctl --user -u ${TEST_UNIT} -n 50 --no-pager`,
+    );
   });
 
   it("still falls back to the plain notice when there is nothing anywhere", () => {
     const text = sentText("");
-    expect(text).toContain("no journal lines captured, and no durable run log either");
+    expect(text).toContain("실행 로그도 저널도 남지 않았습니다");
   });
 });
 
@@ -334,7 +336,7 @@ describe("promote-or-keep, never promote-or-delete", () => {
     await seedRunLog(TEST_UNIT, `${ALERT_MARKER}✗ FAILED: live: google_auth\n`);
     const text = sentText("");
     expect(text!.split("\n")[1]).toBe("✗ FAILED: live: google_auth");
-    expect(text).not.toContain("no journal lines captured");
+    expect(text).not.toContain("실행 로그도 저널도 남지 않았습니다");
   });
 
   it("promotes a marked line that is indented, and does not leave the raw marker behind", () => {

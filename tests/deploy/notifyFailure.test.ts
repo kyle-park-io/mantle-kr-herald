@@ -48,9 +48,17 @@ let scriptPath: string;
  */
 let logRoot: string;
 
-/** curl stub: records the JSON body (the argument immediately after `-d`) to curl-body.log, and
- *  exits with $STUB_CURL_EXIT (default 0) — lets tests simulate Telegram accepting or rejecting
- *  the request without a real network call. */
+/** curl stub: APPENDS the JSON body (the argument immediately after `-d`) to curl-body.log — one
+ *  send can now become two, HTML then a plain-text retry, since deploy/herald-notify-failure.sh
+ *  retries once when Telegram rejects the HTML — and exits with $STUB_CURL_EXIT (default 0), lets
+ *  tests simulate Telegram accepting or rejecting the request without a real network call.
+ *
+ *  Each body is followed by a `\n ` record separator (a real newline, then a space) rather than
+ *  overwriting the file on every invocation. That separator is itself insignificant JSON
+ *  whitespace, so a single-body file still parses with a bare `JSON.parse(readFileSync(...))` —
+ *  existing tests that do exactly that are unaffected — and it cannot appear inside a body: the
+ *  payload is always one physical line, since json_escape turns an embedded newline into the
+ *  two-character `\n` escape, never a raw newline byte. */
 const CURL_STUB_LINES = [
   "#!/usr/bin/env bash",
   "set -uo pipefail",
@@ -59,7 +67,7 @@ const CURL_STUB_LINES = [
   'prev=""',
   'for arg in "$@"; do',
   '  if [ "$prev" = "-d" ]; then',
-  '    printf %s "$arg" > "$BODY_LOG"',
+  '    printf "%s\\n " "$arg" >> "$BODY_LOG"',
   "  fi",
   '  prev="$arg"',
   "done",
@@ -112,6 +120,21 @@ async function writeSyntheticEnv(vars: Record<string, string>): Promise<void> {
     .map(([k, v]) => `${k}=${v}`)
     .join("\n");
   await writeFile(join(repoDir, ".env"), body + "\n", "utf8");
+}
+
+/** The record separator the curl stub appends after each body — see CURL_STUB_LINES' own comment. */
+const CURL_BODY_SEPARATOR = "\n ";
+
+/** Every JSON body curl was invoked with, in call order (HTML attempt first, plain retry second
+ *  when there is one). Empty if curl was never invoked at all. */
+async function readAllCurlBodies(): Promise<string[]> {
+  const raw = await readFile(join(stubDir, "curl-body.log"), "utf8");
+  return raw.split(CURL_BODY_SEPARATOR).filter((s) => s.length > 0);
+}
+
+/** The first (and, absent a retry, only) body curl was invoked with. */
+async function readCurlBody(): Promise<string> {
+  return (await readAllCurlBodies())[0] ?? "";
 }
 
 /**
@@ -174,7 +197,7 @@ describe("deploy/herald-notify-failure.sh", () => {
     const bodyRaw = await readFile(join(stubDir, "curl-body.log"), "utf8");
     const body = JSON.parse(bodyRaw) as { chat_id: string; text: string };
     expect(body.chat_id).toBe("-100999");
-    expect(body.text).toContain(`⚠ ${TEST_UNIT} failed`);
+    expect(body.text).toContain(`⚠ ${TEST_UNIT} 실패`);
     expect(body.text).toContain("collect: ok");
     expect(body.text).toContain("translate:prepare: FAILED (timeout)");
     expect(body.text).toContain(`journalctl --user -u ${TEST_UNIT} -n 50 --no-pager`);
@@ -208,7 +231,7 @@ describe("deploy/herald-notify-failure.sh", () => {
 
     const bodyRaw = await readFile(join(stubDir, "curl-body.log"), "utf8");
     const body = JSON.parse(bodyRaw) as { text: string };
-    expect(body.text).toContain("no journal lines captured");
+    expect(body.text).toContain("실행 로그도 저널도 남지 않았습니다");
     expect(body.text).toContain(`journalctl --user -u ${TEST_UNIT} -n 50 --no-pager`);
   });
 
@@ -341,12 +364,12 @@ describe("deploy/herald-notify-failure.sh", () => {
       expect(status).toBe(0);
 
       const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
-      expect(body.text).toContain(`⚠ ${TEST_UNIT} failed`);
+      expect(body.text).toContain(`⚠ ${TEST_UNIT} 실패`);
       expect(body.text).toContain("ECONNREFUSED");
       // Pointing at `journalctl` here would send the reader to the one place already known to be
       // empty. The path is the whole point of the fallback.
       expect(body.text).toContain(`tail -n 50 ${runLog}`);
-      expect(body.text).not.toContain("no journal lines captured");
+      expect(body.text).not.toContain("실행 로그도 저널도 남지 않았습니다");
     });
 
     it("reads only the failing unit's own run logs", async () => {
@@ -420,7 +443,7 @@ describe("deploy/herald-notify-failure.sh", () => {
       expect(status).toBe(0);
 
       const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
-      expect(body.text).toContain("no journal lines captured");
+      expect(body.text).toContain("실행 로그도 저널도 남지 않았습니다");
     });
   });
 
@@ -432,5 +455,94 @@ describe("deploy/herald-notify-failure.sh", () => {
     expect(status).not.toBe(0);
     expect(stderr).toContain("no unit name");
     expect(existsSync(join(stubDir, "curl-invoked"))).toBe(false);
+  });
+
+  // The alert's shape: `parse_mode: "HTML"` makes the message *rejectable*, not just prettier. An
+  // unescaped `<` in a log line makes malformed HTML, Telegram answers 400, and `curl -fsS … ||
+  // true` used to discard that silently — the alert simply never arrived, at either end. Escaping
+  // and the plain-text retry are two halves of one guard, proven here by actually running the
+  // script against a stub that rejects the first attempt, not by asserting the code path exists.
+  describe("the HTML alert, and its plain-text retry", () => {
+    it("sends HTML: a monospace excerpt, an escaped body, and a header naming the exit code", async () => {
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      // The exit line is deliberately included — EXIT_CODE otherwise depends on `systemctl --user
+      // show` finding a real unit, which a synthetic TEST_UNIT never is. Seeding the wrapper's own
+      // boundary line is what makes "a header naming the exit code" a fact about this test rather
+      // than a fact about whatever happens to be running on the box that executes it.
+      await seedRunLog(
+        TEST_UNIT,
+        "20260810T060000Z",
+        [
+          "  ✓ live: google_drive_review  reachable",
+          "  ✗ live: google_auth          400 <invalid_grant> & dead",
+          "6 ok · 0 warn · 1 fail",
+          `=== ${TEST_UNIT} exited 1 at 2026-08-10T06:00:09Z ===`,
+        ].join("\n") + "\n",
+      );
+      const { status } = runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "" });
+      expect(status).toBe(0);
+
+      const body = await readCurlBody();
+      const payload = JSON.parse(body) as { text: string; parse_mode?: string };
+
+      expect(payload.parse_mode).toBe("HTML");
+      expect(payload.text).toMatch(/^⚠ .*실패/);
+      expect(payload.text).toContain("(exit 1)");
+      expect(payload.text).toContain("<pre>");
+      expect(payload.text).toContain("</pre>");
+      // Escaped, or Telegram 400s and the alert vanishes.
+      expect(payload.text).toContain("400 &lt;invalid_grant&gt; &amp; dead");
+      expect(payload.text, "the raw form must not survive").not.toContain("<invalid_grant>");
+      expect(payload.text).toContain("↳ ");
+    });
+
+    it("escapes a literal `</pre>` in a log line so it cannot close the real block early", async () => {
+      // The design doc for this task calls this out by name as a hazard distinct from an ordinary
+      // `<`: an unescaped `</pre>` in the excerpt would close OUR tag early and dump everything
+      // after it — including the pointer line — as unformatted text sitting outside any block.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(TEST_UNIT, "20260810T060050Z", "payload said </pre><script>evil</script>\n");
+      const { status } = runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "" });
+      expect(status).toBe(0);
+
+      const payload = JSON.parse(await readCurlBody()) as { text: string };
+      // Exactly one real <pre> and one real </pre> — the pair this script itself inserts around the
+      // excerpt. More than one of either means a tag from the log content survived escaping.
+      expect(payload.text.match(/<pre>/g)).toHaveLength(1);
+      expect(payload.text.match(/<\/pre>/g)).toHaveLength(1);
+      expect(payload.text).toContain("payload said &lt;/pre&gt;&lt;script&gt;evil&lt;/script&gt;");
+    });
+
+    it("retries once as plain text when Telegram rejects the HTML", async () => {
+      // A stray `<` that escaping missed must cost one message's formatting, not the message.
+      // curl's own `|| true` already discards the failure, so without the retry the alert is
+      // simply gone — proven here by execution, not by inspecting the code path.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(TEST_UNIT, "20260810T060100Z", "something broke\n");
+      const { status } = runScript(TEST_UNIT, {
+        STUB_JOURNAL_OUTPUT: "",
+        STUB_CURL_EXIT: "22", // curl -f: HTTP error
+      });
+      // The hook must still reach exit 0 even though both curl attempts below "fail" — an alert
+      // failure must never fail the systemd unit that ran it.
+      expect(status).toBe(0);
+
+      const bodies = await readAllCurlBodies();
+      expect(bodies, "one HTML attempt, then one plain retry").toHaveLength(2);
+      const first = JSON.parse(bodies[0]) as { parse_mode?: string; text: string };
+      const second = JSON.parse(bodies[1]) as { parse_mode?: string; text: string };
+      expect(first.parse_mode).toBe("HTML");
+      expect(second.parse_mode, "the retry must not ask for HTML again").toBeUndefined();
+      expect(second.text, "tags stripped, content kept").not.toContain("<pre>");
+      expect(second.text).toContain("something broke");
+    });
+
+    it("does not retry when the first send succeeds", async () => {
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(TEST_UNIT, "20260810T060200Z", "something broke\n");
+      const { status } = runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "" });
+      expect(status).toBe(0);
+      expect(await readAllCurlBodies()).toHaveLength(1);
+    });
   });
 });

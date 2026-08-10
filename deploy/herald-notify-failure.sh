@@ -392,46 +392,128 @@ json_escape() {
   printf '%s' "$s"
 }
 
+# HTML entity escaping, for `parse_mode: "HTML"`. Only three characters need it — the repo settled
+# on HTML over MarkdownV2 for exactly that reason (src/domain/formatting/emitters/telegram.ts:29:
+# MarkdownV2 needs 18, including `.`, `(`, `)` and `-`, all of which saturate Korean prose).
+#
+# `&` FIRST, or the ampersands this function itself introduces get escaped a second time and the
+# operator reads `&amp;lt;`.
+#
+# The `&` in each replacement is written `\&`, not `&`, and that backslash is not decorative: since
+# bash 5.2, `${s//pattern/string}` treats a bare `&` in `string` as sed does — "the text that just
+# matched" — so `s=${s//</&lt;}` would substitute `<` with `<lt;` (the matched `<` followed by
+# `lt;`), never inserting the ampersand at all. Verified on this box's bash 5.2.21, where the
+# unescaped version passed a naive read of this function while silently emitting `<lt;…>gt;` — the
+# exact unescaped-`<` failure mode this function exists to prevent, coming from the escaper itself.
+#
+# This is not cosmetic. An unescaped `<` in a log line makes the message malformed HTML, Telegram
+# answers 400, and `curl -fsS … || true` below discards that — so the alert disappears with no
+# trace at either end. The plain-text retry further down is the second half of this guard; neither
+# replaces the other, because escaping is what a future edit can get wrong and the retry is what
+# makes getting it wrong survivable.
+#
+# Composes with, and does not replace, `sanitizeWireText` (src/deploy/describeValue.ts) upstream in
+# the TypeScript layer: that one stops a wire string from forging a `HERALD_ALERT: ` marker line;
+# this one stops it from forging HTML markup. Neither is a substitute for the other.
+html_escape() {
+  local s=$1
+  s=${s//&/\&amp;}
+  s=${s//</\&lt;}
+  s=${s//>/\&gt;}
+  printf '%s' "$s"
+}
+
 # Unset means: no scheduler-failures room configured yet (.env.example documents it as
 # [REQUIRED for the pnpm watch scheduler's failure hook], but nothing enforces that before the
 # timer is installed). Exiting 0 with nothing sent is the same fail-safe posture as a Telegram
 # outage below — this hook never turns "not configured yet" into a failed systemd unit.
 if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
+  # The exit code separates a dead credential (1) from a machine-configuration error (2), and the
+  # operator should not have to infer which from the body. ExecMainStatus survives into the failed
+  # state, which is when this hook runs. `--value` needs systemd 246+; the wrapper's own footer is
+  # the fallback, and an unknown code degrades to a header with no code rather than a wrong one.
+  EXIT_CODE=""
+  if command -v systemctl >/dev/null 2>&1; then
+    EXIT_CODE="$(systemctl --user show "$UNIT" -p ExecMainStatus --value 2>/dev/null)" || EXIT_CODE=""
+  fi
+  case "$EXIT_CODE" in ''|*[!0-9]*) EXIT_CODE="" ;; esac
+  if [ -z "$EXIT_CODE" ] && [ -n "$RUN_LOG" ]; then
+    EXIT_CODE="$(sed -n "s/^=== ${UNIT} exited \([0-9][0-9]*\) at .*$/\1/p" "$RUN_LOG" 2>/dev/null | tail -n 1)" || EXIT_CODE=""
+  fi
+
+  HEADER="⚠ ${UNIT} 실패"
+  [ -n "$EXIT_CODE" ] && HEADER="${HEADER} (exit ${EXIT_CODE})"
+
   # Header, then anything promoted, then the note if there is one, then the tail, then the pointer.
   # Assembled by appending so the three optional pieces cannot multiply into branches — the earlier
   # shape had one branch per combination and lost a case the moment ALERT_NOTE was added.
+  #
+  # Header and marked lines are plain: they are the part that must stay readable when a phone is
+  # narrow, and `<pre>` would let them scroll off to the right. The excerpt is `<pre>` because the
+  # reports these units print are column-aligned and proportional text ruins them.
   if [ -n "$ALERT_TEXT" ] || [ -n "$ALERT_NOTE" ] || [ -n "$LOG_EXCERPT" ]; then
-    TEXT="⚠ ${UNIT} failed"
+    TEXT="$(html_escape "$HEADER")"
     [ -n "$ALERT_TEXT" ] && TEXT="${TEXT}
-${ALERT_TEXT}"
+$(html_escape "$ALERT_TEXT")"
     [ -n "$ALERT_NOTE" ] && TEXT="${TEXT}
-${ALERT_NOTE}"
+$(html_escape "$ALERT_NOTE")"
     [ -n "$LOG_EXCERPT" ] && TEXT="${TEXT}
-${LOG_EXCERPT}"
+<pre>$(html_escape "$LOG_EXCERPT")</pre>"
     TEXT="${TEXT}
-— ${LOG_POINTER}"
+↳ $(html_escape "$LOG_POINTER")"
   else
     # Neither source had anything: the journal was already rotated (or unreadable), AND there is no
     # durable run log — the unit never reached deploy/herald-run-logged.sh, or could not write under
     # %h/.herald/logs. Still send the alert; the pointer is the fallback the excerpt exists to make
     # unnecessary, not a replacement for it.
-    TEXT="⚠ ${UNIT} failed (no journal lines captured, and no durable run log either) — journalctl --user -u ${UNIT} -n 50 --no-pager"
+    TEXT="$(html_escape "${HEADER} — 실행 로그도 저널도 남지 않았습니다")
+↳ $(html_escape "$LOG_POINTER")"
   fi
+
+  # One attempt as HTML, and if Telegram rejects it, one as plain text with the tags stripped.
+  #
   # -4: this machine's IPv6 route to api.telegram.org is known broken while the AAAA record still
   # resolves (see src/cli/preferIpv4.ts) — curl itself is unaffected by that bug, but there is no
   # reason to let Happy Eyeballs race a dead route on every failure notice. -m 10: a hung request
-  # here must not hold the unit open; -fsS: fail (non-zero exit) on an HTTP error, silent on
-  # stdout otherwise, but -S still prints the error to stderr — deliberately NOT redirected to
-  # /dev/null (a 2>&1 here would make -S pointless), so a 401 on a stale token, a 400 on a bad chat
-  # id, or any other Telegram-side rejection lands in `journalctl --user -u
-  # herald-notify-failure@${UNIT}.service` instead of vanishing along with the message that never
-  # sent — the templated unit name, now that this script is invoked as an instance of that template
-  # rather than through the single fixed unit it used to be.
-  curl -4 -fsS -m 10 \
-    -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    -H "Content-Type: application/json" \
-    -d "$(printf '{"chat_id":"%s","text":"%s"}' "$TELEGRAM_CHAT_ID_OPS" "$(json_escape "$TEXT")")" \
-    >/dev/null || true
+  # must not hold the unit open. -fsS: non-zero exit on an HTTP error, quiet on stdout, but -S
+  # still prints the error to stderr — deliberately NOT redirected, so a 401 on a stale token or a
+  # 400 on malformed HTML lands in `journalctl --user -u herald-notify-failure@${UNIT}.service`
+  # instead of vanishing along with the message that never sent.
+  send_telegram() {
+    local text=$1 mode=$2 payload
+    if [ -n "$mode" ]; then
+      payload="$(printf '{"chat_id":"%s","text":"%s","parse_mode":"%s"}' \
+        "$TELEGRAM_CHAT_ID_OPS" "$(json_escape "$text")" "$mode")"
+    else
+      payload="$(printf '{"chat_id":"%s","text":"%s"}' \
+        "$TELEGRAM_CHAT_ID_OPS" "$(json_escape "$text")")"
+    fi
+    curl -4 -fsS -m 10 \
+      -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      -H "Content-Type: application/json" \
+      -d "$payload" \
+      >/dev/null
+  }
+
+  if ! send_telegram "$TEXT" "HTML"; then
+    # Formatting cost us the message. Send the content unformatted rather than nothing: `<pre>` tags
+    # out, entities back to their characters, no parse_mode. One retry, not a loop — the second
+    # attempt uses the encoding that worked before this change, so a second failure is not about
+    # formatting and repeating would only delay `exit 0`.
+    #
+    # Reverse order from html_escape on purpose: `&lt;`/`&gt;` must give back `<`/`>` before `&amp;`
+    # gives back `&`, or an original `&lt;` (escaped by html_escape to `&amp;lt;`) would have its
+    # `&amp;` collapsed to `&` first and stop matching `&lt;` at all, leaving a literal `&lt;` in the
+    # "plain text" retry. And `&` in the final replacement is written `\&`: the same bash-5.2
+    # matched-text meaning that bit html_escape above bites here too — `${PLAIN//&amp;/&}` would
+    # replace `&amp;` with itself (a no-op), not with `&`.
+    PLAIN=${TEXT//<pre>/}
+    PLAIN=${PLAIN//<\/pre>/}
+    PLAIN=${PLAIN//&lt;/<}
+    PLAIN=${PLAIN//&gt;/>}
+    PLAIN=${PLAIN//&amp;/\&}
+    send_telegram "$PLAIN" "" || true
+  fi
 fi
 
 exit 0
