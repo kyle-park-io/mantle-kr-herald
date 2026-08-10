@@ -7,6 +7,7 @@ import { RenderingsView } from "./components/RenderingsView";
 import { EnvironmentBanner } from "./components/EnvironmentBanner";
 import { CollectedBreakdownCard } from "./components/CollectedBreakdownCard";
 import { btn } from "./buttonStyles";
+import { livenessChip, livenessHeadline, probeLabel } from "./liveness";
 
 type Mode = "translations" | "renderings";
 
@@ -49,6 +50,8 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [publishRows, setPublishRows] = useState<PublishStateRow[]>([]);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   // Clears on success, because the `authEpoch` effect below re-runs this after a login and the
   // failure it is recovering from is usually the cold-start 401 — leaving that set would park
@@ -170,8 +173,26 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
     }
   };
 
+  /**
+   * [지금 확인]: two requests, deliberately, and no grading here. `/api/diagnostics/live` makes the
+   * deployment re-probe every credential and record what it observed (its response body is not read
+   * — the route's own doc comment explains why); `/api/status` is then re-read for the graded
+   * summary Task 5's `livenessChip`/`livenessHeadline` consume, so severity is computed exactly once,
+   * server-side, whether the operator is looking or not.
+   */
+  const recheckLiveness = () => {
+    setChecking(true);
+    setCheckError(null);
+    api
+      .liveness()
+      .then(() => api.status().then(setStatus))
+      .catch((e) => setCheckError(String((e as Error).message ?? e)))
+      .finally(() => setChecking(false));
+  };
+
   const isCloud = status?.storageMode === "cloud";
   const syncWarn = !!status && (status.sync.needsRepublish > 0 || status.sync.unpublished > 0);
+  const chip = livenessChip(status?.liveness, new Date());
 
   return (
     <div className="flex h-screen flex-col bg-bg text-ink">
@@ -205,7 +226,26 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                 <span className={`h-1.5 w-1.5 rounded-full ${isCloud ? "bg-mint" : "bg-amber-ink"}`} />
                 {status.storageMode}
               </span>
-              <div className="pointer-events-none absolute left-0 top-full z-30 mt-2 hidden w-72 rounded-lg border border-line bg-surface p-3 text-[12px] leading-relaxed text-muted shadow-lg group-hover:block">
+              {chip && (
+                <span
+                  className={`ml-1.5 inline-flex shrink-0 items-center rounded-full px-2 py-1 text-xs font-medium ${
+                    chip.tone === "red" ? "bg-red-50 text-red-700" : "bg-amber-soft text-amber-ink"
+                  }`}
+                >
+                  ⚠ {chip.text}
+                </span>
+              )}
+              {/*
+               * `pointer-events-auto`, not `-none`: this card now holds a real control ([지금 확인]),
+               * and `pointer-events-none` would let clicks fall straight through it to whatever sits
+               * behind (the reasoning the long comment above this header row gives for the surrounding
+               * layout). Safe to drop here specifically because visibility is carried entirely by
+               * `hidden group-hover:block`, not by `pointer-events` — `hidden` is `display: none`,
+               * which removes the card from hit-testing on its own, with or without this class. So the
+               * card can never intercept a pointer while it is hidden; this only changes what happens
+               * once `group-hover` has already made it visible.
+               */}
+              <div className="pointer-events-auto absolute left-0 top-full z-30 mt-2 hidden w-72 rounded-lg border border-line bg-surface p-3 text-[12px] leading-relaxed text-muted shadow-lg group-hover:block">
                 <p className="mb-1 font-semibold text-ink">
                   현재 <span className={isCloud ? "text-mint" : "text-amber-ink"}>{status.storageMode}</span> 모드
                 </p>
@@ -240,6 +280,37 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                       </div>
                     );
                   })}
+                </div>
+
+                {status.liveness && (
+                  <div className="mt-2 space-y-1 border-t border-line pt-2">
+                    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">키 응답</div>
+                    <p className={status.liveness.worst === "ok" ? "text-ink" : "font-medium text-amber-ink"}>
+                      {livenessHeadline(status.liveness, new Date())}
+                    </p>
+                    {status.liveness.dead.map((d) => (
+                      <div key={d.key} className="flex items-start gap-1.5">
+                        <span
+                          className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${d.severity === "fail" ? "bg-red-500" : "bg-amber-ink"}`}
+                        />
+                        <span className="text-ink">{probeLabel(d.key)}</span>
+                        {/* `break-words` — a dead probe's `detail` is an English sentence of varying
+                            length, and this card is a fixed `w-72`; without it a long detail would
+                            force the row wider than the card instead of wrapping inside it. */}
+                        <span
+                          className={`ml-auto max-w-[60%] break-words text-right ${d.severity === "fail" ? "text-red-600" : "text-amber-ink"}`}
+                        >
+                          {d.detail}
+                        </span>
+                      </div>
+                    ))}
+                    {checkError && <p className="text-red-600">⚠ {checkError}</p>}
+                  </div>
+                )}
+                <div className="mt-2 flex justify-end">
+                  <button type="button" className={btn} disabled={checking} onClick={recheckLiveness}>
+                    {checking ? "확인 중…" : "지금 확인"}
+                  </button>
                 </div>
 
                 <p className="mt-2 text-faint">

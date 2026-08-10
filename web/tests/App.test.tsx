@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 /**
  * A stand-in for `RenderingsView` with its own internal state (a mount counter, via an
@@ -35,7 +35,7 @@ import { App } from "../src/App";
  */
 const NO_SCHEDULER_COLLECTED = { items: 0, rows: 0, breakdown: { total: 0, reach: { kind: "unknown" } } };
 
-function stubFetch() {
+function stubFetch(extra: Record<string, unknown> = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/api/translations")) return new Response(JSON.stringify([]), { status: 200 });
@@ -55,15 +55,27 @@ function stubFetch() {
           integrations: [],
           sheetLinks: {},
           dbEnv: "development",
+          ...extra,
         }),
         { status: 200 },
       );
     }
     if (url.endsWith("/api/publish/state")) return new Response(JSON.stringify([]), { status: 200 });
+    // The re-probe route [지금 확인] calls — never read for its body (App.tsx re-reads /api/status
+    // instead), so an empty probes array is enough for every test that does not click the button.
+    if (url.endsWith("/api/diagnostics/live")) return new Response(JSON.stringify({ probes: [] }), { status: 200 });
     throw new Error(`unexpected fetch: ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+/**
+ * A thin wrapper over `stubFetch` for tests that only need to vary the `/api/status` body —
+ * merges `extra` into it rather than duplicating the dispatch above.
+ */
+function stubFetchWithStatus(extra: Record<string, unknown>) {
+  return stubFetch(extra);
 }
 
 /**
@@ -496,5 +508,71 @@ describe("App's 수집 breakdown card", () => {
     expect(el.textContent).toContain("2026-06-01 09:00 KST");
     expect(el.textContent).toContain("다릅니다");
     expect(el.textContent).toContain("⚠");
+  });
+});
+
+/**
+ * The chip beside the mode pill (Task 5's `livenessChip`), the hover card's key-by-key detail
+ * (`livenessHeadline` + `probeLabel`), and the [지금 확인] button that re-probes and re-reads
+ * `/api/status`. `stubFetchWithStatus` merges a `liveness` summary into an otherwise-ordinary
+ * status body so each test states only what differs.
+ *
+ * Waits are on the [지금 확인] button (unconditionally rendered once `status` loads), not on
+ * `storageMode`'s text — the hover card's own "현재 local 모드" note already repeats that word a
+ * second time, so `findByText("local")`/`findByText("cloud")` would always be ambiguous here.
+ */
+describe("App's liveness chip", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows no liveness chip when the last observation found everything alive", async () => {
+    stubFetchWithStatus({ liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], total: 7 } });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    expect(await screen.findByRole("button", { name: "지금 확인" })).toBeTruthy();
+    expect(screen.queryByText(/응답 없음/)).toBeNull();
+  });
+
+  it("shows a red chip naming the tier when a publishing credential is dead", async () => {
+    stubFetchWithStatus({
+      liveness: {
+        observedAt: new Date().toISOString(),
+        worst: "fail",
+        dead: [{ key: "google_auth", tier: "publish", severity: "fail", detail: "400 invalid_grant" }],
+        total: 7,
+      },
+    });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    expect(await screen.findByText("⚠ 발행 키 1개 응답 없음")).toBeTruthy();
+  });
+
+  it("names the dead credential and its reason in the hover card", async () => {
+    stubFetchWithStatus({
+      liveness: {
+        observedAt: new Date().toISOString(),
+        worst: "fail",
+        dead: [{ key: "google_auth", tier: "publish", severity: "fail", detail: "400 invalid_grant" }],
+        total: 7,
+      },
+    });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    expect(await screen.findByText("Google 인증")).toBeTruthy();
+    expect(screen.getByText("400 invalid_grant")).toBeTruthy();
+  });
+
+  it("re-probes and re-reads the status when [지금 확인] is clicked", async () => {
+    const fetchMock = stubFetchWithStatus({
+      liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], total: 7 },
+    });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    await screen.findByRole("button", { name: "지금 확인" });
+    fetchMock.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map(([input]) => String(input));
+      expect(urls).toContain("/api/diagnostics/live");
+      expect(urls).toContain("/api/status");
+    });
   });
 });
