@@ -171,9 +171,35 @@ say() {
 # needs something guaranteed into the alert should not rely on that budget at all — it marks the
 # line with ALERT_MARKER (src/deploy/alertMarker.ts) and the hook carries it whatever the depth.
 #
+# ── The invocation id, and why this line carries it ──────────────────────────────────────────────
+#
+# systemd assigns each START of a unit a 128-bit id and puts it in the service's environment as
+# $INVOCATION_ID; the same value is readable from outside as the unit's `InvocationID` property. It
+# is the only thing that can prove which run a file on disk belongs to.
+#
+# deploy/herald-notify-failure.sh needs that proof and had no way to get it. The run logs are named
+# by timestamp and it reads the newest by name, so when a unit fails WITHOUT reaching this wrapper —
+# a 203/EXEC because pnpm moved, a bad ExecStart=, an unwritable log root — the newest file is the
+# PREVIOUS run's, complete with that run's output and its `exited <n>` footer. The alert then
+# reported yesterday's failure, with yesterday's exit code, as today's. Recording the id here is
+# what lets the hook refuse a file it cannot attribute to the run that just failed.
+#
+# On the SAME line rather than a new one, deliberately: the hook sends only the last
+# LOG_TAIL_LINES lines of this file, so for a short run every extra boundary line costs one line of
+# the alert's context — the constraint the NOTE above states. This line already exists; it simply
+# says more.
+#
+# `none` when $INVOCATION_ID is unset (someone running this wrapper by hand, outside systemd) or is
+# not the plain hex systemd emits. The hook requires hex, so `none` reads as "unverifiable" to it
+# and as an explanation to a human, rather than silently omitting the field and looking like an old
+# log. A value with a space in it would break the parse on the other side, which is why this is
+# sanitised here rather than trusted.
+RUN_INVOCATION="${INVOCATION_ID:-}"
+case "$RUN_INVOCATION" in ''|*[!0-9a-f]*) RUN_INVOCATION="none" ;; esac
+
 # Names the unit and the exact command line, which is what makes a run log answerable months later:
 # whether `--yes` was passed, which pnpm was on PATH, which subcommand ran.
-say "=== $UNIT started $(date -u +%Y-%m-%dT%H:%M:%SZ) — $* ==="
+say "=== $UNIT started $(date -u +%Y-%m-%dT%H:%M:%SZ) invocation $RUN_INVOCATION — $* ==="
 
 if [ -n "$LOG_FILE" ]; then
   # `2>&1` merges stderr into the log: the interesting half of a failed run is almost always there

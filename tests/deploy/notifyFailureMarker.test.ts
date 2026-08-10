@@ -34,11 +34,16 @@ const CURL_STUB_LINES = [
   "done",
   "exit 0",
 ];
+/** The invocation id this file's run-log fixtures are written under, and the one the systemctl stub
+ *  reports as the unit's current one. The hook refuses any run log it cannot attribute to the run
+ *  that just failed, so a fixture without a matching id is a file it will not read at all. */
+const TEST_INVOCATION_ID = "1f2e3d4c5b6a79880123456789abcdef";
+
 /**
- * systemctl stub, defaulting to what a real `systemctl --user show` prints for a unit it has never
- * heard of: `ExecMainCode=0`, `ExecMainStatus=0`, exit 0. It never returns empty, which is the
- * whole reason the script reads ExecMainCode as well — see tests/deploy/notifyFailure.test.ts,
- * which drives every branch of that lookup.
+ * systemctl stub. Honours `-p` and emits nothing for a name it does not recognise, the way the real
+ * one does; defaults to a matching invocation id (so a seeded run log is usable) plus
+ * `ExecMainCode=0`/`ExecMainStatus=0`, verbatim what a real `systemctl --user show` prints for a
+ * unit it has never heard of. tests/deploy/notifyFailure.test.ts drives every branch of that lookup.
  *
  * Needed HERE because this file's TEST_UNIT is `herald-creds.service`, a unit that is genuinely
  * installed on the development box (measured: it reports ExecMainStatus=2 right now). Without the
@@ -48,7 +53,23 @@ const CURL_STUB_LINES = [
  */
 const SYSTEMCTL_STUB_LINES = [
   "#!/usr/bin/env bash",
-  'printf "ExecMainStatus=%s\\nExecMainCode=%s\\n" "${STUB_EXEC_MAIN_STATUS:-0}" "${STUB_EXEC_MAIN_CODE:-0}"',
+  "set -uo pipefail",
+  "want_status=0; want_code=0; want_invocation=0",
+  'prev=""',
+  'for arg in "$@"; do',
+  '  if [ "$prev" = "-p" ]; then',
+  '    case "$arg" in',
+  "      ExecMainStatus) want_status=1 ;;",
+  "      ExecMainCode) want_code=1 ;;",
+  "      InvocationID) want_invocation=1 ;;",
+  "    esac",
+  "  fi",
+  '  prev="$arg"',
+  "done",
+  '[ "$want_status" = 1 ] && printf "ExecMainStatus=%s\\n" "${STUB_EXEC_MAIN_STATUS:-0}"',
+  '[ "$want_code" = 1 ] && printf "ExecMainCode=%s\\n" "${STUB_EXEC_MAIN_CODE:-0}"',
+  `[ "$want_invocation" = 1 ] && printf "InvocationID=%s\\n" "\${STUB_INVOCATION_ID-${TEST_INVOCATION_ID}}"`,
+  "exit 0",
 ];
 // Honours `-n`, like the real thing and like the (now fixed) stub in notifyFailure.test.ts. Without
 // that, "the marked line is outside the tail" is a premise no test actually establishes.
@@ -83,11 +104,18 @@ async function writeExecutable(path: string, lines: string[]): Promise<void> {
   await chmod(path, 0o755);
 }
 
-async function seedRunLog(unit: string, body: string): Promise<string> {
+/**
+ * Writes a run log the way deploy/herald-run-logged.sh writes one — headed with the wrapper's own
+ * `=== <unit> started … invocation <id> — <cmd> ===` line, because the hook refuses a file it cannot
+ * attribute to the run that just failed. `invocation: null` writes the body bare, which is an
+ * unverifiable file and therefore one the hook will not read.
+ */
+async function seedRunLog(unit: string, body: string, invocation: string | null = TEST_INVOCATION_ID): Promise<string> {
   const dir = join(logRoot, unit.replace(/\.service$/, ""));
   await mkdir(dir, { recursive: true });
   const path = join(dir, "20260810T062300Z.log");
-  await writeFile(path, body, "utf8");
+  const header = `=== ${unit} started 2026-08-10T06:23:00Z invocation ${invocation} — pnpm creds:check ===`;
+  await writeFile(path, invocation === null ? body : `${header}\n${body}`, "utf8");
   return path;
 }
 
@@ -146,10 +174,12 @@ function startLine(stamp = "2026-08-10T06:23:00Z", cmd = "pnpm creds:check"): st
   return `=== ${TEST_UNIT} started ${stamp} — ${cmd} ===`;
 }
 
-/** A report-shaped run, with the marked summary last, followed by however many trailing lines. */
-function credsRun(trailing: string[]): string {
+/** A report-shaped run, with the marked summary last, followed by however many trailing lines.
+ *  `start: false` omits the wrapper's own header line, for a fixture that is written to a run log —
+ *  `seedRunLog` heads those itself, with the invocation id the hook verifies. */
+function credsRun(trailing: string[], { start = true }: { start?: boolean } = {}): string {
   return [
-    startLine(),
+    ...(start ? [startLine()] : []),
     "Mantle KR Herald — credential liveness (https://mantle-kr-herald.vercel.app)",
     "",
     "  ✗ live: google_auth            HTTP 401 invalid_grant",
@@ -207,7 +237,7 @@ describe("marked lines reach the alert regardless of tail depth", () => {
   });
 
   it("carries it out of the durable run log too, when the journal is empty", async () => {
-    await seedRunLog(TEST_UNIT, credsRun(["herald-creds.service: Consumed 1.234s CPU time."]) + "\n");
+    await seedRunLog(TEST_UNIT, credsRun(["herald-creds.service: Consumed 1.234s CPU time."], { start: false }) + "\n");
     const text = sentText("");
     expect(text).toContain("live: google_auth");
     expect(text).not.toContain(ALERT_MARKER);
@@ -326,14 +356,26 @@ describe("promoted lines come from this run, never a previous one", () => {
   });
 
   it("does not scope the durable run log, which is one run per file by definition", async () => {
-    // Deliberately without a start line: an older run log, or one written before the wrapper grew
-    // its header. Applying the journal's filter here would trade a correct message for an empty one.
+    // A run long enough that its own header falls OUT of the 200-line scan window. That is what
+    // separates the two branches now: on the JOURNAL branch, no start line in the window means
+    // nothing may be attributed to this run and nothing is promoted. A run log needs no such filter
+    // — the file IS one run, proven by the invocation id in its header — and applying the journal's
+    // filter to it would trade a correct message for an empty one.
+    //
+    // This used to be driven by a run log with no start line at all, which no longer distinguishes
+    // anything: every usable run log is headed now, so a wrongly-applied filter would simply keep
+    // everything after that header. Verified by mutation — with the old fixture, applying the
+    // journal's scoping to this branch left the whole file green.
+    const filler = Array.from({ length: 250 }, (_, i) => `line ${i}`);
     await seedRunLog(
       TEST_UNIT,
-      ["  ✗ live: google_auth  HTTP 401", `${ALERT_MARKER}✗ FAILED: live: google_auth`].join("\n") + "\n",
+      [...filler, `${ALERT_MARKER}✗ FAILED: live: google_auth`, "after", "the", "marked line"].join("\n") + "\n",
     );
     const text = sentText("");
     expect(text!.split("\n")[1]).toBe("✗ FAILED: live: google_auth");
+    expect(text, "the run log is one run; it can never have outrun its own window").not.toContain(
+      "longer than the",
+    );
   });
 });
 
@@ -352,12 +394,21 @@ describe("promote-or-keep, never promote-or-delete", () => {
     expect(text).not.toContain(ALERT_MARKER);
   });
 
-  it("still sends the promoted line when promotion emptied the excerpt entirely", async () => {
-    // A run log whose only line is the marked one: after promote-or-keep the tail is empty, and the
-    // message must still carry the promoted line rather than falling through to "no lines captured".
+  it("still sends the promoted line when promotion took the whole of the run's own output", async () => {
+    // A run whose only output is the marked line. After promote-or-keep the excerpt is reduced to
+    // the wrapper's own boundary line and nothing else, and the message must still carry the
+    // promoted line rather than falling through to "no lines captured" — and must carry it once.
+    //
+    // Narrower than it used to be, and deliberately so. This previously seeded a run log whose only
+    // line was the marked one, leaving the excerpt EMPTY. That state is no longer reachable from
+    // either source: a run log must be headed to be usable at all and the journal must carry a
+    // start line to be scoped at all, so a boundary line always survives promotion. Asserting an
+    // unreachable state would be asserting nothing.
     await seedRunLog(TEST_UNIT, `${ALERT_MARKER}✗ FAILED: live: google_auth\n`);
     const text = sentText("");
     expect(text!.split("\n")[1]).toBe("✗ FAILED: live: google_auth");
+    expect(text!.match(/✗ FAILED: live: google_auth/g)).toHaveLength(1);
+    expect(text).not.toContain(ALERT_MARKER);
     expect(text).not.toContain("실행 로그도 저널도 남지 않았습니다");
   });
 

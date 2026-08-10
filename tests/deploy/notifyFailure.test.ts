@@ -91,15 +91,24 @@ const CURL_STUB_LINES = [
 ];
 
 /**
+ * The systemd invocation id every fixture in this file shares: the one `seedRunLog` writes into the
+ * run log's header line, and the one the systemctl stub reports as the unit's current one. Equal by
+ * default, because "the run log belongs to this run" is the ordinary case; a test that wants the
+ * stale-log case makes them differ on purpose.
+ */
+const TEST_INVOCATION_ID = "1f2e3d4c5b6a79880123456789abcdef";
+
+/**
  * systemctl stub, and the reason this file has one at all.
  *
- * The script asks systemd for the failing unit's exit code. Until 2026-08-10 this test's env
- * whitelist carried no D-Bus address, so `systemctl --user` could not reach the user manager, every
- * lookup failed, and the header assertions passed *because the branch never ran*. That is not a
- * harmless gap: on a real box the same call SUCCEEDS and returns `0` for a unit systemd cannot
- * account for, which is how `⚠ <unit> 실패 (exit 0)` — a header contradicting itself — reached
- * production while this suite was green. Same shape as the `journalctl` stub that ignored `-n`
- * (see below): a mechanism sound by luck of the harness rather than by the test.
+ * The script asks systemd two things: whether a run log on disk belongs to the run that just failed
+ * (`InvocationID`), and what that run's exit code was (`ExecMainCode`/`ExecMainStatus`). Until
+ * 2026-08-10 this test's env whitelist carried no D-Bus address, so `systemctl --user` could not
+ * reach the user manager, every lookup failed, and the header assertions passed *because the branch
+ * never ran*. That is not a harmless gap: on a real box the same call SUCCEEDS and returns `0` for a
+ * unit systemd cannot account for, which is how `⚠ <unit> 실패 (exit 0)` — a header contradicting
+ * itself — reached production while this suite was green. Same shape as the `journalctl` stub that
+ * ignored `-n` (see below): a mechanism sound by luck of the harness rather than by the test.
  *
  * A stub rather than the real thing, because the real thing is not deterministic here: TEST_UNIT
  * and the marker file's `herald-creds.service` are BOTH installed on the development box, so a real
@@ -107,8 +116,10 @@ const CURL_STUB_LINES = [
  * `herald-creds.service` reports ExecMainStatus=2 right now) and would answer differently again on
  * CI, which has no user manager at all.
  *
- * Defaults to exactly what a real `systemctl --user show` prints for a unit it has never heard of,
- * measured on a live box — `ExecMainCode=0`, `ExecMainStatus=0`, exit 0. It never returns empty.
+ * Each property is driven independently, and the defaults are chosen so the ordinary case needs no
+ * configuration: an invocation id matching what `seedRunLog` writes (so a seeded run log is usable),
+ * and `ExecMainCode=0`/`ExecMainStatus=0` — verbatim what a real `systemctl --user show` prints for
+ * a unit it has never heard of, measured on a live box. It never returns empty.
  *
  * Prints ExecMainStatus BEFORE ExecMainCode, the reverse of the order the script asks for them in,
  * because that is what systemd does: it emits properties in its own order, not the requested one
@@ -118,10 +129,33 @@ const CURL_STUB_LINES = [
  */
 const SYSTEMCTL_STUB_LINES = [
   "#!/usr/bin/env bash",
+  "set -uo pipefail",
   // STUB_SYSTEMCTL_SILENT: no output and a non-zero exit — a box where systemctl exists but has no
   // user manager to ask (a container, CI, a session whose bus is gone).
   'if [ -n "${STUB_SYSTEMCTL_SILENT:-}" ]; then exit "${STUB_SYSTEMCTL_EXIT:-1}"; fi',
-  'printf "ExecMainStatus=%s\\nExecMainCode=%s\\n" "${STUB_EXEC_MAIN_STATUS:-0}" "${STUB_EXEC_MAIN_CODE:-0}"',
+  // HONOURS `-p`, and emits nothing for a name it does not recognise — which is exactly what real
+  // systemctl does (verified: `-p NoSuchPropertyXyz` produces no line and exit 0). A stub that
+  // always printed all three would make a typo'd property name in the script invisible here while
+  // silently costing the real thing its answer.
+  "want_status=0; want_code=0; want_invocation=0",
+  'prev=""',
+  'for arg in "$@"; do',
+  '  if [ "$prev" = "-p" ]; then',
+  '    case "$arg" in',
+  "      ExecMainStatus) want_status=1 ;;",
+  "      ExecMainCode) want_code=1 ;;",
+  "      InvocationID) want_invocation=1 ;;",
+  "    esac",
+  "  fi",
+  '  prev="$arg"',
+  "done",
+  // Emitted in a FIXED order that is deliberately not the order the script asks for them in,
+  // because systemd emits properties in its own order too. Positional parsing has to fail here.
+  '[ "$want_status" = 1 ] && printf "ExecMainStatus=%s\\n" "${STUB_EXEC_MAIN_STATUS:-0}"',
+  '[ "$want_code" = 1 ] && printf "ExecMainCode=%s\\n" "${STUB_EXEC_MAIN_CODE:-0}"',
+  // `-` not `:-`: an explicitly empty STUB_INVOCATION_ID means "systemd knows of no invocation for
+  // this unit", which is what it reports for one it has never heard of, and is distinct from unset.
+  `[ "$want_invocation" = 1 ] && printf "InvocationID=%s\\n" "\${STUB_INVOCATION_ID-${TEST_INVOCATION_ID}}"`,
   'exit "${STUB_SYSTEMCTL_EXIT:-0}"',
 ];
 
@@ -153,16 +187,40 @@ async function writeExecutable(path: string, lines: string[]): Promise<void> {
 }
 
 /**
- * Writes a durable run log for `unit` under the stand-in log root, named the way
- * deploy/herald-run-logged.sh names one. `mtime` is settable so a test can invert the mtime order
- * against the name order — see the test that relies on it.
+ * The header line deploy/herald-run-logged.sh writes before it runs anything, carrying the systemd
+ * invocation id the hook verifies the file against. Spelled here rather than imported because the
+ * wrapper is bash; the "the wrapper writes a header this hook accepts" test below runs the REAL
+ * wrapper end to end, so a drift between the two files fails there rather than making every fixture
+ * in this file quietly unverifiable.
  */
-async function seedRunLog(unit: string, stamp: string, body: string, mtime?: Date): Promise<string> {
+function wrapperHeader(unit: string, invocation: string = TEST_INVOCATION_ID, cmd = "pnpm the-command"): string {
+  return `=== ${unit} started 2026-08-10T07:00:00Z invocation ${invocation} — ${cmd} ===`;
+}
+
+/**
+ * Writes a durable run log for `unit` under the stand-in log root, named the way
+ * deploy/herald-run-logged.sh names one — and, by default, HEADED the way the wrapper heads one.
+ *
+ * The header is not decoration: since the hook refuses any run log it cannot attribute to the run
+ * that just failed, a fixture without one is a file the hook will not read at all. `invocation`
+ * sets the id in that header (pass a different one to seed a PREVIOUS run's log); `invocation: null`
+ * writes the body bare, which is an old log from before the wrapper recorded ids, and is therefore
+ * unusable by design. `mtime` is settable so a test can invert the mtime order against the name
+ * order — see the test that relies on it.
+ */
+async function seedRunLog(
+  unit: string,
+  stamp: string,
+  body: string,
+  opts: { mtime?: Date; invocation?: string | null } = {},
+): Promise<string> {
   const dir = join(logRoot, unit.replace(/\.service$/, ""));
   await mkdir(dir, { recursive: true });
   const path = join(dir, `${stamp}.log`);
-  await writeFile(path, body, "utf8");
-  if (mtime) await utimes(path, mtime, mtime);
+  const invocation = opts.invocation === undefined ? TEST_INVOCATION_ID : opts.invocation;
+  const contents = invocation === null ? body : `${wrapperHeader(unit, invocation)}\n${body}`;
+  await writeFile(path, contents, "utf8");
+  if (opts.mtime) await utimes(path, opts.mtime, opts.mtime);
   return path;
 }
 
@@ -284,7 +342,14 @@ describe("the hook fits inside its own TimeoutStartSec, with margin", () => {
     const journalReads = (script.match(/journal_read --/g) ?? []).length;
     const systemctlReads = (script.match(/systemctl_show "/g) ?? []).length;
     const sends = (script.match(/send_telegram "/g) ?? []).length;
+    // EVERY term needs this guard, not just two of them. A call written any other way — through a
+    // variable, in a loop, renamed — is invisible to the regex above, and an invisible call counts
+    // as zero: the term silently leaves the sum and the budget looks roomier than it is. That is the
+    // same drift this whole test exists to catch, so a term that has disappeared must fail here
+    // rather than quietly reduce the total. Verified by rewriting each call site through a variable
+    // and confirming this test fails.
     expect(journalReads, "no journalctl call sites found — this test can no longer see them").toBeGreaterThan(0);
+    expect(systemctlReads, "no systemctl call sites found — this test can no longer see them").toBeGreaterThan(0);
     expect(sends, "no send_telegram call sites found — this test can no longer see them").toBeGreaterThan(0);
 
     const worstCase = journalReads * journalTimeout + systemctlReads * systemctlTimeout + sends * curlTimeout;
@@ -412,7 +477,6 @@ describe("deploy/herald-notify-failure.sh", () => {
         TEST_UNIT,
         "20260807T094200Z",
         [
-          `=== ${TEST_UNIT} started 2026-08-07T09:42:00Z — pnpm x:reconcile --yes ===`,
           "writing…",
           "  ✗ x:2085765414248968281 publish failed — HTTP 429",
           "wrote 0, retired 0, failed 1.",
@@ -457,7 +521,10 @@ describe("deploy/herald-notify-failure.sh", () => {
     });
 
     it("falls back to the journal when the run log exists but is empty", async () => {
-      await seedRunLog(TEST_UNIT, "20260807T094200Z", "");
+      // A zero-byte file: the wrapper opened it and died before writing its header, or the disk
+      // filled. `invocation: null` is what makes it genuinely empty — there is no header to carry an
+      // id, which is also why the invocation gate refuses it. Both reasons point the same way here.
+      await seedRunLog(TEST_UNIT, "20260807T094200Z", "", { invocation: null });
       await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
       const { status } = runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "journal had it" });
       expect(status).toBe(0);
@@ -503,8 +570,8 @@ describe("deploy/herald-notify-failure.sh", () => {
       // seeded with mtimes in the opposite order to their names; a `ls -t` implementation picks the
       // older run and reports a failure that already happened.
       await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
-      await seedRunLog(TEST_UNIT, "20260808T004126Z", "the newer run\n", new Date("2020-01-01T00:00:00Z"));
-      await seedRunLog(TEST_UNIT, "20260807T184126Z", "the older run\n", new Date("2030-01-01T00:00:00Z"));
+      await seedRunLog(TEST_UNIT, "20260808T004126Z", "the newer run\n", { mtime: new Date("2020-01-01T00:00:00Z") });
+      await seedRunLog(TEST_UNIT, "20260807T184126Z", "the older run\n", { mtime: new Date("2030-01-01T00:00:00Z") });
       runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "" });
 
       const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
@@ -723,6 +790,189 @@ describe("deploy/herald-notify-failure.sh", () => {
       const { status } = runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "" });
       expect(status).toBe(0);
       expect(await readAllCurlBodies()).toHaveLength(1);
+    });
+  });
+
+  /**
+   * Proving the run log is THIS run's, which is what makes reading it first safe at all.
+   *
+   * "Newest by name" is not "this run's". They come apart exactly when the unit fails WITHOUT
+   * reaching deploy/herald-run-logged.sh — a 203/EXEC because pnpm moved, a bad ExecStart=, an
+   * unwritable log root — because then nothing is written for this run and the newest file is the
+   * PREVIOUS run's, output and `exited <n>` footer intact. The alert reported yesterday's failure,
+   * with yesterday's exit code, as today's, and discarded today's real status. Nothing in the file's
+   * name, mtime or content could tell the two apart; systemd's invocation id can, because it changes
+   * on every start of the unit.
+   *
+   * The rule is all-or-nothing: an unverifiable file is dropped for the excerpt AND the exit code.
+   * Both came from the same stale file, so a gate that saved only the number would still have
+   * shipped yesterday's output under today's date.
+   */
+  describe("the run log is used only when it can be proven to be this run's", () => {
+    it("does not report a previous run's output or exit code when this run never wrote a log", async () => {
+      // The scenario in full, exactly as it was reported. A stale run log with footer `exited 1`
+      // sits in the directory; today the unit died at 203/EXEC before the wrapper could run, so
+      // there is no log for it and the journal is the only record. The alert must be today's.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      const stale = await seedRunLog(
+        TEST_UNIT,
+        "20260809T070000Z",
+        `yesterday: collect failed, 3 items lost\n=== ${TEST_UNIT} exited 1 at 2026-08-09T07:00:09Z ===\n`,
+        { invocation: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, // a PREVIOUS start of the unit
+      );
+      const { status } = runScript(TEST_UNIT, {
+        STUB_JOURNAL_OUTPUT: `${TEST_UNIT}: Failed to execute /home/kyle/.herald/bin/pnpm: No such file or directory`,
+        STUB_INVOCATION_ID: TEST_INVOCATION_ID, // systemd's answer for the run that just failed
+        STUB_EXEC_MAIN_CODE: "1",
+        STUB_EXEC_MAIN_STATUS: "203",
+      });
+      expect(status).toBe(0);
+
+      const payload = JSON.parse(await readCurlBody()) as { text: string };
+      expect(payload.text, "yesterday's exit code must not be presented as today's").not.toContain("(exit 1)");
+      expect(payload.text, "yesterday's output must not be presented as today's").not.toContain(
+        "yesterday: collect failed",
+      );
+      expect(payload.text, "the pointer must not send the reader to a file about another run").not.toContain(stale);
+      // What today actually was, from the only source that has it.
+      expect(payload.text).toContain("(exit 203)");
+      expect(payload.text).toContain("No such file or directory");
+      expect(payload.text).toContain(`journalctl --user -u ${TEST_UNIT}`);
+    });
+
+    it("uses the run log when the ids match", async () => {
+      // The other half, so the gate cannot pass by refusing everything.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      const runLog = await seedRunLog(TEST_UNIT, "20260810T070000Z", "today: the real failure\n");
+      runScript(TEST_UNIT, {
+        STUB_JOURNAL_OUTPUT: "systemd noise nobody wants",
+        STUB_INVOCATION_ID: TEST_INVOCATION_ID,
+      });
+      const payload = JSON.parse(await readCurlBody()) as { text: string };
+      expect(payload.text).toContain("today: the real failure");
+      expect(payload.text).toContain(`tail -n 50 ${runLog}`);
+      expect(payload.text).not.toContain("systemd noise");
+    });
+
+    it("refuses a run log written before the wrapper recorded an invocation id", async () => {
+      // Deliberate, and stated in the script's own comment so nobody "fixes" it by trusting them:
+      // an id-less log cannot be attributed to any run, and trusting it is the bug. The transition
+      // ages itself out — herald-run-logged.sh keeps 60 runs per unit and these units run daily.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(TEST_UNIT, "20260810T070000Z", "an old log, from before the id existed\n", {
+        invocation: null,
+      });
+      const { status } = runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "the journal still has today" });
+      expect(status).toBe(0);
+      const payload = JSON.parse(await readCurlBody()) as { text: string };
+      expect(payload.text).not.toContain("an old log");
+      expect(payload.text).toContain("the journal still has today");
+    });
+
+    it("refuses a run log whose header says `none` — the wrapper run outside systemd", async () => {
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(TEST_UNIT, "20260810T070000Z", "someone ran the wrapper by hand\n", {
+        invocation: "none",
+      });
+      runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "the journal still has today" });
+      const payload = JSON.parse(await readCurlBody()) as { text: string };
+      expect(payload.text).not.toContain("by hand");
+      expect(payload.text).toContain("the journal still has today");
+    });
+
+    it("takes the journal when systemd cannot be asked at all, rather than an unverifiable file", async () => {
+      // No bus, no user manager, the 2s timeout expiring: nothing can be verified, so nothing on
+      // disk may be trusted. Losing the run log's formatting is survivable; presenting yesterday's
+      // failure as today's is not. Note the run log here is otherwise PERFECTLY GOOD — it is the
+      // inability to check that decides, not anything about the file.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(TEST_UNIT, "20260810T070000Z", "a run log nobody can vouch for\n");
+      const { status } = runScript(TEST_UNIT, {
+        STUB_JOURNAL_OUTPUT: "the journal, unverified but current",
+        STUB_SYSTEMCTL_SILENT: "1",
+      });
+      expect(status).toBe(0);
+      const payload = JSON.parse(await readCurlBody()) as { text: string };
+      expect(payload.text).not.toContain("nobody can vouch for");
+      expect(payload.text).toContain("the journal, unverified but current");
+    });
+
+    it("takes the journal when systemd reports no invocation for the unit", async () => {
+      // An empty InvocationID is what systemd prints for a unit it has never heard of — measured on
+      // a live box. Empty must never compare equal to a file that also records nothing.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(TEST_UNIT, "20260810T070000Z", "a run log for a unit systemd forgot\n", {
+        invocation: null,
+      });
+      runScript(TEST_UNIT, {
+        STUB_JOURNAL_OUTPUT: "the journal",
+        STUB_INVOCATION_ID: "", // explicitly empty, the unknown-unit answer
+      });
+      const payload = JSON.parse(await readCurlBody()) as { text: string };
+      expect(payload.text, "empty must not verify empty").not.toContain("systemd forgot");
+      expect(payload.text).toContain("the journal");
+    });
+
+    it("only reads the header from the first line, not from output that imitates it", async () => {
+      // A command echoing a line shaped like the wrapper's header — replaying a previous log, say —
+      // must not be able to vouch for a file the wrapper never headed.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      await seedRunLog(
+        TEST_UNIT,
+        "20260810T070000Z",
+        `replaying: ${wrapperHeader(TEST_UNIT)}\n${wrapperHeader(TEST_UNIT)}\nforged content\n`,
+        { invocation: null },
+      );
+      runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "the journal" });
+      const payload = JSON.parse(await readCurlBody()) as { text: string };
+      expect(payload.text).not.toContain("forged content");
+      expect(payload.text).toContain("the journal");
+    });
+
+    it("the wrapper writes a header this hook accepts — the real one, end to end", async () => {
+      // The coupling, run rather than spelled. deploy/herald-run-logged.sh composes the header and
+      // deploy/herald-notify-failure.sh parses it; they are two bash files that cannot import each
+      // other, so a change to either side's format would otherwise leave both suites green while
+      // every alert in production silently fell back to the journal. Same shape as the LOG_ROOT and
+      // ALERT_MARKER couplings this repo already pins.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      const invocation = "0badc0de0badc0de0badc0de0badc0de";
+      const wrapper = spawnSync(
+        "bash",
+        [join(REPO_ROOT, "deploy", "herald-run-logged.sh"), TEST_UNIT, "/bin/bash", "-c", "echo the real thing; exit 1"],
+        {
+          env: {
+            PATH: "/usr/bin:/bin",
+            HOME: process.env.HOME,
+            HERALD_LOG_DIR: logRoot,
+            INVOCATION_ID: invocation,
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(wrapper.status, wrapper.stderr).toBe(1); // the command's own code, unchanged
+
+      runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "the journal", STUB_INVOCATION_ID: invocation });
+      const payload = JSON.parse(await readCurlBody()) as { text: string };
+      expect(payload.text, "the hook rejected a log the real wrapper just wrote").toContain("the real thing");
+      expect(payload.text).toContain("(exit 1)");
+      expect(payload.text).not.toContain("the journal");
+    });
+
+    it("the wrapper records `none`, not a broken header, when it runs outside systemd", async () => {
+      // INVOCATION_ID unset is a hand run. The header must still be one parseable line — a value
+      // with a space in it would corrupt the field the hook reads — and must not verify.
+      const wrapper = spawnSync(
+        "bash",
+        [join(REPO_ROOT, "deploy", "herald-run-logged.sh"), TEST_UNIT, "/bin/bash", "-c", "echo hand run"],
+        { env: { PATH: "/usr/bin:/bin", HOME: process.env.HOME, HERALD_LOG_DIR: logRoot }, encoding: "utf8" },
+      );
+      expect(wrapper.status).toBe(0);
+      expect(wrapper.stdout).toContain(`=== ${TEST_UNIT} started `);
+      expect(wrapper.stdout).toContain("invocation none —");
+      expect(wrapper.stdout, "a hand run must not look like a systemd invocation").not.toMatch(
+        /invocation [0-9a-f]{8} /,
+      );
     });
   });
 

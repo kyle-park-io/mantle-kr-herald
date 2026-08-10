@@ -155,6 +155,47 @@ else
   systemctl_show() { systemctl --user show "$@" 2>/dev/null; }
 fi
 
+# ── What systemd says about the failed unit, asked once ──────────────────────────────────────────
+#
+# Read here, before anything decides which source to trust, because the first of these three
+# properties is what decides it. One call for all three: the budget above counts CALLS, and
+# properties are free.
+#
+#   InvocationID    the 128-bit id systemd assigns to each START of a unit. The only thing that can
+#                   prove a file on disk belongs to the run that just failed — see the gate below.
+#   ExecMainCode    the waitid(2) si_code: whether ExecMainStatus is a status, a signal, or nothing.
+#   ExecMainStatus  the number itself. Both are used by the header block far below.
+#
+# Asked for as `Name=Value` pairs rather than with `--value`, for two measured reasons. systemctl
+# prints properties in ITS order, not the order requested (`-p ActiveState -p SubState -p LoadState
+# --value` prints LoadState first), so reading `--value` lines positionally is wrong by
+# construction. And it SILENTLY DROPS a name it does not recognise — `-p NoSuchPropertyXyz` yields
+# no line and exit 0 — so a typo here would not fail, it would just quietly stop answering. Reading
+# by name means a dropped property is an empty value, which every consumer below already treats as
+# "unknown"; the test stub honours `-p` for the same reason, so a typo fails a test instead.
+UNIT_INVOCATION=""
+EXEC_MAIN_CODE=""
+EXEC_MAIN_STATUS=""
+if command -v systemctl >/dev/null 2>&1; then
+  while IFS='=' read -r _k _v; do
+    case "$_k" in
+      InvocationID) UNIT_INVOCATION="$_v" ;;
+      ExecMainCode) EXEC_MAIN_CODE="$_v" ;;
+      ExecMainStatus) EXEC_MAIN_STATUS="$_v" ;;
+    esac
+  done <<< "$(systemctl_show "$UNIT" -p InvocationID -p ExecMainCode -p ExecMainStatus)"
+fi
+# Plain lowercase hex, 32 characters on this systemd.
+#
+# The EMPTY case is the load-bearing one and it is checked at the gate below: an unknown unit
+# reports `InvocationID=` and empty must never verify anything. The hex test here is belt and
+# braces — a non-hex value could not match anyway, since the other side of the comparison is
+# extracted by an awk that only accepts `[0-9a-f]+` — and it is kept because it states the shape
+# both sides require in the same terms, so the two cannot drift apart silently. Mutation testing
+# says so plainly: deleting this line changes no test's outcome, while deleting the empty check
+# below fails one immediately.
+case "$UNIT_INVOCATION" in ''|*[!0-9a-f]*) UNIT_INVOCATION="" ;; esac
+
 # ── Where the excerpt comes from, and why the run log wins ───────────────────────────────────────
 #
 # The run log is read FIRST, and this is the whole point of `deploy/herald-run-logged.sh` existing.
@@ -187,6 +228,57 @@ RUN_LOG=""
 LOG_ROOT="${HERALD_LOG_DIR:-${HOME:-}/.herald/logs}"
 RUN_LOG_DIR="$LOG_ROOT/${UNIT%.service}"
 RUN_LOG="$(ls -1 "$RUN_LOG_DIR"/*.log 2>/dev/null | tail -n 1)" || RUN_LOG=""
+
+# ── Prove the file is THIS run's, or do not use it ───────────────────────────────────────────────
+#
+# "Newest by name" is not "this run's". The two come apart exactly when the unit fails WITHOUT
+# reaching deploy/herald-run-logged.sh — a 203/EXEC because pnpm moved, a bad ExecStart=, an
+# unwritable log root — because then no file is written for this run at all and the newest one is
+# the PREVIOUS run's, with its output and its `exited <n>` footer intact. The alert reported
+# yesterday's failure, with yesterday's exit code, as today's, and today's real status (203) was
+# discarded. It reads entirely plausible, which is what makes it the worst failure mode this hook
+# has: a confident, specific, wrong answer.
+#
+# Nothing in the file's name, mtime or content could distinguish the two — this box's clock steps,
+# so even an mtime within the last second proves nothing. systemd's invocation id can: it changes on
+# every start of the unit, the wrapper records the one it ran under in its header line, and the hook
+# asks systemd for the unit's current one. Equal, or the file is not this run's.
+#
+# THE RULE IS ALL-OR-NOTHING, and deliberately so: an unverifiable file is dropped for the excerpt
+# AND for the exit code, not special-cased for one of them. Both were stale together, from the same
+# file, and a gate that saved only the number would still have shipped yesterday's output.
+#
+# Three ways to fail it, all landing on the journal:
+#   - the file records no id (`none`, or a log written before the wrapper recorded one). UNUSABLE,
+#     on purpose. Trusting an unverifiable file is the bug. The transition costs nothing to wait
+#     out: herald-run-logged.sh keeps 60 runs per unit and these units run daily to two-hourly, so
+#     every id-less log ages out on its own within days. Do NOT "fix" this by trusting them.
+#   - the ids differ. The file is a previous run's, which is the case above.
+#   - systemd could not be asked at all — no systemctl, no bus, the 2s `timeout` expiring. Then
+#     nothing can be verified and the journal is taken. Losing the run log's formatting is
+#     survivable; presenting yesterday's failure as today's is not.
+#
+# Said on stderr rather than in the message: it lands in `journalctl --user -u
+# herald-notify-failure@<unit>.service` next to curl's own `-S` errors, so "why is this alert
+# journal-shaped when a run log exists?" is answerable, without spending a line of the phone budget
+# on it for every unit during the transition.
+#
+# `head -n 1`: the wrapper writes this line before it runs anything, so the first line is the only
+# place its own header can be. A line further down carrying the same shape came from the command's
+# output, and a same-second name collision (`tee -a` appends rather than clobbers) leaves the OLDER
+# run's header first — which fails the check and takes the journal, the safe direction.
+if [ -n "$RUN_LOG" ]; then
+  RUN_LOG_INVOCATION="$(head -n 1 "$RUN_LOG" 2>/dev/null | awk -v marker="=== ${UNIT} started " '
+    index($0, marker) == 1 && match($0, / invocation [0-9a-f]+ /) {
+      print substr($0, RSTART + 12, RLENGTH - 13)
+    }
+  ')" || RUN_LOG_INVOCATION=""
+  if [ -z "$UNIT_INVOCATION" ] || [ "$RUN_LOG_INVOCATION" != "$UNIT_INVOCATION" ]; then
+    echo "herald-notify-failure.sh: ignoring ${RUN_LOG} — cannot prove it is this run's (log invocation '${RUN_LOG_INVOCATION:-none}', unit invocation '${UNIT_INVOCATION:-unknown}'); using the journal instead" >&2
+    RUN_LOG=""
+  fi
+fi
+
 if [ -n "$RUN_LOG" ]; then
   LOG_EXCERPT="$(tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null)" || LOG_EXCERPT=""
   if [ -n "$LOG_EXCERPT" ]; then
@@ -474,12 +566,12 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
   #    in shell convention (a signalled command is already 128+N there). All four units this hook
   #    serves run through that wrapper, so in production this is the branch that answers.
   #
-  #    $RUN_LOG is the same single file the excerpt is quoting whenever the excerpt came from a run
-  #    log at all — there is only ever one, the newest by name — so no separate "is this the source
-  #    that answered" gate is needed here, and one would be unreachable code. The one way the two
-  #    can be stale together is a run that never reached the wrapper, leaving yesterday's file
-  #    newest: then the body is yesterday's as well, which is a Task-1-level property of the excerpt
-  #    and not something a second opinion about the exit code would improve.
+  #    $RUN_LOG is the same single file the excerpt is quoting, and it has already been PROVEN to
+  #    belong to this run — see the invocation-id gate above, which empties $RUN_LOG when it cannot
+  #    prove that. So there is nothing left for this block to second-guess: if the variable is set,
+  #    the footer in it is this run's footer. That gate is also why preferring the footer is safe at
+  #    all; without it, "the newest file by name" and "this run" come apart precisely when a unit
+  #    fails before reaching the wrapper, and this block would have named the previous run's code.
   #
   # 2. systemd, and only as the FALLBACK, because `systemctl --user show <unit> -p ExecMainStatus`
   #    NEVER returns empty. For a unit it has never heard of it prints `0` and exits 0 — measured on
@@ -500,10 +592,9 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
   #               command never returned — while the wrapper's own footer, for the same run, says
   #               143. Converted to 128+N here so the two agree whichever one answers.
   #
-  #    Asked for as `Name=Value` pairs rather than with `--value`: systemctl prints properties in
-  #    ITS order, not the order they were requested (verified — `-p ActiveState -p SubState -p
-  #    LoadState --value` prints LoadState first), so reading two `--value` lines positionally is
-  #    wrong by construction. Parsing by name also drops the systemd 246+ requirement `--value` had.
+  #    $EXEC_MAIN_CODE and $EXEC_MAIN_STATUS were read at the top of the script, in the same single
+  #    `systemctl show` the invocation-id gate needed — see that block for why the properties are
+  #    read by name rather than with `--value`.
   EXIT_CODE=""
   if [ -n "$RUN_LOG" ]; then
     # Through `tail`, not straight at the file: the footer is the LAST thing herald-run-logged.sh
@@ -525,15 +616,7 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
     ')" || EXIT_CODE=""
   fi
 
-  if [ -z "$EXIT_CODE" ] && command -v systemctl >/dev/null 2>&1; then
-    EXEC_MAIN_CODE=""
-    EXEC_MAIN_STATUS=""
-    while IFS='=' read -r _k _v; do
-      case "$_k" in
-        ExecMainCode) EXEC_MAIN_CODE="$_v" ;;
-        ExecMainStatus) EXEC_MAIN_STATUS="$_v" ;;
-      esac
-    done <<< "$(systemctl_show "$UNIT" -p ExecMainCode -p ExecMainStatus)"
+  if [ -z "$EXIT_CODE" ]; then
     case "$EXEC_MAIN_STATUS" in ''|*[!0-9]*) EXEC_MAIN_STATUS="" ;; esac
     if [ -n "$EXEC_MAIN_STATUS" ]; then
       case "$EXEC_MAIN_CODE" in
