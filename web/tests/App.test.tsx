@@ -569,10 +569,111 @@ describe("App's liveness chip", () => {
     await screen.findByRole("button", { name: "지금 확인" });
     fetchMock.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
+    // Order is the load-bearing part of this flow — the deployment must record what it observed
+    // (`/api/diagnostics/live`) before the graded summary is re-read (`/api/status`), or the second
+    // request could race the first and read back a stale observation.
     await waitFor(() => {
       const urls = fetchMock.mock.calls.map(([input]) => String(input));
-      expect(urls).toContain("/api/diagnostics/live");
-      expect(urls).toContain("/api/status");
+      const liveIndex = urls.indexOf("/api/diagnostics/live");
+      const statusIndex = urls.indexOf("/api/status");
+      expect(liveIndex).toBeGreaterThanOrEqual(0);
+      expect(statusIndex).toBeGreaterThan(liveIndex);
     });
+  });
+
+  /**
+   * Task 4's own pinned state: a database that has never been probed reports no `liveness` at all —
+   * not a contrived fixture, the ordinary state of a fresh deployment. The very first [지금 확인]
+   * can fail (server error, or a session that lapsed mid-click), and `checkError`'s only render path
+   * used to sit inside `{status.liveness && (...)}` — which never runs when `status.liveness` is
+   * undefined, so the operator this button exists to help most (nothing has ever looked) saw the
+   * button quietly return to its resting label with nothing on screen saying anything went wrong.
+   */
+  it("shows the failure inline when the very first check fails, with nothing ever observed yet", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/translations")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.endsWith("/api/publish/state")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.endsWith("/api/status")) {
+        return new Response(
+          JSON.stringify({
+            storageMode: "local",
+            funnel: {
+              collected: NO_SCHEDULER_COLLECTED,
+              translated: { items: 0, rows: 0 },
+              converted: { items: 0, rows: 0 },
+              rendered: { items: 0, rows: 0 },
+              published: { items: 0, rows: 0 },
+            },
+            sync: { synced: 0, needsRepublish: 0, unpublished: 0 },
+            availableTargets: ["local"],
+            integrations: [],
+            sheetLinks: {},
+            dbEnv: "development",
+            // `liveness` genuinely absent — JSON has no way to send `undefined`, so an omitted key is
+            // what "never probed" actually looks like on the wire (matches Task 4's fixture for this
+            // exact state).
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/api/diagnostics/live")) {
+        return new Response(JSON.stringify({ error: "credential probe timed out" }), { status: 500 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    await screen.findByRole("button", { name: "지금 확인" });
+    fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
+    expect(await screen.findByText("⚠ credential probe timed out")).toBeTruthy();
+  });
+
+  /**
+   * The other half of the fix above: once an observation exists, a later failed re-check must not
+   * blank out what the earlier successful one found — `recheckLiveness` deliberately does not call
+   * `setStatus` on failure, so the preserved summary and the new error render side by side.
+   */
+  it("keeps the last-known summary and adds the failure beside it when a later check fails", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/translations")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.endsWith("/api/publish/state")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.endsWith("/api/status")) {
+        return new Response(
+          JSON.stringify({
+            storageMode: "local",
+            funnel: {
+              collected: NO_SCHEDULER_COLLECTED,
+              translated: { items: 0, rows: 0 },
+              converted: { items: 0, rows: 0 },
+              rendered: { items: 0, rows: 0 },
+              published: { items: 0, rows: 0 },
+            },
+            sync: { synced: 0, needsRepublish: 0, unpublished: 0 },
+            availableTargets: ["local"],
+            integrations: [],
+            sheetLinks: {},
+            dbEnv: "development",
+            liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], total: 7 },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/api/diagnostics/live")) {
+        return new Response(JSON.stringify({ error: "credential probe timed out" }), { status: 500 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    await screen.findByRole("button", { name: "지금 확인" });
+    fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
+    expect(await screen.findByText("⚠ credential probe timed out")).toBeTruthy();
+    // "방금 전" (reportAge's under-a-minute wording) — the preserved summary from the fixture above,
+    // proof `setStatus` was not called on this failed re-check.
+    expect(screen.getByText("7개 모두 응답 · 방금 전 확인")).toBeTruthy();
   });
 });

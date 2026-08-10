@@ -236,94 +236,107 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                 </span>
               )}
               {/*
-               * `pointer-events-auto`, not `-none`: this card now holds a real control ([지금 확인]),
-               * and `pointer-events-none` would let clicks fall straight through it to whatever sits
-               * behind (the reasoning the long comment above this header row gives for the surrounding
-               * layout). Safe to drop here specifically because visibility is carried entirely by
-               * `hidden group-hover:block`, not by `pointer-events` — `hidden` is `display: none`,
-               * which removes the card from hit-testing on its own, with or without this class. So the
-               * card can never intercept a pointer while it is hidden; this only changes what happens
-               * once `group-hover` has already made it visible.
+               * Two nested boxes, not one. The outer carries the absolute positioning, `hidden
+               * group-hover:block`, and the gap to the pill as `pt-2` *padding*; the inner carries
+               * the visible border/background/shadow. Before this task the card was
+               * `pointer-events-none`, so nothing inside it could ever hold `:hover` and a gap between
+               * the pill and the card never mattered. Now [지금 확인] needs the pointer to be able to
+               * travel from the pill down into the card without crossing a dead zone — a `margin` on
+               * a single box would have left exactly that: margin sits outside an element's own
+               * hit-test area, padding sits inside it. Splitting the box keeps the visible result
+               * identical to before (the inner box still starts 8px below the pill) while making that
+               * whole 8px strip hit-testable, so a pointer crossing it in a straight line keeps
+               * `group-hover` — and the card — alive instead of dropping it mid-transit.
                */}
-              <div className="pointer-events-auto absolute left-0 top-full z-30 mt-2 hidden w-72 rounded-lg border border-line bg-surface p-3 text-[12px] leading-relaxed text-muted shadow-lg group-hover:block">
-                <p className="mb-1 font-semibold text-ink">
-                  현재 <span className={isCloud ? "text-mint" : "text-amber-ink"}>{status.storageMode}</span> 모드
-                </p>
-                <p>
-                  {isCloud
-                    ? "발행하면 Google · Lark Drive에 올라갑니다."
-                    : "발행하면 로컬 폴더(output/publish/local/)에 저장됩니다."}
-                </p>
-
-                <div className="mt-2 space-y-2 border-t border-line pt-2">
-                  {(["collect", "publish", "send", "data"] as const).map((g) => {
-                    const rows = status.integrations.filter((i) => i.group === g);
-                    if (rows.length === 0) return null;
-                    return (
-                      <div key={g}>
-                        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">
-                          {GROUP_LABEL[g]}
-                        </div>
-                        <ul className="space-y-0.5">
-                          {rows.map((i) => (
-                            <li key={i.key} className="flex items-center gap-1.5">
-                              <span
-                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${i.configured ? "bg-mint" : "bg-amber-ink"}`}
-                              />
-                              <span className="text-ink">{i.label}</span>
-                              <span className={`ml-auto ${i.configured ? "text-mint" : "text-amber-ink"}`}>
-                                {i.configured ? "설정됨" : "키 없음"}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {status.liveness && (
-                  <div className="mt-2 space-y-1 border-t border-line pt-2">
-                    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">키 응답</div>
-                    <p className={status.liveness.worst === "ok" ? "text-ink" : "font-medium text-amber-ink"}>
-                      {livenessHeadline(status.liveness, new Date())}
-                    </p>
-                    {status.liveness.dead.map((d) => (
-                      <div key={d.key} className="flex items-start gap-1.5">
-                        <span
-                          className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${d.severity === "fail" ? "bg-red-500" : "bg-amber-ink"}`}
-                        />
-                        <span className="text-ink">{probeLabel(d.key)}</span>
-                        {/* `break-words` — a dead probe's `detail` is an English sentence of varying
-                            length, and this card is a fixed `w-72`; without it a long detail would
-                            force the row wider than the card instead of wrapping inside it. */}
-                        <span
-                          className={`ml-auto max-w-[60%] break-words text-right ${d.severity === "fail" ? "text-red-600" : "text-amber-ink"}`}
-                        >
-                          {d.detail}
-                        </span>
-                      </div>
-                    ))}
-                    {checkError && <p className="text-red-600">⚠ {checkError}</p>}
-                  </div>
-                )}
-                <div className="mt-2 flex justify-end">
-                  <button type="button" className={btn} disabled={checking} onClick={recheckLiveness}>
-                    {checking ? "확인 중…" : "지금 확인"}
-                  </button>
-                </div>
-
-                <p className="mt-2 text-faint">
-                  모드를 바꾸려면 서버를 끄고 <code className="font-mono">.env</code>의{" "}
-                  <code className="font-mono">HERALD_STORAGE_MODE</code>를 고친 뒤 다시 실행하세요. 대시보드에서는 바꿀 수
-                  없습니다.
-                </p>
-                {status.integrations.some((i) => !i.configured) && (
-                  <p className="mt-1.5 text-faint">
-                    <span className="text-amber-ink">키 없음</span> 항목은 <code className="font-mono">.env</code>에 해당 키를
-                    채우고 서버를 다시 실행하면 활성화됩니다.
+              <div className="pointer-events-auto absolute left-0 top-full z-30 hidden w-72 pt-2 group-hover:block">
+                <div className="rounded-lg border border-line bg-surface p-3 text-[12px] leading-relaxed text-muted shadow-lg">
+                  <p className="mb-1 font-semibold text-ink">
+                    현재 <span className={isCloud ? "text-mint" : "text-amber-ink"}>{status.storageMode}</span> 모드
                   </p>
-                )}
+                  <p>
+                    {isCloud
+                      ? "발행하면 Google · Lark Drive에 올라갑니다."
+                      : "발행하면 로컬 폴더(output/publish/local/)에 저장됩니다."}
+                  </p>
+
+                  <div className="mt-2 space-y-2 border-t border-line pt-2">
+                    {(["collect", "publish", "send", "data"] as const).map((g) => {
+                      const rows = status.integrations.filter((i) => i.group === g);
+                      if (rows.length === 0) return null;
+                      return (
+                        <div key={g}>
+                          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">
+                            {GROUP_LABEL[g]}
+                          </div>
+                          <ul className="space-y-0.5">
+                            {rows.map((i) => (
+                              <li key={i.key} className="flex items-center gap-1.5">
+                                <span
+                                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${i.configured ? "bg-mint" : "bg-amber-ink"}`}
+                                />
+                                <span className="text-ink">{i.label}</span>
+                                <span className={`ml-auto ${i.configured ? "text-mint" : "text-amber-ink"}`}>
+                                  {i.configured ? "설정됨" : "키 없음"}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {status.liveness ? (
+                    <div className="mt-2 space-y-1 border-t border-line pt-2">
+                      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">키 응답</div>
+                      <p className={status.liveness.worst === "ok" ? "text-ink" : "font-medium text-amber-ink"}>
+                        {livenessHeadline(status.liveness, new Date())}
+                      </p>
+                      {status.liveness.dead.map((d) => (
+                        <div key={d.key} className="flex items-start gap-1.5">
+                          <span
+                            className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${d.severity === "fail" ? "bg-red-500" : "bg-amber-ink"}`}
+                          />
+                          <span className="text-ink">{probeLabel(d.key)}</span>
+                          {/* `break-words` — a dead probe's `detail` is an English sentence of varying
+                              length, and this card is a fixed `w-72`; without it a long detail would
+                              force the row wider than the card instead of wrapping inside it. */}
+                          <span
+                            className={`ml-auto max-w-[60%] break-words text-right ${d.severity === "fail" ? "text-red-600" : "text-amber-ink"}`}
+                          >
+                            {d.detail}
+                          </span>
+                        </div>
+                      ))}
+                      {checkError && <p className="text-red-600">⚠ {checkError}</p>}
+                    </div>
+                  ) : (
+                    // Task 4's own pinned state: a database that has never been probed reports no
+                    // `liveness` at all. A first-ever [지금 확인] that fails must still say so — the
+                    // block above is the only place `checkError` rendered before this fix, and it
+                    // never runs when `status.liveness` is undefined, which is exactly the deployment
+                    // this button exists to help most (nothing has ever looked, and the first click
+                    // just failed too).
+                    checkError && <p className="mt-2 border-t border-line pt-2 text-red-600">⚠ {checkError}</p>
+                  )}
+                  <div className="mt-2 flex justify-end">
+                    <button type="button" className={btn} disabled={checking} onClick={recheckLiveness}>
+                      {checking ? "확인 중…" : "지금 확인"}
+                    </button>
+                  </div>
+
+                  <p className="mt-2 text-faint">
+                    모드를 바꾸려면 서버를 끄고 <code className="font-mono">.env</code>의{" "}
+                    <code className="font-mono">HERALD_STORAGE_MODE</code>를 고친 뒤 다시 실행하세요. 대시보드에서는 바꿀 수
+                    없습니다.
+                  </p>
+                  {status.integrations.some((i) => !i.configured) && (
+                    <p className="mt-1.5 text-faint">
+                      <span className="text-amber-ink">키 없음</span> 항목은 <code className="font-mono">.env</code>에 해당 키를
+                      채우고 서버를 다시 실행하면 활성화됩니다.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           )}
