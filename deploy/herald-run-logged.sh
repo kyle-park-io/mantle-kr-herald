@@ -215,6 +215,10 @@ case "$RUN_INVOCATION" in ''|*[!0-9a-f]*) RUN_INVOCATION="none" ;; esac
 # this header needs — content that stays ON this line cannot match a marker grep anchored at column
 # 0. Does not touch "$@" below, only this cosmetic echo of it: the command still runs with the
 # argument's real, unescaped bytes.
+#
+# tests/deploy/notifyFailure.test.ts's "the wrapper's own header cannot forge a marked line from an
+# argument it echoes" drives this REAL script (not a stub) with exactly that shape and pins the
+# count of marked lines the run log ends up with; mutation-confirmed to fail without this escaping.
 CMD_LINE=${*//$'\r'/\\r}
 CMD_LINE=${CMD_LINE//$'\n'/\\n}
 say "=== $UNIT started $(date -u +%Y-%m-%dT%H:%M:%SZ) invocation $RUN_INVOCATION — $CMD_LINE ==="

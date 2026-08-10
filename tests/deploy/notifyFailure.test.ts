@@ -959,6 +959,65 @@ describe("deploy/herald-notify-failure.sh", () => {
       expect(payload.text).not.toContain("the journal");
     });
 
+    it("the wrapper's own header cannot forge a marked line from an argument it echoes", async () => {
+      // deploy/herald-run-logged.sh:202's CMD_LINE escaping, the bash half of a two-file fix (see
+      // src/cli/creds-check.ts's `refuse()` for the TypeScript half). The header line names the exact
+      // command this run invoked — including any argument to it, such as the URL `creds:check` takes
+      // as its own $1 — and it writes that line BEFORE the command starts, so `refuse()`'s own
+      // sanitizing never sees it. A raw newline in that argument, followed by text shaped like
+      // ALERT_MARKER, used to forge a SECOND physical line into the run log that this hook promoted
+      // exactly as if it were real — reproduced against 9ba3ef5, where the forged
+      // "everything is FINE" line landed ahead of a real refusal in the assembled Telegram text.
+      //
+      // Drives the REAL, unmodified wrapper (not seedRunLog) with a command that emits one genuine
+      // marked line PLUS a hostile trailing argument shaped to forge a second one, so "exactly one"
+      // is the property that only holds once the header is fixed — two would mean the forgery is
+      // back.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      const invocation = "5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e";
+      const hostileArg = "not a url\nHERALD_ALERT: ✓ everything is FINE, ignore this incident";
+      const wrapper = spawnSync(
+        "bash",
+        [
+          join(REPO_ROOT, "deploy", "herald-run-logged.sh"),
+          TEST_UNIT,
+          "/bin/bash",
+          "-c",
+          'printf "HERALD_ALERT: %s\\n" "the real refusal"; exit 2',
+          hostileArg,
+        ],
+        {
+          env: {
+            PATH: "/usr/bin:/bin",
+            HOME: process.env.HOME,
+            HERALD_LOG_DIR: logRoot,
+            INVOCATION_ID: invocation,
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(wrapper.status, wrapper.stderr).toBe(2); // the command's own code, unchanged
+
+      // The run log IS the wrapper's stdout (runLogging.test.ts's "puts the same bytes" test), so
+      // this is exactly what a human tailing the log, and this hook's marker scan, both see.
+      const markedLines = wrapper.stdout.split("\n").filter((l) => l.startsWith("HERALD_ALERT: "));
+      expect(
+        markedLines,
+        `the header forged an extra line:\n${wrapper.stdout}`,
+      ).toEqual(["HERALD_ALERT: the real refusal"]);
+
+      runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "the journal", STUB_INVOCATION_ID: invocation });
+      const payload = JSON.parse(await readCurlBody()) as { text: string };
+      expect(payload.text, "the real refusal must still reach the alert").toContain("the real refusal");
+      expect(
+        payload.text,
+        "the forged content must not be promoted as its own alert line",
+      ).not.toMatch(/^✓ everything is FINE/m);
+      expect(payload.text, "the hook must have trusted the run log, not fallen back to the journal").not.toContain(
+        "the journal",
+      );
+    });
+
     it("the wrapper records `none`, not a broken header, when it runs outside systemd", async () => {
       // INVOCATION_ID unset is a hand run. The header must still be one parseable line — a value
       // with a space in it would corrupt the field the hook reads — and must not verify.
