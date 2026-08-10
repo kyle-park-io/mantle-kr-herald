@@ -8,9 +8,10 @@
  * not be read" — for a deployment that was perfectly healthy. The feature had never once executed,
  * and a full green suite plus four clean reviews had nothing to say about it.
  *
- * So the cookie is not a header a caller remembers to add. `authed()` attaches it, and refuses
- * outright before login rather than quietly sending an unauthenticated request that would come back
- * looking like the deployment's fault.
+ * So the cookie is not a header a caller remembers to add. `authed()` attaches it inside the client,
+ * making an authenticated request without the session impossible by construction. `request()` is the
+ * unauthenticated escape hatch for gated routes; call sites are held to using `authed()` for such
+ * routes by test.
  */
 
 export interface DeploymentClient {
@@ -21,7 +22,7 @@ export interface DeploymentClient {
   request(path: string, init?: RequestInit): Promise<Response | undefined>;
   /** POSTs `/api/login` and remembers the session. Returns the status, or -1 if it never completed. */
   logIn(username: string, password: string): Promise<number>;
-  /** A call carrying the session. Throws if there is no session — see the module comment. */
+  /** A call carrying the session cookie. Throws if there is no session — the cookie is attached by `authed()`, not by the caller. */
   authed(path: string, init?: RequestInit): Promise<Response | undefined>;
   forgetSession(): void;
 }
@@ -61,7 +62,9 @@ export function createDeploymentClient(
       if (cookie === undefined) {
         throw new Error(`authed(${path}) called before a successful log in — this is a programming error`);
       }
-      return request(path, { ...init, headers: { ...(init?.headers as Record<string, string>), cookie } });
+      const headers = new Headers(init?.headers);
+      headers.set("cookie", cookie);
+      return request(path, { ...init, headers });
     },
     forgetSession(): void {
       cookie = undefined;

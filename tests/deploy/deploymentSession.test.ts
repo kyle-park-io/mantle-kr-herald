@@ -57,7 +57,8 @@ describe("createDeploymentClient", () => {
     await client.authed("/api/status");
     await client.authed("/api/diagnostics/live");
     for (const call of calls.slice(1)) {
-      expect((call.init?.headers as Record<string, string>).cookie, call.url).toBe("herald_session=abc123");
+      const headers = new Headers(call.init?.headers);
+      expect(headers.get("cookie"), call.url).toBe("herald_session=abc123");
     }
   });
 
@@ -66,9 +67,9 @@ describe("createDeploymentClient", () => {
     const client = createDeploymentClient("https://example.test", fetchFn);
     await client.logIn("u", "p");
     await client.authed("/api/thing", { method: "POST", headers: { "content-type": "application/json" } });
-    const headers = calls[1].init?.headers as Record<string, string>;
-    expect(headers.cookie).toBe("herald_session=abc123");
-    expect(headers["content-type"]).toBe("application/json");
+    const headers = new Headers(calls[1].init?.headers);
+    expect(headers.get("cookie")).toBe("herald_session=abc123");
+    expect(headers.get("content-type")).toBe("application/json");
   });
 
   it("refuses an authed call before login rather than sending an unauthenticated one", async () => {
@@ -106,5 +107,37 @@ describe("createDeploymentClient", () => {
     const client = createDeploymentClient("https://example.test", fetchFn, () => {});
     expect(await client.logIn("u", "p")).toBe(-1);
     expect(client.loggedIn).toBe(false);
+  });
+
+  it("preserves a Headers instance passed by the caller", async () => {
+    const { calls, fetchFn } = recorder(() => LOGIN_OK);
+    const client = createDeploymentClient("https://example.test", fetchFn);
+    await client.logIn("u", "p");
+    const callerHeaders = new Headers({ "content-type": "application/json" });
+    await client.authed("/api/thing", { headers: callerHeaders });
+    const outgoing = new Headers(calls[1].init?.headers);
+    expect(outgoing.get("content-type")).toBe("application/json");
+    expect(outgoing.get("cookie")).toBe("herald_session=abc123");
+  });
+
+  it("preserves a [key, value][] array passed by the caller", async () => {
+    const { calls, fetchFn } = recorder(() => LOGIN_OK);
+    const client = createDeploymentClient("https://example.test", fetchFn);
+    await client.logIn("u", "p");
+    const callerHeaders: [string, string][] = [["content-type", "application/json"], ["x-custom", "value"]];
+    await client.authed("/api/thing", { headers: callerHeaders });
+    const outgoing = new Headers(calls[1].init?.headers);
+    expect(outgoing.get("content-type")).toBe("application/json");
+    expect(outgoing.get("x-custom")).toBe("value");
+    expect(outgoing.get("cookie")).toBe("herald_session=abc123");
+  });
+
+  it("ensures the session cookie overrides a caller-supplied cookie header", async () => {
+    const { calls, fetchFn } = recorder(() => LOGIN_OK);
+    const client = createDeploymentClient("https://example.test", fetchFn);
+    await client.logIn("u", "p");
+    await client.authed("/api/thing", { headers: { cookie: "stale=old123" } });
+    const outgoing = new Headers(calls[1].init?.headers);
+    expect(outgoing.get("cookie")).toBe("herald_session=abc123");
   });
 });
