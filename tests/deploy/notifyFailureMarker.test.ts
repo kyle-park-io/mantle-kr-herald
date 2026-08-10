@@ -50,6 +50,16 @@ let workDir: string;
 let repoDir: string;
 let stubDir: string;
 let scriptPath: string;
+/**
+ * HERALD_LOG_DIR for the script under test, always a fresh per-test path — but, unlike
+ * `tests/deploy/notifyFailure.test.ts`, never `mkdir`'d in `beforeEach` here. Since the script now
+ * reads the run log FIRST (this task), a test that wants the JOURNAL branch (EXCERPT_SOURCE
+ * "journal") must not seed a run log for TEST_UNIT: with nothing under this path, `ls` on the
+ * per-unit directory finds no `*.log` file, RUN_LOG stays empty, and the script falls through to
+ * `journalctl`. Every test below that sets only STUB_JOURNAL_OUTPUT (no `seedRunLog` call) is
+ * exercising the journal branch for exactly this reason. Tests that call `seedRunLog` are
+ * exercising the run-log branch instead, and say so in their own titles/comments.
+ */
 let logRoot: string;
 
 async function writeExecutable(path: string, lines: string[]): Promise<void> {

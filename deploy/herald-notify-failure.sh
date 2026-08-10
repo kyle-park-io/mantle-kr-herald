@@ -7,11 +7,11 @@
 # script directly. Each source unit sets its own `OnFailure=herald-notify-failure@%n.service`; `%n`
 # expands to the failing unit's own full name before systemd resolves that target, so it becomes the
 # template's `%i`, which systemd hands to `ExecStart=` and this script reads as $1. Sends ONE
-# Telegram message naming the unit that failed, a short tail of *that* unit's own output — from its
-# journal if the journal still has it, otherwise from the durable run log
-# deploy/herald-run-logged.sh leaves under %h/.herald/logs/ — and the command to read more, then
-# exits 0 unconditionally once past the argument check below: a failure-handler that can itself fail
-# is a loop, not a safety net, and nothing here is worth the timer never firing again over.
+# Telegram message naming the unit that failed, a short tail of *that* unit's own output — from the
+# durable run log deploy/herald-run-logged.sh leaves under %h/.herald/logs/ if there is one, otherwise
+# from the journal — and the command to read more, then exits 0 unconditionally once past the
+# argument check below: a failure-handler that can itself fail is a loop, not a safety net, and
+# nothing here is worth the timer never firing again over.
 #
 # Takes the failing unit's name as $1 rather than hardcoding it. This used to hardcode
 # herald-watch.service, the only unit this hook served at the time; once herald-x-reconcile.service
@@ -116,40 +116,62 @@ else
   journal_read() { journalctl "$@" 2>/dev/null; }
 fi
 
-LOG_EXCERPT="$(journal_read --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat)" || LOG_EXCERPT=""
-# Where the reader is pointed for more, once they open the alert. Replaced below if the excerpt
-# turns out to have come from the durable run log instead of the journal.
-LOG_POINTER="journalctl --user -u ${UNIT} -n 50 --no-pager"
-
-# Fallback: the durable run log deploy/herald-run-logged.sh writes for every scheduled run. This is
-# the payoff of that script existing. "Captured immediately" above buys nothing when the journal was
-# already rotated *before* this hook ran — an eight-minute window is not much of a window, and a run
-# that failed at minute nine of a thirty-minute TimeoutStartSec= has already outlived its own log.
-# The run log has no such window: the wrapper's tee has flushed and exited before ExecStart= returns,
-# which is before systemd transitions the unit to failed and activates this hook, so by the time
-# this line runs the file is complete on disk.
+# ── Where the excerpt comes from, and why the run log wins ───────────────────────────────────────
 #
-# Same root expression as the wrapper's, character for character — tests/deploy/runLogging.test.ts
-# pins the two equal, because a wrapper writing where this hook does not look is a fallback that
-# silently never fires while both scripts keep passing their own tests. Same `${UNIT%.service}`
-# per-unit directory, so this reads only the failing unit's own runs.
+# The run log is read FIRST, and this is the whole point of `deploy/herald-run-logged.sh` existing.
+#
+# journald attributes systemd's own messages about a unit to that unit — `Main process exited`,
+# `Failed with result`, `Failed to start`, `Triggering OnFailure=`, `Consumed … CPU time` — and it
+# emits them AFTER the process exits, so they are always the last lines. Reading the journal first
+# therefore spent the entire five-line budget on systemd talking about itself. A real alert, from
+# 2026-08-07, arrived as six lines of which five were that, and nothing about what `pnpm x:reconcile`
+# had done wrong. The journal is never empty for a unit that just failed, so the run-log fallback
+# below it almost never fired: the wrapper had been writing exactly the right content all along and
+# the hook was not looking at it.
+#
+# The run log holds the command's own output plus the wrapper's two boundary lines, and nothing else.
+# It is also one file per run, so the marked-line scan over it is run-scoped by construction —
+# the `awk` anchoring further down is needed only on the journal path now.
 #
 # Newest by NAME, not by mtime: the run logs are UTC-timestamped, `ls -1` sorts them
 # lexicographically, and mtime ordering is exactly what this machine's constantly stepping clock
-# makes untrustworthy — the same clock that destroyed the journal this fallback exists for.
+# makes untrustworthy.
+#
+# Same root expression as the wrapper's, character for character — tests/deploy/runLogging.test.ts
+# pins the two equal, because a wrapper writing where this hook does not look is a fallback that
+# silently never fires while both scripts keep passing their own tests.
+LOG_EXCERPT=""
+LOG_POINTER=""
+EXCERPT_SOURCE="none"
 RUN_LOG=""
-if [ -z "$LOG_EXCERPT" ]; then
-  LOG_ROOT="${HERALD_LOG_DIR:-${HOME:-}/.herald/logs}"
-  RUN_LOG_DIR="$LOG_ROOT/${UNIT%.service}"
-  RUN_LOG="$(ls -1 "$RUN_LOG_DIR"/*.log 2>/dev/null | tail -n 1)" || RUN_LOG=""
-  if [ -n "$RUN_LOG" ]; then
-    LOG_EXCERPT="$(tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null)" || LOG_EXCERPT=""
-    # Point at the file, not at a journalctl invocation that just came back empty. Never fatal on
-    # its own either: an unreadable or absent run log degrades to an empty excerpt and the plain
-    # notice below, exactly as an unreadable journal does.
-    [ -n "$LOG_EXCERPT" ] && LOG_POINTER="tail -n 50 ${RUN_LOG}"
+
+LOG_ROOT="${HERALD_LOG_DIR:-${HOME:-}/.herald/logs}"
+RUN_LOG_DIR="$LOG_ROOT/${UNIT%.service}"
+RUN_LOG="$(ls -1 "$RUN_LOG_DIR"/*.log 2>/dev/null | tail -n 1)" || RUN_LOG=""
+if [ -n "$RUN_LOG" ]; then
+  LOG_EXCERPT="$(tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null)" || LOG_EXCERPT=""
+  if [ -n "$LOG_EXCERPT" ]; then
+    LOG_POINTER="tail -n 50 ${RUN_LOG}"
+    EXCERPT_SOURCE="runlog"
   fi
 fi
+
+# Journal fallback: the unit never reached the wrapper (a misconfigured ExecStart=, a unit added
+# without it), or could not write under %h/.herald/logs. Captured with `--output=cat` to drop
+# journalctl's own timestamp/hostname prefix — redundant here, since the alert's arrival time
+# already says when. Never fatal on its own: an unreadable journal degrades to an empty excerpt via
+# `|| true`, not a script failure. This hook still has to reach `exit 0` regardless.
+if [ -z "$LOG_EXCERPT" ]; then
+  LOG_EXCERPT="$(journal_read --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat)" || LOG_EXCERPT=""
+  if [ -n "$LOG_EXCERPT" ]; then
+    LOG_POINTER="journalctl --user -u ${UNIT} -n 50 --no-pager"
+    EXCERPT_SOURCE="journal"
+  fi
+fi
+
+# Neither source had anything. The pointer is still worth sending — it is what the excerpt exists to
+# make unnecessary, not a replacement for it.
+[ -z "$LOG_POINTER" ] && LOG_POINTER="journalctl --user -u ${UNIT} -n 50 --no-pager"
 
 # ── Marked lines: content the failing command declared must reach the alert ──────────────────────
 #
@@ -171,17 +193,20 @@ fi
 # capturing and diffing real payloads, not by reasoning. `src/deploy/alertMarker.ts` holds the same
 # string on the TypeScript side and tests/deploy/notifyFailureMarker.test.ts pins the two equal.
 #
-# A SECOND journal read rather than widening the first: reusing one wider read and re-tailing it
-# would change how LOG_EXCERPT is produced for every unit, which is exactly what must not change
-# here. This one is bounded and its failure degrades to "no marked lines", never to a script error.
+# A SECOND read of the same source rather than widening the excerpt's own: reusing that read and
+# re-tailing it would change how LOG_EXCERPT is produced for every unit, which is exactly what must
+# not change here. This one is bounded and its failure degrades to "no marked lines", never to a
+# script error.
 ALERT_MARKER="HERALD_ALERT: "
 # How far back to look for marked lines. Well past LOG_TAIL_LINES, because the whole point is that
 # the line may be nowhere near the end; bounded because this is a log of unknown length.
 ALERT_SCAN_LINES=200
-# A LINE bound is not a SIZE bound, and this read is unconditional, so all four units pay whatever it
+# A LINE bound is not a SIZE bound, and on the journal branch this read still runs regardless of
+# whether the unit marks any lines — every unit that falls through to the journal pays whatever it
 # costs. Measured: 200 lines of 1 MiB each took 26.46s and 1,039 MB RSS against 1.00s and 216 MB for
 # the single read before, crossing TimeoutStartSec= at around 246 MB of journal. `head -c` puts the
-# ceiling where bash can enforce it. 256 KiB is a thousand times any real run and still nothing.
+# ceiling where bash can enforce it. 256 KiB is a thousand times any real run and still nothing. A
+# unit whose run log answered the excerpt never takes this journal branch at all — see below.
 ALERT_SCAN_MAX_BYTES=262144
 # What the mechanism may add to the message, so a log full of marked lines cannot produce an
 # unbounded Telegram message. Three lines is more than any command emits today (creds:check emits
@@ -192,13 +217,16 @@ ALERT_MAX_CHARS=250
 # `|| true` inside the group, not after the pipeline: `head -c` closes the pipe once it has enough,
 # journalctl dies of SIGPIPE, and with `pipefail` that would discard a window that was merely
 # truncated — turning the byte cap into a silent off switch.
-ALERT_WINDOW="$( { journal_read --user -u "$UNIT" -n "$ALERT_SCAN_LINES" --no-pager --output=cat || true; } | head -c "$ALERT_SCAN_MAX_BYTES" )" || ALERT_WINDOW=""
-# Same source precedence as the excerpt above: the journal when it has anything, the durable run log
-# otherwise. RUN_LOG is set only when the journal came back empty, which is the same condition.
-ALERT_FROM_JOURNAL=1
-if [ -z "$ALERT_WINDOW" ] && [ -n "$RUN_LOG" ]; then
+#
+# Same source precedence as the excerpt above, and for the same reason: scan whichever source
+# EXCERPT_SOURCE says actually answered — the run log first, the journal only when that came back
+# empty — rather than always widening a journal read regardless of where the excerpt came from. This
+# is also what keeps the journal read above conditional in practice: a unit whose run log answered
+# skips it entirely.
+if [ "$EXCERPT_SOURCE" = "runlog" ]; then
   ALERT_WINDOW="$( { tail -n "$ALERT_SCAN_LINES" "$RUN_LOG" 2>/dev/null || true; } | head -c "$ALERT_SCAN_MAX_BYTES" )" || ALERT_WINDOW=""
-  ALERT_FROM_JOURNAL=0
+else
+  ALERT_WINDOW="$( { journal_read --user -u "$UNIT" -n "$ALERT_SCAN_LINES" --no-pager --output=cat || true; } | head -c "$ALERT_SCAN_MAX_BYTES" )" || ALERT_WINDOW=""
 fi
 
 # ── Scope the window to THIS run ─────────────────────────────────────────────────────────────────
@@ -227,7 +255,7 @@ fi
 # — trading a correct message for an empty one.
 ALERT_SCOPE="$ALERT_WINDOW"
 ALERT_UNSCOPED=0
-if [ "$ALERT_FROM_JOURNAL" -eq 1 ] && [ -n "$ALERT_WINDOW" ]; then
+if [ "$EXCERPT_SOURCE" = "journal" ] && [ -n "$ALERT_WINDOW" ]; then
   ALERT_SCOPE="$(printf '%s\n' "$ALERT_WINDOW" | awk -v marker="=== ${UNIT} started " '
     index($0, marker) == 1 { buf = ""; found = 1; next }
     found { buf = buf $0 "\n" }

@@ -39,9 +39,12 @@ let stubDir: string;
 let scriptPath: string;
 /**
  * Stands in for ~/.herald/logs — the durable run logs deploy/herald-run-logged.sh writes, which the
- * script now falls back to when the journal excerpt comes back empty. Always pointed at a temp
- * directory, never left to the default: without the override every test whose journalctl stub
- * returns nothing would read Kyle's real production run logs.
+ * script now reads FIRST, falling back to the journal only when there is no run log (or an empty
+ * one) for the unit. Always pointed at a temp directory, never left to the default: without the
+ * override every test would either read Kyle's real production run logs or (worse) never exercise
+ * the journal fallback at all, since a real box always has one. Never `mkdir`'d ahead of time in
+ * `beforeEach` — a test that wants the journal branch simply does not call `seedRunLog`, and the
+ * absent directory makes `ls` on it fail exactly like an empty one would.
  */
 let logRoot: string;
 
@@ -253,12 +256,80 @@ describe("deploy/herald-notify-failure.sh", () => {
     expect(existsSync(join(stubDir, "curl-invoked"))).toBe(false);
   });
 
-  // The durable-log fallback — the actual payoff of deploy/herald-run-logged.sh existing. journald
-  // on this box holds roughly eight minutes of history because it rotates on every backwards clock
-  // step, so "captured immediately" buys nothing when the journal was already rotated *before* this
-  // hook ran: a run that failed at minute nine of a thirty-minute TimeoutStartSec= has outlived its
-  // own journal. The run log has no such window.
-  describe("durable run-log fallback", () => {
+  // The durable run log — the actual payoff of deploy/herald-run-logged.sh existing, and (since this
+  // task) the PRIMARY excerpt source, not a fallback for when the journal is empty. journald on this
+  // box holds roughly eight minutes of history because it rotates on every backwards clock step, so
+  // "captured immediately" buys nothing when the journal was already rotated *before* this hook ran:
+  // a run that failed at minute nine of a thirty-minute TimeoutStartSec= has outlived its own
+  // journal. Worse, journald attributes systemd's own post-exit chatter (`Main process exited`,
+  // `Failed with result`, `Consumed … CPU time`, …) to the unit, and always last — so even a live
+  // journal read spent its whole five-line budget on systemd talking about itself, never the
+  // command's own output. The run log has neither problem: no rotation window, and nothing in it but
+  // what the command printed plus the wrapper's own two boundary lines.
+  describe("excerpt source: the run log is read first, the journal only as fallback", () => {
+    it("prefers the durable run log over the journal, so systemd's own lines cannot crowd out the command's", async () => {
+      // The 2026-08-07 alert this task's design doc is named for: journald attributes systemd's own
+      // post-exit messages to the unit, and they are always last, so a five-line tail of the JOURNAL
+      // is five lines of systemd talking about itself. The run log holds only what the command
+      // printed. Both sources are seeded here, deliberately, so this proves precedence rather than
+      // just "the run log is used when the journal has nothing" (the next test covers that).
+      const runLog = await seedRunLog(
+        TEST_UNIT,
+        "20260807T094200Z",
+        [
+          `=== ${TEST_UNIT} started 2026-08-07T09:42:00Z — pnpm x:reconcile --yes ===`,
+          "writing…",
+          "  ✗ x:2085765414248968281 publish failed — HTTP 429",
+          "wrote 0, retired 0, failed 1.",
+          `=== ${TEST_UNIT} exited 1 at 2026-08-07T09:42:09Z ===`,
+        ].join("\n") + "\n",
+      );
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      const { status } = runScript(TEST_UNIT, {
+        STUB_JOURNAL_OUTPUT: [
+          "herald-x-reconcile.service: Main process exited, code=exited, status=1/FAILURE",
+          "herald-x-reconcile.service: Failed with result 'exit-code'.",
+          "Failed to start herald-x-reconcile.service - Mantle KR Herald X publish reconcile.",
+          "herald-x-reconcile.service: Triggering OnFailure= dependencies.",
+          "herald-x-reconcile.service: Consumed 2.021s CPU time.",
+        ].join("\n"),
+      });
+      expect(status).toBe(0);
+
+      const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
+      expect(body.text, "the command's own failing line must be in the alert").toContain("HTTP 429");
+      expect(body.text).toContain("wrote 0, retired 0, failed 1.");
+      // The whole complaint, asserted directly.
+      expect(body.text, "systemd's own noise must not appear").not.toContain("Consumed 2.021s CPU time");
+      expect(body.text).not.toContain("Main process exited");
+      expect(body.text).not.toContain("Triggering OnFailure=");
+      // The pointer names the source that was actually used.
+      expect(body.text).toContain(`tail -n 50 ${runLog}`);
+      expect(body.text).not.toContain("journalctl --user -u");
+    });
+
+    it("falls back to the journal when there is no run log at all", async () => {
+      // No seedRunLog call: this unit never reached the wrapper, so HERALD_LOG_DIR (a fresh per-test
+      // temp directory, never created ahead of time — see beforeEach) has no entry for TEST_UNIT.
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      const { status } = runScript(TEST_UNIT, {
+        STUB_JOURNAL_OUTPUT: "the only record of this run\nsecond line",
+      });
+      expect(status).toBe(0);
+      const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
+      expect(body.text).toContain("the only record of this run");
+      expect(body.text).toContain("journalctl --user -u");
+    });
+
+    it("falls back to the journal when the run log exists but is empty", async () => {
+      await seedRunLog(TEST_UNIT, "20260807T094200Z", "");
+      await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
+      const { status } = runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "journal had it" });
+      expect(status).toBe(0);
+      const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
+      expect(body.text).toContain("journal had it");
+    });
+
     it("uses the run log's tail when the journal comes back empty, and points at the file", async () => {
       await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
       const runLog = await seedRunLog(
@@ -306,17 +377,19 @@ describe("deploy/herald-notify-failure.sh", () => {
       expect(body.text).not.toContain("the older run");
     });
 
-    it("prefers the journal when it has lines, and keeps the journalctl pointer", async () => {
-      // The journal stays the primary source when it is readable: it is live, and it does not
-      // depend on the failing unit having reached the wrapper at all. The fallback is a fallback.
+    it("prefers the run log when it has lines, even though the journal also has content", async () => {
+      // Inverted by this task, on purpose: before Task 1 this test asserted the opposite (the
+      // journal won this race) because the journal was read first. That was the exact bug — see the
+      // "prefers the durable run log over the journal" test above — so this assertion is now
+      // backwards from what it used to be, not weakened from it.
       await writeSyntheticEnv({ TELEGRAM_BOT_TOKEN: "123:AA-token", TELEGRAM_CHAT_ID_OPS: "-100999" });
-      await seedRunLog(TEST_UNIT, "20260808T004126Z", "from the run log\n");
+      const runLog = await seedRunLog(TEST_UNIT, "20260808T004126Z", "from the run log\n");
       runScript(TEST_UNIT, { STUB_JOURNAL_OUTPUT: "from the journal" });
 
       const body = JSON.parse(await readFile(join(stubDir, "curl-body.log"), "utf8")) as { text: string };
-      expect(body.text).toContain("from the journal");
-      expect(body.text).not.toContain("from the run log");
-      expect(body.text).toContain(`journalctl --user -u ${TEST_UNIT} -n 50 --no-pager`);
+      expect(body.text).toContain("from the run log");
+      expect(body.text).not.toContain("from the journal");
+      expect(body.text).toContain(`tail -n 50 ${runLog}`);
     });
 
     it("truncates an oversized run-log excerpt the same way it truncates a journal one", async () => {
