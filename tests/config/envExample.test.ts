@@ -7,8 +7,14 @@ import { ALL_OUTLETS } from "../../src/domain/outlet/models";
 /**
  * Standard runtime variables that are never ours to document — the app does not define them and a
  * user does not set them in `.env`.
+ *
+ * `PR_TITLE` joins them for the same reason rather than a different one: `.github/workflows/ci.yml`
+ * hands the pull request title to `src/cli/check-pr-title.ts` through the environment (never
+ * interpolated into a shell command, where a backtick in a title would run), so it is supplied by
+ * CI and read by nothing an operator installs. Documenting it in `.env.example` would tell a reader
+ * to set something that has no meaning outside a GitHub runner.
  */
-const NOT_OURS = new Set(["NODE_ENV", "CI", "HOME", "PATH"]);
+const NOT_OURS = new Set(["NODE_ENV", "CI", "HOME", "PATH", "PR_TITLE"]);
 
 const TAGS = ["[REQUIRED", "[OPTIONAL", "[PICK ONE"];
 
