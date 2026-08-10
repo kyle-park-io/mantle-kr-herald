@@ -19,8 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   catch it between deploys, but both answers ended in a terminal and in a systemd journal this box
   rotates every eight minutes — never on the screen the team actually watches. This is the same fact,
   on that screen. **Existing installs need `pnpm db:migrate`** for the new `credential_liveness` table;
-  `deploy/herald-deploy.sh` already runs it on every deploy, and the read degrades to showing nothing
-  rather than to a 500, so a database that has not been migrated costs this feature and nothing else.
+  `deploy/herald-deploy.sh` already runs it on every deploy. `/api/status`'s own read degrades to
+  showing nothing rather than to a 500, but an unmigrated database does not stop there:
+  `credential_liveness` is now one of `TABLE_NAMES`, so `isSchemaApplied` fails without it and `pnpm
+  doctor`'s Database check turns red with `Schema not fully applied — a column applySchema adds is
+  missing` — naming a missing *column* when what is actually missing is this new *table*. `pnpm
+  db:export`'s preview prints its own `Schema not applied yet` line for the same reason.
   - **The route that probes is the only thing that writes**, so every caller that already existed fills
     the row for free — no new unit, no new command, no change to `herald-creds.service`. `GET
     /api/diagnostics/live` records the seven results it just took into one upserted row

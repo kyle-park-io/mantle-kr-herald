@@ -45,6 +45,16 @@ function parseProbes(value: string): StoredProbe[] | undefined {
  * `.env`, a different set of objects, and must never land in a row the board reads as the
  * deployment's.
  *
+ * **That rule is about which COMMAND writes, not which DATABASE gets written to** — and it does not
+ * cover the second half. `probeLiveness` is built identically for `routes: "local"` and `routes:
+ * "hosted"` (`createDeps.ts`); nothing gates `GET /api/diagnostics/live` on the route set
+ * (`apiHandlers.ts`). So `pnpm serve` run locally in a shell whose `DATABASE_URL` happens to point at
+ * production shares this exact writer: a `[지금 확인]` click, or any other caller of that route, on
+ * that local dashboard probes the LAPTOP's own `.env` credentials and writes them into the row the
+ * production board reads as its own observation — indistinguishable there from a real deployment
+ * probe. Nothing in this class can detect that; it is a `DATABASE_URL` hygiene question, the same one
+ * every other write in this file already depends on the operator getting right.
+ *
  * **Reader** is `/api/status`, degrading to `undefined` rather than taking the header down — see
  * `createDeps`'s `readLiveness`.
  *

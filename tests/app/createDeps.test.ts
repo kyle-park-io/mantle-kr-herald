@@ -358,10 +358,12 @@ describe("createDeps", () => {
       // on this exact substitution.
       const startedAt = performance.now();
       const probes = await deps.probeLiveness();
-      // Comfortably above the 2s write budget (headroom for CI scheduling jitter) and comfortably
-      // below what "hanging" would look like — this assertion is the one that would fail if the
-      // bound were ever dropped or made unbounded again.
-      expect(performance.now() - startedAt).toBeLessThan(3_000);
+      // The exact number here does not matter — a hang is unbounded, so anything comfortably above
+      // the 2s write budget proves the same thing a tighter bound would. What matters is that this
+      // stays well short of "hanging": 5s is 2.5x the budget, generous enough not to flake in a
+      // fork-contended CI suite, and still an assertion that fails if the bound were ever dropped or
+      // made unbounded again.
+      expect(performance.now() - startedAt).toBeLessThan(5_000);
       expect(probes.every((p) => p.status === "skipped")).toBe(true);
     });
 

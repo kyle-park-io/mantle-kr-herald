@@ -18,8 +18,11 @@ export interface LivenessObservation {
 
 /** A credential that did not answer, with everything the card needs to name it and everything the
  *  chip needs to word itself. `tier` is carried rather than re-derived in the browser: the tier
- *  table lives on this side, and a copy of it in `web/src` is how the CLI and the header drifted
- *  apart the last time. */
+ *  table lives on this side, and re-deriving it in `web/src` would risk the same failure mode
+ *  `web/src/components/CollectedBreakdownCard.tsx`'s own header warns about for the 수집 card — "a
+ *  card that did its own arithmetic is exactly how the CLI and the header drifted apart the last
+ *  time." That precedent is re-derived *arithmetic*, not a duplicated tier table, and no tier table
+ *  has actually drifted here — keeping `tier` server-computed is what keeps it that way. */
 export interface DeadProbe {
   key: ProbeKey;
   tier: ProbeTier;

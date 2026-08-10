@@ -96,6 +96,15 @@ const LIVENESS_WRITE_TIMEOUT_MS = 2_000;
  * way harmlessly (the `.then` below still consumes its settlement, so a late rejection never
  * surfaces as an unhandled one). What this buys is bounding how long the CALLER waits — see
  * `LIVENESS_WRITE_TIMEOUT_MS` for why `probeLiveness` needs exactly that.
+ *
+ * A second copy of `withDeadline` in `src/doctor/liveProbes.ts` rather than an import of it: that
+ * module's own header names its contract as two exports, `runLiveProbes` and `buildLiveProbeInput`,
+ * and `withDeadline` — like the private `DeadlineError` it rejects with — is deliberately not one of
+ * them. Importing it would mean widening that module's surface to reuse a five-line race, for a
+ * caller that does not even want the same failure shape: `withDeadline` rejects with a `DeadlineError`
+ * naming *what* timed out, where this rejects with a plain `Error` naming the millisecond bound —
+ * the two are worded for different readers (a probe report vs. a `console.warn`), not accidentally
+ * different.
  */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -413,10 +422,11 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     // the Lark term. `pnpm status` reads them in this same order, for this same reason — hence one
     // sequential round trip here rather than a sixth entry in the `Promise.all` above.
     const threads = await stores.collectionRepository.loadAll();
-    // Not in the `Promise.all` above either, but for a different reason than `threads`: this one is
-    // a plain single-row read with no ordering constraint at all. It sits here so the two reads
-    // whose ORDER is load-bearing stay visibly adjacent and nothing later mistakes this for part of
-    // that pairing.
+    // Not in the `Promise.all` above either, but for a different reason than `threads`: these next
+    // two are plain single-row reads, each with no ordering constraint of its own — not on `threads`,
+    // and not on each other. They sit here, after `threads`, so the one pair above whose ORDER is
+    // load-bearing stays visibly adjacent and nothing later mistakes either of these for part of that
+    // pairing.
     const floorReport = await readFloorReport();
     const liveness = await readLiveness();
     const sync = syncSummary({ translations, entries, render: renderFor });
