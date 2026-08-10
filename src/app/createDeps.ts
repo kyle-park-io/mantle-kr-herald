@@ -66,6 +66,8 @@ import { TypefullyDraftLookup } from "../adapters/send/TypefullyDraftLookup";
 import type { DraftLookup } from "../ports/DraftLookup";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { runLiveProbes, buildLiveProbeInput, type LiveProbeResult } from "../doctor/liveProbes";
+import { PgCredentialLiveness } from "../adapters/store/PgCredentialLiveness";
+import { summarizeLiveness, type LivenessObservation } from "../status/liveness";
 
 /** Which route set an entry point serves. See `prepareConversionRun`'s construction below — this is
  *  the one axis the route set currently varies on. */
@@ -282,14 +284,47 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     ];
   })();
 
+  /** Reads and (from `probeLiveness` below) writes the deployment's last credential observation —
+   *  see that class's own doc comment for the one-writer rule. */
+  const credentialLiveness = new PgCredentialLiveness(db);
+
   /**
    * Live credential checks — the counterpart to `integrations` above, which only reports presence.
    *
    * Both halves come from `src/doctor/liveProbes.ts`, including the environment-reading half. This
    * used to be a verbatim copy of `src/cli/doctor.ts`'s block, and a copy is exactly what that
    * module's header rules out: the drifted one would be this one, the one running in production.
+   *
+   * Records what it just observed before answering, which is what makes the daily `creds:check` and
+   * every `deploy:smoke` populate the board's badge for free — no new command, no new unit, and no
+   * second place that knows how to probe.
+   *
+   * The write is best-effort and deliberately cannot fail the call: this route's whole purpose is to
+   * answer when things are broken.
    */
-  const probeLiveness = async (): Promise<LiveProbeResult[]> => runLiveProbes(buildLiveProbeInput());
+  const probeLiveness = async (): Promise<LiveProbeResult[]> => {
+    const probes = await runLiveProbes(buildLiveProbeInput());
+    try {
+      await credentialLiveness.write({
+        observedAt: new Date().toISOString(),
+        probes: probes.map(({ key, status, detail }) => ({ key, status, detail })),
+      });
+    } catch (err) {
+      console.warn(`[diagnostics] could not record the credential observation: ${(err as Error).message}`);
+    }
+    return probes;
+  };
+
+  /** The read above, degraded to `undefined` rather than allowed to take `/api/status` down with it —
+   *  the same window, and the same argument, as `readFloorReport`. */
+  const readLiveness = async (): Promise<LivenessObservation | undefined> => {
+    try {
+      return await credentialLiveness.read();
+    } catch (err) {
+      console.warn(`[status] could not read the credential liveness observation: ${(err as Error).message}`);
+      return undefined;
+    }
+  };
 
   const linkCfg: PublishLinkConfig = {};
   if (storageMode === "cloud") {
@@ -334,6 +369,7 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     // whose ORDER is load-bearing stay visibly adjacent and nothing later mistakes this for part of
     // that pairing.
     const floorReport = await readFloorReport();
+    const liveness = await readLiveness();
     const sync = syncSummary({ translations, entries, render: renderFor });
     return {
       storageMode,
@@ -357,6 +393,7 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       dbEnv,
       sendsEnabled,
       conversionEnabled,
+      liveness: liveness === undefined ? undefined : summarizeLiveness(liveness, sendsEnabled),
     };
   };
 

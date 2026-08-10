@@ -25,6 +25,7 @@ import { signSession, type SessionPayload } from "../../domain/auth/session";
 import type { SessionConfig } from "../../config";
 import { buildSessionCookie, CLEARED_SESSION_COOKIE } from "./sessionCookie";
 import type { LiveProbeResult } from "../../doctor/liveProbes";
+import type { LivenessSummary } from "../../status/liveness";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -61,6 +62,16 @@ export interface StatusView {
    * for both), so the board never offers a [변환 준비] button whose route answers 404.
    */
   conversionEnabled: boolean;
+  /**
+   * How the deployment's credentials answered the last time anything asked — the counterpart to
+   * `integrations` above, which reports only that a key is present. Absent when nothing has ever
+   * probed (a database predating this field, an install that has never deployed) and when the read
+   * failed, both of which read on the board as "nothing has looked" rather than as a claim.
+   *
+   * Graded here rather than in the browser: `web/src` cannot import `liveSeverity`, and a severity
+   * table copied into it is a second policy nothing pins.
+   */
+  liveness?: LivenessSummary;
 }
 
 export interface PublishStateRow {

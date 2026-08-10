@@ -5,6 +5,7 @@ import { createDeps } from "../../src/app/createDeps";
 import { handleApi, type ApiDeps } from "../../src/adapters/web/apiHandlers";
 import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
 import { PgTranslateFloorReport } from "../../src/adapters/store/PgTranslateFloorReport";
+import { PgCredentialLiveness } from "../../src/adapters/store/PgCredentialLiveness";
 import type { Db } from "../../src/adapters/db/Db";
 import { VALID_PASSWORD_HASH } from "../support/authFixtures";
 
@@ -261,6 +262,71 @@ describe("createDeps", () => {
       // derived from tables that are all still there.
       expect(status.funnel.translated).toBeDefined();
       expect(status.sync).toBeDefined();
+    });
+  });
+
+  describe("credential liveness", () => {
+    /**
+     * A `Db` that answers a real 42P01 for `credential_liveness` and forwards everything else to
+     * `real` — NOT a genuine `drop table`. `createTestDb`'s pool truncates every name in
+     * `TABLE_NAMES` on release (see that file's own comment), so a real drop here would fail this
+     * test's own teardown instead of the assertion below, same as the reason
+     * `the scheduler's reported translation floor > degrades to unknown...` above injects rather
+     * than drops.
+     */
+    function missingCredentialLivenessTable(real: Db): Db {
+      return {
+        query: async (sql, params) => {
+          if (sql.includes("credential_liveness")) throw new Error('relation "credential_liveness" does not exist');
+          return real.query(sql, params);
+        },
+        tx: (fn) => real.tx(fn),
+      };
+    }
+
+    it("records what it just probed, so every caller of the diagnostics route populates the row", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      await deps.probeLiveness();
+      const observation = await new PgCredentialLiveness(db).read();
+      expect(observation?.probes.map((p) => p.key)).toContain("google_auth");
+      expect(observation?.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it("still answers with the probes when recording them throws", async () => {
+      // The route exists to answer when things are broken. A diagnostic that fails because it could
+      // not write its own answer down is the same mistake as one that 500s because a probe failed,
+      // which `diagnosticsRoute.test.ts` already pins against.
+      db = await createTestDb();
+      const deps = createDeps({ db: missingCredentialLivenessTable(db), routes: "local" });
+      await expect(deps.probeLiveness()).resolves.toBeInstanceOf(Array);
+    });
+
+    it("reports no liveness at all on a database that has never been probed", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      expect((await deps.loadStatus()).liveness).toBeUndefined();
+    });
+
+    it("grades a recorded observation into the status payload", async () => {
+      db = await createTestDb();
+      await new PgCredentialLiveness(db).write({
+        observedAt: "2026-08-11T06:23:04.000Z",
+        probes: [{ key: "google_auth", status: "dead", detail: "400 invalid_grant" }],
+      });
+      const deps = createDeps({ db, routes: "local" });
+      const status = await deps.loadStatus();
+      expect(status.liveness?.worst).toBe("fail");
+      expect(status.liveness?.dead[0]).toMatchObject({ key: "google_auth", tier: "publish" });
+    });
+
+    it("degrades to no liveness rather than 500ing the header when the table is missing", async () => {
+      // The hosted deployment is the one reader that does not apply the schema at startup, so between
+      // a Vercel deploy and the next `pnpm db:migrate` this code talks to a database without the
+      // table. An uncaught 42P01 there renders no header at all. Same window `readFloorReport` closes.
+      db = await createTestDb();
+      const deps = createDeps({ db: missingCredentialLivenessTable(db), routes: "local" });
+      await expect(deps.loadStatus()).resolves.toMatchObject({ liveness: undefined });
     });
   });
 });
