@@ -307,16 +307,24 @@ gitignore 문법에서 앞에 `/`가 없는 `translation/`은 **모든 깊이**�
 
 | 실행 위치 | 나온 `DATABASE_URL` |
 | --- | --- |
-| 레포 루트 (`.env.local` 있을 때) | 옛 Neon (이미 없어진 것) |
 | 레포 루트 (`.env`만) | `127.0.0.1` — 로컬 도커 |
 | `.env*` 없는 디렉터리 | 진짜 프로덕션 ✅ |
+
+가리는 건 **파일에 무엇이 들었느냐가 아니라 파일이 있느냐**입니다. `.env.local`이 존재하면 그 안에
+있는 키는 무엇이든 내려받은 프로덕션 값을 이깁니다. 2026-08-10에 이 표에는 "`.env.local` 있을 때 →
+이미 없어진 옛 Neon"이라는 행이 하나 더 있었는데, 그때 그 파일이 죽은 `DATABASE_URL`을 들고 있었기
+때문입니다. 지금은 그 파일이 없으니 행도 지웠습니다 — **경고가 낡은 게 아니라 방아쇠가 치워진
+것**이고, `vercel link`나 `vercel dev`가 파일을 다시 만드는 순간 되살아납니다.
 
 `.env`는 지킬 규칙 3이라 못 지웁니다. 그래서 **레포 안에서 `vercel env run -e production`은 영영
 프로덕션 값을 못 줍니다.** 레포 밖 디렉터리에 `.vercel/`만 복사해 두고 `--cwd`로 가리키세요.
 조용히 틀린 DB에 붙는 종류의 함정이라, 눈으로 호스트를 확인하기 전에는 파괴적인 명령을 돌리지
 마세요.
 
-`vercel env pull`은 바로 그 가리는 파일을 만드는 명령이라 쓰지 않습니다.
+`vercel env pull`은 바로 그 가리는 파일을 만드는 명령이라 쓰지 않습니다. `vercel link`와
+`vercel dev`는 `VERCEL_OIDC_TOKEN`만 든 `.env.local`을 만드는데, 이 레포는 그 변수를 읽는 곳이
+없습니다. 생겼으면 지우세요 — 쓰지도 않는 자격증명이 트리에 남는 데다, 위 함정의 방아쇠가
+그 파일의 존재 자체입니다.
 
 ### `sensitive` 변수는 되읽을 수 없습니다
 
@@ -379,7 +387,8 @@ npx vercel api "/v9/projects/mantle-kr-herald/domains"
 
 → `HERALD_DEPLOYMENT_ORIGIN=https://mantle-kr-herald.vercel.app` (scheme+host만, 끝 슬래시 없음)
 
-`vercel link`가 만드는 `.env.local`은 커밋하지 않습니다. 그리고 `.gitignore`에 추가되는 `.env*`
+`vercel link`가 만드는 `.env.local`은 커밋하지 않습니다 — 그리고 다 쓴 뒤에는 지우세요. 이유는
+위 "로컬 `.env*`가 프로덕션 값을 가립니다"에 있습니다. 그리고 `.gitignore`에 추가되는 `.env*`
 줄은 **제거해야 합니다** — 기존 `!.env.example` 예외를 마지막 규칙이 이겨서 `.env.example`이
 무시돼 버립니다.
 
