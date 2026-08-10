@@ -1,4 +1,12 @@
 import type { CheckResult } from "../doctor/report";
+/**
+ * Every `detail` below describes its input with `describeValue`, never `JSON.stringify`. Do not swap
+ * it back: `JSON.stringify` is recursive and throws `RangeError` on a body nested past ~3,000-5,000
+ * levels, which `JSON.parse` accepts happily — so a deployment could make these functions throw
+ * while describing the very input they promise to judge without throwing, and it printed unbounded
+ * bodies into a log file with no cap. Both measured; see `describeValue.ts`'s header.
+ */
+import { describeValue } from "./describeValue";
 import { SESSION_COOKIE_NAME } from "../adapters/web/sessionCookie";
 import type { LiveProbeResult, ProbeKey } from "../doctor/liveProbes";
 
@@ -46,7 +54,7 @@ export function checkAnonymous(codes: {
   foreignOrigin: number;
 }): CheckResult[] {
   if (codes === null || typeof codes !== "object") {
-    const detail = `Expected an object of status codes, got ${JSON.stringify(codes)}.`;
+    const detail = `Expected an object of status codes, got ${describeValue(codes)}.`;
     return [
       { name: "GET /", status: "fail", detail },
       { name: "GET /api/status (anonymous)", status: "fail", detail },
@@ -165,7 +173,7 @@ export function checkCredentials(username: string, password: string): CheckResul
  */
 export function checkStatus(payload: StatusPayload): CheckResult[] {
   if (payload === null || typeof payload !== "object") {
-    const detail = `Expected a status object, got ${JSON.stringify(payload)} — the response body did not parse into the expected shape.`;
+    const detail = `Expected a status object, got ${describeValue(payload)} — the response body did not parse into the expected shape.`;
     return [
       { name: "storageMode", status: "fail", detail },
       { name: "dbEnv", status: "fail", detail },
@@ -185,7 +193,7 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
       : {
           name: "storageMode",
           status: "fail",
-          detail: `Expected "cloud", got ${JSON.stringify(payload.storageMode)} — local mode writes to an ephemeral filesystem.`,
+          detail: `Expected "cloud", got ${describeValue(payload.storageMode)} — local mode writes to an ephemeral filesystem.`,
         },
   );
 
@@ -195,7 +203,7 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
       : {
           name: "dbEnv",
           status: "fail",
-          detail: `Expected "production", got ${JSON.stringify(payload.dbEnv)} — this deployment points at a non-production database.`,
+          detail: `Expected "production", got ${describeValue(payload.dbEnv)} — this deployment points at a non-production database.`,
         },
   );
 
@@ -205,7 +213,7 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
       : {
           name: "sendsEnabled",
           status: "fail",
-          detail: `Expected false, got ${JSON.stringify(payload.sendsEnabled)} — sends should ship closed on first deploy.`,
+          detail: `Expected false, got ${describeValue(payload.sendsEnabled)} — sends should ship closed on first deploy.`,
         },
   );
 
@@ -215,7 +223,7 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
       : {
           name: "conversionEnabled",
           status: "fail",
-          detail: `Expected false, got ${JSON.stringify(payload.conversionEnabled)} — the hosted route set has no local conversion agent.`,
+          detail: `Expected false, got ${describeValue(payload.conversionEnabled)} — the hosted route set has no local conversion agent.`,
         },
   );
 
@@ -319,7 +327,7 @@ export function checkLogout(statusCode: number, setCookieHeader: string | undefi
       status: cleared ? "ok" : "fail",
       detail: cleared
         ? `Set-Cookie clears ${SESSION_COOKIE_NAME}`
-        : `Expected a Set-Cookie clearing ${SESSION_COOKIE_NAME}, got ${JSON.stringify(setCookieHeader)} — the browser was not told to drop its session cookie.`,
+        : `Expected a Set-Cookie clearing ${SESSION_COOKIE_NAME}, got ${describeValue(setCookieHeader)} — the browser was not told to drop its session cookie.`,
     },
   ];
 }
@@ -460,7 +468,7 @@ export function checkLiveness(probes: unknown, sendsEnabled: boolean, httpStatus
         status: "fail",
         detail:
           `GET /api/diagnostics/live answered (${describeStatus(httpStatus)}) with a \`probes\` field that is not an ` +
-          `array: ${JSON.stringify(probes)}. Nothing in it can be judged, so this is a failure rather than a pass.`,
+          `array: ${describeValue(probes)}. Nothing in it can be judged, so this is a failure rather than a pass.`,
       },
     ];
   }
@@ -473,7 +481,7 @@ export function checkLiveness(probes: unknown, sendsEnabled: boolean, httpStatus
       results.push({
         name: `credential liveness (entry ${index})`,
         status: "fail",
-        detail: `Not a probe result: ${JSON.stringify(entry)} — expected { key, status: ok|dead|skipped, detail }.`,
+        detail: `Not a probe result: ${describeValue(entry)} — expected { key, status: ok|dead|skipped, detail }.`,
       });
       return;
     }

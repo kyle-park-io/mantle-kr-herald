@@ -66,6 +66,9 @@ interface StubState {
   statusStatus: number;
   /** `GET /api/status`'s raw body; `undefined` means the normal `{"sendsEnabled": …}` JSON. */
   statusRawBody?: string;
+  /** `GET /api/diagnostics/live`'s raw body; `undefined` means `{"probes": …}` from `probes` above.
+   *  Needed for bodies this test process cannot itself `JSON.stringify` — see the deep-nesting tests. */
+  liveRawBody?: string;
 }
 
 const HEALTHY: StubState = {
@@ -75,6 +78,7 @@ const HEALTHY: StubState = {
   loginSetsCookie: true,
   statusStatus: 200,
   statusRawBody: undefined,
+  liveRawBody: undefined,
 };
 let stub: StubState = { ...HEALTHY };
 let server: Server;
@@ -109,7 +113,7 @@ beforeAll(async () => {
     }
     if (url === "/api/diagnostics/live") {
       res.writeHead(stub.liveStatus, { "content-type": "application/json" });
-      res.end(JSON.stringify({ probes: stub.probes }));
+      res.end(stub.liveRawBody ?? JSON.stringify({ probes: stub.probes }));
       return;
     }
     res.writeHead(404).end();
@@ -221,8 +225,8 @@ describe("pnpm creds:check", () => {
   });
 
   /**
-   * The three ways `/api/status` can fail to answer the one question this command asks it — and all
-   * three used to exit 0 with `6 ok · 1 warn · 0 fail` while a send credential was dead.
+   * Every way `/api/status` can fail to answer the one question this command asks it. The first
+   * three each used to exit 0 with `6 ok · 1 warn · 0 fail` while a send credential was dead.
    *
    * The mechanism is worth stating because it is silent by construction: an unreadable `/api/status`
    * yields no `sendsEnabled`, that collapses to `false`, and `false` is precisely "sends are closed,
@@ -230,7 +234,12 @@ describe("pnpm creds:check", () => {
    * could not be read, so the one case where the answer matters most — sends actually open in
    * production — is the case the failure hides. Not knowing is not the same as being fine.
    *
-   * Each variant therefore pins `telegram` dead: the probe whose severity depends on the answer.
+   * The last four are the narrowing, not the reading: `sendsEnabled` must be an actual boolean.
+   * A naive `body?.sendsEnabled === true` reads `"true"` and `1` as "not true", i.e. as sends being
+   * CLOSED — the lenient verdict again, this time from a route that answered perfectly well. That
+   * regression passed all sixteen tests this file had before these four were added.
+   *
+   * Each variant pins `telegram` dead: the probe whose severity depends on the answer.
    */
   describe.each([
     {
@@ -254,6 +263,43 @@ describe("pnpm creds:check", () => {
       },
       says: "no boolean `sendsEnabled`",
     },
+    {
+      what: "answers with an empty body",
+      arrange: () => {
+        stub.statusRawBody = "";
+      },
+      says: "did not parse",
+    },
+    {
+      what: "answers 204 with no content",
+      arrange: () => {
+        stub.statusStatus = 204;
+        stub.statusRawBody = "";
+      },
+      says: "did not parse",
+    },
+    {
+      what: "answers with a JSON array instead of an object",
+      arrange: () => {
+        stub.statusRawBody = "[]";
+      },
+      says: "no boolean `sendsEnabled`",
+    },
+    {
+      what: "sends sendsEnabled as the STRING \"true\"",
+      arrange: () => {
+        stub.statusRawBody = '{"sendsEnabled": "true"}';
+      },
+      // The body is echoed, so the operator can see it was a string and not guess.
+      says: '{"sendsEnabled":"true"}',
+    },
+    {
+      what: "sends sendsEnabled as the NUMBER 1",
+      arrange: () => {
+        stub.statusRawBody = '{"sendsEnabled": 1}';
+      },
+      says: '{"sendsEnabled":1}',
+    },
   ])("when /api/status $what", ({ arrange, says }) => {
     it("fails, and says the send tier could not be graded", async () => {
       stub.probes = dead("telegram");
@@ -274,6 +320,62 @@ describe("pnpm creds:check", () => {
     const r = await run();
     expect(r.exitCode).toBe(1);
     expect(r.stdout).toContain("could not be read");
+  });
+
+  /**
+   * A body the deployment can send that `JSON.parse` accepts and `JSON.stringify` cannot survive.
+   * The asymmetry is real and measured: parse is iterative and takes 100,000 levels; stringify is
+   * recursive and throws `RangeError: Maximum call stack size exceeded` somewhere between 3,000 and
+   * 5,000. Every judging function that described a body with `JSON.stringify` therefore had an input
+   * that made it throw while describing the very value it promises to judge without throwing.
+   *
+   * Before the fix both of these ended at `✗ credential liveness … Maximum call stack size exceeded`
+   * with `0 ok · 0 warn · 1 fail`. Note what that cost beyond the wrong words: the entire liveness
+   * report was discarded, so six healthy probes and any dead one went unreported. A 06:23 alert
+   * about this process's call stack, for a deployment whose actual problem — if any — was never
+   * printed.
+   *
+   * The assertion is therefore not "exits 1". It is that the report NAMES the thing that could not
+   * be read, keeps everything it could read, and never mentions the call stack.
+   */
+  describe("when the deployment sends a body too deeply nested to serialise", () => {
+    /** `[[[…]]]` as TEXT — this process cannot build it with JSON.stringify either, which is the point. */
+    const nest = (depth: number) => `${"[".repeat(depth)}${"]".repeat(depth)}`;
+
+    it("names the unreadable probe and keeps the rest of the liveness report", async () => {
+      const healthy = JSON.stringify(ALL_OK);
+      stub.liveRawBody = `{"probes": ${healthy.slice(0, -1)},${nest(5000)}]}`;
+      const r = await run();
+      expect(r.exitCode, r.stdout + r.stderr).toBe(1);
+      expect(r.stdout, "the operator was told about this process's call stack").not.toContain("Maximum call stack");
+      expect(r.stdout).toContain("Not a probe result");
+      expect(r.stdout).toContain("an array of 1 entries");
+      // The part that was lost entirely before: everything the deployment DID answer correctly.
+      for (const probe of ALL_OK) expect(r.stdout).toContain(`live: ${probe.key}`);
+    });
+
+    it("names the sendsEnabled field it could not read", async () => {
+      stub.probes = ALL_OK;
+      stub.statusRawBody = `{"sendsEnabled": ${nest(5000)}, "other": 1}`;
+      const r = await run();
+      expect(r.exitCode, r.stdout + r.stderr).toBe(1);
+      expect(r.stdout).not.toContain("Maximum call stack");
+      expect(r.stdout).toContain("sendsEnabled");
+      expect(r.stdout).toContain("an object with 2 keys");
+      expect(r.stdout).toContain("could not be graded");
+      for (const probe of ALL_OK) expect(r.stdout).toContain(`live: ${probe.key}`);
+    });
+
+    it("bounds what it echoes into the log, however large the body", async () => {
+      // `herald-run-logged.sh` tees stdout into ~/.herald/logs/<unit>/<run>.log with no cap, so the
+      // bound has to be here, where the string is built. 20,000 characters used to land in full.
+      stub.probes = ALL_OK;
+      stub.statusRawBody = JSON.stringify({ filler: "x".repeat(20_000) });
+      const r = await run();
+      expect(r.exitCode).toBe(1);
+      expect(r.stdout).toContain("truncated from");
+      expect(r.stdout.length, `the report grew with the body:\n${r.stdout.slice(0, 400)}`).toBeLessThan(3_000);
+    });
   });
 
   it("takes the origin from HERALD_DEPLOYMENT_ORIGIN when no argument is given", async () => {

@@ -23,6 +23,7 @@
 import "./registerErrorHandler";
 import { createDeploymentClient } from "../deploy/deploymentSession";
 import { checkLiveness } from "../deploy/smokeChecks";
+import { describeValue } from "../deploy/describeValue";
 import { smokeCredentials } from "./smokeCredentials";
 import { formatReport, type CheckResult } from "../doctor/report";
 
@@ -89,7 +90,7 @@ function unreadableStatus(res: Response | undefined, parsed: unknown): string {
         ? `answered HTTP ${res.status}`
         : parsed === undefined
           ? `answered HTTP ${res.status} with a body that did not parse as JSON`
-          : `answered HTTP ${res.status} with no boolean \`sendsEnabled\` field: ${JSON.stringify(parsed)}`;
+          : `answered HTTP ${res.status} with no boolean \`sendsEnabled\` field: ${describeValue(parsed)}`;
   return (
     `GET /api/status ${reason}, so the send tier could not be graded. A dead Typefully or Telegram ` +
     "credential is a warn while sends are closed and a fail once they are open, and this run could not " +
@@ -175,23 +176,27 @@ try {
   }
 } catch (err) {
   /**
-   * **Deliberately unreachable today, and deliberately kept. Do not delete this as dead code.**
+   * **Kept, and deliberately not claimed to be unreachable. Do not delete this as dead code.**
    *
-   * Every throw the block above can produce was traced: `logIn` cannot throw (`request()` catches
-   * network failures and returns `undefined`); both JSON parses carry `.catch(() => undefined)`;
-   * `checkLiveness` is total over an unvalidated body by construction, as its own header argues; and
-   * `authed()` throws in exactly one case — no session — which the `!client.loggedIn` branch above
-   * intercepts first, with a message about the deployment instead of one about an invariant. That
-   * branch is what is tested ("reports a login that returns 200 with no session as a failed check");
-   * this `catch` has no remaining input to drive it with, so deleting it leaves the suite green.
-   * That is a fact about the current call list, not evidence the `catch` is pointless — measured and
-   * stated here rather than left for the next reader to rediscover as a passing mutation.
+   * An earlier version of this comment traced every path above and concluded nothing could throw.
+   * That was wrong, and it was wrong in the way worth remembering: `JSON.parse` is iterative and
+   * accepts 100,000 levels of nesting, `JSON.stringify` is recursive and dies at a few thousand, so
+   * a deployment could send a body that parsed fine and then blew the stack while a judging function
+   * was describing it. Both routes did it — `probes` and `sendsEnabled` — and this `catch` dutifully
+   * turned each into `✗ credential liveness … Maximum call stack size exceeded`, discarding the rest
+   * of the report. Exit 1, an alert, and a message about this process's call stack rather than about
+   * their deployment. The `catch` was not handling that failure, it was hiding it.
    *
-   * What makes it reachable again: a third authenticated call added without a `loggedIn` guard, a
-   * parse that forgets its `.catch`, or a judging function that stops being total. Each is a
-   * one-line change, and without this the cost is the failure mode this whole feature exists to
-   * remove — under the timer the operator gets a Telegram alert plus a JavaScript error naming an
-   * internal invariant, with no report attached, and a checker failure reads as a dead credential.
+   * So the fix went to the source: every wire value is now described through `describeValue`, which
+   * cannot throw and is length-bounded, and two tests assert those bodies now produce a fail line
+   * that NAMES the probe or the field and never mentions the call stack. This block no longer sees
+   * them.
+   *
+   * What is left here is a backstop for the next input of that kind — the one nobody has thought of,
+   * which is precisely the category a trace cannot enumerate, as the last trace proved. Deleting it
+   * leaves the suite green; that means only that today's known inputs are handled at source, which
+   * is where they should be handled. Without it, the next one costs the operator a Telegram alert
+   * with a JavaScript error and no report attached, and a checker failure reads as a dead credential.
    */
   results.push({
     name: "credential liveness",
