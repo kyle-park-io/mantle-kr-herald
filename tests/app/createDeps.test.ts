@@ -267,6 +267,42 @@ describe("createDeps", () => {
 
   describe("credential liveness", () => {
     /**
+     * Every env var `buildLiveProbeInput()` (`liveProbes.ts`) can read across the seven probes it
+     * builds — cleared for this whole block, the same guard `the send flag` above applies to
+     * `HERALD_SENDS_ENABLED`. Without this, a developer who has exported the deployment's own env
+     * (`set -a; . .env`) and runs `pnpm test` would have `deps.probeLiveness()` below make up to
+     * seven live outbound calls against production credentials — exactly what an ordinary `vitest
+     * run` must never do (`vitest.probe.config.ts`'s whole reason to exist as a separate config).
+     */
+    const PROBE_ENV_KEYS = [
+      "GOOGLE_AUTH_MODE",
+      "GOOGLE_OAUTH_REFRESH_TOKEN",
+      "GOOGLE_OAUTH_CLIENT_ID",
+      "GOOGLE_OAUTH_CLIENT_SECRET",
+      "GOOGLE_SA_KEY_FILE",
+      "GDRIVE_REVIEW_FOLDER_ID",
+      "GDRIVE_APPROVED_FOLDER_ID",
+      "GSHEET_ID",
+      "LARK_APP_ID",
+      "LARK_APP_SECRET",
+      "TYPEFULLY_API_KEY",
+      "TYPEFULLY_SOCIAL_SET_ID",
+      "TELEGRAM_BOT_TOKEN",
+    ] as const;
+    let savedProbeEnv: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+      savedProbeEnv = Object.fromEntries(PROBE_ENV_KEYS.map((k) => [k, process.env[k]]));
+      for (const k of PROBE_ENV_KEYS) delete process.env[k];
+    });
+    afterEach(() => {
+      for (const k of PROBE_ENV_KEYS) {
+        if (savedProbeEnv[k] === undefined) delete process.env[k];
+        else process.env[k] = savedProbeEnv[k];
+      }
+    });
+
+    /**
      * A `Db` that answers a real 42P01 for `credential_liveness` and forwards everything else to
      * `real` — NOT a genuine `drop table`. `createTestDb`'s pool truncates every name in
      * `TABLE_NAMES` on release (see that file's own comment), so a real drop here would fail this
@@ -287,7 +323,13 @@ describe("createDeps", () => {
     it("records what it just probed, so every caller of the diagnostics route populates the row", async () => {
       db = await createTestDb();
       const deps = createDeps({ db, routes: "local" });
-      await deps.probeLiveness();
+      const probes = await deps.probeLiveness();
+      // Pins this describe block's own precondition: with `PROBE_ENV_KEYS` cleared above, every one
+      // of the seven probes must come back `skipped` — never a live call — so this test (and every
+      // other one below that calls the real `probeLiveness`) cannot silently start spending
+      // production credentials if that guard ever stops covering a key `liveProbes.ts` reads.
+      expect(probes).toHaveLength(7);
+      expect(probes.every((p) => p.status === "skipped")).toBe(true);
       const observation = await new PgCredentialLiveness(db).read();
       expect(observation?.probes.map((p) => p.key)).toContain("google_auth");
       expect(observation?.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -300,6 +342,27 @@ describe("createDeps", () => {
       db = await createTestDb();
       const deps = createDeps({ db: missingCredentialLivenessTable(db), routes: "local" });
       await expect(deps.probeLiveness()).resolves.toBeInstanceOf(Array);
+    });
+
+    it("returns the probes promptly rather than hanging when the write stalls", async () => {
+      // The other axis a bounded write has to cover, and the one `missingCredentialLivenessTable`
+      // above cannot exercise: a `Db.query` that never settles at all — a stalled connection (pool
+      // exhaustion, a blackholed socket, Neon mid-restart), not one that answers with an error.
+      // `LIVENESS_WRITE_TIMEOUT_MS` (`createDeps.ts`) is what stops this from hanging `probeLiveness`
+      // — and therefore `GET /api/diagnostics/live` itself — indefinitely.
+      db = await createTestDb();
+      const stallingDb: Db = { query: () => new Promise<never>(() => {}), tx: (fn) => db!.tx(fn) };
+      const deps = createDeps({ db: stallingDb, routes: "local" });
+      // `performance.now()`, not `Date.now()` — monotonic, so a wall-clock step mid-test cannot
+      // manufacture (or hide) a slow result. See `tests/cli/claudeSpawnKill.test.ts`'s own comment
+      // on this exact substitution.
+      const startedAt = performance.now();
+      const probes = await deps.probeLiveness();
+      // Comfortably above the 2s write budget (headroom for CI scheduling jitter) and comfortably
+      // below what "hanging" would look like — this assertion is the one that would fail if the
+      // bound were ever dropped or made unbounded again.
+      expect(performance.now() - startedAt).toBeLessThan(3_000);
+      expect(probes.every((p) => p.status === "skipped")).toBe(true);
     });
 
     it("reports no liveness at all on a database that has never been probed", async () => {
