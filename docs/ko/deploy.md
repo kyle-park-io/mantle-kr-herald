@@ -207,10 +207,10 @@ warn), Sheet는 헤더 링크뿐이라 언제나 warn. **미설정(`skipped`)은
 존재 여부는 `deploy:check`의 몫이고, Telegram만 쓰는 설치가 Lark가 없다고 빨개지면 안 됩니다.
 
 **이 표를 읽는 곳은 이제 셋입니다** — `deploy:smoke`의 `live:` 줄, `pnpm creds:check`의 텔레그램
-알림, 그리고 **대시보드 헤더의 배지**. 표 자체는 `src/doctor/liveSeverity.ts` 한 곳에만 있고
-(`src/deploy`와 `src/adapters/web`가 거기서 각자 가져다 씁니다), 보드가 받는 요약도 서버에서 같은
-함수로 매겨집니다(`src/status/liveness.ts`의 `summarizeLiveness`) — 화면 쪽은 색과 문구만 고르고
-등급은 다시 계산하지 않습니다. 게다가 보드는 **같은 관측을 읽습니다**: 이 라우트(`GET
+알림, 그리고 **대시보드 헤더의 배지**. 표 자체는 `src/doctor/liveSeverity.ts` 한 곳에만 있고,
+터미널용 채점기(`src/deploy/smokeChecks.ts`)와 보드용 채점기(`src/status/liveness.ts`의
+`summarizeLiveness`)가 거기서 같은 걸 가져다 씁니다 — 판정은 서버에서 끝나고, 화면 쪽은 색과 문구만
+고르지 등급을 다시 계산하지 않습니다. 게다가 보드는 **같은 관측을 읽습니다**: 이 라우트(`GET
 /api/diagnostics/live`)가 찔러본 직후 자기가 본 걸 `credential_liveness` 한 행에 기록하고, 보드는
 그 행을 읽을 뿐 다시 확인하지 않습니다. 그래서 여기서 fail인 자격 증명이 보드에서 warn으로 보이는
 일은 있을 수 없고, 방금 이 명령이 본 결과가 그대로 헤더에 뜹니다

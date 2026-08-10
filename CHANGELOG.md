@@ -10,10 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **The dashboard's `local`/`cloud` badge now says whether the deployment's credentials still ANSWER,
-  not merely that they exist — and a ⚠ chip appears beside it only when one of them does not.** On
-  2026-08-10 the deployment's Google, Typefully and Telegram credentials answered 401 for four days
-  while the header showed every key `설정됨`, and that display was correct rather than broken: presence
-  is all `/api/status` could see (`createDeps.ts`: "env only, no live calls"). `pnpm deploy:smoke`
+  not merely that they exist — and a ⚠ chip appears beside it only when one of them stopped answering,
+  or when nothing has asked in over a day.** On 2026-08-10 the deployment's Google, Typefully and
+  Telegram credentials answered 401 for four days while the header showed every key `설정됨`, and that
+  display was correct rather than broken: presence is all `/api/status` could see (`createDeps.ts`:
+  "env only, no live calls"). `pnpm deploy:smoke`
   learned to catch this at deploy time and `pnpm creds:check` under `herald-creds.timer` learned to
   catch it between deploys, but both answers ended in a terminal and in a systemd journal this box
   rotates every eight minutes — never on the screen the team actually watches. This is the same fact,
@@ -41,19 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     hundred milliseconds" Neon's own docs give for waking a suspended compute, with the function
     (`sin1`) and the database (`ap-southeast-1`) in the same city.
   - **`/api/status` gained one single-row read and no outbound call of its own.** The refusal written
-    into `apiHandlers.ts` stands — the board calls that route on every load and after each 1차
-    mutation, and "six external calls per board render would be a different bug" — so the payload
-    carries a summary of what was *already* observed, beside the seven reads `loadStatus` already
-    makes. `liveness` is optional the way `dbEnv` and `sendsEnabled` are: absent means nothing has ever
-    probed this database, or the table is not there yet, and both render as the header did yesterday
-    rather than as an error or as an all-clear.
+    into `apiHandlers.ts` stands — the board calls that route on mount, on every login, and after each
+    approve, unapprove, retire, unretire and publish, and "six external calls per board render would be
+    a different bug" — so the payload carries a summary of what was *already* observed, beside the
+    seven reads `loadStatus` already makes. `liveness` is optional the way `dbEnv` and `sendsEnabled`
+    are: absent means nothing has ever probed this database, or the table is not there yet, and both
+    render as the header did yesterday rather than as an error or as an all-clear.
   - **Severity is the same table `deploy:smoke` prints, applied once and on the server.** A dead
     publishing credential (Google auth, either Drive folder, Lark) is red, a dead send credential
     (Typefully, Telegram) follows `HERALD_SENDS_ENABLED` — red when sends are open, amber when they are
     closed — the Sheet is header links so it only ever ambers, and an unconfigured integration is
     neither. `PROBE_TIER`/`liveSeverity` moved out of `src/deploy/smokeChecks.ts` into
-    `src/doctor/liveSeverity.ts`, beside the `ProbeKey` they are keyed on, and `src/deploy` and
-    `src/adapters/web` now both import them from there rather than one importing out of the other. The
+    `src/doctor/liveSeverity.ts`, beside the `ProbeKey` they are keyed on, so the two graders that
+    exist — `smokeChecks.ts` for a terminal, `src/status/liveness.ts`'s `summarizeLiveness` for a
+    request — read one table instead of one of them importing out of the other's directory. The
     browser re-derives none of it: it is handed `worst`, and `tier`/`severity` per dead credential, and
     only picks the wording and the colour — a card that did its own arithmetic is exactly how the CLI
     and the header drifted apart the last time. So a credential that fails a deploy and the same
