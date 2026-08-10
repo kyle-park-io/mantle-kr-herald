@@ -133,8 +133,21 @@ npx vercel deploy --prod
 1. https://console.cloud.google.com/auth/audience → **PUBLISH APP**
 2. **게시 후 `pnpm google:auth`를 다시 돌리세요.** 지금 토큰은 Testing일 때 발급된 것이라 자기
    7일 시계를 그대로 들고 있습니다
-3. 새 `GOOGLE_OAUTH_REFRESH_TOKEN`을 **`.env`와 Vercel 두 곳 모두** 갱신 후 재배포
-4. `pnpm doctor --live`로 확인
+3. **`GOOGLE_OAUTH_CLIENT_ID`·`_SECRET`·`_REFRESH_TOKEN` 세 개를 한 벌로** `.env`와 Vercel 양쪽에
+   갱신한 뒤 재배포
+4. `pnpm deploy:smoke <배포 주소>`로 확인 — `live: google_auth`가 초록불인지
+
+> **refresh token만 옮기면 안 됩니다.** 토큰은 그것을 발급한 OAuth 클라이언트에 묶여 있어서,
+> 새 토큰을 낡은 `CLIENT_ID`/`_SECRET`과 짝지으면 인증이 깨집니다. 2026-08-10에 실제로 이
+> 문단의 옛 지시("refresh token을 두 곳 모두 갱신")를 그대로 따라 그렇게 됐습니다.
+>
+> 증상으로 구분됩니다 — **`400 invalid_grant`**는 토큰이 폐기·만료된 것이고,
+> **`401`**은 클라이언트 자격증명이 안 맞는 것입니다. 401을 보고 토큰을 다시 발급하면
+> 같은 자리를 맴돌게 됩니다.
+>
+> 그리고 4번이 `pnpm doctor --live`였을 때는 이 실패를 **잡을 수 없었습니다.** doctor는 로컬
+> 토큰을 검사하는데 로컬은 멀쩡했으니까요. 배포본의 크레덴셜이 살아 있는지는 `deploy:smoke`의
+> `live:` 줄만 압니다(2026-08-10에 추가).
 
 `spreadsheets`가 민감 스코프라 검증을 안 받으면 재인증 때 **"Google hasn't verified this app"**
 경고가 뜨고, **신규 사용자 100명 상한**이 프로젝트 수명 전체에 걸립니다(리셋 불가). 우리는 팀
