@@ -1,0 +1,89 @@
+# deploy/herald-creds.service
+#
+# systemd --user unit for one `pnpm creds:check` — asks the DEPLOYMENT whether its own credentials
+# still work, and exits non-zero when a publishing one does not.
+#
+# Why this exists: `pnpm deploy:smoke` learned to catch a dead deployed credential on 2026-08-10,
+# but only at deploy time. The incident that prompted it happened BETWEEN deploys — the deployment's
+# Google, Typefully and Telegram credentials answered 401 for four days while `deploy:check` passed
+# 40 ok and the board reported `availableTargets: google — present`. Nothing ran in between that
+# asked. This does, once a day.
+#
+# It cannot be answered locally: Vercel stores those values --sensitive, so they cannot be read back
+# at all, and the local .env holds a different set of objects — green here for the whole four days.
+# The probes therefore run inside the deployment and this unit only asks.
+#
+# NOT installed by any committed script. Copying this into ~/.config/systemd/user/ and running
+# `systemctl --user daemon-reload` is a human-supervised step (see the team runbook), same as the
+# other three units.
+
+[Unit]
+Description=Mantle KR Herald credential liveness — asks the deployment whether its credentials still work
+# The same templated hook the other three scheduled units use. `%n` expands to this unit's own name
+# before systemd resolves the target, so the alert names this unit and not another's — the
+# `OnFailure=bar@%n.service` idiom `man systemd.unit` documents, and the reason the hook became a
+# template at all (see deploy/herald-notify-failure@.service's header).
+OnFailure=herald-notify-failure@%n.service
+
+[Service]
+Type=oneshot
+# The deploy checkout — merged `main` only. Same reasoning as every other unit: whatever is checked
+# out here IS what runs at the next fire. tests/deploy/workingDirectory.test.ts fails if this ever
+# names a development checkout.
+WorkingDirectory=%h/.herald/app
+
+# node and pnpm are reached through %h/.herald/bin, a directory of symlinks, NOT an nvm version
+# directory — see herald-watch.service's own PATH comment for the 2026-08-09 rebuild that made this
+# necessary. node must be reachable even though pnpm is named by absolute path below: pnpm's own
+# file starts `#!/usr/bin/env node`, and `env` resolves that through this PATH. `claude` is not on
+# this path deliberately: this command spawns no agent.
+Environment=PATH=%h/.herald/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# No EnvironmentFile=%h/.herald/prod.env, unlike the other three. This command opens no database —
+# it makes three HTTP calls to the deployment and judges the answer. Naming prod.env would imply a
+# dependency that does not exist, the same reason herald-x-reconcile.service sets no
+# HERALD_OUTPUT_DIR. Everything it needs — HERALD_SMOKE_USERNAME, HERALD_SMOKE_PASSWORD and
+# HERALD_DEPLOYMENT_ORIGIN — comes from the frozen .env via its own `tsx --env-file-if-exists=.env`.
+#
+# HERALD_SMOKE_* is the dashboard password ITSELF, not the scrypt hash. .env.example sanctions that
+# for exactly this case ("in CI, from a deploy script, or unattended") and forbids it on Vercel in
+# the same breath: this runs on your machine and knocks on the deployment as a client.
+#
+# Missing or half-set, the command exits 2 without prompting — a timer has no stdin, and a prompt
+# here would hang until TimeoutStartSec= killed the unit and then alert that a credential check
+# failed when the check never ran. `pnpm creds:check`'s exit codes are a contract this unit depends
+# on: 0 nothing failed, 1 a credential verdict, 2 this machine's configuration.
+
+# The route bounds its own probe run at five seconds and the three calls around it are ordinary
+# round trips; a real run takes a few seconds. 120s is a generous multiple that still fails long
+# before a daily cadence could overlap itself — the "wedged run swallows the next fire" bound the
+# other units argue for at length, with far more slack here than any of them.
+TimeoutStartSec=120
+
+# Wrapped in herald-run-logged.sh for the reason every other unit is: journald on this box holds
+# roughly eight minutes of history, so a run at 06:23 leaves nothing to read by the time anyone
+# looks. The wrapper tees a durable per-run log under %h/.herald/logs/herald-creds/ and hands the
+# command's exit status back unchanged — the status is what OnFailure= above depends on.
+#
+# The alert this feeds is five lines long (herald-notify-failure.sh's LOG_TAIL_LINES), which is why
+# `creds:check` prints a one-line `✗ FAILED: <names>` summary after its report: the report's own `✗`
+# sits nine rows from the end, so without it the 2026-08-10 shape alerted with two green ticks and a
+# count and never named the dead credential. That summary carries the ALERT_MARKER prefix and the
+# hook selects marked lines regardless of tail depth — measured with four systemd lines filling the
+# window, where the line arrives anyway. Do not make it depend on being last again.
+#
+# Argument order is that wrapper's contract, not a convention: `$1` is the unit name and everything
+# after it is the command, run verbatim. Reversed, the wrapper cheerfully names its log directory
+# after pnpm and tries to run the unit name as a command (measured: exit 127). Verified by running
+# the script directly for exit codes 0, 1, 2, 7 and 42 — each arrived back unchanged, as
+# tests/deploy/runLogging.test.ts also asserts.
+#
+# No URL argument: `creds:check` falls back to HERALD_DEPLOYMENT_ORIGIN, which the frozen .env
+# already carries and `deploy:check` already validates against the real Vercel domain. One value,
+# one place. tests/deploy/credsTiming.test.ts checks that `creds:check` is a script package.json
+# actually defines, so renaming it cannot leave this line pointing at nothing.
+#
+# Ordering note for whoever installs this: the wrapper lives in the deploy checkout, so
+# `bash deploy/herald-deploy.sh` must have run (landing this commit in %h/.herald/app) BEFORE this
+# unit file is copied into ~/.config/systemd/user/.
+ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n %h/.herald/bin/pnpm creds:check

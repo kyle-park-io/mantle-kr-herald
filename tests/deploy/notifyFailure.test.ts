@@ -63,12 +63,25 @@ const CURL_STUB_LINES = [
   'exit "${STUB_CURL_EXIT:-0}"',
 ];
 
-/** journalctl stub: prints $STUB_JOURNAL_OUTPUT (may be unset/empty) verbatim and exits
- *  $STUB_JOURNAL_EXIT (default 0) — the script under test always calls it the same way
- *  (`--user -u <unit> -n N --no-pager --output=cat`), so there is nothing else to branch on. */
+/**
+ * journalctl stub: prints the last `-n N` lines of $STUB_JOURNAL_OUTPUT (may be unset/empty) and
+ * exits $STUB_JOURNAL_EXIT (default 0).
+ *
+ * **It honours `-n`, and did not until 2026-08-10.** Ignoring it meant `LOG_TAIL_LINES=5` was never
+ * exercised on the journal branch by any test in this repo: the script asked for five lines and the
+ * stub handed back the whole fixture, so every assertion about what the tail does or does not carry
+ * was really an assertion about a stub that returns everything. The marked-line mechanism's own
+ * premise — that the line sits outside the window — was not what ran. Every fixture here is two
+ * lines or fewer, so honouring it changes no expectation in this file; it changes what the file
+ * proves.
+ */
 const JOURNALCTL_STUB_LINES = [
   "#!/usr/bin/env bash",
-  'printf %s "${STUB_JOURNAL_OUTPUT:-}"',
+  'n=""; prev=""',
+  'for arg in "$@"; do [ "$prev" = "-n" ] && n="$arg"; prev="$arg"; done',
+  'out="${STUB_JOURNAL_OUTPUT:-}"',
+  'if [ -n "$n" ] && [ -n "$out" ]; then out="$(printf %s "$out" | tail -n "$n")"; fi',
+  'printf %s "$out"',
   'exit "${STUB_JOURNAL_EXIT:-0}"',
 ];
 

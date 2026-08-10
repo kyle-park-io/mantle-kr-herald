@@ -14,19 +14,30 @@
 // file is what stops the units drifting back: prose in a runbook about which directory to use is
 // exactly the documentation that rots the first time someone edits a unit file.
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { resolve, join } from "node:path";
 
 const repoRoot = resolve(__dirname, "../..");
+const deployDir = resolve(repoRoot, "deploy");
 
-// Every scheduled unit, not a sample of them: this list is what makes the checks below apply to a
-// unit added later, and a unit missing from it is exactly the one that quietly runs from wherever
-// somebody left it.
-const UNITS = [
-  "deploy/herald-watch.service",
-  "deploy/herald-x-reconcile.service",
-  "deploy/herald-convert.service",
-] as const;
+/**
+ * Every scheduled unit, **derived from `deploy/` rather than listed here**, because a unit missing
+ * from the list is exactly the one that quietly runs from wherever somebody left it — and a
+ * hardcoded list is missing every unit written after it. It was: `herald-creds.service` shipped on
+ * 2026-08-10 citing this file as its guard, and setting its `WorkingDirectory=` to the development
+ * checkout — the literal 2026-08-07 incident shape — left the whole suite green.
+ *
+ * "Scheduled" means it has a timer: `deploy/herald-x.timer` implies `deploy/herald-x.service` is
+ * fired on a schedule out of whatever is checked out where it points. That reading excludes
+ * `herald-notify-failure@.service`, which nothing schedules and which runs a script by absolute
+ * path — its own two checks at the bottom of this file cover the part that matters for it.
+ * `unitToolPaths.test.ts` derives its list from the same directory for the same reason.
+ */
+const UNITS: string[] = readdirSync(deployDir)
+  .filter((f) => f.endsWith(".timer"))
+  .map((f) => `deploy/${f.replace(/\.timer$/, ".service")}`)
+  .filter((p) => existsSync(join(repoRoot, p)))
+  .sort();
 
 /** The unit's `WorkingDirectory=` value. */
 function workingDirectory(unitPath: string): string | undefined {
@@ -35,6 +46,20 @@ function workingDirectory(unitPath: string): string | undefined {
 }
 
 describe("scheduled units run from the deploy checkout, never a development one", () => {
+  it("finds the scheduled units to check — a derivation that finds none passes everything below", () => {
+    // The failure mode a derived list introduces in place of the one it removes. A rename that made
+    // no `.timer` resolve to a `.service` would silently empty the loop, and an empty loop is a file
+    // full of checks that assert nothing.
+    expect(UNITS.length).toBeGreaterThan(1);
+    expect(UNITS).toContain("deploy/herald-watch.service");
+    // Every timer must resolve to a service. A timer whose service is missing is a scheduler with
+    // nothing to run, and it must not simply drop out of the list above.
+    const orphans = readdirSync(deployDir)
+      .filter((f) => f.endsWith(".timer"))
+      .filter((f) => !existsSync(join(deployDir, f.replace(/\.timer$/, ".service"))));
+    expect(orphans, "these timers name no service").toEqual([]);
+  });
+
   for (const unitPath of UNITS) {
     it(`${unitPath} points at the deploy checkout`, () => {
       // `%h/.herald/app` and not an absolute path: %h is the one thing systemd expands for a user
