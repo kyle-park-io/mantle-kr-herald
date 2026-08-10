@@ -1,3 +1,16 @@
+/**
+ * Lives beside the probes, in `src/doctor`, not in `src/deploy` where this policy used to sit —
+ * both consumers are downstream of `runLiveProbes` (`liveProbes.ts`), not of `src/deploy`.
+ * `src/deploy/smokeChecks.ts` renders this grading as terminal lines for `deploy:smoke` and
+ * `creds:check`; `src/status/liveness.ts` renders the same grading as a chip on the dashboard
+ * header. A web adapter reaching into `src/deploy` to grade a request would be the wrong direction —
+ * `src/deploy` is deploy tooling, not something the running web app should import from.
+ *
+ * One copy, not two: a second `PROBE_TIER` — one per consumer — would drift from the first, and the
+ * drifted copy would be whichever surface nobody happened to be looking at when the two disagreed.
+ * Same argument `liveProbes.ts`'s own header makes for why the probes themselves run from one copy
+ * rather than being reimplemented per caller.
+ */
 import type { ProbeKey } from "./liveProbes";
 
 /**
