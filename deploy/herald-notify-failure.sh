@@ -83,16 +83,21 @@ fi
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$REPO_DIR/.env"
 
-# Captured immediately, before anything else in this script runs, because it may not be readable
-# for long: journald on this machine rotates on every backwards clock step (this box's WSL2 +
-# timesyncd combination steps the clock constantly), and the readable window has been measured at
-# roughly eight minutes. Pointing the reader at `journalctl` and letting them run it themselves
-# later — the old behaviour — means the thing that would explain the failure can already be gone
-# by the time anyone reads the alert. `--output=cat` drops journalctl's own timestamp/hostname
-# prefix (redundant here — the alert's own arrival time already says when) so the phone-readable
-# budget below goes entirely to the actual message text. Never fatal on its own: an unreadable
-# journal (permissions, journald down) degrades to an empty excerpt via `|| true`, not a script
-# failure — this hook still has to reach `exit 0` regardless.
+# Why an EXCERPT at all, and not just a pointer: pointing the reader at `journalctl` (or `tail`) and
+# letting them run it themselves later — the old behaviour, before either source was captured here —
+# means the thing that would explain the failure can already be gone by the time anyone reads the
+# alert. That risk is real and measured, but it is a JOURNAL risk, not a general one: journald on
+# this machine rotates on every backwards clock step (this box's WSL2 + timesyncd combination steps
+# the clock constantly), and the readable window has been measured at roughly eight minutes — a run
+# that fails late in a long TimeoutStartSec= can already have outlived its own journal by the time
+# this hook runs, let alone by the time a human opens the alert. This is why the run log — a file,
+# with no rotation window to race at all — is read FIRST below ("Where the excerpt comes from, and
+# why the run log wins"), and the journal is read only as a fallback, when there is no run log to
+# outrace the clock with. `--output=cat` on the journal reads that follow drops journalctl's own
+# timestamp/hostname prefix (redundant here — the alert's own arrival time already says when) so the
+# phone-readable budget below goes entirely to the actual message text. Never fatal on its own:
+# an unreadable journal (permissions, journald down) degrades to an empty excerpt via `|| true`, not
+# a script failure — this hook still has to reach `exit 0` regardless.
 # Five lines is a phone-readable budget, and it is a CONTRACT with the commands these units run, not
 # just a display choice: a command whose important output is not in its last five lines does not
 # appear in the alert at all. `pnpm creds:check` prints a one-line `✗ FAILED: <names>` summary after
