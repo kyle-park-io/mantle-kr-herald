@@ -25,6 +25,34 @@
 # non-zero on purpose — see its own comment for why that case is different.
 set -uo pipefail
 
+# A UTF-8 locale, because the caps below slice strings and bash slices BYTES unless the locale is a
+# multibyte one. systemd gives a user unit no locale at all — none of these units set
+# `Environment=LANG=` — so this script runs under C by default, where `${s:0:250}` can cut a Korean
+# character or an `✗` in half. The result is a lone continuation byte in the JSON, Telegram answers
+# 400, `curl -fsS` fails, and the `|| true` at the bottom swallows it: the alert is never delivered
+# and nothing anywhere says so. Both caps in this file have that exposure; the excerpt's predates
+# the marked-line block.
+#
+# Verified by probing rather than assumed, because a locale being NAMED is not a locale being
+# INSTALLED — bash silently falls back to C for an unknown name. `é` is one character and two bytes,
+# so `${#…} -eq 1` is a direct test of what the caps actually depend on. If none of the candidates
+# is installed the script keeps going with byte semantics and caps by whole lines instead of
+# slicing (see ALERT_TEXT below), which cannot split anything.
+HERALD_UTF8_PROBE=$'é'
+HERALD_UTF8=0
+if [ "${#HERALD_UTF8_PROBE}" -eq 1 ]; then
+  HERALD_UTF8=1
+else
+  HERALD_SAVED_LC_ALL="${LC_ALL:-}"
+  for _cand in C.UTF-8 C.utf8 en_US.UTF-8; do
+    export LC_ALL="$_cand"
+    if [ "${#HERALD_UTF8_PROBE}" -eq 1 ]; then HERALD_UTF8=1; break; fi
+  done
+  if [ "$HERALD_UTF8" -eq 0 ]; then
+    if [ -n "$HERALD_SAVED_LC_ALL" ]; then export LC_ALL="$HERALD_SAVED_LC_ALL"; else unset LC_ALL; fi
+  fi
+fi
+
 UNIT="${1:-}"
 if [ -z "$UNIT" ]; then
   # Refuse rather than guess. Proceeding with an empty $UNIT would silently repeat the exact bug
@@ -72,7 +100,23 @@ ENV_FILE="$REPO_DIR/.env"
 # reached a message. tests/cli/credsCheck.test.ts reads this number out of this file and tails a real
 # run log with it, so lowering it fails there rather than silently emptying an alert.
 LOG_TAIL_LINES=5
-LOG_EXCERPT="$(journalctl --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat 2>/dev/null)" || LOG_EXCERPT=""
+# Both journalctl reads are wrapped, because this unit's TimeoutStartSec= is 30s and was sized when
+# there was one. Measured at exactly 2.00x: a journalctl that sleeps 20s delivered an alert when
+# there was a single read and is SIGTERMed by systemd when there are two — losing the alert
+# entirely, which is worse than losing the marked line. 6s each leaves 30 - 12 - 10 (curl's own -m)
+# = 8s of margin. `timeout` returns 124 on expiry, which the `|| VAR=""` on each read turns into
+# "no lines from this source" — the same degradation an unreadable journal already takes.
+#
+# Resolved rather than assumed present: on a box without `timeout` the reads run unwrapped, exactly
+# as they did before, instead of the script dying on a missing command.
+JOURNAL_READ_TIMEOUT=6
+if command -v timeout >/dev/null 2>&1; then
+  journal_read() { timeout "$JOURNAL_READ_TIMEOUT" journalctl "$@" 2>/dev/null; }
+else
+  journal_read() { journalctl "$@" 2>/dev/null; }
+fi
+
+LOG_EXCERPT="$(journal_read --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat)" || LOG_EXCERPT=""
 # Where the reader is pointed for more, once they open the alert. Replaced below if the excerpt
 # turns out to have come from the durable run log instead of the journal.
 LOG_POINTER="journalctl --user -u ${UNIT} -n 50 --no-pager"
@@ -134,35 +178,127 @@ ALERT_MARKER="HERALD_ALERT: "
 # How far back to look for marked lines. Well past LOG_TAIL_LINES, because the whole point is that
 # the line may be nowhere near the end; bounded because this is a log of unknown length.
 ALERT_SCAN_LINES=200
+# A LINE bound is not a SIZE bound, and this read is unconditional, so all four units pay whatever it
+# costs. Measured: 200 lines of 1 MiB each took 26.46s and 1,039 MB RSS against 1.00s and 216 MB for
+# the single read before, crossing TimeoutStartSec= at around 246 MB of journal. `head -c` puts the
+# ceiling where bash can enforce it. 256 KiB is a thousand times any real run and still nothing.
+ALERT_SCAN_MAX_BYTES=262144
 # What the mechanism may add to the message, so a log full of marked lines cannot produce an
 # unbounded Telegram message. Three lines is more than any command emits today (creds:check emits
 # one); the character cap is the one that actually binds, and it is half the excerpt's own.
 ALERT_MAX_LINES=3
 ALERT_MAX_CHARS=250
 
-ALERT_WINDOW="$(journalctl --user -u "$UNIT" -n "$ALERT_SCAN_LINES" --no-pager --output=cat 2>/dev/null)" || ALERT_WINDOW=""
+# `|| true` inside the group, not after the pipeline: `head -c` closes the pipe once it has enough,
+# journalctl dies of SIGPIPE, and with `pipefail` that would discard a window that was merely
+# truncated — turning the byte cap into a silent off switch.
+ALERT_WINDOW="$( { journal_read --user -u "$UNIT" -n "$ALERT_SCAN_LINES" --no-pager --output=cat || true; } | head -c "$ALERT_SCAN_MAX_BYTES" )" || ALERT_WINDOW=""
 # Same source precedence as the excerpt above: the journal when it has anything, the durable run log
 # otherwise. RUN_LOG is set only when the journal came back empty, which is the same condition.
+ALERT_FROM_JOURNAL=1
 if [ -z "$ALERT_WINDOW" ] && [ -n "$RUN_LOG" ]; then
-  ALERT_WINDOW="$(tail -n "$ALERT_SCAN_LINES" "$RUN_LOG" 2>/dev/null)" || ALERT_WINDOW=""
+  ALERT_WINDOW="$( { tail -n "$ALERT_SCAN_LINES" "$RUN_LOG" 2>/dev/null || true; } | head -c "$ALERT_SCAN_MAX_BYTES" )" || ALERT_WINDOW=""
+  ALERT_FROM_JOURNAL=0
 fi
 
+# ── Scope the window to THIS run ─────────────────────────────────────────────────────────────────
+#
+# The five-line tail was implicitly run-scoped; a 200-line window is not, and the journal is one
+# continuous stream per unit. A creds:check run is 18 lines, so about eleven previous daily runs fit
+# inside the window: a run that exits 2 today — a machine-configuration error naming no credential
+# at all — would headline YESTERDAY's `✗ FAILED: live: google_auth`, and three consecutive failing
+# days would headline three different credentials from three different days. The most confident line
+# in the message, about the wrong day.
+#
+# deploy/herald-run-logged.sh writes `=== <unit> started <ts> — <cmd> ===` before every run, so the
+# boundary already exists in both sources. Everything after the LAST such line is this run.
+#
+# Three cases, all deliberate:
+#   - no start line in the window: the run is longer than the window, or predates the wrapper.
+#     Promote NOTHING. The alert falls back to exactly the five-line tail it sent before this
+#     mechanism existed, which is a known-correct message rather than a guess about which run a line
+#     came from.
+#   - a start line with no exit line after it: the run failing right now. Nothing special — the exit
+#     line is not what scopes anything, the start line is.
+#   - two or more start lines: the last one wins, by construction.
+#
+# The run-log branch is NOT scoped this way, and must not be: that file is one run by definition, and
+# running the same filter over it would promote nothing whenever a log predates the wrapper's header
+# — trading a correct message for an empty one.
+ALERT_SCOPE="$ALERT_WINDOW"
+ALERT_UNSCOPED=0
+if [ "$ALERT_FROM_JOURNAL" -eq 1 ] && [ -n "$ALERT_WINDOW" ]; then
+  ALERT_SCOPE="$(printf '%s\n' "$ALERT_WINDOW" | awk -v marker="=== ${UNIT} started " '
+    index($0, marker) == 1 { buf = ""; found = 1; next }
+    found { buf = buf $0 "\n" }
+    END { if (found) printf "%s", buf }
+  ')" || ALERT_SCOPE=""
+  [ -z "$ALERT_SCOPE" ] && ALERT_UNSCOPED=1
+fi
+
+# Marked lines, newest first-served, matched past leading whitespace. A marked line indented by even
+# one space used to be neither promoted NOR stripped, so the raw `HERALD_ALERT: ` prefix reached the
+# phone and the credential could be lost from the promoted position at the same time.
+ALERT_RAW=""
 ALERT_TEXT=""
-if [ -n "$ALERT_WINDOW" ]; then
-  # Anchored at column 0 and marker-stripped. Newest ALERT_MAX_LINES, matching the tail's own
-  # "most recent is most relevant" bias. `|| true` because grep exits 1 when nothing matches, which
-  # is the ordinary case for the other three units and must not abort anything.
-  ALERT_TEXT="$(printf '%s\n' "$ALERT_WINDOW" | grep "^${ALERT_MARKER}" | tail -n "$ALERT_MAX_LINES" | sed "s/^${ALERT_MARKER}//")" || ALERT_TEXT=""
-  if [ "${#ALERT_TEXT}" -gt "$ALERT_MAX_CHARS" ]; then
-    ALERT_TEXT="${ALERT_TEXT:0:$ALERT_MAX_CHARS}…(truncated)…"
+if [ -n "$ALERT_SCOPE" ]; then
+  ALERT_RAW="$(printf '%s\n' "$ALERT_SCOPE" | grep "^[[:space:]]*${ALERT_MARKER}" | tail -n "$ALERT_MAX_LINES")" || ALERT_RAW=""
+  if [ -n "$ALERT_RAW" ]; then
+    ALERT_TEXT="$(printf '%s\n' "$ALERT_RAW" | sed "s/^[[:space:]]*${ALERT_MARKER}//")" || ALERT_TEXT=""
+  fi
+  if [ "$HERALD_UTF8" -eq 1 ]; then
+    if [ "${#ALERT_TEXT}" -gt "$ALERT_MAX_CHARS" ]; then
+      ALERT_TEXT="${ALERT_TEXT:0:$ALERT_MAX_CHARS}…(truncated)…"
+    fi
+  else
+    # No multibyte locale: cap by dropping whole lines rather than slicing, which cannot split a
+    # character. Cruder, and only reachable on a box with no UTF-8 locale installed at all.
+    while [ "${#ALERT_TEXT}" -gt "$ALERT_MAX_CHARS" ] && [ "$ALERT_TEXT" != "${ALERT_TEXT%$'\n'*}" ]; do
+      ALERT_TEXT="${ALERT_TEXT%$'\n'*}"
+    done
   fi
 fi
 
-# Marked lines are shown once, above the tail. Dropping them from the excerpt here — before the
-# character cap below, so the cap still applies to what is actually sent — keeps them from appearing
-# twice, and keeps the raw marker out of the message. A no-op when nothing is marked.
-if [ -n "$ALERT_TEXT" ]; then
-  LOG_EXCERPT="$(printf '%s\n' "$LOG_EXCERPT" | grep -v "^${ALERT_MARKER}")" || LOG_EXCERPT=""
+# Did the scan hit its own ceiling? Only said out loud when this unit marks lines at all, so a unit
+# that uses none of this keeps a byte-identical payload. Silence here was the remaining cliff: a
+# marked line one line past the window, or a run longer than it, produced the legacy alert with
+# nothing indicating that anything had been looked for and missed.
+ALERT_NOTE=""
+if [ -n "$ALERT_WINDOW" ] && printf '%s\n' "$ALERT_WINDOW" | grep -q "^[[:space:]]*${ALERT_MARKER}"; then
+  ALERT_WINDOW_LINES="$(printf '%s\n' "$ALERT_WINDOW" | wc -l)"
+  if [ "$ALERT_WINDOW_LINES" -ge "$ALERT_SCAN_LINES" ] || [ "${#ALERT_WINDOW}" -ge "$ALERT_SCAN_MAX_BYTES" ]; then
+    if [ "$ALERT_UNSCOPED" -eq 1 ]; then
+      ALERT_NOTE="(this run is longer than the ${ALERT_SCAN_LINES}-line scan window — no marked line could be attributed to it)"
+    else
+      ALERT_NOTE="(scan window full at ${ALERT_SCAN_LINES} lines — older marked lines, if any, were not read)"
+    fi
+  elif [ "$ALERT_UNSCOPED" -eq 1 ]; then
+    ALERT_NOTE="(marked lines were found but belong to an earlier run of this unit, so none was promoted)"
+  fi
+fi
+
+# Marked lines are shown once, above the tail — but PROMOTE-OR-KEEP, never promote-or-delete. This
+# used to strip every marked line from the excerpt while promoting at most ALERT_MAX_LINES of them,
+# so five marked lines inside a five-line tail meant two credentials vanished from a message the
+# pre-marker script delivered in full. Only the lines actually promoted are dropped; any other marked
+# line stays where it is, with its prefix removed so the raw marker never reaches the phone.
+if [ -n "$LOG_EXCERPT" ]; then
+  LOG_EXCERPT="$(
+    promoted=$'\n'"${ALERT_RAW}"$'\n'
+    kept=""
+    while IFS= read -r _line; do
+      if [ -n "$ALERT_RAW" ]; then
+        case "$promoted" in
+          *$'\n'"$_line"$'\n'*) continue ;;
+        esac
+      fi
+      kept="${kept}${_line}"$'\n'
+    done <<< "$LOG_EXCERPT"
+    printf '%s' "${kept%$'\n'}"
+  )" || LOG_EXCERPT=""
+  # Display-strip any marked line that survived, so a line that was kept rather than promoted is
+  # readable instead of carrying machinery the operator never needs to see.
+  LOG_EXCERPT="$(printf '%s\n' "$LOG_EXCERPT" | sed "s/^\([[:space:]]*\)${ALERT_MARKER}/\1/")" || LOG_EXCERPT=""
 fi
 
 # Cap the excerpt independent of how long the captured lines actually are — a single stack-trace
@@ -228,20 +364,18 @@ json_escape() {
 # timer is installed). Exiting 0 with nothing sent is the same fail-safe posture as a Telegram
 # outage below — this hook never turns "not configured yet" into a failed systemd unit.
 if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
-  if [ -n "$ALERT_TEXT" ] && [ -n "$LOG_EXCERPT" ]; then
-    # Marked lines directly under the header, where they are read first, then the tail for context.
-    TEXT="⚠ ${UNIT} failed
-${ALERT_TEXT}
-${LOG_EXCERPT}
-— ${LOG_POINTER}"
-  elif [ -n "$ALERT_TEXT" ]; then
-    # The marked lines were the whole of the tail, or the tail was empty. Still send them.
-    TEXT="⚠ ${UNIT} failed
-${ALERT_TEXT}
-— ${LOG_POINTER}"
-  elif [ -n "$LOG_EXCERPT" ]; then
-    TEXT="⚠ ${UNIT} failed
-${LOG_EXCERPT}
+  # Header, then anything promoted, then the note if there is one, then the tail, then the pointer.
+  # Assembled by appending so the three optional pieces cannot multiply into branches — the earlier
+  # shape had one branch per combination and lost a case the moment ALERT_NOTE was added.
+  if [ -n "$ALERT_TEXT" ] || [ -n "$ALERT_NOTE" ] || [ -n "$LOG_EXCERPT" ]; then
+    TEXT="⚠ ${UNIT} failed"
+    [ -n "$ALERT_TEXT" ] && TEXT="${TEXT}
+${ALERT_TEXT}"
+    [ -n "$ALERT_NOTE" ] && TEXT="${TEXT}
+${ALERT_NOTE}"
+    [ -n "$LOG_EXCERPT" ] && TEXT="${TEXT}
+${LOG_EXCERPT}"
+    TEXT="${TEXT}
 — ${LOG_POINTER}"
   else
     # Neither source had anything: the journal was already rotated (or unreadable), AND there is no

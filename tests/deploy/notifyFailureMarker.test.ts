@@ -34,7 +34,17 @@ const CURL_STUB_LINES = [
   "done",
   "exit 0",
 ];
-const JOURNALCTL_STUB_LINES = ["#!/usr/bin/env bash", 'printf %s "${STUB_JOURNAL_OUTPUT:-}"', "exit 0"];
+// Honours `-n`, like the real thing and like the (now fixed) stub in notifyFailure.test.ts. Without
+// that, "the marked line is outside the tail" is a premise no test actually establishes.
+const JOURNALCTL_STUB_LINES = [
+  "#!/usr/bin/env bash",
+  'n=""; prev=""',
+  'for arg in "$@"; do [ "$prev" = "-n" ] && n="$arg"; prev="$arg"; done',
+  'out="${STUB_JOURNAL_OUTPUT:-}"',
+  'if [ -n "$n" ] && [ -n "$out" ]; then out="$(printf %s "$out" | tail -n "$n")"; fi',
+  'printf %s "$out"',
+  "exit 0",
+];
 
 let workDir: string;
 let repoDir: string;
@@ -99,10 +109,15 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
+/** The boundary deploy/herald-run-logged.sh writes before every run. */
+function startLine(stamp = "2026-08-10T06:23:00Z", cmd = "pnpm creds:check"): string {
+  return `=== ${TEST_UNIT} started ${stamp} — ${cmd} ===`;
+}
+
 /** A report-shaped run, with the marked summary last, followed by however many trailing lines. */
 function credsRun(trailing: string[]): string {
   return [
-    "=== herald-creds.service started 2026-08-10T06:23:00Z — pnpm creds:check ===",
+    startLine(),
     "Mantle KR Herald — credential liveness (https://mantle-kr-herald.vercel.app)",
     "",
     "  ✗ live: google_auth            HTTP 401 invalid_grant",
@@ -178,11 +193,13 @@ describe("marked lines reach the alert regardless of tail depth", () => {
   });
 
   it("bounds what it can add, so a log full of marked lines cannot grow the message", () => {
+    // Six plain trailing lines, so the five-line tail contains no marked line of its own and this
+    // measures only what the promotion adds.
     const many = Array.from({ length: 40 }, (_, i) => `${ALERT_MARKER}${"x".repeat(80)}-${i}`);
-    const text = sentText([...many, "=== herald-creds.service exited 1 ==="].join("\n"));
+    const trailing = Array.from({ length: 6 }, (_, i) => `plain trailing line ${i}`);
+    const text = sentText([startLine(), ...many, ...trailing].join("\n"));
     expect(text).toBeDefined();
-    // Three lines at most, and a character cap that actually binds well below that.
-    const added = text!.split("\n").filter((l) => l.startsWith("x") || l.includes("(truncated)"));
+    const added = text!.split("\n").filter((l) => l.startsWith("x") || /^x*-\d+…/.test(l));
     expect(added.length).toBeLessThanOrEqual(3);
     expect(text!.length).toBeLessThan(1200);
     expect(text).toContain("(truncated)");
@@ -203,5 +220,144 @@ describe("purely additive — a unit that marks nothing is unaffected", () => {
   it("still falls back to the plain notice when there is nothing anywhere", () => {
     const text = sentText("");
     expect(text).toContain("no journal lines captured, and no durable run log either");
+  });
+});
+
+/**
+ * The regression the marker mechanism introduced and this describe block exists to keep out.
+ *
+ * `journalctl --user -u <unit>` is one continuous stream per unit, not one invocation. The five-line
+ * tail was implicitly scoped to the current run; a 200-line window is not. A creds:check run is
+ * eighteen lines, so roughly eleven previous daily runs fit inside it — and a run that exits 2 today
+ * (a machine-configuration error naming no credential at all) headlined YESTERDAY's dead credential.
+ *
+ * These fixtures pad each run past LOG_TAIL_LINES on purpose. The five-line tail was never the buggy
+ * part; the promoted line was. A fixture short enough for yesterday's output to fall inside today's
+ * tail would be asserting about the wrong mechanism.
+ */
+describe("promoted lines come from this run, never a previous one", () => {
+  const yesterday = [
+    startLine("2026-08-09T06:23:00Z"),
+    "Mantle KR Herald — credential liveness",
+    "  ✗ live: google_auth            HTTP 401 invalid_grant",
+    "6 ok · 0 warn · 1 fail",
+    `${ALERT_MARKER}✗ FAILED: live: google_auth`,
+    `=== ${TEST_UNIT} exited 1 at 2026-08-09T06:23:04Z ===`,
+  ];
+  /** Today: a configuration error. Exit 2 names no credential — the case that used to misreport. */
+  const todayExitsTwo = [
+    startLine("2026-08-10T06:23:00Z"),
+    "Not an http(s) URL: mailto:ops@example.com — this command talks to a deployment over HTTP.",
+    "Usage: pnpm creds:check <url>   (or set HERALD_DEPLOYMENT_ORIGIN)",
+    "no report was printed",
+    "nothing was asked of the deployment",
+    `=== ${TEST_UNIT} exited 2 at 2026-08-10T06:23:00Z ===`,
+  ];
+
+  it("does not headline yesterday's dead credential when today's run named no credential", () => {
+    const text = sentText([...yesterday, ...todayExitsTwo].join("\n"));
+    expect(text).toBeDefined();
+    expect(
+      text,
+      `today's run exited 2 and named nothing; the alert must not name a credential:\n${text}`,
+    ).not.toContain("google_auth");
+    // The real cause is still delivered, by the ordinary tail.
+    expect(text).toContain("Not an http(s) URL");
+  });
+
+  it("still promotes when the marked line belongs to the run that is failing now", () => {
+    // Note there is no exit line after it — this is the run in progress, which must not stop it
+    // being scoped. The exit line is not what scopes anything; the start line is.
+    const todayFails = [
+      startLine("2026-08-10T06:23:00Z"),
+      "Mantle KR Herald — credential liveness",
+      "  ✗ live: lark                   HTTP 401",
+      "  ✓ live: telegram               alive",
+      "6 ok · 0 warn · 1 fail",
+      `${ALERT_MARKER}✗ FAILED: live: lark`,
+    ];
+    const text = sentText([...yesterday, ...todayFails].join("\n"));
+    expect(text!.split("\n")[1]).toBe("✗ FAILED: live: lark");
+    expect(text).not.toContain("google_auth");
+  });
+
+  it("promotes nothing when this run's start line is not in the window at all", () => {
+    // A run predating the wrapper's header. Guessing which run a marked line came from is what this
+    // block refuses to do, so the promoted position carries the reason instead of a guess.
+    const noStart = [...yesterday.slice(1), "later output 1", "later output 2", "later output 3"];
+    const text = sentText(noStart.join("\n"));
+    expect(text!.split("\n")[1]).toContain("belong to an earlier run");
+    expect(text!.split("\n")[1]).not.toContain("✗ FAILED:");
+    expect(text).toContain("later output 3");
+  });
+
+  it("does not scope the durable run log, which is one run per file by definition", async () => {
+    // Deliberately without a start line: an older run log, or one written before the wrapper grew
+    // its header. Applying the journal's filter here would trade a correct message for an empty one.
+    await seedRunLog(
+      TEST_UNIT,
+      ["  ✗ live: google_auth  HTTP 401", `${ALERT_MARKER}✗ FAILED: live: google_auth`].join("\n") + "\n",
+    );
+    const text = sentText("");
+    expect(text!.split("\n")[1]).toBe("✗ FAILED: live: google_auth");
+  });
+});
+
+describe("promote-or-keep, never promote-or-delete", () => {
+  it("keeps marked lines it did not promote, instead of deleting them from the tail", () => {
+    // Five marked lines, all inside the five-line tail. Three are promoted; the other two must not
+    // vanish from a message the pre-marker script delivered in full.
+    const marked = Array.from({ length: 5 }, (_, i) => `${ALERT_MARKER}✗ FAILED: credential-${i}`);
+    const text = sentText([startLine(), ...marked].join("\n"));
+    expect(text).toBeDefined();
+    for (let i = 0; i < 5; i++) {
+      expect(text, `credential-${i} vanished from the alert:\n${text}`).toContain(`credential-${i}`);
+    }
+    // Kept is not the same as duplicated, and no kept line carries the raw marker.
+    expect(text!.match(/credential-4/g)).toHaveLength(1);
+    expect(text).not.toContain(ALERT_MARKER);
+  });
+
+  it("still sends the promoted line when promotion emptied the excerpt entirely", async () => {
+    // A run log whose only line is the marked one: after promote-or-keep the tail is empty, and the
+    // message must still carry the promoted line rather than falling through to "no lines captured".
+    await seedRunLog(TEST_UNIT, `${ALERT_MARKER}✗ FAILED: live: google_auth\n`);
+    const text = sentText("");
+    expect(text!.split("\n")[1]).toBe("✗ FAILED: live: google_auth");
+    expect(text).not.toContain("no journal lines captured");
+  });
+
+  it("promotes a marked line that is indented, and does not leave the raw marker behind", () => {
+    // A line at column > 0 used to be neither promoted nor stripped: the prefix reached the phone
+    // and the credential was lost from the position that is meant to guarantee it.
+    const text = sentText([startLine(), `    ${ALERT_MARKER}✗ FAILED: live: telegram`, "trailing"].join("\n"));
+    expect(text!.split("\n")[1]).toBe("✗ FAILED: live: telegram");
+    expect(text).not.toContain(ALERT_MARKER);
+  });
+});
+
+describe("the scan window says when it filled", () => {
+  it("says so when the window filled with this run's start line still inside it", () => {
+    const before = Array.from({ length: 100 }, (_, i) => `older line ${i}`);
+    const after = Array.from({ length: 150 }, (_, i) => `line ${i}`);
+    const text = sentText([...before, startLine(), `${ALERT_MARKER}✗ FAILED: live: lark`, ...after].join("\n"));
+    expect(text!.split("\n")[1]).toBe("✗ FAILED: live: lark");
+    expect(text).toContain("scan window full");
+  });
+
+  it("says the run outran the window when the start line fell out of it", () => {
+    const filler = Array.from({ length: 250 }, (_, i) => `line ${i}`);
+    const text = sentText([startLine(), ...filler, `${ALERT_MARKER}✗ FAILED: live: lark`, "a", "b", "c"].join("\n"));
+    expect(text).toContain("longer than the");
+    expect(text!.split("\n")[1]).not.toContain("✗ FAILED:");
+  });
+
+  it("says nothing at all for a unit that marks no lines, however full the window", () => {
+    // The byte-identical constraint: the other three units must not gain a line of any kind.
+    const filler = Array.from({ length: 250 }, (_, i) => `line ${i}`);
+    const text = sentText([startLine(), ...filler].join("\n"));
+    expect(text).not.toContain("scan window");
+    expect(text).not.toContain("earlier run");
+    expect(text).not.toContain("longer than the");
   });
 });

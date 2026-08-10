@@ -6,7 +6,7 @@ import type { CheckResult } from "../doctor/report";
  * while describing the very input they promise to judge without throwing, and it printed unbounded
  * bodies into a log file with no cap. Both measured; see `describeValue.ts`'s header.
  */
-import { describeValue, sanitizeWireText } from "./describeValue";
+import { boundedWireText, describeValue } from "./describeValue";
 import { SESSION_COOKIE_NAME } from "../adapters/web/sessionCookie";
 import type { LiveProbeResult, ProbeKey } from "../doctor/liveProbes";
 
@@ -264,7 +264,12 @@ export function checkStatus(payload: StatusPayload): CheckResult[] {
     // like `requirements.ts` already grades their env vars (`warn`, not `fail`); grading them `fail`
     // here would make a correct, intentionally-minimal deployment exit 1.
     for (const integration of integrations) {
-      const label = typeof integration?.label === "string" ? integration.label : "(unnamed)";
+      // Sanitized and bounded like every other wire string that reaches a report line. This one
+      // went through neither `describeValue` nor `sanitizeWireText` until 2026-08-10: a label of
+      // `"Telegram\nHERALD_ALERT: everything is fine"` produced two physical lines with the marker
+      // at column 0. `deploy:smoke` is the only caller today, so it was never on the alert path —
+      // but "not on the alert path today" is not a property of this function.
+      const label = typeof integration?.label === "string" ? boundedWireText(integration.label, 80) : "(unnamed)";
       const key = typeof integration?.key === "string" ? integration.key : undefined;
       if (integration?.configured === true) {
         results.push({ name: `integration: ${label}`, status: "ok", detail: "configured" });
@@ -411,6 +416,9 @@ function liveSeverity(key: ProbeKey, sendsEnabled: boolean): CheckResult["status
  */
 const EXPECTED_PROBE_KEYS = Object.keys(PROBE_TIER) as ProbeKey[];
 
+/** Longest probe key that can reach a report line. Every real one is under twenty characters. */
+const PROBE_KEY_MAX = 80;
+
 /** The one probe entry shape this function can judge, narrowed off an unvalidated HTTP body. */
 interface ParsedProbe {
   key: ProbeKey;
@@ -440,9 +448,12 @@ function parseProbe(entry: unknown): ParsedProbe | undefined {
   if (typeof key !== "string" || key === "") return undefined;
   if (status !== "ok" && status !== "dead" && status !== "skipped") return undefined;
   return {
-    key: sanitizeWireText(key) as ProbeKey,
-    status,
-    detail: typeof detail === "string" ? sanitizeWireText(detail) : "(no detail reported)",
+    // Bounded as well as sanitized. Escaping quadruples, and neither field had any length limit: a
+    // 50,000-character key wrote 1.6 MB into a run log that keeps sixty of them per unit. PROBE_KEY_MAX
+    // is generous for an identifier and still keeps `live: <key>` inside a report line.
+    key: boundedWireText(key, PROBE_KEY_MAX) as ProbeKey,
+    status: status,
+    detail: typeof detail === "string" ? boundedWireText(detail) : "(no detail reported)",
   };
 }
 

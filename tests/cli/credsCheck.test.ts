@@ -550,7 +550,13 @@ describe("the last line — what a five-line tail actually carries", () => {
     // build" — so the key is whatever the deployment sends. One newline in it made this line three
     // physical lines, which breaks the one-line guarantee the alert mechanism rests on, and in the
     // newline case would have let a payload manufacture its own `HERALD_ALERT:` line.
-    stub.probes = [...ALL_OK.filter((p) => p.key !== "google_auth"), { key, status: "dead", detail: "HTTP 401" }];
+    // The hostile bytes go in BOTH fields. With them only in `key`, removing `parseProbe`'s
+    // sanitizing of `detail` left every test in this file green — `detail` reaches the report body
+    // by exactly the same route and is just as much a wire string.
+    stub.probes = [
+      ...ALL_OK.filter((p) => p.key !== "google_auth"),
+      { key, status: "dead", detail: `HTTP 401 ${key}` },
+    ];
     const r = await run();
     expect(r.exitCode).toBe(1);
     const line = lastLine(r.stdout);
