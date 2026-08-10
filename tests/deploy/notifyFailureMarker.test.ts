@@ -169,9 +169,22 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
-/** The boundary deploy/herald-run-logged.sh writes before every run. */
-function startLine(stamp = "2026-08-10T06:23:00Z", cmd = "pnpm creds:check"): string {
-  return `=== ${TEST_UNIT} started ${stamp} — ${cmd} ===`;
+/**
+ * The boundary deploy/herald-run-logged.sh writes before every run, INCLUDING the invocation id it
+ * has carried since the hook started refusing run logs it cannot attribute to the failing run.
+ *
+ * The hook's scoping `awk` tests `index($0, marker) == 1` against the `=== <unit> started ` prefix
+ * only, so today the id's absence here changed no result — which is exactly why it survived as a
+ * fixture that no longer matched production. If anyone tightens that predicate to the full header,
+ * a half-spelled fixture passes while the real wrapper's line stops matching, and the alert silently
+ * loses its run scoping. Spelled in full so the two cannot diverge unnoticed.
+ */
+function startLine(
+  stamp = "2026-08-10T06:23:00Z",
+  cmd = "pnpm creds:check",
+  invocation: string = TEST_INVOCATION_ID,
+): string {
+  return `=== ${TEST_UNIT} started ${stamp} invocation ${invocation} — ${cmd} ===`;
 }
 
 /** A report-shaped run, with the marked summary last, followed by however many trailing lines.

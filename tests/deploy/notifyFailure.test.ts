@@ -318,9 +318,21 @@ afterEach(async () => {
  * a call count that drifted and not a timeout value.
  */
 describe("the hook fits inside its own TimeoutStartSec, with margin", () => {
-  /** How much of the 30s must be left over for everything that is not a blocking call. Local text
-   *  processing measures 0.07s end to end against an oversized 256 KiB journal window, so this is
-   *  headroom for a loaded box and for the next thing someone adds, not for the current script. */
+  /**
+   * How much of the 30s must be left over for everything that is not a blocking call.
+   *
+   * The measurement that used to justify this number — 0.07s of local text processing — was taken
+   * against an oversized 256 KiB JOURNAL window, and the journal window has always been byte-capped.
+   * It stopped describing the primary path the moment the run log was read first: what runs on every
+   * failure of every unit now is two reads of a FILE whose size nothing in this script bounds, and
+   * the excerpt read of it was not capped at all. Against a 100 MB run log with one long last line
+   * that took the whole hook to 47.68s and 1.32 GB — SIGTERM territory, past this very deadline.
+   *
+   * Re-measured with `LOG_READ_MAX_BYTES` capping every read (see the script's own block on it):
+   * 0.34s end to end and 7 MB peak RSS on that same 100 MB log, 0.03s on the 1 KB kind these units
+   * actually write. So three seconds is headroom for a loaded box and for the next thing someone
+   * adds — about ten times the measured worst case rather than a fraction of it.
+   */
   const REQUIRED_MARGIN_SECONDS = 3;
 
   it("2 × journalctl + 1 × systemctl + 2 × curl still leaves room under the unit's deadline", async () => {
@@ -360,6 +372,42 @@ describe("the hook fits inside its own TimeoutStartSec, with margin", () => {
         "Every one of these numbers is part of one sum; redo it in the script's budget comment and " +
         "in the unit file's before changing any of them.",
     ).toBeLessThanOrEqual(deadline - REQUIRED_MARGIN_SECONDS);
+  });
+});
+
+/**
+ * The other thing a comment could not keep true, and the sibling of the sum above.
+ *
+ * Every read of a log this script captures into a VARIABLE is bounded by `LOG_READ_MAX_BYTES`,
+ * because a line count is not a size: `tail -n 5` of a run log whose last line is a 100 MB blob is
+ * 100 MB, and it is bash that pays — 47.68s and 1.32 GB end to end, measured, against a 30s
+ * TimeoutStartSec=, which is the alert lost AND the hook's own unit failed.
+ *
+ * The excerpt read of the run log is how this was learned: it was left uncapped while it was the
+ * FALLBACK, taken only when the journal came back empty (which for a unit that just failed almost
+ * never happens), and inverting the source order made it the path every failure of every unit takes.
+ * Nothing failed when that happened — no test, and no comment — because the cap is invisible until
+ * the log is huge. So the rule is asserted over the file rather than trusted to the next reader
+ * noticing which of five reads has it.
+ */
+describe("every log read is byte-capped", () => {
+  it("no read of the run log or the journal reaches bash uncapped", async () => {
+    const script = await readFile(REAL_SCRIPT_PATH, "utf8");
+    // Call sites only: `journal_read() {` (the definition) has no ` --` after the name, and the
+    // comments that discuss `tail -n 5` in prose write no `"$LOG_TAIL_LINES"`.
+    const reads = script
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .filter((line) => /tail -n "\$(LOG_TAIL_LINES|ALERT_SCAN_LINES)"/.test(line) || /journal_read --/.test(line));
+
+    // Same guard the sum above puts on every one of its terms: a read this test can no longer SEE
+    // counts as a read that is capped, which is the failure mode being guarded against.
+    expect(reads.length, "no log reads found — this test can no longer see them").toBeGreaterThanOrEqual(5);
+    for (const line of reads) {
+      expect(line.trim(), "this read hands bash a log of unbounded size").toMatch(
+        /(head|tail) -c "\$LOG_READ_MAX_BYTES"/,
+      );
+    }
   });
 });
 

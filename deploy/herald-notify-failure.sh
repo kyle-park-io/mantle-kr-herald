@@ -105,6 +105,36 @@ ENV_FILE="$REPO_DIR/.env"
 # reached a message. tests/cli/credsCheck.test.ts reads this number out of this file and tails a real
 # run log with it, so lowering it fails there rather than silently emptying an alert.
 LOG_TAIL_LINES=5
+# ── The byte ceiling on every log read, and why a line count is not one ──────────────────────────
+#
+# Every read below that a VARIABLE captures is capped at this many bytes: the run log's excerpt and
+# its exit-code footer, the journal's excerpt, and the marked-line window over whichever of the two
+# answered. A LINE bound is not a SIZE bound — `tail -n 5` of a run log whose last line is a 100 MB
+# JSON blob is 100 MB — and the cost lands on BASH, not on the tool doing the reading. Measured on
+# this box against a run log with one long last line, statement by statement at 100 MB:
+#
+#   tail -n 5 → /dev/null (streamed)            0.04s /   3 MB   ← what tail itself costs
+#   LOG_EXCERPT="$(tail -n 5 …)"  uncapped      3.08s / 394 MB   ← what CAPTURING it costs
+#     + the promote-or-keep read loop          13.61s / 589 MB   ← and copying it again
+#   tail -n 5 … | awk (the footer)  uncapped    0.76s / 641 MB
+#   ── the same three reads through this cap ──
+#   the excerpt read                            0.09s /   5 MB
+#     + the promote-or-keep read loop           0.12s /   6 MB
+#   the footer read                             0.08s /   4 MB
+#
+# End to end, uncapped, the whole hook against that 100 MB run log measured 47.68s and 1.32 GB —
+# past the wrapper unit's TimeoutStartSec=30, which is not a slow alert but no alert plus a second
+# failed unit (see the budget block below). Capped, the same run measures 0.34s and 7 MB, and sends
+# a byte-identical message: at these sizes the cap costs cost, not content.
+#
+# This mattered less when the run log was the FALLBACK: the excerpt read of it ran only when the
+# journal came back empty, which for a unit that just failed almost never happens. Reading the run
+# log FIRST made it the always-taken path for all four units, so it is capped like everything else.
+#
+# 256 KiB is a thousand times any real run and still nothing to read. What a wedged run can leave
+# behind is bounded only by the units' own TimeoutStartSec= (1800s for herald-watch), which is to
+# say: not bounded by anything this hook can rely on.
+LOG_READ_MAX_BYTES=262144
 # ── The 30-second budget, and every command that can spend it ────────────────────────────────────
 #
 # This hook's own wrapper unit sets TimeoutStartSec=30 (deploy/herald-notify-failure@.service).
@@ -126,9 +156,19 @@ LOG_TAIL_LINES=5
 #                                                26s   leaving 4s of margin against 30s.
 #
 # All three co-occur on one real path: no run log means both journal reads AND the systemctl
-# fallback AND, if Telegram is unreachable, both curls. Everything else this script does is local
-# text processing, measured end to end at 0.07s against an oversized 256 KiB journal window — so
-# that 4s of margin is some fifty times the whole rest of the script.
+# fallback AND, if Telegram is unreachable, both curls.
+#
+# Everything else this script does is local text processing, and the number that used to stand here
+# — 0.07s against an oversized 256 KiB journal window — described the wrong path. It was measured on
+# the journal branch, whose window has always been byte-capped; since the run log is read FIRST, the
+# reads that run on every failure of every unit are the two over that FILE, whose size nothing in
+# this script bounds and whose excerpt read was not capped at all. Re-measured, with LOG_READ_MAX_BYTES
+# above now capping both, against the worst run log this box could produce (100 MB, one long last
+# line, the shape a wedged run under an 1800s TimeoutStartSec= leaves): 0.34s end to end and 7 MB
+# peak RSS, against 47.68s and 1.32 GB for the same input uncapped. An ordinary run log — the 1 KB
+# kind these units actually write — is 0.03s. So the 4s of margin is some twelve times the whole
+# rest of the script at its measured worst, on the path that actually runs, rather than fifty times
+# a path that almost never does.
 #
 # Any change to any of these three numbers, to the retry count, or to TimeoutStartSec= is a change
 # to this sum. Redo it here, and in the unit file's own comment, which states it too.
@@ -280,7 +320,33 @@ if [ -n "$RUN_LOG" ]; then
 fi
 
 if [ -n "$RUN_LOG" ]; then
-  LOG_EXCERPT="$(tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null)" || LOG_EXCERPT=""
+  # Byte-capped, like the marked-line window over this same file below, and for the same reason:
+  # five LINES of a run log is not five lines' worth of BYTES, and what bash captures here it holds —
+  # then copies again in the promote-or-keep loop further down. See LOG_READ_MAX_BYTES for the
+  # measurements. This read is why that cap exists: it runs on every failure of every unit.
+  #
+  # `tail -c`, where the marked-line window uses `head -c`, and the direction is not a matter of
+  # taste. Two reasons, both measured on this box:
+  #
+  #   - It is the END of these five lines that the message wants. The display cap further down
+  #     (LOG_EXCERPT_MAX_CHARS) keeps `${LOG_EXCERPT: -500}` — "the tail (the most recent, and
+  #     usually most relevant, output)" — and capping from the front would leave that slice 256 KiB
+  #     INTO a long line: neither the start nor the end of the output, and the wrapper's own footer
+  #     gone from the excerpt entirely. Reproduced against a 100 MB run log: `head -c` sent 500
+  #     characters out of the middle of the blob, `tail -c` sent the same last 500 characters the
+  #     uncapped read did. Capping from the back makes the cap invisible to every message that is
+  #     not already truncated, which is the property to want from a ceiling nothing normal reaches.
+  #   - `head -c` cuts at a BYTE, and in a UTF-8 locale a trailing partial character silently
+  #     destroys the line it is in: bash's `read` hits EOF mid-character, returns non-zero, and the
+  #     promote-or-keep loop below never runs its body for that line. Reproduced with a Korean run
+  #     log — a 2 MB last line vanished from the alert completely, leaving three lines of preamble
+  #     and no sign anything had been dropped. A partial character at the FRONT, which is all
+  #     `tail -c` can produce, reads fine and is dropped by the 500-character cap anyway.
+  #
+  # `|| true` INSIDE the group, never after the pipeline: if `tail -n` fails or is killed partway,
+  # `pipefail` would make the `|| LOG_EXCERPT=""` throw away what it did read. Same shape as the
+  # window below, where `head -c` closing the pipe makes it load-bearing against SIGPIPE.
+  LOG_EXCERPT="$( { tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null || true; } | tail -c "$LOG_READ_MAX_BYTES" )" || LOG_EXCERPT=""
   if [ -n "$LOG_EXCERPT" ]; then
     LOG_POINTER="tail -n 50 ${RUN_LOG}"
     EXCERPT_SOURCE="runlog"
@@ -293,7 +359,14 @@ fi
 # already says when. Never fatal on its own: an unreadable journal degrades to an empty excerpt via
 # `|| true`, not a script failure. This hook still has to reach `exit 0` regardless.
 if [ -z "$LOG_EXCERPT" ]; then
-  LOG_EXCERPT="$(journal_read --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat)" || LOG_EXCERPT=""
+  # Capped from the back, exactly like the run-log excerpt above and for both of its reasons, though
+  # this side is the belt to that one's braces: journald splits a stream into records at LineMax=
+  # (48K by default, and unset on this box), so five records cannot exceed 240 KB however long the
+  # command's own lines were. Capped anyway, so that "every read this script captures into a variable
+  # is bounded by LOG_READ_MAX_BYTES" is a rule with no exception to remember — a raised LineMax, or
+  # a different `--output=`, must not be able to reintroduce the unbounded read the run-log side has
+  # just cost us.
+  LOG_EXCERPT="$( { journal_read --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat || true; } | tail -c "$LOG_READ_MAX_BYTES" )" || LOG_EXCERPT=""
   if [ -n "$LOG_EXCERPT" ]; then
     LOG_POINTER="journalctl --user -u ${UNIT} -n 50 --no-pager"
     EXCERPT_SOURCE="journal"
@@ -332,13 +405,11 @@ ALERT_MARKER="HERALD_ALERT: "
 # How far back to look for marked lines. Well past LOG_TAIL_LINES, because the whole point is that
 # the line may be nowhere near the end; bounded because this is a log of unknown length.
 ALERT_SCAN_LINES=200
-# A LINE bound is not a SIZE bound, and on the journal branch this read still runs regardless of
-# whether the unit marks any lines — every unit that falls through to the journal pays whatever it
-# costs. Measured: 200 lines of 1 MiB each took 26.46s and 1,039 MB RSS against 1.00s and 216 MB for
-# the single read before, crossing TimeoutStartSec= at around 246 MB of journal. `head -c` puts the
-# ceiling where bash can enforce it. 256 KiB is a thousand times any real run and still nothing. A
-# unit whose run log answered the excerpt never takes this journal branch at all — see below.
-ALERT_SCAN_MAX_BYTES=262144
+# The byte ceiling on this window is LOG_READ_MAX_BYTES, the same one every other read in this
+# script now takes — this block is where that rule was first learned, and it is stated once, at the
+# top, rather than per read. Measured here: 200 lines of 1 MiB each took 26.46s and 1,039 MB RSS
+# against 1.00s and 216 MB for the single read before, crossing TimeoutStartSec= at around 246 MB of
+# journal. `head -c` puts the ceiling where bash can enforce it.
 # What the mechanism may add to the message, so a log full of marked lines cannot produce an
 # unbounded Telegram message. Three lines is more than any command emits today (creds:check emits
 # one); the character cap is the one that actually binds, and it is half the excerpt's own.
@@ -355,9 +426,9 @@ ALERT_MAX_CHARS=250
 # is also what keeps the journal read above conditional in practice: a unit whose run log answered
 # skips it entirely.
 if [ "$EXCERPT_SOURCE" = "runlog" ]; then
-  ALERT_WINDOW="$( { tail -n "$ALERT_SCAN_LINES" "$RUN_LOG" 2>/dev/null || true; } | head -c "$ALERT_SCAN_MAX_BYTES" )" || ALERT_WINDOW=""
+  ALERT_WINDOW="$( { tail -n "$ALERT_SCAN_LINES" "$RUN_LOG" 2>/dev/null || true; } | head -c "$LOG_READ_MAX_BYTES" )" || ALERT_WINDOW=""
 else
-  ALERT_WINDOW="$( { journal_read --user -u "$UNIT" -n "$ALERT_SCAN_LINES" --no-pager --output=cat || true; } | head -c "$ALERT_SCAN_MAX_BYTES" )" || ALERT_WINDOW=""
+  ALERT_WINDOW="$( { journal_read --user -u "$UNIT" -n "$ALERT_SCAN_LINES" --no-pager --output=cat || true; } | head -c "$LOG_READ_MAX_BYTES" )" || ALERT_WINDOW=""
 fi
 
 # ── Scope the window to THIS run ─────────────────────────────────────────────────────────────────
@@ -369,8 +440,12 @@ fi
 # days would headline three different credentials from three different days. The most confident line
 # in the message, about the wrong day.
 #
-# deploy/herald-run-logged.sh writes `=== <unit> started <ts> — <cmd> ===` before every run, so the
-# boundary already exists in both sources. Everything after the LAST such line is this run.
+# deploy/herald-run-logged.sh writes `=== <unit> started <ts> invocation <id> — <cmd> ===` before
+# every run, so the boundary already exists in both sources. Everything after the LAST such line is
+# this run. The `awk` below matches only the `=== <unit> started ` PREFIX of it, which is why the
+# invocation id being in the middle of that line costs it nothing — but the line is quoted here in
+# full, and in the fixtures, because a predicate later tightened to the whole header would otherwise
+# pass against a fixture that no longer matches what the wrapper writes.
 #
 # Three cases, all deliberate:
 #   - no start line in the window: the run is longer than the window, or predates the wrapper.
@@ -425,7 +500,7 @@ fi
 ALERT_NOTE=""
 if [ -n "$ALERT_WINDOW" ] && printf '%s\n' "$ALERT_WINDOW" | grep -q "^[[:space:]]*${ALERT_MARKER}"; then
   ALERT_WINDOW_LINES="$(printf '%s\n' "$ALERT_WINDOW" | wc -l)"
-  if [ "$ALERT_WINDOW_LINES" -ge "$ALERT_SCAN_LINES" ] || [ "${#ALERT_WINDOW}" -ge "$ALERT_SCAN_MAX_BYTES" ]; then
+  if [ "$ALERT_WINDOW_LINES" -ge "$ALERT_SCAN_LINES" ] || [ "${#ALERT_WINDOW}" -ge "$LOG_READ_MAX_BYTES" ]; then
     if [ "$ALERT_UNSCOPED" -eq 1 ]; then
       ALERT_NOTE="(this run is longer than the ${ALERT_SCAN_LINES}-line scan window — no marked line could be attributed to it)"
     else
@@ -602,12 +677,25 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
     # 1800s TimeoutStartSec= can leave a very large log. Measured on a 100 MB one: 0.004s this way
     # against 0.232s reading the whole thing, and unlike the 0.232s this one does not grow.
     #
+    # `tail -c`, not the `head -c` every other read uses, and that is not a slip: this read wants the
+    # END of the window — the footer is the last line — and `head -c` would cut precisely the line
+    # being looked for off a log whose last five lines are large. Five LINES is not five lines' worth
+    # of BYTES, so the line bound alone left awk holding the whole of a 100 MB last line: measured at
+    # 0.76s and 641 MB RSS, second only to the excerpt read it sits beside, and 0.09s / 5 MB through
+    # this cap. Ordering is unaffected — awk still takes the LAST footer in the window.
+    #
+    # `LC_ALL=C` on the awk, because a byte cap can cut a multibyte character in half and gawk warns
+    # about it on stderr — `warning: Invalid multibyte data detected` — which in this script means a
+    # line of noise in `journalctl --user -u herald-notify-failure@<unit>.service`, the place a human
+    # goes to ask why an alert looks wrong. Nothing here needs character semantics: the marker, the
+    # digits and the ` at ` suffix are all ASCII, matched with index()/substr() against bytes.
+    #
     # awk with `-v`, not `sed` with an interpolated "$UNIT": in a BRE the dots of
     # `herald-creds.service` are wildcards and a `/` would close the `s///` delimiter early. awk's
     # index() against a -v variable is a literal comparison with no metacharacters at all — the same
     # reason the run-scoping awk further up takes its marker that way. Last footer wins; the ` at `
     # suffix is matched so a line that merely starts the same way cannot contribute a number.
-    EXIT_CODE="$(tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null | awk -v marker="=== ${UNIT} exited " '
+    EXIT_CODE="$(tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null | tail -c "$LOG_READ_MAX_BYTES" | LC_ALL=C awk -v marker="=== ${UNIT} exited " '
       index($0, marker) == 1 {
         rest = substr($0, length(marker) + 1)
         if (match(rest, /^[0-9]+ at /)) code = substr(rest, 1, RLENGTH - 4)
