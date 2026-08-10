@@ -30,6 +30,42 @@
 /** Long enough to recognise a body at a glance, short enough that a log line stays a log line. */
 export const MAX_DESCRIBED_LENGTH = 200;
 
+/**
+ * A wire string made safe to put on a report line, by escaping every control character rather than
+ * dropping it.
+ *
+ * `describeValue` renders through `JSON.stringify`, which already escapes these. A string that
+ * reaches a report line **without** going through it does not: `checkLiveness` interpolates a
+ * probe's `key` and `detail` straight into `name`/`detail`, and a deployment answering with
+ * `{"key": "google_auth\nSOMETHING", …}` turned one report line into two. That is not only an
+ * adversarial case — `parseProbe`'s own comment accepts an unknown key precisely because a
+ * deployment can be "one probe ahead of this build", so the key is whatever that build sends.
+ *
+ * Two things break when a wire string can contain a newline, and the second is why this is not
+ * cosmetic:
+ *   - `creds:check`'s `✗ FAILED:` summary is a one-line guarantee. One embedded newline made it
+ *     three physical lines, and the tail that carries it into a Telegram alert counts lines.
+ *   - `deploy/herald-notify-failure.sh` selects lines to force into that alert by matching a marker
+ *     at the start of a line. A wire string carrying `\nHERALD_ALERT: …` would inject one.
+ * A terminal escape is the third: an ESC-[-2-J sequence in a probe key clears the screen of
+ * whoever cats the run log.
+ *
+ * Escaped, not stripped, so the evidence survives — `google_auth\x0aSOMETHING` says what arrived.
+ * Bounded by construction: each control character becomes exactly four characters, and every caller
+ * is length-capped downstream anyway.
+ */
+export function sanitizeWireText(value: string): string {
+  let out = "";
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    // C0 (which is \n, \r, \t and ESC), DEL, and C1 — the last because a lone 0x9b is an
+    // alternative CSI introducer on some terminals, so escaping only C0 leaves a working escape.
+    const control = code < 0x20 || (code >= 0x7f && code <= 0x9f);
+    out += control ? `\\x${code.toString(16).padStart(2, "0")}` : ch;
+  }
+  return out;
+}
+
 export function describeValue(value: unknown, maxLength: number = MAX_DESCRIBED_LENGTH): string {
   const text = render(value);
   if (text.length <= maxLength) return text;

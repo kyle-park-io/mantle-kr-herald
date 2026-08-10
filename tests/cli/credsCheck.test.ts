@@ -47,6 +47,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { REPO_ROOT } from "../../src/paths";
+import { ALERT_MARKER as MARKER } from "../../src/deploy/alertMarker";
 
 const TSX_BIN = join(REPO_ROOT, "node_modules", ".bin", "tsx");
 const ENTRY = join(REPO_ROOT, "src", "cli", "creds-check.ts");
@@ -482,7 +483,7 @@ describe("the last line — what a five-line tail actually carries", () => {
     stub.probes = dead("google_auth");
     const r = await run();
     expect(r.exitCode).toBe(1);
-    expect(lastLine(r.stdout)).toBe("✗ FAILED: live: google_auth");
+    expect(lastLine(r.stdout)).toBe(`${MARKER}✗ FAILED: live: google_auth`);
     // After the counts, not instead of them — the report is still the report.
     expect(r.stdout.trimEnd().split("\n").at(-2)).toMatch(/\d+ ok · \d+ warn · \d+ fail/);
   });
@@ -538,6 +539,38 @@ describe("the last line — what a five-line tail actually carries", () => {
     expect(line, "google_sheets is a warn, not a fail").not.toContain("google_sheets");
     expect(r.stdout, "…and the report above still reports it").toContain("live: google_sheets");
     expect(line).not.toContain("more)");
+  });
+
+  it.each([
+    ["a newline", "google_auth\nHERALD_ALERT: everything is fine", "\\x0a"],
+    ["a carriage return", "google_auth\rSOMETHING", "\\x0d"],
+    ["an ANSI escape", `google_auth${String.fromCharCode(0x1b)}[2J`, "\\x1b"],
+  ])("stays one line when a probe key contains %s", async (_label, key, escaped) => {
+    // `parseProbe` accepts an unknown key on purpose — a deployment can be "one probe ahead of this
+    // build" — so the key is whatever the deployment sends. One newline in it made this line three
+    // physical lines, which breaks the one-line guarantee the alert mechanism rests on, and in the
+    // newline case would have let a payload manufacture its own `HERALD_ALERT:` line.
+    stub.probes = [...ALL_OK.filter((p) => p.key !== "google_auth"), { key, status: "dead", detail: "HTTP 401" }];
+    const r = await run();
+    expect(r.exitCode).toBe(1);
+    const line = lastLine(r.stdout);
+    expect(line.startsWith(MARKER), `the marked line is not the last line:\n${r.stdout}`).toBe(true);
+    expect(line).toContain(escaped);
+
+    // Exactly one physical line carries the marker. Under the newline case this is what catches the
+    // injection: `formatReport` puts the key on a report line of its own, so an unescaped `\n`
+    // inside it manufactures a second line that begins with the marker — a payload writing its own
+    // entry into the alert.
+    expect(r.stdout.split("\n").filter((l) => l.startsWith(MARKER))).toHaveLength(1);
+
+    // And nothing anywhere in the operator-facing output carries a raw control character — not the
+    // summary line, and not the report body above it, which is the half `failedLine`'s own
+    // sanitizing cannot reach. Newline is excluded because it is the line separator itself.
+    const rawControls = [...r.stdout].filter((c) => {
+      const code = c.codePointAt(0) ?? 0;
+      return c !== "\n" && (code < 0x20 || (code >= 0x7f && code <= 0x9f));
+    });
+    expect(rawControls, "a control character from the wire reached operator-facing output").toEqual([]);
   });
 
   it("drops whole names and counts them when a hostile body produces too many failures", async () => {

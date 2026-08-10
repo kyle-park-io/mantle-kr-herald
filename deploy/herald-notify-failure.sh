@@ -93,6 +93,7 @@ LOG_POINTER="journalctl --user -u ${UNIT} -n 50 --no-pager"
 # Newest by NAME, not by mtime: the run logs are UTC-timestamped, `ls -1` sorts them
 # lexicographically, and mtime ordering is exactly what this machine's constantly stepping clock
 # makes untrustworthy — the same clock that destroyed the journal this fallback exists for.
+RUN_LOG=""
 if [ -z "$LOG_EXCERPT" ]; then
   LOG_ROOT="${HERALD_LOG_DIR:-${HOME:-}/.herald/logs}"
   RUN_LOG_DIR="$LOG_ROOT/${UNIT%.service}"
@@ -104,6 +105,64 @@ if [ -z "$LOG_EXCERPT" ]; then
     # notice below, exactly as an unreadable journal does.
     [ -n "$LOG_EXCERPT" ] && LOG_POINTER="tail -n 50 ${RUN_LOG}"
   fi
+fi
+
+# ── Marked lines: content the failing command declared must reach the alert ──────────────────────
+#
+# Everything above locates the interesting output by counting lines from the end. That is a
+# positional heuristic and it has already failed once, on the one unit whose important line is at the
+# top rather than the bottom: `pnpm creds:check` prints a seven-line report, so the `✗` naming the
+# dead credential sat nine rows from the end and the alert carried two green ticks and a count.
+# Printing a summary line last fixed that run and left one line of slack — on the journal branch
+# systemd's own `Main process exited` / `Failed with result` / `Failed to start` lines put it at
+# position 1 of 5, so one more systemd line (`Consumed 1.234s CPU time` is a real one) empties the
+# alert again, silently.
+#
+# So a command can declare a line instead: anything printed with the ALERT_MARKER prefix is carried
+# into the message regardless of LOG_TAIL_LINES. The prefix is stripped before sending, so it costs
+# the message nothing, and marked lines are removed from the tail below rather than repeated.
+#
+# PURELY ADDITIVE. The other three units emit no marker, so every variable below stays empty for
+# them and their payload is byte-identical to what it was before this block existed — verified by
+# capturing and diffing real payloads, not by reasoning. `src/deploy/alertMarker.ts` holds the same
+# string on the TypeScript side and tests/deploy/notifyFailureMarker.test.ts pins the two equal.
+#
+# A SECOND journal read rather than widening the first: reusing one wider read and re-tailing it
+# would change how LOG_EXCERPT is produced for every unit, which is exactly what must not change
+# here. This one is bounded and its failure degrades to "no marked lines", never to a script error.
+ALERT_MARKER="HERALD_ALERT: "
+# How far back to look for marked lines. Well past LOG_TAIL_LINES, because the whole point is that
+# the line may be nowhere near the end; bounded because this is a log of unknown length.
+ALERT_SCAN_LINES=200
+# What the mechanism may add to the message, so a log full of marked lines cannot produce an
+# unbounded Telegram message. Three lines is more than any command emits today (creds:check emits
+# one); the character cap is the one that actually binds, and it is half the excerpt's own.
+ALERT_MAX_LINES=3
+ALERT_MAX_CHARS=250
+
+ALERT_WINDOW="$(journalctl --user -u "$UNIT" -n "$ALERT_SCAN_LINES" --no-pager --output=cat 2>/dev/null)" || ALERT_WINDOW=""
+# Same source precedence as the excerpt above: the journal when it has anything, the durable run log
+# otherwise. RUN_LOG is set only when the journal came back empty, which is the same condition.
+if [ -z "$ALERT_WINDOW" ] && [ -n "$RUN_LOG" ]; then
+  ALERT_WINDOW="$(tail -n "$ALERT_SCAN_LINES" "$RUN_LOG" 2>/dev/null)" || ALERT_WINDOW=""
+fi
+
+ALERT_TEXT=""
+if [ -n "$ALERT_WINDOW" ]; then
+  # Anchored at column 0 and marker-stripped. Newest ALERT_MAX_LINES, matching the tail's own
+  # "most recent is most relevant" bias. `|| true` because grep exits 1 when nothing matches, which
+  # is the ordinary case for the other three units and must not abort anything.
+  ALERT_TEXT="$(printf '%s\n' "$ALERT_WINDOW" | grep "^${ALERT_MARKER}" | tail -n "$ALERT_MAX_LINES" | sed "s/^${ALERT_MARKER}//")" || ALERT_TEXT=""
+  if [ "${#ALERT_TEXT}" -gt "$ALERT_MAX_CHARS" ]; then
+    ALERT_TEXT="${ALERT_TEXT:0:$ALERT_MAX_CHARS}…(truncated)…"
+  fi
+fi
+
+# Marked lines are shown once, above the tail. Dropping them from the excerpt here — before the
+# character cap below, so the cap still applies to what is actually sent — keeps them from appearing
+# twice, and keeps the raw marker out of the message. A no-op when nothing is marked.
+if [ -n "$ALERT_TEXT" ]; then
+  LOG_EXCERPT="$(printf '%s\n' "$LOG_EXCERPT" | grep -v "^${ALERT_MARKER}")" || LOG_EXCERPT=""
 fi
 
 # Cap the excerpt independent of how long the captured lines actually are — a single stack-trace
@@ -169,7 +228,18 @@ json_escape() {
 # timer is installed). Exiting 0 with nothing sent is the same fail-safe posture as a Telegram
 # outage below — this hook never turns "not configured yet" into a failed systemd unit.
 if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
-  if [ -n "$LOG_EXCERPT" ]; then
+  if [ -n "$ALERT_TEXT" ] && [ -n "$LOG_EXCERPT" ]; then
+    # Marked lines directly under the header, where they are read first, then the tail for context.
+    TEXT="⚠ ${UNIT} failed
+${ALERT_TEXT}
+${LOG_EXCERPT}
+— ${LOG_POINTER}"
+  elif [ -n "$ALERT_TEXT" ]; then
+    # The marked lines were the whole of the tail, or the tail was empty. Still send them.
+    TEXT="⚠ ${UNIT} failed
+${ALERT_TEXT}
+— ${LOG_POINTER}"
+  elif [ -n "$LOG_EXCERPT" ]; then
     TEXT="⚠ ${UNIT} failed
 ${LOG_EXCERPT}
 — ${LOG_POINTER}"

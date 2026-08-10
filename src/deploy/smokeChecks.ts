@@ -6,7 +6,7 @@ import type { CheckResult } from "../doctor/report";
  * while describing the very input they promise to judge without throwing, and it printed unbounded
  * bodies into a log file with no cap. Both measured; see `describeValue.ts`'s header.
  */
-import { describeValue } from "./describeValue";
+import { describeValue, sanitizeWireText } from "./describeValue";
 import { SESSION_COOKIE_NAME } from "../adapters/web/sessionCookie";
 import type { LiveProbeResult, ProbeKey } from "../doctor/liveProbes";
 
@@ -420,13 +420,30 @@ interface ParsedProbe {
 
 /** `entry` as a probe result, or `undefined` if it is not one. `key` is accepted as any string and
  *  cast: an unknown key is a real possibility (a deployment one probe ahead of this build), and
- *  `liveSeverity` already grades an unclassifiable key as `fail` rather than guessing. */
+ *  `liveSeverity` already grades an unclassifiable key as `fail` rather than guessing.
+ *
+ *  **Both strings are sanitized here, at the one place they enter this module.** They are the only
+ *  wire values in it that reach a report line without passing through `describeValue` (whose
+ *  `JSON.stringify` escapes control characters as a side effect), and `checkLiveness` interpolates
+ *  them into `name` and `detail` directly. A key containing a newline split one report line into
+ *  two, which broke `creds:check`'s one-line `✗ FAILED:` guarantee and could inject a line matching
+ *  the marker `deploy/herald-notify-failure.sh` selects on. Sanitizing at the boundary rather than
+ *  at each interpolation is what makes that true for `deploy:smoke` as well, and for the next reader
+ *  of these fields — see `sanitizeWireText`.
+ *
+ *  Sanitizing `key` does not change any lookup: `PROBE_TIER` and `EXPECTED_PROBE_KEYS` hold plain
+ *  identifiers, so a key that needed escaping was never going to match one, and `liveSeverity`
+ *  already grades an unmatched key as `fail`. */
 function parseProbe(entry: unknown): ParsedProbe | undefined {
   if (entry === null || typeof entry !== "object") return undefined;
   const { key, status, detail } = entry as { key?: unknown; status?: unknown; detail?: unknown };
   if (typeof key !== "string" || key === "") return undefined;
   if (status !== "ok" && status !== "dead" && status !== "skipped") return undefined;
-  return { key: key as ProbeKey, status, detail: typeof detail === "string" ? detail : "(no detail reported)" };
+  return {
+    key: sanitizeWireText(key) as ProbeKey,
+    status,
+    detail: typeof detail === "string" ? sanitizeWireText(detail) : "(no detail reported)",
+  };
 }
 
 /**

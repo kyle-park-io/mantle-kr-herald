@@ -12,7 +12,7 @@
 // The second is the reason it exists: `JSON.stringify` throws on inputs a deployment can actually
 // send, and prints unbounded ones in full. See the module header for the measurements.
 import { describe, it, expect } from "vitest";
-import { describeValue, MAX_DESCRIBED_LENGTH } from "../../src/deploy/describeValue";
+import { describeValue, MAX_DESCRIBED_LENGTH, sanitizeWireText } from "../../src/deploy/describeValue";
 
 /** `[[[[…]]]]` nested `depth` deep, built as text and parsed — the exact route a body takes. */
 function deeplyNested(depth: number): unknown {
@@ -126,5 +126,48 @@ describe("describeValue", () => {
     it("honours a caller-supplied limit", () => {
       expect(describeValue("z".repeat(100), 10)).toBe(`${'"'}${"z".repeat(9)}… (truncated from 102 characters)`);
     });
+  });
+});
+
+describe("sanitizeWireText", () => {
+  // The strings this exists for are the two `checkLiveness` interpolates straight into a report
+  // line: a probe's `key` and its `detail`. Everything else in smokeChecks.ts goes through
+  // describeValue, whose JSON.stringify escapes these as a side effect.
+  it("escapes a newline, so one report line cannot become two", () => {
+    expect(sanitizeWireText("google_auth\nSOMETHING")).toBe("google_auth\\x0aSOMETHING");
+    expect(sanitizeWireText("google_auth\nSOMETHING")).not.toContain("\n");
+  });
+
+  it("escapes a carriage return, which would otherwise overwrite the line in a terminal", () => {
+    expect(sanitizeWireText("a\rb")).toBe("a\\x0db");
+  });
+
+  it("escapes an ANSI escape, so a probe key cannot clear the reader's screen", () => {
+    const clearScreen = String.fromCharCode(0x1b) + "[2J";
+    expect(sanitizeWireText(`google_auth${clearScreen}`)).toBe("google_auth\\x1b[2J");
+  });
+
+  it("escapes the C1 introducer too, not only C0", () => {
+    // A lone 0x9b is an alternative CSI on some terminals, so escaping only C0 would leave a
+    // working escape sequence behind.
+    expect(sanitizeWireText(String.fromCharCode(0x9b) + "2J")).toBe("\\x9b2J");
+    expect(sanitizeWireText(String.fromCharCode(0x7f))).toBe("\\x7f");
+  });
+
+  it("leaves ordinary text — including the report's own glyphs and Korean — untouched", () => {
+    for (const text of ["google_auth", "live: telegram", "HTTP 401 — invalid_grant", "✗ ⚠ ✓ · 발행", ""]) {
+      expect(sanitizeWireText(text)).toBe(text);
+    }
+  });
+
+  it("grows by exactly four characters per control character, so callers stay bounded", () => {
+    expect(sanitizeWireText("\n\n\n")).toHaveLength(12);
+  });
+
+  it("cannot introduce the alert marker into a line of its own", () => {
+    // The marker deploy/herald-notify-failure.sh selects on is anchored at the start of a line. A
+    // wire string carrying a newline was the one way to manufacture such a line from a payload.
+    const injected = sanitizeWireText("ok\nHERALD_ALERT: everything is fine");
+    expect(injected.split("\n")).toHaveLength(1);
   });
 });

@@ -23,7 +23,8 @@
 import "./registerErrorHandler";
 import { createDeploymentClient } from "../deploy/deploymentSession";
 import { checkLiveness } from "../deploy/smokeChecks";
-import { describeValue } from "../deploy/describeValue";
+import { describeValue, sanitizeWireText } from "../deploy/describeValue";
+import { ALERT_MARKER } from "../deploy/alertMarker";
 import { smokeCredentials } from "./smokeCredentials";
 import { formatReport, type CheckResult } from "../doctor/report";
 
@@ -123,8 +124,15 @@ function unreadableStatus(res: Response | undefined, parsed: unknown): string {
  * stack trace at the END of their output, which is where a five-line tail looks.
  *
  * Fixed here rather than by widening `LOG_TAIL_LINES`: that tail is shared with three units whose
- * alerts are shaped around it, and one command's layout is not a reason to re-cut everyone's. One
- * line, last, under this command's control, survives any tail.
+ * alerts are shaped around it, and one command's layout is not a reason to re-cut everyone's.
+ *
+ * **Printing it last is not what makes it arrive — the marker is.** Last-line-plus-a-five-line-tail
+ * left one line of slack, and on the journal branch systemd's own failure lines spend all of it:
+ * measured at position 1 of 5, so one more systemd line or one stray print empties the alert again.
+ * Locating content by counting lines from the end is a positional heuristic, and this is the third
+ * guard in this task to be defeated by one. So the line declares itself with `ALERT_MARKER` and
+ * `deploy/herald-notify-failure.sh` carries marked lines whatever the tail depth. It is still
+ * printed last, because that is where it reads best for a human tailing the log.
  *
  * Names only, no details — the details are three rows up in the same log, and the alert links it.
  * Bounded for the reason `describeValue` is bounded: seven dead probes, or a hostile body that
@@ -133,17 +141,22 @@ function unreadableStatus(res: Response | undefined, parsed: unknown): string {
  */
 const FAILED_LINE_MAX = 200;
 function failedLine(results: CheckResult[]): string | undefined {
-  const names = results.filter((r) => r.status === "fail").map((r) => r.name);
+  // Sanitized again here, even though `checkLiveness` already sanitizes the only wire-derived names
+  // that reach this point. This function's entire contract is "one line", and a contract that holds
+  // only because of what some other module currently does is the shape of guard this task has now
+  // been caught by three times. For today's inputs this is a no-op; it is what keeps the contract
+  // true for a `CheckResult` built somewhere that has not thought about it.
+  const names = results.filter((r) => r.status === "fail").map((r) => sanitizeWireText(r.name));
   if (names.length === 0) return undefined;
   for (let shown = names.length; shown >= 1; shown--) {
     const dropped = names.length - shown;
-    const line = `✗ FAILED: ${names.slice(0, shown).join(", ")}${dropped > 0 ? ` (+${dropped} more)` : ""}`;
+    const line = `${ALERT_MARKER}✗ FAILED: ${names.slice(0, shown).join(", ")}${dropped > 0 ? ` (+${dropped} more)` : ""}`;
     if (line.length <= FAILED_LINE_MAX) return line;
   }
   // Even one name is over budget — a probe key long enough to be pathological. Still answer, still
   // bounded, and still say how many went unnamed rather than silently dropping them.
   const suffix = names.length > 1 ? ` (+${names.length - 1} more)` : "";
-  return `${`✗ FAILED: ${names[0]}`.slice(0, FAILED_LINE_MAX - suffix.length - 1)}…${suffix}`;
+  return `${`${ALERT_MARKER}✗ FAILED: ${names[0]}`.slice(0, FAILED_LINE_MAX - suffix.length - 1)}…${suffix}`;
 }
 
 const results: CheckResult[] = [];

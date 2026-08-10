@@ -66,10 +66,11 @@ TimeoutStartSec=120
 # command's exit status back unchanged — the status is what OnFailure= above depends on.
 #
 # The alert this feeds is five lines long (herald-notify-failure.sh's LOG_TAIL_LINES), which is why
-# `creds:check` prints a one-line `✗ FAILED: <names>` after its report: the report's own `✗` sits
-# nine rows from the end, so without that line the 2026-08-10 shape alerted with two green ticks and
-# a count and never named the dead credential. Anything added after ExecStart's output costs a line
-# of that budget.
+# `creds:check` prints a one-line `✗ FAILED: <names>` summary after its report: the report's own `✗`
+# sits nine rows from the end, so without it the 2026-08-10 shape alerted with two green ticks and a
+# count and never named the dead credential. That summary carries the ALERT_MARKER prefix and the
+# hook selects marked lines regardless of tail depth — measured with four systemd lines filling the
+# window, where the line arrives anyway. Do not make it depend on being last again.
 #
 # Argument order is that wrapper's contract, not a convention: `$1` is the unit name and everything
 # after it is the command, run verbatim. Reversed, the wrapper cheerfully names its log directory
