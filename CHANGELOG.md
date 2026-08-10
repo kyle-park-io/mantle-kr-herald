@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-11
+
+### Upgrading — action required for existing installs
+
+- **Run `pnpm db:migrate` against every database this install touches — production first, and before
+  you redeploy the dashboard.** This release adds three columns to a table every prior install
+  already has (`translations.posted_url`, `.posted_at`, `.published_text`) and one new table
+  (`translate_floor_reports`). Columns do not announce themselves the way a missing table does:
+  `src/adapters/store/PgTranslationStore.ts` names all three in a plain `select`, so an unmigrated
+  database fails on *every* read of `translations` — the review list, `pnpm status`, `pnpm watch`,
+  `pnpm x:reconcile` — with `column "posted_url" does not exist`. That is exactly how it was found,
+  against the real production database on 2026-08-07. Only `pnpm serve`, `pnpm db:import` and
+  `pnpm db:export` apply the schema themselves; **the Vercel entry point cannot**
+  (`src/app/createDeps.ts`), so a hosted deployment redeployed ahead of the migration serves 500s
+  from the review screen. `db:migrate` is safe to re-run and has no `--yes` gate — every statement is
+  `create table if not exists` / `alter table ... add column if not exists`, so it can only add
+  schema. `deploy/herald-deploy.sh` runs it on every deploy, so the scheduler's production database
+  is covered by the step below. `pnpm doctor`'s `Database` line is column-aware now, so it will tell
+  you before any other command does.
+- **`git pull` alone now puts unreleased code into production, because the installed
+  `herald-watch.service` still runs out of the development checkout — stand up the deploy checkout
+  and reinstall the units, in that order.** Until this release a unit's `WorkingDirectory=` was
+  `/home/kyle/code/mantle-kr-herald`, so whatever was checked out there *was* what the timer ran. It
+  is `%h/.herald/app` now — merged `main` only, moved by nothing but `deploy/herald-deploy.sh`. The
+  one-time setup must happen before the unit files are copied, because their `ExecStart=` points into
+  that directory ([`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §6):
+
+  ```bash
+  mkdir -p ~/.herald && chmod 700 ~/.herald
+  git clone --branch main <this repo> ~/.herald/app
+  mkdir -p ~/.herald/bin
+  ln -sfn "$(which node)" ~/.herald/bin/node
+  ln -sfn "$(which pnpm)" ~/.herald/bin/pnpm
+  bash deploy/herald-deploy.sh          # stops at the config gate, exit 2 — this is expected
+  bash deploy/herald-deploy.sh --yes    # once the printed list of names looks right
+  ```
+
+  The units reach node and pnpm through `~/.herald/bin` rather than an nvm version directory, because
+  nvm *deletes* the old directory on upgrade: a 2026-08-09 rebuild of this box came back on v24.19.0
+  while every unit still said v24.14.0, and each fire after that died with `203/EXEC` before running a
+  line — the timer kept firing, every fire failed identically, and the only signal was the failure
+  alert. After a node upgrade, re-run the two `ln -sfn` lines and leave the units alone. The first
+  `herald-deploy.sh` always stops: there is no previous snapshot to diff against, so every variable
+  name and steering file prints as `+`. Values are never printed, only names.
+- **Copy all nine unit files and delete `~/.config/systemd/user/herald-notify-failure.service` — copy
+  without deleting, or skip this, and the failure alert stops arriving with nothing to say so.** The
+  `OnFailure=` hook is templated now (`herald-notify-failure@.service`, taking the failing unit's name
+  through `%n`/`%i`) because four scheduled units share it and a hardcoded name meant three of them
+  reported `herald-watch.service`'s journal on their own failure. The old wrapper invokes
+  `deploy/herald-notify-failure.sh` **with no argument, out of the development tree** — so this pull
+  swaps the new script under the unit systemd already has, and the new script refuses an empty `$1`
+  with exit 1 rather than sending a message that names no unit. Nothing breaks loudly: the timers keep
+  firing, the pipeline keeps running, and the one thing that would have told you a scheduler died is a
+  `herald-notify-failure.service` sitting in `systemctl --user --failed` that nobody is looking at.
+  Copy the whole list even to install one unit — an identical file is just an overwrite:
+
+  ```bash
+  cp deploy/herald-watch.service deploy/herald-watch.timer \
+     deploy/herald-convert.service deploy/herald-convert.timer \
+     deploy/herald-x-reconcile.service deploy/herald-x-reconcile.timer \
+     deploy/herald-creds.service deploy/herald-creds.timer \
+     deploy/herald-notify-failure@.service \
+     ~/.config/systemd/user/
+  rm -f ~/.config/systemd/user/herald-notify-failure.service
+  systemctl --user daemon-reload
+  ```
+
+  `daemon-reload` is where this block ends. `enable --now` is per unit and each has its own gate to
+  clear first — `herald-x-reconcile.service` carries `--yes` in its `ExecStart=`, so starting it by
+  hand is not a rehearsal, it is the first production write.
+- **The scheduler's configuration is a deploy-time copy now, not a symlink — editing the development
+  `.env` or a steering file no longer reaches production.** Until this release the deploy checkout's
+  `.env` was a symlink into the development tree, so production read the development checkout's
+  configuration fresh at every timer fire: the exposure the deploy checkout closed for code was still
+  open on the config axis. `pnpm deploy:freeze` takes the copy, prints what would change **by name
+  only, never by value**, and stops unless `--yes` says the change was intended. Two consequences: a
+  steering or `.env` fix is live only after `bash deploy/herald-deploy.sh --yes`, and a rehearsal
+  value left in the development `.env` will be carried into production by the next deploy — the gate
+  names it, which is the point.
+- **`HERALD_TRANSLATE_SINCE` moves one second, to `2026-07-27T14:35:25.000Z`, when you reinstall
+  `herald-watch.service` — and if you are reinstalling on a box that has been collecting, do not
+  raise it to meet your watermark.** `applySelector` compares `item.createdAt >= since`, so a floor
+  set *at* a post's own timestamp still selects that post; the extra second excludes exactly the one
+  item dropped as stale on 2026-08-06 and nothing else. On a reinstall, `floor < watermark` is the
+  correct state — the gap is a queue, not a hole. Raising the floor to the watermark permanently drops
+  everything `pnpm status` counts as `in scope`: already collected, not yet translated. That was 20
+  items on 2026-08-10 ([`docs/ko/team-runbook.md`](docs/ko/team-runbook.md) §6).
+
 ### Added
 
 - **`pnpm deploy:smoke` now proves the deployment's credentials are still ALIVE, not merely present
@@ -204,102 +292,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     instead of claiming X cannot attach video, and says "Telegram video delivery is not
     implemented" on the channel where that is still the true reason.
 
-### Fixed
-
-- **`pnpm status` states the translation floor, and qualifies the Collected total with it.** That
-  total counts every collected item back to the first collect, but the watch scheduler runs
-  `translate:prepare --since $HERALD_TRANSLATE_SINCE` — so on 2026-08-08 a Collected total was read
-  as a backlog and reported to a human as one, when the floor put most of it permanently out of the
-  scheduler's reach. The floor's only real home is `Environment=` on `herald-watch.service`: `.env`
-  carries the key blank and nothing else in the repo carries the value, so there was no read-only
-  way to ask what production selects with. The stage line now reads
-  `Collected (X + Lark)  135   (224 X threads - 92 replies dropped + 3 Lark · in scope 20 · below floor 115)`,
-  with the floor itself printed under the table.
-  - **The whole funnel is on that one line, left to right.** Qualifying the total with the floor
-    alone left the same class of question — "is 135 even right?" — answerable only by a database
-    query, because ~41% of everything ever collected is a reply Mantle made to someone else and is
-    dropped before it can become an item (`isCommenterReply`). The counting reuses that predicate
-    rather than restating it, over `status = 'active'` threads and their first tweet, so the number
-    printed is the drop the pipeline actually took.
-  - **The Lark term is named, and derived.** `224 - 92 = 132`, but the headline is 135: three Lark
-    items are in the total and are not threads, and a reader who subtracts and comes up 3 short
-    concludes the pipeline lost items. The remainder is computed as `total - (threads - dropped)`,
-    never counted separately, so the printed arithmetic reaches the headline by construction — and
-    on the one input where it cannot (a `collect` landing between the two reads), no funnel is
-    printed at all rather than one that visibly fails to add up. Zero terms are omitted, and a
-    deployment with no X threads reads exactly as it did before.
-  - **Asked of systemd, not of the shell.** `systemctl --user show herald-watch.service` reports
-    what the *manager* loaded, so a unit file edited without `daemon-reload` is described by what
-    will really run rather than by what someone meant. `process.env.HERALD_TRANSLATE_SINCE` is
-    empty in a hand-run and arbitrary in a shell that exported it; when it disagrees with the unit
-    it gets its own ⚠ line saying so, and it is never used as the answer.
-  - **Five states, because "no floor" and "no answer" are opposite facts.** `systemctl show` exits 0
-    for a unit it has never heard of and prints a bare `Environment=` for it — identical to a loaded
-    unit that sets nothing — so `LoadState` is read alongside. A loaded unit with no floor is the
-    alarming one (⚠ the whole backlog is in scope, oldest first); a missing unit is just a dev
-    machine. A `systemctl` that is absent, non-zero, slow, or unrecognisable degrades to
-    "cannot determine" and never throws: this is a read-only diagnostic, and it also runs as a stage
-    inside every watch tick.
-  - **The floor and the scope are required arguments** of `pipelineStages`/`formatStatus`, not
-    optional ones. The bare total is the shape that caused the misreading, so the table cannot be
-    rendered without saying how much of it is in reach.
-
-- **The dashboard sends no referrer, without which every video preview 403s.** `video.twimg.com`
-  enforces a Referer allowlist: the same mp4 that returns 200 with no Referer returns 403 with the
-  dashboard's own origin, and a `<video>` that gets a 403 fails with `MEDIA_ERR_SRC_NOT_SUPPORTED`.
-  `pbs.twimg.com` does not enforce it, which is why photo previews have always worked and why
-  nothing connected the two. The policy has to be document-level — `referrerpolicy` is defined for
-  img/iframe/link/script/a but not for media elements, so it cannot be scoped to the one element
-  that needs it. A test pins the meta tag, because deleting it turns nothing else red.
-
-- **A format run no longer builds channel cards for an item that has already been published.**
-  `selectVariants` filters on `types`/`ids`/`channels` and never looked at the source translation's
-  status, so `pnpm format --only-missing` — added this morning and run by the scheduler every 30
-  minutes — read a retired item's absent renderings as work to do and manufactured them. Three items
-  were in that state in production on 2026-08-08 (`x:2080608995371597892`,
-  `x:2080661810034917770`, `x:2081711456320655644`: 13 renderings, 10 variants between them), and
-  they sat on the 2차 검수 board as finished work a reviewer could not clear. Deleting the renderings
-  by hand did not help either — the variants remain, so the next tick rebuilt every one, losing the
-  approvals and keeping the clutter.
-  - **The rule is `PublishTranslations`', extended, not a new one.** That class already refuses to
-    re-process a `posted` translation, for every caller, because a finished item's record is the
-    record of what went out and re-processing *demotes* it. What re-processing demotes here is the
-    2차 검수 board rather than the Drive doc; the reasoning is the same and its comment is not
-    repeated in `FormatVariants`.
-  - **The skip applies to every caller, not only to `--only-missing`.** Scoping it to the scheduled
-    mode was the alternative and it is the weaker one: a bare `pnpm format` is documented as
-    "rebuild every card" and is what an operator runs after re-saving a conversion, so under that
-    scoping it would resurrect every card a human cleanup had just deleted — the cleanup would not
-    have survived one hand run. `posted` already means terminal for every caller in four other
-    places (`PublishTranslations`, `syncSummary`, `loadPublishState`, the 발행 route); a fifth that
-    meant it only on a timer is where a rule like this drifts. The cost is that `[포맷 다시]` and
-    `pnpm format --ids <a posted item>` render nothing; 되돌리기 reopens the item and 게시됨으로
-    closes it again, exactly as the Drive path already documents.
-  - **The refusal is reported rather than returned as a silent zero.** `FormatVariants.run` now
-    reports `skippedPosted`, `pnpm format` prints `skipped n item(s) already posted` under its
-    summary line, and the format route answers `alreadyPosted: true` alongside `rendered: 0`. An
-    unexplained zero is indistinguishable from "your selector matched nothing", which is the
-    appears-to-work-and-does-nothing shape this CLI already refuses elsewhere (`--only-missing` with
-    `--refine` throws rather than being ignored). The new line is deliberately not a `⚠`: it is the
-    permanent steady state of every retired item, not something `ConvertTick` should carry into the
-    journal as a note, and the summary line the tick parses is unchanged.
-  - **Counted where a write was actually declined**, which is why the gate sits after the
-    already-rendered check rather than before it: a finished item whose cards are all still on the
-    board is not work this run refused, and reporting it would put a line in the scheduler's run log
-    every 30 minutes about nothing having happened.
-  - **`status === "posted"` and nothing else.** Not `postedUrl`, which 되돌리기 leaves on the row as
-    the evidence of a disputed match — a gate on it would refuse exactly the item a reviewer just
-    reopened. An item with no translation row at all still formats: only an explicit `posted` says
-    "this went out", and the send path already blocks a missing source loudly.
-  - **The rest of what the schedulers touch was checked, not assumed.** `PrepareConversions`
-    (`convert:prepare`) filters `status === "approved"`; `PrepareTranslations` (`translate:prepare`)
-    selects only ids with no translation row at all, via `listTranslatedIds`, which counts every
-    status; `PrepareAlignment` (`translate:align`) filters `status === "translated"`; `collect` and
-    `status` write no translation; `RetireTranslation` (`x:reconcile`) is idempotent on `postedUrl`,
-    so a 되돌리기 survives the next reconcile. `FormatVariants` was the only hole.
-
-### Added
-
 - **The conversion tick now formats what it converted, so its output actually reaches the 2차 검수
   board.** The tick shipped one stage short of its own purpose: it produced rows in `variants`, but
   the board is built from `renderings` (`src/adapters/web/board.ts` derives its `unconverted` list
@@ -484,56 +476,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RetireTranslation`'s second half — the row already exists from the original retire, and if that
   write had failed, reconcile's conjunctive skip still re-admits the item and repairs it.
 
-### Changed
-
-- **The dashboard header stopped drawing a funnel over a pipeline that branches.** It read
-  `수집 134 → 번역 23 → 변환 10 → 렌더 13 → 발행 16`, and every arrow claimed something the data does
-  not support. Past 번역 a row stops being an item — a variant is keyed `(itemId, type)`, a rendering
-  `(itemId, type, channel)`, a publish-ledger row `(itemId, status, target)` — so the line appeared to
-  *gain* work between 변환 and 렌더 when **three items** had simply fanned out twice (10 and 13 rows
-  over the same 3 items). And 발행 is not downstream of 렌더 at all: it counts the translation
-  markdown uploaded to Drive, a sibling branch off 번역, and 3 of its 9 items have no rendering.
-  Each stage now shows its item count, plus its row count as `N건` where the two differ, separated by
-  `·` instead of `→`. `pnpm status` gained the same item counts. Both are now built by one function,
-  `funnelCounts` in `src/status/pipeline.ts`, alongside the CLI's own `pipelineStages` — they were
-  separate code, and it showed: the CLI learned about the terminal `posted` status while the header
-  kept counting it as work in progress.
-- **The `GET /api/status` funnel is now pinned by `tests/web/typeMirror.test.ts`.** Changing it from
-  five numbers to five `{ items, rows }` tallies left **both typechecks green** while the dashboard
-  kept its own `number` declaration — it would have rendered `[object Object]` in the header on the
-  first deploy. The mirror test file existed for exactly this class of drift but was not pointed at
-  this payload.
-
-- **`pnpm status` and the 1차 검수 tabs now say how many items are actually waiting, instead of
-  letting a finished queue look like a full one.** Once `x:reconcile` began retiring hand-published
-  translations to the terminal status `posted`, the funnel's `Translated 23 (approved 0)` read as
-  "23 waiting, none approved" when the truth was 21 done and **2** waiting — the same misreading the
-  sync line's own comment had already warned about for its half of the report. The translated stage
-  now names all three buckets, actionable first (`pending 2 · approved 0 · posted 21`); the other
-  stages keep the bare `approved N`, having no terminal third status to hide behind it. The sidebar
-  tabs carry the matching per-filter counts, derived from the same predicate that decides which rows
-  a tab shows, so a tab can never promise a row it then does not display. Tab labels shortened to the
-  `StatusChip` vocabulary one row below them (대기 · 승인 · 게시됨): four tabs plus counts do not fit a
-  `w-80` sidebar at the old widths — `검수 대기 5` wrapped its count onto a second line — and a tab
-  should not name a status differently from the chip it filters for. A rendering underneath a
-  `posted` translation is deliberately **not** discounted anywhere: the X post having gone out by
-  hand says nothing about whether its 공지 is still owed to Telegram and Kakao.
-
-- **Replies Mantle made to other accounts no longer enter the pipeline at all.** Measured against
-  production on 2026-08-07: **92 of 221 collected threads (42%) were reply-only** — "@elfa_ai 🥳🥳",
-  "@Agnidex 💚", "@ethereum Onwards." — each arriving in 1차 검수 as its own row for a human to skip.
-  A further 140 nested reply blocks sat inside 46 real threads, prefixed `(댓글 · 지워도 됨)`, which
-  was an instruction to delete them by hand on every worksheet, forever. Both are now filtered at the
-  source (`XContentSource.flattenXThreads`): a reply-rooted thread never becomes a `ContentItem`, and
-  a nested reply never reaches the 원문. The predicate is unchanged and deliberately narrow — a reply
-  is `isReply` **and** its text leads with an `@`. Each half rules out a case the other would destroy:
-  a self-thread continuation is `isReply` without a leading `@`, and a genuine post can open with a
-  mention without being a reply. The exclusion is total, matching how `collect:reference` already
-  isolates @0xMantleKR's own posts: a filtered reply cannot be recovered by `translate:prepare --ids`,
-  because it never becomes an item for the selector to find.
-
-### Added
-
 - **`pnpm x:reconcile` — reads @0xMantleKR's live timeline back and reconciles it against our own
   approved copy, because the account is the record and the board is not.** Three routes lead to a
   published post — the full pipeline, a partial run finished by hand, and copy written entirely
@@ -615,6 +557,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "applied", which is exactly the check that reported healthy against a database still missing the
   two new columns. See `src/cli/db-migrate.ts`, `src/adapters/db/schema.ts` (`isSchemaApplied`,
   `ALTERED_COLUMNS`), and `src/doctor/checks.ts`.
+
+### Changed
+
+- **The dashboard header stopped drawing a funnel over a pipeline that branches.** It read
+  `수집 134 → 번역 23 → 변환 10 → 렌더 13 → 발행 16`, and every arrow claimed something the data does
+  not support. Past 번역 a row stops being an item — a variant is keyed `(itemId, type)`, a rendering
+  `(itemId, type, channel)`, a publish-ledger row `(itemId, status, target)` — so the line appeared to
+  *gain* work between 변환 and 렌더 when **three items** had simply fanned out twice (10 and 13 rows
+  over the same 3 items). And 발행 is not downstream of 렌더 at all: it counts the translation
+  markdown uploaded to Drive, a sibling branch off 번역, and 3 of its 9 items have no rendering.
+  Each stage now shows its item count, plus its row count as `N건` where the two differ, separated by
+  `·` instead of `→`. `pnpm status` gained the same item counts. Both are now built by one function,
+  `funnelCounts` in `src/status/pipeline.ts`, alongside the CLI's own `pipelineStages` — they were
+  separate code, and it showed: the CLI learned about the terminal `posted` status while the header
+  kept counting it as work in progress.
+- **The `GET /api/status` funnel is now pinned by `tests/web/typeMirror.test.ts`.** Changing it from
+  five numbers to five `{ items, rows }` tallies left **both typechecks green** while the dashboard
+  kept its own `number` declaration — it would have rendered `[object Object]` in the header on the
+  first deploy. The mirror test file existed for exactly this class of drift but was not pointed at
+  this payload.
+
+- **`pnpm status` and the 1차 검수 tabs now say how many items are actually waiting, instead of
+  letting a finished queue look like a full one.** Once `x:reconcile` began retiring hand-published
+  translations to the terminal status `posted`, the funnel's `Translated 23 (approved 0)` read as
+  "23 waiting, none approved" when the truth was 21 done and **2** waiting — the same misreading the
+  sync line's own comment had already warned about for its half of the report. The translated stage
+  now names all three buckets, actionable first (`pending 2 · approved 0 · posted 21`); the other
+  stages keep the bare `approved N`, having no terminal third status to hide behind it. The sidebar
+  tabs carry the matching per-filter counts, derived from the same predicate that decides which rows
+  a tab shows, so a tab can never promise a row it then does not display. Tab labels shortened to the
+  `StatusChip` vocabulary one row below them (대기 · 승인 · 게시됨): four tabs plus counts do not fit a
+  `w-80` sidebar at the old widths — `검수 대기 5` wrapped its count onto a second line — and a tab
+  should not name a status differently from the chip it filters for. A rendering underneath a
+  `posted` translation is deliberately **not** discounted anywhere: the X post having gone out by
+  hand says nothing about whether its 공지 is still owed to Telegram and Kakao.
+
+- **Replies Mantle made to other accounts no longer enter the pipeline at all.** Measured against
+  production on 2026-08-07: **92 of 221 collected threads (42%) were reply-only** — "@elfa_ai 🥳🥳",
+  "@Agnidex 💚", "@ethereum Onwards." — each arriving in 1차 검수 as its own row for a human to skip.
+  A further 140 nested reply blocks sat inside 46 real threads, prefixed `(댓글 · 지워도 됨)`, which
+  was an instruction to delete them by hand on every worksheet, forever. Both are now filtered at the
+  source (`XContentSource.flattenXThreads`): a reply-rooted thread never becomes a `ContentItem`, and
+  a nested reply never reaches the 원문. The predicate is unchanged and deliberately narrow — a reply
+  is `isReply` **and** its text leads with an `@`. Each half rules out a case the other would destroy:
+  a self-thread continuation is `isReply` without a leading `@`, and a genuine post can open with a
+  mention without being a reply. The exclusion is total, matching how `collect:reference` already
+  isolates @0xMantleKR's own posts: a filtered reply cannot be recovered by `translate:prepare --ids`,
+  because it never becomes an item for the selector to find.
+
+### Fixed
+
+- **`pnpm status` states the translation floor, and qualifies the Collected total with it.** That
+  total counts every collected item back to the first collect, but the watch scheduler runs
+  `translate:prepare --since $HERALD_TRANSLATE_SINCE` — so on 2026-08-08 a Collected total was read
+  as a backlog and reported to a human as one, when the floor put most of it permanently out of the
+  scheduler's reach. The floor's only real home is `Environment=` on `herald-watch.service`: `.env`
+  carries the key blank and nothing else in the repo carries the value, so there was no read-only
+  way to ask what production selects with. The stage line now reads
+  `Collected (X + Lark)  135   (224 X threads - 92 replies dropped + 3 Lark · in scope 20 · below floor 115)`,
+  with the floor itself printed under the table.
+  - **The whole funnel is on that one line, left to right.** Qualifying the total with the floor
+    alone left the same class of question — "is 135 even right?" — answerable only by a database
+    query, because ~41% of everything ever collected is a reply Mantle made to someone else and is
+    dropped before it can become an item (`isCommenterReply`). The counting reuses that predicate
+    rather than restating it, over `status = 'active'` threads and their first tweet, so the number
+    printed is the drop the pipeline actually took.
+  - **The Lark term is named, and derived.** `224 - 92 = 132`, but the headline is 135: three Lark
+    items are in the total and are not threads, and a reader who subtracts and comes up 3 short
+    concludes the pipeline lost items. The remainder is computed as `total - (threads - dropped)`,
+    never counted separately, so the printed arithmetic reaches the headline by construction — and
+    on the one input where it cannot (a `collect` landing between the two reads), no funnel is
+    printed at all rather than one that visibly fails to add up. Zero terms are omitted, and a
+    deployment with no X threads reads exactly as it did before.
+  - **Asked of systemd, not of the shell.** `systemctl --user show herald-watch.service` reports
+    what the *manager* loaded, so a unit file edited without `daemon-reload` is described by what
+    will really run rather than by what someone meant. `process.env.HERALD_TRANSLATE_SINCE` is
+    empty in a hand-run and arbitrary in a shell that exported it; when it disagrees with the unit
+    it gets its own ⚠ line saying so, and it is never used as the answer.
+  - **Five states, because "no floor" and "no answer" are opposite facts.** `systemctl show` exits 0
+    for a unit it has never heard of and prints a bare `Environment=` for it — identical to a loaded
+    unit that sets nothing — so `LoadState` is read alongside. A loaded unit with no floor is the
+    alarming one (⚠ the whole backlog is in scope, oldest first); a missing unit is just a dev
+    machine. A `systemctl` that is absent, non-zero, slow, or unrecognisable degrades to
+    "cannot determine" and never throws: this is a read-only diagnostic, and it also runs as a stage
+    inside every watch tick.
+  - **The floor and the scope are required arguments** of `pipelineStages`/`formatStatus`, not
+    optional ones. The bare total is the shape that caused the misreading, so the table cannot be
+    rendered without saying how much of it is in reach.
+
+- **The dashboard sends no referrer, without which every video preview 403s.** `video.twimg.com`
+  enforces a Referer allowlist: the same mp4 that returns 200 with no Referer returns 403 with the
+  dashboard's own origin, and a `<video>` that gets a 403 fails with `MEDIA_ERR_SRC_NOT_SUPPORTED`.
+  `pbs.twimg.com` does not enforce it, which is why photo previews have always worked and why
+  nothing connected the two. The policy has to be document-level — `referrerpolicy` is defined for
+  img/iframe/link/script/a but not for media elements, so it cannot be scoped to the one element
+  that needs it. A test pins the meta tag, because deleting it turns nothing else red.
+
+- **A format run no longer builds channel cards for an item that has already been published.**
+  `selectVariants` filters on `types`/`ids`/`channels` and never looked at the source translation's
+  status, so `pnpm format --only-missing` — added this morning and run by the scheduler every 30
+  minutes — read a retired item's absent renderings as work to do and manufactured them. Three items
+  were in that state in production on 2026-08-08 (`x:2080608995371597892`,
+  `x:2080661810034917770`, `x:2081711456320655644`: 13 renderings, 10 variants between them), and
+  they sat on the 2차 검수 board as finished work a reviewer could not clear. Deleting the renderings
+  by hand did not help either — the variants remain, so the next tick rebuilt every one, losing the
+  approvals and keeping the clutter.
+  - **The rule is `PublishTranslations`', extended, not a new one.** That class already refuses to
+    re-process a `posted` translation, for every caller, because a finished item's record is the
+    record of what went out and re-processing *demotes* it. What re-processing demotes here is the
+    2차 검수 board rather than the Drive doc; the reasoning is the same and its comment is not
+    repeated in `FormatVariants`.
+  - **The skip applies to every caller, not only to `--only-missing`.** Scoping it to the scheduled
+    mode was the alternative and it is the weaker one: a bare `pnpm format` is documented as
+    "rebuild every card" and is what an operator runs after re-saving a conversion, so under that
+    scoping it would resurrect every card a human cleanup had just deleted — the cleanup would not
+    have survived one hand run. `posted` already means terminal for every caller in four other
+    places (`PublishTranslations`, `syncSummary`, `loadPublishState`, the 발행 route); a fifth that
+    meant it only on a timer is where a rule like this drifts. The cost is that `[포맷 다시]` and
+    `pnpm format --ids <a posted item>` render nothing; 되돌리기 reopens the item and 게시됨으로
+    closes it again, exactly as the Drive path already documents.
+  - **The refusal is reported rather than returned as a silent zero.** `FormatVariants.run` now
+    reports `skippedPosted`, `pnpm format` prints `skipped n item(s) already posted` under its
+    summary line, and the format route answers `alreadyPosted: true` alongside `rendered: 0`. An
+    unexplained zero is indistinguishable from "your selector matched nothing", which is the
+    appears-to-work-and-does-nothing shape this CLI already refuses elsewhere (`--only-missing` with
+    `--refine` throws rather than being ignored). The new line is deliberately not a `⚠`: it is the
+    permanent steady state of every retired item, not something `ConvertTick` should carry into the
+    journal as a note, and the summary line the tick parses is unchanged.
+  - **Counted where a write was actually declined**, which is why the gate sits after the
+    already-rendered check rather than before it: a finished item whose cards are all still on the
+    board is not work this run refused, and reporting it would put a line in the scheduler's run log
+    every 30 minutes about nothing having happened.
+  - **`status === "posted"` and nothing else.** Not `postedUrl`, which 되돌리기 leaves on the row as
+    the evidence of a disputed match — a gate on it would refuse exactly the item a reviewer just
+    reopened. An item with no translation row at all still formats: only an explicit `posted` says
+    "this went out", and the send path already blocks a missing source loudly.
+  - **The rest of what the schedulers touch was checked, not assumed.** `PrepareConversions`
+    (`convert:prepare`) filters `status === "approved"`; `PrepareTranslations` (`translate:prepare`)
+    selects only ids with no translation row at all, via `listTranslatedIds`, which counts every
+    status; `PrepareAlignment` (`translate:align`) filters `status === "translated"`; `collect` and
+    `status` write no translation; `RetireTranslation` (`x:reconcile`) is idempotent on `postedUrl`,
+    so a 되돌리기 survives the next reconcile. `FormatVariants` was the only hole.
 
 ## [0.4.0] - 2026-08-06
 
@@ -1868,7 +1952,8 @@ Initial release: the end-to-end Mantle KR content pipeline
   closing (`server.address()` returned `null`).
 - Dashboard server returns 500 safely instead of crashing when a response fails to serialize.
 
-[Unreleased]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kyle-park-io/mantle-kr-herald/compare/v0.1.0...v0.2.0
