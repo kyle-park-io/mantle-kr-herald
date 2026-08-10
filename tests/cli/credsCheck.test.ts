@@ -62,9 +62,20 @@ interface StubState {
   sendsEnabled: boolean;
   /** When false, `POST /api/login` answers 200 with no `Set-Cookie` — a 200 that yields no session. */
   loginSetsCookie: boolean;
+  /** `GET /api/status`'s status code for a request that DOES carry a session. */
+  statusStatus: number;
+  /** `GET /api/status`'s raw body; `undefined` means the normal `{"sendsEnabled": …}` JSON. */
+  statusRawBody?: string;
 }
 
-const HEALTHY: StubState = { probes: [], liveStatus: 200, sendsEnabled: false, loginSetsCookie: true };
+const HEALTHY: StubState = {
+  probes: [],
+  liveStatus: 200,
+  sendsEnabled: false,
+  loginSetsCookie: true,
+  statusStatus: 200,
+  statusRawBody: undefined,
+};
 let stub: StubState = { ...HEALTHY };
 let server: Server;
 let origin = "";
@@ -92,8 +103,8 @@ beforeAll(async () => {
       return;
     }
     if (url === "/api/status") {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ sendsEnabled: stub.sendsEnabled }));
+      res.writeHead(stub.statusStatus, { "content-type": "application/json" });
+      res.end(stub.statusRawBody ?? JSON.stringify({ sendsEnabled: stub.sendsEnabled }));
       return;
     }
     if (url === "/api/diagnostics/live") {
@@ -209,6 +220,54 @@ describe("pnpm creds:check", () => {
     expect(r.stdout).toContain("live: telegram");
   });
 
+  /**
+   * The three ways `/api/status` can fail to answer the one question this command asks it — and all
+   * three used to exit 0 with `6 ok · 1 warn · 0 fail` while a send credential was dead.
+   *
+   * The mechanism is worth stating because it is silent by construction: an unreadable `/api/status`
+   * yields no `sendsEnabled`, that collapses to `false`, and `false` is precisely "sends are closed,
+   * so a dead send credential is only a warn". The lenient verdict is the DEFAULT for a route that
+   * could not be read, so the one case where the answer matters most — sends actually open in
+   * production — is the case the failure hides. Not knowing is not the same as being fine.
+   *
+   * Each variant therefore pins `telegram` dead: the probe whose severity depends on the answer.
+   */
+  describe.each([
+    {
+      what: "cannot be read at all",
+      arrange: () => {
+        stub.statusStatus = 401;
+      },
+      says: "HTTP 401",
+    },
+    {
+      what: "answers with a body that is not JSON",
+      arrange: () => {
+        stub.statusRawBody = "<html>bad gateway</html>";
+      },
+      says: "did not parse",
+    },
+    {
+      what: "answers JSON with no sendsEnabled flag",
+      arrange: () => {
+        stub.statusRawBody = "{}";
+      },
+      says: "no boolean `sendsEnabled`",
+    },
+  ])("when /api/status $what", ({ arrange, says }) => {
+    it("fails, and says the send tier could not be graded", async () => {
+      stub.probes = dead("telegram");
+      arrange();
+      const r = await run();
+      expect(r.exitCode, `an unreadable /api/status must not read as a pass:\n${r.stdout}${r.stderr}`).toBe(1);
+      expect(r.stdout).toContain("sendsEnabled");
+      expect(r.stdout).toContain(says);
+      // The point of the fail: the operator is told the send tier's severity is ungraded, rather
+      // than being handed the lenient half of a judgement nobody made.
+      expect(r.stdout).toContain("could not be graded");
+    });
+  });
+
   it("exits 1 when the route cannot be read", async () => {
     stub.probes = [];
     stub.liveStatus = 500;
@@ -228,6 +287,23 @@ describe("pnpm creds:check", () => {
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("Usage:");
   });
+
+  // `new URL()` accepting a string is not the same as that string addressing a deployment.
+  // `mailto:` and `file:` both parse, and both have an `origin` of the *string* `"null"` — so the
+  // parse guard passes them through, the client is built on `"null"`, and `fetch("null/api/login")`
+  // fails as a network error. The operator's report then says the deployment was unreachable and the
+  // exit code says a credential check failed, when what actually happened is that this machine is
+  // configured with something that is not a deployment URL. That is a 2, not a 1: the exit codes are
+  // a contract for the systemd unit, and 1 must mean "go look at a credential".
+  it.each(["mailto:ops@example.com", "file:///etc/hosts", "ftp://example.com/x"])(
+    "exits 2 on %s, a URL that parses but cannot address a deployment",
+    async (url) => {
+      const r = await run({}, [url]);
+      expect(r.exitCode, r.stdout + r.stderr).toBe(2);
+      expect(r.stderr).toContain(url);
+      expect(r.stdout, "a configuration error must not print a credential report").toBe("");
+    },
+  );
 
   it("reports a login that returns 200 with no session as a failed check, not a stack trace", async () => {
     // `createDeploymentClient.authed()` THROWS when there is no session, and a 200 carrying no

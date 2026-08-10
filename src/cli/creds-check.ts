@@ -42,6 +42,19 @@ try {
   process.exit(2);
 }
 
+/**
+ * Parsing is not addressing. `new URL("mailto:ops@example.com")` and `new URL("file:///etc/hosts")`
+ * both succeed, and both have an `origin` of the *string* `"null"`; `ftp://example.com/x` parses to
+ * a real-looking origin `fetch` still cannot use. Without this guard the client is built on that,
+ * the first request fails as a network error, and the report tells the operator the deployment was
+ * unreachable and exits 1 — a credential verdict for what is actually a misconfigured unit file. The
+ * exit codes are a contract (`deploy/herald-creds.service`): 1 must mean go look at a credential.
+ */
+if (deployment.protocol !== "http:" && deployment.protocol !== "https:") {
+  console.error(`Not an http(s) URL: ${rawUrl} — this command talks to a deployment over HTTP.`);
+  process.exit(2);
+}
+
 // Scheme + host only, the shape the deployment's CSRF guard compares an `Origin` against.
 const client = createDeploymentClient(deployment.origin);
 
@@ -59,6 +72,30 @@ if (source.kind !== "env") {
       : "HERALD_SMOKE_USERNAME and HERALD_SMOKE_PASSWORD must both be set — this command runs unattended and never prompts.",
   );
   process.exit(2);
+}
+
+/**
+ * Why `GET /api/status` could not answer whether sends are open, in the words an operator reading a
+ * Telegram alert needs: which way it failed, and what that cost. `parsed` is the body as parsed, or
+ * `undefined` when the parse itself failed — the two are different failures and are named
+ * differently, because "your deployment returned an HTML error page" and "your deployment's status
+ * payload lost a field" lead to entirely different places.
+ */
+function unreadableStatus(res: Response | undefined, parsed: unknown): string {
+  const reason =
+    res === undefined
+      ? "never completed — the deployment could not be reached"
+      : !res.ok
+        ? `answered HTTP ${res.status}`
+        : parsed === undefined
+          ? `answered HTTP ${res.status} with a body that did not parse as JSON`
+          : `answered HTTP ${res.status} with no boolean \`sendsEnabled\` field: ${JSON.stringify(parsed)}`;
+  return (
+    `GET /api/status ${reason}, so the send tier could not be graded. A dead Typefully or Telegram ` +
+    "credential is a warn while sends are closed and a fail once they are open, and this run could not " +
+    "tell which — so the milder verdict below was not observed, it was merely the default. Not knowing " +
+    "is not the same as being fine."
+  );
 }
 
 const results: CheckResult[] = [];
@@ -86,12 +123,32 @@ try {
         "this deployment. Not the same as the credentials being alive, so this is a failure rather than a pass.",
     });
   } else {
-    // `sendsEnabled` decides whether a dead send credential is a warn or a fail, and it comes from the
-    // deployment itself so the check tightens exactly when sends open.
+    /**
+     * `sendsEnabled` decides whether a dead send credential is a warn or a fail, and it comes from
+     * the deployment itself so the check tightens exactly when sends open.
+     *
+     * Which is why an unreadable answer here is its own `fail`, and was the bug this branch used to
+     * hold: no `sendsEnabled` collapses to `false`, and `false` is exactly "sends are closed, so a
+     * dead send credential is only a warn". The lenient verdict is the DEFAULT for a route that could
+     * not be read, so the run where the answer mattered most — sends genuinely open, Telegram dead —
+     * exited 0 with `6 ok · 1 warn · 0 fail` and told nobody. A 401, an HTML error page and a `{}`
+     * body all did it.
+     *
+     * One `fail`, not `checkStatus()`'s seven. `deploy:smoke` grades that whole payload's shape; this
+     * command deliberately does not, because a route-shape assertion firing at 06:23 is how an
+     * operator learns to ignore the channel. This says the one thing that was lost.
+     */
     const statusRes = await client.authed("/api/status");
-    const statusBody = (statusRes ? await statusRes.json().catch(() => undefined) : undefined) as
-      | { sendsEnabled?: boolean }
-      | undefined;
+    const statusBody: unknown = statusRes?.ok ? await statusRes.json().catch(() => undefined) : undefined;
+    const sendsEnabled =
+      typeof statusBody === "object" &&
+      statusBody !== null &&
+      typeof (statusBody as { sendsEnabled?: unknown }).sendsEnabled === "boolean"
+        ? ((statusBody as { sendsEnabled: boolean }).sendsEnabled)
+        : undefined;
+    if (sendsEnabled === undefined) {
+      results.push({ name: "sendsEnabled", status: "fail", detail: unreadableStatus(statusRes, statusBody) });
+    }
 
     // Through `client.authed`, never the plain unauthenticated escape hatch: this route is
     // session-gated like every route but `/api/login`, and a call that reached it without the cookie
@@ -108,15 +165,33 @@ try {
       | undefined;
 
     // The status code is passed so an unreadable route can say WHICH way it was unreadable.
-    results.push(...checkLiveness(liveBody?.probes, statusBody?.sendsEnabled === true, liveRes?.status));
+    //
+    // `sendsEnabled === true` deliberately treats an unknown answer as the lenient `false`, even
+    // though the line above has just failed the run over not knowing it. Guessing `true` instead
+    // would print `✗ live: telegram` — a severity nobody observed, on a credential that may be
+    // perfectly fine — and the exit code is already settled by that `fail`. Report what was seen;
+    // say separately that something was not.
+    results.push(...checkLiveness(liveBody?.probes, sendsEnabled === true, liveRes?.status));
   }
 } catch (err) {
   /**
-   * Nothing above is expected to throw — `request()` swallows network failures and both JSON parses
-   * are guarded — so this is for the unforeseen. It exists because the alternative is worse than a
-   * generic message: an escaping rejection would print a JavaScript error and exit, the operator
-   * would get the alert with no report attached, and the check would look like the deployment
-   * failing rather than the checker failing.
+   * **Deliberately unreachable today, and deliberately kept. Do not delete this as dead code.**
+   *
+   * Every throw the block above can produce was traced: `logIn` cannot throw (`request()` catches
+   * network failures and returns `undefined`); both JSON parses carry `.catch(() => undefined)`;
+   * `checkLiveness` is total over an unvalidated body by construction, as its own header argues; and
+   * `authed()` throws in exactly one case — no session — which the `!client.loggedIn` branch above
+   * intercepts first, with a message about the deployment instead of one about an invariant. That
+   * branch is what is tested ("reports a login that returns 200 with no session as a failed check");
+   * this `catch` has no remaining input to drive it with, so deleting it leaves the suite green.
+   * That is a fact about the current call list, not evidence the `catch` is pointless — measured and
+   * stated here rather than left for the next reader to rediscover as a passing mutation.
+   *
+   * What makes it reachable again: a third authenticated call added without a `loggedIn` guard, a
+   * parse that forgets its `.catch`, or a judging function that stops being total. Each is a
+   * one-line change, and without this the cost is the failure mode this whole feature exists to
+   * remove — under the timer the operator gets a Telegram alert plus a JavaScript error naming an
+   * internal invariant, with no report attached, and a checker failure reads as a dead credential.
    */
   results.push({
     name: "credential liveness",
