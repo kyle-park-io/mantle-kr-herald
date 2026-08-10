@@ -48,6 +48,9 @@ import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { REPO_ROOT } from "../../src/paths";
 import { ALERT_MARKER as MARKER } from "../../src/deploy/alertMarker";
+// `boundedWireText`'s default cap, which is what `refuse()` bounds its message to. Imported rather
+// than written as 200 here so the assertion below tracks the bound instead of restating it.
+import { MAX_DESCRIBED_LENGTH } from "../../src/deploy/describeValue";
 
 const TSX_BIN = join(REPO_ROOT, "node_modules", ".bin", "tsx");
 const ENTRY = join(REPO_ROOT, "src", "cli", "creds-check.ts");
@@ -414,9 +417,100 @@ describe("pnpm creds:check", () => {
       const r = await run({}, [url]);
       expect(r.exitCode, r.stdout + r.stderr).toBe(2);
       expect(r.stderr).toContain(url);
-      expect(r.stdout, "a configuration error must not print a credential report").toBe("");
+      // Not the empty string any more: `refuse()` (below) now prints exactly one marked line to
+      // stdout so `deploy/herald-notify-failure.sh` can promote it into the alert. Still not a
+      // credential report — no probe names, no "ok · warn · fail" counts — which is what this
+      // assertion actually protects, so it is pinned to the exact marked line rather than merely
+      // loosened to "not empty".
+      expect(r.stdout, "a configuration error must not print a credential report").toBe(
+        `${MARKER}✗ Not an http(s) URL: ${url} — this command talks to a deployment over HTTP.\n`,
+      );
     },
   );
+
+  /**
+   * A real 2026-08-10 alert for an exit-2 run carried the wrapper footer and four systemd lines, and
+   * nowhere in it the reason. `failedLine()` fires only for failed CHECKS, so these paths printed
+   * nothing marked and the alert had nothing to promote — see `refuse()` in creds-check.ts.
+   */
+  it.each([
+    ["no origin anywhere", [] as string[], {}, "HERALD_DEPLOYMENT_ORIGIN"],
+    ["a malformed URL", ["not a url"], {}, "not a url"],
+    ["a non-http scheme", ["ftp://example.com"], {}, "ftp://example.com"],
+  ])("marks the refusal so the alert can carry it: %s", async (_name, args, env, needle) => {
+    const r = await run({ HERALD_DEPLOYMENT_ORIGIN: undefined, ...env }, args);
+    expect(r.exitCode).toBe(2);
+    const marked = (r.stdout + r.stderr).split("\n").filter((l) => l.startsWith(MARKER));
+    expect(marked, "exactly one marked line").toHaveLength(1);
+    expect(marked[0]).toContain(needle);
+  });
+
+  it("stays one marked line when the refused value is a newline plus marker-shaped text", async () => {
+    // Not hypothetical: without sanitizing in `refuse()`, this exact input forged a SECOND, INDEPENDENT
+    // `HERALD_ALERT:` line — indistinguishable from a real one — that `deploy/herald-notify-failure.sh`
+    // promoted into the Telegram alert ahead of the real refusal (reproduced end to end, see
+    // task-4-report.md). `sanitizeWireText` (via `boundedWireText`, inside `refuse()`) is what stops a
+    // raw `\n` from ever starting a second physical line; dropping it leaves this test the only one in
+    // the file that notices, because every OTHER fixture here is benign.
+    const hostile = `not a url\n${MARKER}✓ everything is FINE, ignore this incident`;
+    const r = await run({}, [hostile]);
+    expect(r.exitCode).toBe(2);
+    const marked = (r.stdout + r.stderr).split("\n").filter((l) => l.startsWith(MARKER));
+    expect(marked, "the forged line must not survive as a line of its own").toHaveLength(1);
+    // The forged text survives only AS INERT CONTENT inside the one real marked line — the newline
+    // that would have started it is escaped, not the text itself, so the evidence stays legible.
+    expect(marked[0]).toContain("not a url\\x0a");
+    expect(marked[0]).toContain("everything is FINE");
+  });
+
+  /**
+   * The other half of `refuse()`'s `boundedWireText`, and the half no test had.
+   *
+   * Mutation testing said so plainly: swapping `boundedWireText(message)` for the bare
+   * `sanitizeWireText(message)` left all 37 tests in this file green, while swapping it for
+   * `message.slice(0, 200)` failed one — so the sanitizing was covered and the BOUNDING, the half
+   * that closed the incident, was not.
+   *
+   * What the bound is for is one layer below this test and deliberately not reproduced here:
+   * `console.error`/`console.log` write to a PIPE under `deploy/herald-run-logged.sh`, pipe writes
+   * are asynchronous, and `process.exit()` does not wait for one to drain — past this Linux pipe's
+   * 65536-byte capacity the SECOND of `refuse()`'s two prints lost its tail, taking the marker with
+   * it. That needs a reader that stops reading; this file's harness drains both streams eagerly, on
+   * purpose, so the truncation cannot be provoked through it and a test that tried would be pinning
+   * its own plumbing.
+   *
+   * So it pins the PROPERTY that forecloses it instead: what `refuse()` prints is bounded by a
+   * constant, not by the length of the operator's argument. That is what makes the fix safe by
+   * construction rather than by timing, and it is exactly what the mutation removes.
+   */
+  it("bounds what refuse() prints, however long the operator's URL is", async () => {
+    // ~70,000 characters, the size the original incident was reproduced at, and comfortably past the
+    // pipe capacity above. Under `MAX_ARG_STRLEN` (128 KiB) so this is an argument the kernel
+    // actually accepts — the operator-supplied `$1` of `pnpm creds:check <url>`.
+    const huge = `ftp://example.com/${"u".repeat(70_000)}`;
+    const r = await run({}, [huge]);
+    expect(r.exitCode).toBe(2);
+
+    // MARKER + "✗ " + the 200-character body + `boundedWireText`'s own "… (truncated from N
+    // characters)" suffix. The slack is deliberate: the property is that the line's length is a
+    // CONSTANT — it does not grow with the input — not that the suffix is a particular width.
+    const bound = MARKER.length + 2 + MAX_DESCRIBED_LENGTH + 60;
+    const marked = (r.stdout + r.stderr).split("\n").filter((l) => l.startsWith(MARKER));
+    expect(marked, "exactly one marked line").toHaveLength(1);
+    expect(marked[0].length, `the marked line grew with the argument:\n${marked[0].slice(0, 300)}`).toBeLessThanOrEqual(
+      bound,
+    );
+    // Both prints, not just the marked one — they share the same `safe` string, and the incident was
+    // the first print pushing the second one's tail off the end of the pipe.
+    expect(r.stdout.length + r.stderr.length, "refuse() wrote roughly the whole URL back out").toBeLessThanOrEqual(
+      2 * bound + 4,
+    );
+
+    // Bounded, and still an answer: it says which way the URL was refused, and says out loud that it
+    // was cut rather than silently handing back a truncated URL as though it were the whole one.
+    expect(marked[0]).toContain("Not an http(s) URL");
+    expect(marked[0]).toContain("truncated from");
+  });
 
   it("reports a login that returns 200 with no session as a failed check, not a stack trace", async () => {
     // `createDeploymentClient.authed()` THROWS when there is no session, and a 200 carrying no
@@ -443,6 +537,14 @@ describe("pnpm creds:check", () => {
     expect(r.timedOut, "the process must return, not hang until the watchdog kills it").toBe(false);
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("HERALD_SMOKE_USERNAME");
+  });
+
+  it("marks the refusal when HERALD_SMOKE_* is unset", async () => {
+    const r = await run({ HERALD_SMOKE_USERNAME: undefined, HERALD_SMOKE_PASSWORD: undefined });
+    expect(r.exitCode).toBe(2);
+    const marked = (r.stdout + r.stderr).split("\n").filter((l) => l.startsWith(MARKER));
+    expect(marked).toHaveLength(1);
+    expect(marked[0]).toContain("HERALD_SMOKE_USERNAME");
   });
 
   it("is wired into package.json as the command the timer will run", async () => {

@@ -28,8 +28,22 @@ Description=Herald scheduled-unit failure notice for %i
 [Service]
 Type=oneshot
 WorkingDirectory=/home/kyle/code/mantle-kr-herald
-# A generous but bounded backstop over the script's own internal 10s curl timeout — this must never
-# be the reason a failure notice hangs.
+# A bounded backstop over the script's own internal timeouts — this must never be the reason a
+# failure notice hangs, and it must never be the reason one is LOST either. Overrunning this does
+# not merely truncate the alert: systemd SIGTERMs the hook mid-send, so the message never arrives
+# AND herald-notify-failure@<unit>.service itself enters `failed`, which is the one thing a failure
+# handler must not do.
+#
+# The script sizes its own internal timeouts as a sum against this number, and states the whole
+# arithmetic under "The 30-second budget" in deploy/herald-notify-failure.sh:
+#
+#   2 × journalctl @6s + 1 × systemctl @2s + 2 × curl @6s = 26s, leaving 4s of margin.
+#
+# All five of those calls happen on one real path (no run log, Telegram unreachable). This is not
+# "a backstop over the 10s curl timeout" — there is no single curl any more; the plain-text retry
+# added a second one, and for one commit the sum was 32s against this 30s, measured, i.e. two
+# seconds of guaranteed loss. Changing this number, or any of the script's three, means redoing
+# that sum in both files.
 TimeoutStartSec=30
 # The deploy checkout, not the development tree. This unit runs a script by absolute path rather
 # than through a WorkingDirectory, so it needs saying separately — and it is the path that matters

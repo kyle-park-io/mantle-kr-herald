@@ -7,11 +7,11 @@
 # script directly. Each source unit sets its own `OnFailure=herald-notify-failure@%n.service`; `%n`
 # expands to the failing unit's own full name before systemd resolves that target, so it becomes the
 # template's `%i`, which systemd hands to `ExecStart=` and this script reads as $1. Sends ONE
-# Telegram message naming the unit that failed, a short tail of *that* unit's own output — from its
-# journal if the journal still has it, otherwise from the durable run log
-# deploy/herald-run-logged.sh leaves under %h/.herald/logs/ — and the command to read more, then
-# exits 0 unconditionally once past the argument check below: a failure-handler that can itself fail
-# is a loop, not a safety net, and nothing here is worth the timer never firing again over.
+# Telegram message naming the unit that failed, a short tail of *that* unit's own output — from the
+# durable run log deploy/herald-run-logged.sh leaves under %h/.herald/logs/ if there is one, otherwise
+# from the journal — and the command to read more, then exits 0 unconditionally once past the
+# argument check below: a failure-handler that can itself fail is a loop, not a safety net, and
+# nothing here is worth the timer never firing again over.
 #
 # Takes the failing unit's name as $1 rather than hardcoding it. This used to hardcode
 # herald-watch.service, the only unit this hook served at the time; once herald-x-reconcile.service
@@ -83,16 +83,21 @@ fi
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$REPO_DIR/.env"
 
-# Captured immediately, before anything else in this script runs, because it may not be readable
-# for long: journald on this machine rotates on every backwards clock step (this box's WSL2 +
-# timesyncd combination steps the clock constantly), and the readable window has been measured at
-# roughly eight minutes. Pointing the reader at `journalctl` and letting them run it themselves
-# later — the old behaviour — means the thing that would explain the failure can already be gone
-# by the time anyone reads the alert. `--output=cat` drops journalctl's own timestamp/hostname
-# prefix (redundant here — the alert's own arrival time already says when) so the phone-readable
-# budget below goes entirely to the actual message text. Never fatal on its own: an unreadable
-# journal (permissions, journald down) degrades to an empty excerpt via `|| true`, not a script
-# failure — this hook still has to reach `exit 0` regardless.
+# Why an EXCERPT at all, and not just a pointer: pointing the reader at `journalctl` (or `tail`) and
+# letting them run it themselves later — the old behaviour, before either source was captured here —
+# means the thing that would explain the failure can already be gone by the time anyone reads the
+# alert. That risk is real and measured, but it is a JOURNAL risk, not a general one: journald on
+# this machine rotates on every backwards clock step (this box's WSL2 + timesyncd combination steps
+# the clock constantly), and the readable window has been measured at roughly eight minutes — a run
+# that fails late in a long TimeoutStartSec= can already have outlived its own journal by the time
+# this hook runs, let alone by the time a human opens the alert. This is why the run log — a file,
+# with no rotation window to race at all — is read FIRST below ("Where the excerpt comes from, and
+# why the run log wins"), and the journal is read only as a fallback, when there is no run log to
+# outrace the clock with. `--output=cat` on the journal reads that follow drops journalctl's own
+# timestamp/hostname prefix (redundant here — the alert's own arrival time already says when) so the
+# phone-readable budget below goes entirely to the actual message text. Never fatal on its own:
+# an unreadable journal (permissions, journald down) degrades to an empty excerpt via `|| true`, not
+# a script failure — this hook still has to reach `exit 0` regardless.
 # Five lines is a phone-readable budget, and it is a CONTRACT with the commands these units run, not
 # just a display choice: a command whose important output is not in its last five lines does not
 # appear in the alert at all. `pnpm creds:check` prints a one-line `✗ FAILED: <names>` summary after
@@ -100,56 +105,296 @@ ENV_FILE="$REPO_DIR/.env"
 # reached a message. tests/cli/credsCheck.test.ts reads this number out of this file and tails a real
 # run log with it, so lowering it fails there rather than silently emptying an alert.
 LOG_TAIL_LINES=5
-# Both journalctl reads are wrapped, because this unit's TimeoutStartSec= is 30s and was sized when
-# there was one. Measured at exactly 2.00x: a journalctl that sleeps 20s delivered an alert when
-# there was a single read and is SIGTERMed by systemd when there are two — losing the alert
-# entirely, which is worse than losing the marked line. 6s each leaves 30 - 12 - 10 (curl's own -m)
-# = 8s of margin. `timeout` returns 124 on expiry, which the `|| VAR=""` on each read turns into
-# "no lines from this source" — the same degradation an unreadable journal already takes.
+# ── The byte ceiling on every log read, and why a line count is not one ──────────────────────────
+#
+# Every read below that a VARIABLE captures is capped at this many bytes: the run log's excerpt and
+# its exit-code footer, the journal's excerpt, and the marked-line window over whichever of the two
+# answered. A LINE bound is not a SIZE bound — `tail -n 5` of a run log whose last line is a 100 MB
+# JSON blob is 100 MB — and the cost lands on BASH, not on the tool doing the reading. Measured on
+# this box against a run log with one long last line, statement by statement at 100 MB:
+#
+#   tail -n 5 → /dev/null (streamed)            0.04s /   3 MB   ← what tail itself costs
+#   LOG_EXCERPT="$(tail -n 5 …)"  uncapped      3.08s / 394 MB   ← what CAPTURING it costs
+#     + the promote-or-keep read loop          13.61s / 589 MB   ← and copying it again
+#   tail -n 5 … | awk (the footer)  uncapped    0.76s / 641 MB
+#   ── the same three reads through this cap ──
+#   the excerpt read                            0.09s /   5 MB
+#     + the promote-or-keep read loop           0.12s /   6 MB
+#   the footer read                             0.08s /   4 MB
+#
+# End to end, uncapped, the whole hook against that 100 MB run log measured 47.68s and 1.32 GB —
+# past the wrapper unit's TimeoutStartSec=30, which is not a slow alert but no alert plus a second
+# failed unit (see the budget block below). Capped, the same run measures 0.34s and 7 MB, and sends
+# a byte-identical message: at these sizes the cap costs cost, not content.
+#
+# This mattered less when the run log was the FALLBACK: the excerpt read of it ran only when the
+# journal came back empty, which for a unit that just failed almost never happens. Reading the run
+# log FIRST made it the always-taken path for all four units, so it is capped like everything else.
+#
+# 256 KiB is a thousand times any real run and still nothing to read. What a wedged run can leave
+# behind is bounded only by the units' own TimeoutStartSec= (1800s for herald-watch), which is to
+# say: not bounded by anything this hook can rely on.
+LOG_READ_MAX_BYTES=262144
+# ── The 30-second budget, and every command that can spend it ────────────────────────────────────
+#
+# This hook's own wrapper unit sets TimeoutStartSec=30 (deploy/herald-notify-failure@.service).
+# Overrunning it is not a slow alert, it is NO alert plus a second failed unit: systemd SIGTERMs the
+# hook mid-send, the message is lost, and herald-notify-failure@<unit>.service itself enters
+# `failed` — precisely the "a failure-handler that can itself fail is a loop, not a safety net"
+# outcome this file's header refuses.
+#
+# So every external command here that can block is wrapped, and the wrappers are sized as ONE SUM,
+# not one at a time. That arithmetic has already been wrong once: it was written for a single curl,
+# then the plain-text retry added a second one without redoing it, and the worst case — the
+# journal-fallback branch with api.telegram.org unreachable — was MEASURED at 32.04s against the 30s
+# deadline. Two seconds past it, so the hook was SIGTERMed mid-retry: alert lost, hook unit failed.
+#
+#   2 × journalctl  @ JOURNAL_READ_TIMEOUT=6   = 12s   excerpt read + marked-line scan
+#   1 × systemctl   @ SYSTEMCTL_READ_TIMEOUT=2 =  2s   the exit-code fallback, far below
+#   2 × curl        @ `-m 6` in send_telegram  = 12s   the HTML attempt + the plain-text retry
+#                                              ─────
+#                                                26s   leaving 4s of margin against 30s.
+#
+# All three co-occur on one real path: no run log means both journal reads AND the systemctl
+# fallback AND, if Telegram is unreachable, both curls.
+#
+# Everything else this script does is local text processing, and the number that used to stand here
+# — 0.07s against an oversized 256 KiB journal window — described the wrong path. It was measured on
+# the journal branch, whose window has always been byte-capped; since the run log is read FIRST, the
+# reads that run on every failure of every unit are the two over that FILE, whose size nothing in
+# this script bounds and whose excerpt read was not capped at all. Re-measured, with LOG_READ_MAX_BYTES
+# above now capping both, against the worst run log this box could produce (100 MB, one long last
+# line, the shape a wedged run under an 1800s TimeoutStartSec= leaves): 0.34s end to end and 7 MB
+# peak RSS, against 47.68s and 1.32 GB for the same input uncapped. An ordinary run log — the 1 KB
+# kind these units actually write — is 0.03s. So the 4s of margin is some twelve times the whole
+# rest of the script at its measured worst, on the path that actually runs, rather than fifty times
+# a path that almost never does.
+#
+# Any change to any of these three numbers, to the retry count, or to TimeoutStartSec= is a change
+# to this sum. Redo it here, and in the unit file's own comment, which states it too.
+#
+# Measured at exactly 2.00x when the journal reads went from one to two: a journalctl that sleeps
+# 20s delivered an alert when there was a single read and is SIGTERMed by systemd when there are
+# two — losing the alert entirely, which is worse than losing the marked line.
+#
+# WHAT A TIMED-OUT READ NOW YIELDS: whatever arrived before the timeout, not nothing. `timeout`
+# still returns 124 on expiry, but every read here is now `{ … || true; } | (head|tail) -c …`, and
+# that `|| true` — there to stop `pipefail` turning a byte cap into a silent off switch — swallows
+# the 124 as well. The group exits 0, the pipe carries what journalctl had already written, and the
+# `|| VAR=""` after each read no longer fires on a timeout; it remains only for the substitution
+# itself failing. What still drives the degradation is EMPTINESS, tested right after each read: a
+# journalctl that is missing, killed before writing anything, or genuinely empty leaves the variable
+# empty and the fallbacks below take over exactly as they did.
+#
+# Measured through a copy of this script, with a journalctl stub that prints two lines and then
+# hangs (both reads time out, 12.03s, exit 0 either way):
+#   before: `⚠ <unit> 실패 (exit 1) — 실행 로그도 저널도 남지 않았습니다` and the pointer
+#   after:  `⚠ <unit> 실패 (exit 1)`, `<pre>partial line A\npartial line B</pre>`, the pointer
+#
+# Partial content beats none, so this is kept — but KNOWN LIMITATION, deliberately not fixed here:
+# nothing in the message distinguishes a partial tail from a complete one. Those two lines are
+# presented exactly as a whole five-line tail would be, and an operator reading the alert cannot
+# tell that the read was cut off. Saying so would mean a new marker in the message (the ALERT_NOTE
+# mechanism further down is the obvious place); it is a behaviour change, and it belongs in its own
+# change with its own test, not smuggled in beside a byte cap.
 #
 # Resolved rather than assumed present: on a box without `timeout` the reads run unwrapped, exactly
 # as they did before, instead of the script dying on a missing command.
 JOURNAL_READ_TIMEOUT=6
+# `systemctl --user show` talks to the user manager over D-Bus. That manager is alive by definition
+# while this hook runs — it is what started it — but it can be busy, and an unbounded third blocking
+# command sitting on the same worst-case path is exactly how the sum above went negative the first
+# time. 2s against a call measured at 0.007s.
+SYSTEMCTL_READ_TIMEOUT=2
 if command -v timeout >/dev/null 2>&1; then
   journal_read() { timeout "$JOURNAL_READ_TIMEOUT" journalctl "$@" 2>/dev/null; }
+  systemctl_show() { timeout "$SYSTEMCTL_READ_TIMEOUT" systemctl --user show "$@" 2>/dev/null; }
 else
   journal_read() { journalctl "$@" 2>/dev/null; }
+  systemctl_show() { systemctl --user show "$@" 2>/dev/null; }
 fi
 
-LOG_EXCERPT="$(journal_read --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat)" || LOG_EXCERPT=""
-# Where the reader is pointed for more, once they open the alert. Replaced below if the excerpt
-# turns out to have come from the durable run log instead of the journal.
-LOG_POINTER="journalctl --user -u ${UNIT} -n 50 --no-pager"
-
-# Fallback: the durable run log deploy/herald-run-logged.sh writes for every scheduled run. This is
-# the payoff of that script existing. "Captured immediately" above buys nothing when the journal was
-# already rotated *before* this hook ran — an eight-minute window is not much of a window, and a run
-# that failed at minute nine of a thirty-minute TimeoutStartSec= has already outlived its own log.
-# The run log has no such window: the wrapper's tee has flushed and exited before ExecStart= returns,
-# which is before systemd transitions the unit to failed and activates this hook, so by the time
-# this line runs the file is complete on disk.
+# ── What systemd says about the failed unit, asked once ──────────────────────────────────────────
 #
-# Same root expression as the wrapper's, character for character — tests/deploy/runLogging.test.ts
-# pins the two equal, because a wrapper writing where this hook does not look is a fallback that
-# silently never fires while both scripts keep passing their own tests. Same `${UNIT%.service}`
-# per-unit directory, so this reads only the failing unit's own runs.
+# Read here, before anything decides which source to trust, because the first of these three
+# properties is what decides it. One call for all three: the budget above counts CALLS, and
+# properties are free.
+#
+#   InvocationID    the 128-bit id systemd assigns to each START of a unit. The only thing that can
+#                   prove a file on disk belongs to the run that just failed — see the gate below.
+#   ExecMainCode    the waitid(2) si_code: whether ExecMainStatus is a status, a signal, or nothing.
+#   ExecMainStatus  the number itself. Both are used by the header block far below.
+#
+# Asked for as `Name=Value` pairs rather than with `--value`, for two measured reasons. systemctl
+# prints properties in ITS order, not the order requested (`-p ActiveState -p SubState -p LoadState
+# --value` prints LoadState first), so reading `--value` lines positionally is wrong by
+# construction. And it SILENTLY DROPS a name it does not recognise — `-p NoSuchPropertyXyz` yields
+# no line and exit 0 — so a typo here would not fail, it would just quietly stop answering. Reading
+# by name means a dropped property is an empty value, which every consumer below already treats as
+# "unknown"; the test stub honours `-p` for the same reason, so a typo fails a test instead.
+UNIT_INVOCATION=""
+EXEC_MAIN_CODE=""
+EXEC_MAIN_STATUS=""
+if command -v systemctl >/dev/null 2>&1; then
+  while IFS='=' read -r _k _v; do
+    case "$_k" in
+      InvocationID) UNIT_INVOCATION="$_v" ;;
+      ExecMainCode) EXEC_MAIN_CODE="$_v" ;;
+      ExecMainStatus) EXEC_MAIN_STATUS="$_v" ;;
+    esac
+  done <<< "$(systemctl_show "$UNIT" -p InvocationID -p ExecMainCode -p ExecMainStatus)"
+fi
+# Plain lowercase hex, 32 characters on this systemd.
+#
+# The EMPTY case is the load-bearing one and it is checked at the gate below: an unknown unit
+# reports `InvocationID=` and empty must never verify anything. The hex test here is belt and
+# braces — a non-hex value could not match anyway, since the other side of the comparison is
+# extracted by an awk that only accepts `[0-9a-f]+` — and it is kept because it states the shape
+# both sides require in the same terms, so the two cannot drift apart silently. Mutation testing
+# says so plainly: deleting this line changes no test's outcome, while deleting the empty check
+# below fails one immediately.
+case "$UNIT_INVOCATION" in ''|*[!0-9a-f]*) UNIT_INVOCATION="" ;; esac
+
+# ── Where the excerpt comes from, and why the run log wins ───────────────────────────────────────
+#
+# The run log is read FIRST, and this is the whole point of `deploy/herald-run-logged.sh` existing.
+#
+# journald attributes systemd's own messages about a unit to that unit — `Main process exited`,
+# `Failed with result`, `Failed to start`, `Triggering OnFailure=`, `Consumed … CPU time` — and it
+# emits them AFTER the process exits, so they are always the last lines. Reading the journal first
+# therefore spent the entire five-line budget on systemd talking about itself. A real alert, from
+# 2026-08-07, arrived as six lines of which five were that, and nothing about what `pnpm x:reconcile`
+# had done wrong. The journal is never empty for a unit that just failed, so the run-log fallback
+# below it almost never fired: the wrapper had been writing exactly the right content all along and
+# the hook was not looking at it.
+#
+# The run log holds the command's own output plus the wrapper's two boundary lines, and nothing else.
+# It is also one file per run, so the marked-line scan over it is run-scoped by construction —
+# the `awk` anchoring further down is needed only on the journal path now.
 #
 # Newest by NAME, not by mtime: the run logs are UTC-timestamped, `ls -1` sorts them
 # lexicographically, and mtime ordering is exactly what this machine's constantly stepping clock
-# makes untrustworthy — the same clock that destroyed the journal this fallback exists for.
+# makes untrustworthy.
+#
+# Same root expression as the wrapper's, character for character — tests/deploy/runLogging.test.ts
+# pins the two equal, because a wrapper writing where this hook does not look is a fallback that
+# silently never fires while both scripts keep passing their own tests.
+LOG_EXCERPT=""
+LOG_POINTER=""
+EXCERPT_SOURCE="none"
 RUN_LOG=""
-if [ -z "$LOG_EXCERPT" ]; then
-  LOG_ROOT="${HERALD_LOG_DIR:-${HOME:-}/.herald/logs}"
-  RUN_LOG_DIR="$LOG_ROOT/${UNIT%.service}"
-  RUN_LOG="$(ls -1 "$RUN_LOG_DIR"/*.log 2>/dev/null | tail -n 1)" || RUN_LOG=""
-  if [ -n "$RUN_LOG" ]; then
-    LOG_EXCERPT="$(tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null)" || LOG_EXCERPT=""
-    # Point at the file, not at a journalctl invocation that just came back empty. Never fatal on
-    # its own either: an unreadable or absent run log degrades to an empty excerpt and the plain
-    # notice below, exactly as an unreadable journal does.
-    [ -n "$LOG_EXCERPT" ] && LOG_POINTER="tail -n 50 ${RUN_LOG}"
+
+LOG_ROOT="${HERALD_LOG_DIR:-${HOME:-}/.herald/logs}"
+RUN_LOG_DIR="$LOG_ROOT/${UNIT%.service}"
+RUN_LOG="$(ls -1 "$RUN_LOG_DIR"/*.log 2>/dev/null | tail -n 1)" || RUN_LOG=""
+
+# ── Prove the file is THIS run's, or do not use it ───────────────────────────────────────────────
+#
+# "Newest by name" is not "this run's". The two come apart exactly when the unit fails WITHOUT
+# reaching deploy/herald-run-logged.sh — a 203/EXEC because pnpm moved, a bad ExecStart=, an
+# unwritable log root — because then no file is written for this run at all and the newest one is
+# the PREVIOUS run's, with its output and its `exited <n>` footer intact. The alert reported
+# yesterday's failure, with yesterday's exit code, as today's, and today's real status (203) was
+# discarded. It reads entirely plausible, which is what makes it the worst failure mode this hook
+# has: a confident, specific, wrong answer.
+#
+# Nothing in the file's name, mtime or content could distinguish the two — this box's clock steps,
+# so even an mtime within the last second proves nothing. systemd's invocation id can: it changes on
+# every start of the unit, the wrapper records the one it ran under in its header line, and the hook
+# asks systemd for the unit's current one. Equal, or the file is not this run's.
+#
+# THE RULE IS ALL-OR-NOTHING, and deliberately so: an unverifiable file is dropped for the excerpt
+# AND for the exit code, not special-cased for one of them. Both were stale together, from the same
+# file, and a gate that saved only the number would still have shipped yesterday's output.
+#
+# Three ways to fail it, all landing on the journal:
+#   - the file records no id (`none`, or a log written before the wrapper recorded one). UNUSABLE,
+#     on purpose. Trusting an unverifiable file is the bug. The transition costs nothing to wait
+#     out: herald-run-logged.sh keeps 60 runs per unit and these units run daily to two-hourly, so
+#     every id-less log ages out on its own within days. Do NOT "fix" this by trusting them.
+#   - the ids differ. The file is a previous run's, which is the case above.
+#   - systemd could not be asked at all — no systemctl, no bus, the 2s `timeout` expiring. Then
+#     nothing can be verified and the journal is taken. Losing the run log's formatting is
+#     survivable; presenting yesterday's failure as today's is not.
+#
+# Said on stderr rather than in the message: it lands in `journalctl --user -u
+# herald-notify-failure@<unit>.service` next to curl's own `-S` errors, so "why is this alert
+# journal-shaped when a run log exists?" is answerable, without spending a line of the phone budget
+# on it for every unit during the transition.
+#
+# `head -n 1`: the wrapper writes this line before it runs anything, so the first line is the only
+# place its own header can be. A line further down carrying the same shape came from the command's
+# output, and a same-second name collision (`tee -a` appends rather than clobbers) leaves the OLDER
+# run's header first — which fails the check and takes the journal, the safe direction.
+if [ -n "$RUN_LOG" ]; then
+  RUN_LOG_INVOCATION="$(head -n 1 "$RUN_LOG" 2>/dev/null | awk -v marker="=== ${UNIT} started " '
+    index($0, marker) == 1 && match($0, / invocation [0-9a-f]+ /) {
+      print substr($0, RSTART + 12, RLENGTH - 13)
+    }
+  ')" || RUN_LOG_INVOCATION=""
+  if [ -z "$UNIT_INVOCATION" ] || [ "$RUN_LOG_INVOCATION" != "$UNIT_INVOCATION" ]; then
+    echo "herald-notify-failure.sh: ignoring ${RUN_LOG} — cannot prove it is this run's (log invocation '${RUN_LOG_INVOCATION:-none}', unit invocation '${UNIT_INVOCATION:-unknown}'); using the journal instead" >&2
+    RUN_LOG=""
   fi
 fi
+
+if [ -n "$RUN_LOG" ]; then
+  # Byte-capped, like the marked-line window over this same file below, and for the same reason:
+  # five LINES of a run log is not five lines' worth of BYTES, and what bash captures here it holds —
+  # then copies again in the promote-or-keep loop further down. See LOG_READ_MAX_BYTES for the
+  # measurements. This read is why that cap exists: it runs on every failure of every unit.
+  #
+  # `tail -c`, where the marked-line window uses `head -c`, and the direction is not a matter of
+  # taste. Two reasons, both measured on this box:
+  #
+  #   - It is the END of these five lines that the message wants. The display cap further down
+  #     (LOG_EXCERPT_MAX_CHARS) keeps `${LOG_EXCERPT: -500}` — "the tail (the most recent, and
+  #     usually most relevant, output)" — and capping from the front would leave that slice 256 KiB
+  #     INTO a long line: neither the start nor the end of the output, and the wrapper's own footer
+  #     gone from the excerpt entirely. Reproduced against a 100 MB run log: `head -c` sent 500
+  #     characters out of the middle of the blob, `tail -c` sent the same last 500 characters the
+  #     uncapped read did. Capping from the back makes the cap invisible to every message that is
+  #     not already truncated, which is the property to want from a ceiling nothing normal reaches.
+  #   - `head -c` cuts at a BYTE, and in a UTF-8 locale a trailing partial character silently
+  #     destroys the line it is in: bash's `read` hits EOF mid-character, returns non-zero, and the
+  #     promote-or-keep loop below never runs its body for that line. Reproduced with a Korean run
+  #     log — a 2 MB last line vanished from the alert completely, leaving three lines of preamble
+  #     and no sign anything had been dropped. A partial character at the FRONT, which is all
+  #     `tail -c` can produce, reads fine and is dropped by the 500-character cap anyway.
+  #
+  # `|| true` INSIDE the group, never after the pipeline: if `tail -n` fails or is killed partway,
+  # `pipefail` would make the `|| LOG_EXCERPT=""` throw away what it did read. Same shape as the
+  # window below, where `head -c` closing the pipe makes it load-bearing against SIGPIPE.
+  LOG_EXCERPT="$( { tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null || true; } | tail -c "$LOG_READ_MAX_BYTES" )" || LOG_EXCERPT=""
+  if [ -n "$LOG_EXCERPT" ]; then
+    LOG_POINTER="tail -n 50 ${RUN_LOG}"
+    EXCERPT_SOURCE="runlog"
+  fi
+fi
+
+# Journal fallback: the unit never reached the wrapper (a misconfigured ExecStart=, a unit added
+# without it), or could not write under %h/.herald/logs. Captured with `--output=cat` to drop
+# journalctl's own timestamp/hostname prefix — redundant here, since the alert's arrival time
+# already says when. Never fatal on its own: an unreadable journal degrades to an empty excerpt via
+# `|| true`, not a script failure. This hook still has to reach `exit 0` regardless.
+if [ -z "$LOG_EXCERPT" ]; then
+  # Capped from the back, exactly like the run-log excerpt above and for both of its reasons, though
+  # this side is the belt to that one's braces: journald splits a stream into records at LineMax=
+  # (48K by default, and unset on this box), so five records cannot exceed 240 KB however long the
+  # command's own lines were. Capped anyway, so that "every read this script captures into a variable
+  # is bounded by LOG_READ_MAX_BYTES" is a rule with no exception to remember — a raised LineMax, or
+  # a different `--output=`, must not be able to reintroduce the unbounded read the run-log side has
+  # just cost us.
+  LOG_EXCERPT="$( { journal_read --user -u "$UNIT" -n "$LOG_TAIL_LINES" --no-pager --output=cat || true; } | tail -c "$LOG_READ_MAX_BYTES" )" || LOG_EXCERPT=""
+  if [ -n "$LOG_EXCERPT" ]; then
+    LOG_POINTER="journalctl --user -u ${UNIT} -n 50 --no-pager"
+    EXCERPT_SOURCE="journal"
+  fi
+fi
+
+# Neither source had anything. The pointer is still worth sending — it is what the excerpt exists to
+# make unnecessary, not a replacement for it.
+[ -z "$LOG_POINTER" ] && LOG_POINTER="journalctl --user -u ${UNIT} -n 50 --no-pager"
 
 # ── Marked lines: content the failing command declared must reach the alert ──────────────────────
 #
@@ -171,18 +416,19 @@ fi
 # capturing and diffing real payloads, not by reasoning. `src/deploy/alertMarker.ts` holds the same
 # string on the TypeScript side and tests/deploy/notifyFailureMarker.test.ts pins the two equal.
 #
-# A SECOND journal read rather than widening the first: reusing one wider read and re-tailing it
-# would change how LOG_EXCERPT is produced for every unit, which is exactly what must not change
-# here. This one is bounded and its failure degrades to "no marked lines", never to a script error.
+# A SECOND read of the same source rather than widening the excerpt's own: reusing that read and
+# re-tailing it would change how LOG_EXCERPT is produced for every unit, which is exactly what must
+# not change here. This one is bounded and its failure degrades to "no marked lines", never to a
+# script error.
 ALERT_MARKER="HERALD_ALERT: "
 # How far back to look for marked lines. Well past LOG_TAIL_LINES, because the whole point is that
 # the line may be nowhere near the end; bounded because this is a log of unknown length.
 ALERT_SCAN_LINES=200
-# A LINE bound is not a SIZE bound, and this read is unconditional, so all four units pay whatever it
-# costs. Measured: 200 lines of 1 MiB each took 26.46s and 1,039 MB RSS against 1.00s and 216 MB for
-# the single read before, crossing TimeoutStartSec= at around 246 MB of journal. `head -c` puts the
-# ceiling where bash can enforce it. 256 KiB is a thousand times any real run and still nothing.
-ALERT_SCAN_MAX_BYTES=262144
+# The byte ceiling on this window is LOG_READ_MAX_BYTES, the same one every other read in this
+# script now takes — this block is where that rule was first learned, and it is stated once, at the
+# top, rather than per read. Measured here: 200 lines of 1 MiB each took 26.46s and 1,039 MB RSS
+# against 1.00s and 216 MB for the single read before, crossing TimeoutStartSec= at around 246 MB of
+# journal. `head -c` puts the ceiling where bash can enforce it.
 # What the mechanism may add to the message, so a log full of marked lines cannot produce an
 # unbounded Telegram message. Three lines is more than any command emits today (creds:check emits
 # one); the character cap is the one that actually binds, and it is half the excerpt's own.
@@ -192,13 +438,16 @@ ALERT_MAX_CHARS=250
 # `|| true` inside the group, not after the pipeline: `head -c` closes the pipe once it has enough,
 # journalctl dies of SIGPIPE, and with `pipefail` that would discard a window that was merely
 # truncated — turning the byte cap into a silent off switch.
-ALERT_WINDOW="$( { journal_read --user -u "$UNIT" -n "$ALERT_SCAN_LINES" --no-pager --output=cat || true; } | head -c "$ALERT_SCAN_MAX_BYTES" )" || ALERT_WINDOW=""
-# Same source precedence as the excerpt above: the journal when it has anything, the durable run log
-# otherwise. RUN_LOG is set only when the journal came back empty, which is the same condition.
-ALERT_FROM_JOURNAL=1
-if [ -z "$ALERT_WINDOW" ] && [ -n "$RUN_LOG" ]; then
-  ALERT_WINDOW="$( { tail -n "$ALERT_SCAN_LINES" "$RUN_LOG" 2>/dev/null || true; } | head -c "$ALERT_SCAN_MAX_BYTES" )" || ALERT_WINDOW=""
-  ALERT_FROM_JOURNAL=0
+#
+# Same source precedence as the excerpt above, and for the same reason: scan whichever source
+# EXCERPT_SOURCE says actually answered — the run log first, the journal only when that came back
+# empty — rather than always widening a journal read regardless of where the excerpt came from. This
+# is also what keeps the journal read above conditional in practice: a unit whose run log answered
+# skips it entirely.
+if [ "$EXCERPT_SOURCE" = "runlog" ]; then
+  ALERT_WINDOW="$( { tail -n "$ALERT_SCAN_LINES" "$RUN_LOG" 2>/dev/null || true; } | head -c "$LOG_READ_MAX_BYTES" )" || ALERT_WINDOW=""
+else
+  ALERT_WINDOW="$( { journal_read --user -u "$UNIT" -n "$ALERT_SCAN_LINES" --no-pager --output=cat || true; } | head -c "$LOG_READ_MAX_BYTES" )" || ALERT_WINDOW=""
 fi
 
 # ── Scope the window to THIS run ─────────────────────────────────────────────────────────────────
@@ -210,8 +459,12 @@ fi
 # days would headline three different credentials from three different days. The most confident line
 # in the message, about the wrong day.
 #
-# deploy/herald-run-logged.sh writes `=== <unit> started <ts> — <cmd> ===` before every run, so the
-# boundary already exists in both sources. Everything after the LAST such line is this run.
+# deploy/herald-run-logged.sh writes `=== <unit> started <ts> invocation <id> — <cmd> ===` before
+# every run, so the boundary already exists in both sources. Everything after the LAST such line is
+# this run. The `awk` below matches only the `=== <unit> started ` PREFIX of it, which is why the
+# invocation id being in the middle of that line costs it nothing — but the line is quoted here in
+# full, and in the fixtures, because a predicate later tightened to the whole header would otherwise
+# pass against a fixture that no longer matches what the wrapper writes.
 #
 # Three cases, all deliberate:
 #   - no start line in the window: the run is longer than the window, or predates the wrapper.
@@ -227,7 +480,7 @@ fi
 # — trading a correct message for an empty one.
 ALERT_SCOPE="$ALERT_WINDOW"
 ALERT_UNSCOPED=0
-if [ "$ALERT_FROM_JOURNAL" -eq 1 ] && [ -n "$ALERT_WINDOW" ]; then
+if [ "$EXCERPT_SOURCE" = "journal" ] && [ -n "$ALERT_WINDOW" ]; then
   ALERT_SCOPE="$(printf '%s\n' "$ALERT_WINDOW" | awk -v marker="=== ${UNIT} started " '
     index($0, marker) == 1 { buf = ""; found = 1; next }
     found { buf = buf $0 "\n" }
@@ -266,7 +519,7 @@ fi
 ALERT_NOTE=""
 if [ -n "$ALERT_WINDOW" ] && printf '%s\n' "$ALERT_WINDOW" | grep -q "^[[:space:]]*${ALERT_MARKER}"; then
   ALERT_WINDOW_LINES="$(printf '%s\n' "$ALERT_WINDOW" | wc -l)"
-  if [ "$ALERT_WINDOW_LINES" -ge "$ALERT_SCAN_LINES" ] || [ "${#ALERT_WINDOW}" -ge "$ALERT_SCAN_MAX_BYTES" ]; then
+  if [ "$ALERT_WINDOW_LINES" -ge "$ALERT_SCAN_LINES" ] || [ "${#ALERT_WINDOW}" -ge "$LOG_READ_MAX_BYTES" ]; then
     if [ "$ALERT_UNSCOPED" -eq 1 ]; then
       ALERT_NOTE="(this run is longer than the ${ALERT_SCAN_LINES}-line scan window — no marked line could be attributed to it)"
     else
@@ -359,46 +612,236 @@ json_escape() {
   printf '%s' "$s"
 }
 
+# HTML entity escaping, for `parse_mode: "HTML"`. Only three characters need it — the repo settled
+# on HTML over MarkdownV2 for exactly that reason (src/domain/formatting/emitters/telegram.ts:29:
+# MarkdownV2 needs 18, including `.`, `(`, `)` and `-`, all of which saturate Korean prose).
+#
+# `&` FIRST, or the ampersands this function itself introduces get escaped a second time and the
+# operator reads `&amp;lt;`.
+#
+# The `&` in each replacement is written `\&`, not `&`, and that backslash is not decorative: since
+# bash 5.2, `${s//pattern/string}` treats a bare `&` in `string` as sed does — "the text that just
+# matched" — so `s=${s//</&lt;}` would substitute `<` with `<lt;` (the matched `<` followed by
+# `lt;`), never inserting the ampersand at all. Verified on this box's bash 5.2.21, where the
+# unescaped version passed a naive read of this function while silently emitting `<lt;…>gt;` — the
+# exact unescaped-`<` failure mode this function exists to prevent, coming from the escaper itself.
+#
+# This is not cosmetic. An unescaped `<` in a log line makes the message malformed HTML, Telegram
+# answers 400, and `curl -fsS … || true` below discards that — so the alert disappears with no
+# trace at either end. The plain-text retry further down is the second half of this guard; neither
+# replaces the other, because escaping is what a future edit can get wrong and the retry is what
+# makes getting it wrong survivable.
+#
+# Composes with, and does not replace, `sanitizeWireText` (src/deploy/describeValue.ts) upstream in
+# the TypeScript layer: that one stops a wire string from forging a `HERALD_ALERT: ` marker line;
+# this one stops it from forging HTML markup. Neither is a substitute for the other.
+html_escape() {
+  local s=$1
+  s=${s//&/\&amp;}
+  s=${s//</\&lt;}
+  s=${s//>/\&gt;}
+  printf '%s' "$s"
+}
+
 # Unset means: no scheduler-failures room configured yet (.env.example documents it as
 # [REQUIRED for the pnpm watch scheduler's failure hook], but nothing enforces that before the
 # timer is installed). Exiting 0 with nothing sent is the same fail-safe posture as a Telegram
 # outage below — this hook never turns "not configured yet" into a failed systemd unit.
 if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
+  # ── Which exit code the header names, and who gets asked ───────────────────────────────────────
+  #
+  # The exit code separates a dead credential (1) from a machine-configuration error (2), and the
+  # operator should not have to infer which from the body. Two sources can answer, and the order is
+  # the same judgment the excerpt makes above: OUR OWN ARTIFACT FIRST, systemd's account of it
+  # second.
+  #
+  # 1. The run log's footer — `=== <unit> exited <n> at … ===`, written by
+  #    deploy/herald-run-logged.sh from ${PIPESTATUS[0]}, i.e. the status the wrapper actually saw,
+  #    in shell convention (a signalled command is already 128+N there). All four units this hook
+  #    serves run through that wrapper, so in production this is the branch that answers.
+  #
+  #    $RUN_LOG is the same single file the excerpt is quoting, and it has already been PROVEN to
+  #    belong to this run — see the invocation-id gate above, which empties $RUN_LOG when it cannot
+  #    prove that. So there is nothing left for this block to second-guess: if the variable is set,
+  #    the footer in it is this run's footer. That gate is also why preferring the footer is safe at
+  #    all; without it, "the newest file by name" and "this run" come apart precisely when a unit
+  #    fails before reaching the wrapper, and this block would have named the previous run's code.
+  #
+  # 2. systemd, and only as the FALLBACK, because `systemctl --user show <unit> -p ExecMainStatus`
+  #    NEVER returns empty. For a unit it has never heard of it prints `0` and exits 0 — measured on
+  #    this box:
+  #        $ systemctl --user show herald-nope.service -p ExecMainCode -p ExecMainStatus
+  #        ExecMainCode=0
+  #        ExecMainStatus=0
+  #    A guard that only rejected a NON-NUMERIC value therefore accepted that `0`, and the alert
+  #    read `⚠ <unit> 실패 (exit 0)` — a header contradicting itself about a real failure — while
+  #    `[ -z "$EXIT_CODE" ]` was never true, making the run-log branch dead code in production.
+  #    Reproduced end to end before this was rewritten, not reasoned about.
+  #
+  #    ExecMainCode is what separates the cases. It is the waitid(2) si_code, so:
+  #        0    → no main process was ever reaped. Nothing is known; NO code in the header.
+  #        1    → CLD_EXITED. ExecMainStatus is a genuine exit status.
+  #        2, 3 → CLD_KILLED / CLD_DUMPED. ExecMainStatus is a SIGNAL NUMBER, not a status: a unit
+  #               killed on its own TimeoutStartSec= reports 15, and `(exit 15)` names a code the
+  #               command never returned — while the wrapper's own footer, for the same run, says
+  #               143. Converted to 128+N here so the two agree whichever one answers.
+  #
+  #    $EXEC_MAIN_CODE and $EXEC_MAIN_STATUS were read at the top of the script, in the same single
+  #    `systemctl show` the invocation-id gate needed — see that block for why the properties are
+  #    read by name rather than with `--value`.
+  EXIT_CODE=""
+  if [ -n "$RUN_LOG" ]; then
+    # Through `tail`, not straight at the file: the footer is the LAST thing herald-run-logged.sh
+    # writes, and every other read of this file is capped for a reason — a wedged run under an
+    # 1800s TimeoutStartSec= can leave a very large log. Measured on a 100 MB one: 0.004s this way
+    # against 0.232s reading the whole thing, and unlike the 0.232s this one does not grow.
+    #
+    # `tail -c`, not the `head -c` every other read uses, and that is not a slip: this read wants the
+    # END of the window — the footer is the last line — and `head -c` would cut precisely the line
+    # being looked for off a log whose last five lines are large. Five LINES is not five lines' worth
+    # of BYTES, so the line bound alone left awk holding the whole of a 100 MB last line: measured at
+    # 0.76s and 641 MB RSS, second only to the excerpt read it sits beside, and 0.09s / 5 MB through
+    # this cap. Ordering is unaffected — awk still takes the LAST footer in the window.
+    #
+    # `LC_ALL=C` on the awk. The reason that holds everywhere: nothing this awk does needs character
+    # semantics — the marker, the digits and the ` at ` suffix are all ASCII, matched with
+    # index()/substr(), so bytes are the right unit for a read that a byte cap may have cut through
+    # the middle of a character.
+    #
+    # What prompted it is weaker evidence and is recorded as such. On this box (GNU Awk 5.2.1, in a
+    # UTF-8 locale — which is what the probe at the top of this file arranges) a cut landing
+    # mid-character made gawk write `warning: Invalid multibyte data detected` to stderr, seen both
+    # in isolation and through the whole hook against a Korean run log; that is a line of noise in
+    # `journalctl --user -u herald-notify-failure@<unit>.service`, the place a human goes to ask why
+    # an alert looks wrong. It did NOT reproduce for the reviewer on the same gawk version, so treat
+    # it as build- or locale-dependent rather than as something this line reliably prevents. The
+    # first paragraph is why the line stays either way.
+    #
+    # awk with `-v`, not `sed` with an interpolated "$UNIT": in a BRE the dots of
+    # `herald-creds.service` are wildcards and a `/` would close the `s///` delimiter early. awk's
+    # index() against a -v variable is a literal comparison with no metacharacters at all — the same
+    # reason the run-scoping awk further up takes its marker that way. Last footer wins; the ` at `
+    # suffix is matched so a line that merely starts the same way cannot contribute a number.
+    EXIT_CODE="$(tail -n "$LOG_TAIL_LINES" "$RUN_LOG" 2>/dev/null | tail -c "$LOG_READ_MAX_BYTES" | LC_ALL=C awk -v marker="=== ${UNIT} exited " '
+      index($0, marker) == 1 {
+        rest = substr($0, length(marker) + 1)
+        if (match(rest, /^[0-9]+ at /)) code = substr(rest, 1, RLENGTH - 4)
+      }
+      END { if (code != "") print code }
+    ')" || EXIT_CODE=""
+  fi
+
+  if [ -z "$EXIT_CODE" ]; then
+    case "$EXEC_MAIN_STATUS" in ''|*[!0-9]*) EXEC_MAIN_STATUS="" ;; esac
+    if [ -n "$EXEC_MAIN_STATUS" ]; then
+      case "$EXEC_MAIN_CODE" in
+        1) EXIT_CODE="$EXEC_MAIN_STATUS" ;;
+        2|3) EXIT_CODE="$((128 + EXEC_MAIN_STATUS))" ;;
+      esac
+    fi
+  fi
+
+  # Whichever source answered: `⚠ <unit> 실패 (exit 0)` is a sentence that contradicts itself, and 0
+  # is exactly what an unknown unit reports. Unknown degrades to a header with NO code — which is
+  # what this block has always claimed to do and, until this was fixed, did not.
+  [ "$EXIT_CODE" = "0" ] && EXIT_CODE=""
+
+  HEADER="⚠ ${UNIT} 실패"
+  [ -n "$EXIT_CODE" ] && HEADER="${HEADER} (exit ${EXIT_CODE})"
+
   # Header, then anything promoted, then the note if there is one, then the tail, then the pointer.
   # Assembled by appending so the three optional pieces cannot multiply into branches — the earlier
   # shape had one branch per combination and lost a case the moment ALERT_NOTE was added.
+  #
+  # Header and marked lines are plain: they are the part that must stay readable when a phone is
+  # narrow, and `<pre>` would let them scroll off to the right. The excerpt is `<pre>` because the
+  # reports these units print are column-aligned and proportional text ruins them.
   if [ -n "$ALERT_TEXT" ] || [ -n "$ALERT_NOTE" ] || [ -n "$LOG_EXCERPT" ]; then
-    TEXT="⚠ ${UNIT} failed"
+    TEXT="$(html_escape "$HEADER")"
     [ -n "$ALERT_TEXT" ] && TEXT="${TEXT}
-${ALERT_TEXT}"
+$(html_escape "$ALERT_TEXT")"
     [ -n "$ALERT_NOTE" ] && TEXT="${TEXT}
-${ALERT_NOTE}"
+$(html_escape "$ALERT_NOTE")"
     [ -n "$LOG_EXCERPT" ] && TEXT="${TEXT}
-${LOG_EXCERPT}"
+<pre>$(html_escape "$LOG_EXCERPT")</pre>"
     TEXT="${TEXT}
-— ${LOG_POINTER}"
+↳ $(html_escape "$LOG_POINTER")"
   else
     # Neither source had anything: the journal was already rotated (or unreadable), AND there is no
     # durable run log — the unit never reached deploy/herald-run-logged.sh, or could not write under
     # %h/.herald/logs. Still send the alert; the pointer is the fallback the excerpt exists to make
     # unnecessary, not a replacement for it.
-    TEXT="⚠ ${UNIT} failed (no journal lines captured, and no durable run log either) — journalctl --user -u ${UNIT} -n 50 --no-pager"
+    TEXT="$(html_escape "${HEADER} — 실행 로그도 저널도 남지 않았습니다")
+↳ $(html_escape "$LOG_POINTER")"
   fi
+
+  # One attempt as HTML, and — only if Telegram REJECTED it — one as plain text with the tags
+  # stripped.
+  #
   # -4: this machine's IPv6 route to api.telegram.org is known broken while the AAAA record still
   # resolves (see src/cli/preferIpv4.ts) — curl itself is unaffected by that bug, but there is no
-  # reason to let Happy Eyeballs race a dead route on every failure notice. -m 10: a hung request
-  # here must not hold the unit open; -fsS: fail (non-zero exit) on an HTTP error, silent on
-  # stdout otherwise, but -S still prints the error to stderr — deliberately NOT redirected to
-  # /dev/null (a 2>&1 here would make -S pointless), so a 401 on a stale token, a 400 on a bad chat
-  # id, or any other Telegram-side rejection lands in `journalctl --user -u
+  # reason to let Happy Eyeballs race a dead route on every failure notice. -fsS: non-zero exit on
+  # an HTTP error, quiet on stdout, but -S still prints the error to stderr — deliberately NOT
+  # redirected, so a 401 on a stale token or a 400 on malformed HTML lands in `journalctl --user -u
   # herald-notify-failure@${UNIT}.service` instead of vanishing along with the message that never
-  # sent — the templated unit name, now that this script is invoked as an instance of that template
-  # rather than through the single fixed unit it used to be.
-  curl -4 -fsS -m 10 \
-    -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    -H "Content-Type: application/json" \
-    -d "$(printf '{"chat_id":"%s","text":"%s"}' "$TELEGRAM_CHAT_ID_OPS" "$(json_escape "$TEXT")")" \
-    >/dev/null || true
+  # sent.
+  #
+  # `-m 6`, not the 10 this used to be, and the difference is the retry: this function is now called
+  # TWICE on the worst path, so its budget is spent twice. See "The 30-second budget" at the top —
+  # 2×6 is the largest per-attempt value that keeps the whole hook inside TimeoutStartSec=30 with
+  # margin. A hung request must not hold the unit open; two hung requests must not either.
+  send_telegram() {
+    local text=$1 mode=$2 payload
+    if [ -n "$mode" ]; then
+      payload="$(printf '{"chat_id":"%s","text":"%s","parse_mode":"%s"}' \
+        "$TELEGRAM_CHAT_ID_OPS" "$(json_escape "$text")" "$mode")"
+    else
+      payload="$(printf '{"chat_id":"%s","text":"%s"}' \
+        "$TELEGRAM_CHAT_ID_OPS" "$(json_escape "$text")")"
+    fi
+    curl -4 -fsS -m 6 \
+      -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      -H "Content-Type: application/json" \
+      -d "$payload" \
+      >/dev/null
+  }
+
+  # Nothing may run between these two lines: $? is clobbered by the next command, and the retry
+  # decision below is about WHICH failure this was, not merely that there was one.
+  send_telegram "$TEXT" "HTML"
+  SEND_RC=$?
+
+  # 22, and nothing else. `curl -f` exits 22 on an HTTP status >= 400, which is the only failure
+  # class a plain-text resend can fix — a 400 on malformed HTML. Retrying any other class is
+  # actively harmful, not merely useless:
+  #   6   (DNS) and 28 (`-m` expired) spend the whole curl budget a second time against the deadline
+  #       above; the 32.04s overrun that budget comment describes was exactly this, an unreachable
+  #       api.telegram.org retried for no reason that could ever have worked.
+  #   28  can also DUPLICATE the alert: `-m` expiring after Telegram already accepted the message
+  #       means the retry posts the same content again, and the operator gets it twice.
+  #   127 (curl not installed) cannot succeed on a second call either.
+  #   A 401 on a stale token is a 22, and re-sending identical content earns the identical 401 —
+  #       one wasted call, bounded, and the price of not special-casing status codes curl does not
+  #       hand back separately.
+  if [ "$SEND_RC" -eq 22 ]; then
+    # Formatting cost us the message. Send the content unformatted rather than nothing: `<pre>` tags
+    # out, entities back to their characters, no parse_mode. One retry, not a loop — the second
+    # attempt uses the encoding that worked before this change, so a second failure is not about
+    # formatting and repeating would only delay `exit 0`.
+    #
+    # Reverse order from html_escape on purpose: `&lt;`/`&gt;` must give back `<`/`>` before `&amp;`
+    # gives back `&`, or an original `&lt;` (escaped by html_escape to `&amp;lt;`) would have its
+    # `&amp;` collapsed to `&` first and stop matching `&lt;` at all, leaving a literal `&lt;` in the
+    # "plain text" retry. And `&` in the final replacement is written `\&`: the same bash-5.2
+    # matched-text meaning that bit html_escape above bites here too — `${PLAIN//&amp;/&}` would
+    # replace `&amp;` with itself (a no-op), not with `&`.
+    PLAIN=${TEXT//<pre>/}
+    PLAIN=${PLAIN//<\/pre>/}
+    PLAIN=${PLAIN//&lt;/<}
+    PLAIN=${PLAIN//&gt;/>}
+    PLAIN=${PLAIN//&amp;/\&}
+    send_telegram "$PLAIN" "" || true
+  fi
 fi
 
 exit 0

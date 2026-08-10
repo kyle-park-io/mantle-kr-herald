@@ -36,12 +36,35 @@ export async function notifyOps(text: string, fetchFn: typeof fetch = fetch): Pr
     return;
   }
 
-  try {
-    const res = await fetchFn(`${API}/bot${token}/sendMessage`, {
+  // One attempt as HTML, one as plain text if Telegram rejects it — same posture as
+  // deploy/herald-notify-failure.sh: a formatting mistake must cost this message its formatting,
+  // not the message. `text` is expected to already be in the shared grammar (opsAlertGrammar.ts):
+  // <pre>-wrapped and HTML-entity-escaped where it needs to be.
+  const post = async (body: Record<string, unknown>): Promise<Response> =>
+    fetchFn(`${API}/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text }),
+      body: JSON.stringify({ chat_id: chatId, ...body }),
     });
+
+  try {
+    let res = await post({ text, parse_mode: "HTML" });
+    if (!res.ok) {
+      // The bash side gates its retry on curl exit 22 specifically — an HTTP-level rejection, not a
+      // DNS failure or a timeout (curl 6/28) — because retrying those doubles the hang and can
+      // duplicate an alert Telegram already accepted. `res.ok === false` is the fetch equivalent of
+      // exit 22: a response was received and Telegram said no. A THROWN fetch rejection (network
+      // failure) is the equivalent of curl 6/28/127 instead, and never reaches this branch — it
+      // skips straight to the catch below, with no second attempt.
+      //
+      // Reverse order from escapeTelegramHtml on purpose — see that function's own comment.
+      const plain = text
+        .replace(/<\/?pre>/g, "")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&amp;/g, "&");
+      res = await post({ text: plain });
+    }
     if (!res.ok) {
       // Mirrors curl -fsS's fail-on-HTTP-error behaviour in herald-notify-failure.sh: a rejection
       // by Telegram (bad token, bad chat id, ...) is a failure to swallow, not a reason to throw.
