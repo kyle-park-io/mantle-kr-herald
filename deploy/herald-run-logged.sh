@@ -199,7 +199,25 @@ case "$RUN_INVOCATION" in ''|*[!0-9a-f]*) RUN_INVOCATION="none" ;; esac
 
 # Names the unit and the exact command line, which is what makes a run log answerable months later:
 # whether `--yes` was passed, which pnpm was on PATH, which subcommand ran.
-say "=== $UNIT started $(date -u +%Y-%m-%dT%H:%M:%SZ) invocation $RUN_INVOCATION — $* ==="
+#
+# `$*` is escaped before it goes into the line below, because this wrapper is the one writer of this
+# file's header and it is writing an argument it did not choose the bytes of. `creds:check` takes an
+# optional URL as its own $1 (falling back to $HERALD_DEPLOYMENT_ORIGIN otherwise), and someone
+# running `deploy/herald-run-logged.sh herald-creds.service … creds:check <url>` by hand puts that
+# URL straight into `$*`. A raw newline in it, followed by text shaped like
+# `HERALD_ALERT: …` (src/deploy/alertMarker.ts), used to forge a second physical line into the run
+# log — BEFORE the command has even started, so `src/cli/creds-check.ts`'s own `refuse()` sanitizing
+# never sees it — and deploy/herald-notify-failure.sh's marker scan does not care which writer put a
+# line there. Reproduced: the forged line promoted ahead of the real one, since it sits earlier in
+# the file. Escaping only `\r`/`\n` — the two bytes that can start a NEW physical line — rather than
+# every code point `sanitizeWireText` (src/deploy/describeValue.ts) escapes: this is bash, that
+# module cannot be imported here, and stopping a second line from starting is the whole guarantee
+# this header needs — content that stays ON this line cannot match a marker grep anchored at column
+# 0. Does not touch "$@" below, only this cosmetic echo of it: the command still runs with the
+# argument's real, unescaped bytes.
+CMD_LINE=${*//$'\r'/\\r}
+CMD_LINE=${CMD_LINE//$'\n'/\\n}
+say "=== $UNIT started $(date -u +%Y-%m-%dT%H:%M:%SZ) invocation $RUN_INVOCATION — $CMD_LINE ==="
 
 if [ -n "$LOG_FILE" ]; then
   # `2>&1` merges stderr into the log: the interesting half of a failed run is almost always there

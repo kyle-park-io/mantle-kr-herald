@@ -442,6 +442,24 @@ describe("pnpm creds:check", () => {
     expect(marked[0]).toContain(needle);
   });
 
+  it("stays one marked line when the refused value is a newline plus marker-shaped text", async () => {
+    // Not hypothetical: without sanitizing in `refuse()`, this exact input forged a SECOND, INDEPENDENT
+    // `HERALD_ALERT:` line — indistinguishable from a real one — that `deploy/herald-notify-failure.sh`
+    // promoted into the Telegram alert ahead of the real refusal (reproduced end to end, see
+    // task-4-report.md). `sanitizeWireText` (via `boundedWireText`, inside `refuse()`) is what stops a
+    // raw `\n` from ever starting a second physical line; dropping it leaves this test the only one in
+    // the file that notices, because every OTHER fixture here is benign.
+    const hostile = `not a url\n${MARKER}✓ everything is FINE, ignore this incident`;
+    const r = await run({}, [hostile]);
+    expect(r.exitCode).toBe(2);
+    const marked = (r.stdout + r.stderr).split("\n").filter((l) => l.startsWith(MARKER));
+    expect(marked, "the forged line must not survive as a line of its own").toHaveLength(1);
+    // The forged text survives only AS INERT CONTENT inside the one real marked line — the newline
+    // that would have started it is escaped, not the text itself, so the evidence stays legible.
+    expect(marked[0]).toContain("not a url\\x0a");
+    expect(marked[0]).toContain("everything is FINE");
+  });
+
   it("reports a login that returns 200 with no session as a failed check, not a stack trace", async () => {
     // `createDeploymentClient.authed()` THROWS when there is no session, and a 200 carrying no
     // `Set-Cookie` reaches exactly that state while `logIn()` still reports 200. Unguarded, the

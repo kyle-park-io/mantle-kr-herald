@@ -23,7 +23,7 @@
 import "./registerErrorHandler";
 import { createDeploymentClient } from "../deploy/deploymentSession";
 import { checkLiveness } from "../deploy/smokeChecks";
-import { describeValue, sanitizeWireText } from "../deploy/describeValue";
+import { describeValue, sanitizeWireText, boundedWireText } from "../deploy/describeValue";
 import { ALERT_MARKER } from "../deploy/alertMarker";
 import { smokeCredentials } from "./smokeCredentials";
 import { formatReport, type CheckResult } from "../doctor/report";
@@ -47,25 +47,34 @@ const rawUrl = positional[0] ?? process.env.HERALD_DEPLOYMENT_ORIGIN?.trim();
  * tests assert stays free of report content — this line is not a report, but a second convention for
  * the same information would be one more thing for the next reader to reconcile.
  *
- * Run through `sanitizeWireText`, same as `failedLine()`'s names: `message` embeds `rawUrl`, which is
- * an operator-supplied CLI argument or environment variable, not deployment-controlled — but it is
- * still a string this process did not choose the bytes of. A stray newline in it would print as a
- * second physical line, and if that line happened to start with `HERALD_ALERT: ` it would forge its
- * own entry in the alert exactly as an unsanitized wire string could (see `describeValue.ts`'s
- * header); a raw control or bidi character would reach a phone the same way.
+ * Run through `boundedWireText` (sanitize, then cap at 200 characters — `failedLine()`'s own
+ * `FAILED_LINE_MAX`), not the bare `sanitizeWireText` `failedLine()`'s *names* use, and for a second
+ * reason beyond sanitizing:
  *
- * **Both lines are sanitized, not only the marked one.** Reproduced end to end: an unsanitized
- * `console.error` alone forges the line, because `deploy/herald-run-logged.sh` tees stdout AND
- * stderr into the same run log, and `deploy/herald-notify-failure.sh` scans that log for anything
- * starting with the marker regardless of which stream wrote it — a raw newline in `message` followed
- * by text shaped like `HERALD_ALERT: …` promoted a second, forged line into the alert even with the
- * console.log half already escaped. Escaped rather than stripped, so the misconfiguration itself
- * remains visible; for every message this file actually sends today — none contain an unsafe code
- * point — sanitizing is a no-op, so `r.stderr` keeps reading exactly as before for a well-formed
- * input.
+ * **Sanitizing.** `message` embeds `rawUrl`, an operator-supplied CLI argument or environment
+ * variable, not deployment-controlled — but still a string this process did not choose the bytes of.
+ * A stray newline in it would print as a second physical line, and if that line happened to start
+ * with `HERALD_ALERT: ` it would forge its own entry in the alert exactly as an unsanitized wire
+ * string could (see `describeValue.ts`'s header); a raw control or bidi character would reach a phone
+ * the same way. **Both lines are sanitized, not only the marked one** — reproduced end to end, an
+ * unsanitized `console.error` alone forges the line, because `deploy/herald-run-logged.sh` tees
+ * stdout AND stderr into the same run log and the hook's scan does not care which stream wrote a
+ * line.
+ *
+ * **Bounding.** A SEPARATE hazard from forging, found by driving a ~70,000-character `rawUrl` through
+ * the real wrapper rather than by reasoning about it: `console.error`/`console.log` write to a pipe
+ * under `deploy/herald-run-logged.sh` (it feeds `tee`), pipe writes are asynchronous on POSIX, and
+ * `process.exit()` does not wait for a pending write to drain — it can truncate one already in
+ * flight. Reproduced deterministically at this Linux pipe's 65536-byte capacity: a message alone
+ * past that size lost everything past the 65536th byte, and two such messages back to back (this
+ * function's own two prints) lost the SECOND one's tail entirely, wiping the marker off the one line
+ * this whole mechanism exists to deliver — the 2026-08-10 incident, reproduced by the fix written for
+ * it. `rawUrl` is operator input this file has never bounded before interpolating it into a message;
+ * every message this file actually sends today is well under 200 characters, so bounding changes
+ * nothing observable for a well-formed input and forecloses the failure mode for a pathological one.
  */
 function refuse(message: string): never {
-  const safe = sanitizeWireText(message);
+  const safe = boundedWireText(message);
   console.error(safe);
   console.log(`${ALERT_MARKER}✗ ${safe}`);
   process.exit(2);
