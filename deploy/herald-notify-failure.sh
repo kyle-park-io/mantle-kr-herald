@@ -175,9 +175,28 @@ LOG_READ_MAX_BYTES=262144
 #
 # Measured at exactly 2.00x when the journal reads went from one to two: a journalctl that sleeps
 # 20s delivered an alert when there was a single read and is SIGTERMed by systemd when there are
-# two — losing the alert entirely, which is worse than losing the marked line. `timeout` returns 124
-# on expiry, which the `|| VAR=""` on each read turns into "no lines from this source" — the same
-# degradation an unreadable journal already takes.
+# two — losing the alert entirely, which is worse than losing the marked line.
+#
+# WHAT A TIMED-OUT READ NOW YIELDS: whatever arrived before the timeout, not nothing. `timeout`
+# still returns 124 on expiry, but every read here is now `{ … || true; } | (head|tail) -c …`, and
+# that `|| true` — there to stop `pipefail` turning a byte cap into a silent off switch — swallows
+# the 124 as well. The group exits 0, the pipe carries what journalctl had already written, and the
+# `|| VAR=""` after each read no longer fires on a timeout; it remains only for the substitution
+# itself failing. What still drives the degradation is EMPTINESS, tested right after each read: a
+# journalctl that is missing, killed before writing anything, or genuinely empty leaves the variable
+# empty and the fallbacks below take over exactly as they did.
+#
+# Measured through a copy of this script, with a journalctl stub that prints two lines and then
+# hangs (both reads time out, 12.03s, exit 0 either way):
+#   before: `⚠ <unit> 실패 (exit 1) — 실행 로그도 저널도 남지 않았습니다` and the pointer
+#   after:  `⚠ <unit> 실패 (exit 1)`, `<pre>partial line A\npartial line B</pre>`, the pointer
+#
+# Partial content beats none, so this is kept — but KNOWN LIMITATION, deliberately not fixed here:
+# nothing in the message distinguishes a partial tail from a complete one. Those two lines are
+# presented exactly as a whole five-line tail would be, and an operator reading the alert cannot
+# tell that the read was cut off. Saying so would mean a new marker in the message (the ALERT_NOTE
+# mechanism further down is the obvious place); it is a behaviour change, and it belongs in its own
+# change with its own test, not smuggled in beside a byte cap.
 #
 # Resolved rather than assumed present: on a box without `timeout` the reads run unwrapped, exactly
 # as they did before, instead of the script dying on a missing command.
@@ -684,11 +703,19 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID_OPS" ]; then
     # 0.76s and 641 MB RSS, second only to the excerpt read it sits beside, and 0.09s / 5 MB through
     # this cap. Ordering is unaffected — awk still takes the LAST footer in the window.
     #
-    # `LC_ALL=C` on the awk, because a byte cap can cut a multibyte character in half and gawk warns
-    # about it on stderr — `warning: Invalid multibyte data detected` — which in this script means a
-    # line of noise in `journalctl --user -u herald-notify-failure@<unit>.service`, the place a human
-    # goes to ask why an alert looks wrong. Nothing here needs character semantics: the marker, the
-    # digits and the ` at ` suffix are all ASCII, matched with index()/substr() against bytes.
+    # `LC_ALL=C` on the awk. The reason that holds everywhere: nothing this awk does needs character
+    # semantics — the marker, the digits and the ` at ` suffix are all ASCII, matched with
+    # index()/substr(), so bytes are the right unit for a read that a byte cap may have cut through
+    # the middle of a character.
+    #
+    # What prompted it is weaker evidence and is recorded as such. On this box (GNU Awk 5.2.1, in a
+    # UTF-8 locale — which is what the probe at the top of this file arranges) a cut landing
+    # mid-character made gawk write `warning: Invalid multibyte data detected` to stderr, seen both
+    # in isolation and through the whole hook against a Korean run log; that is a line of noise in
+    # `journalctl --user -u herald-notify-failure@<unit>.service`, the place a human goes to ask why
+    # an alert looks wrong. It did NOT reproduce for the reviewer on the same gawk version, so treat
+    # it as build- or locale-dependent rather than as something this line reliably prevents. The
+    # first paragraph is why the line stays either way.
     #
     # awk with `-v`, not `sed` with an interpolated "$UNIT": in a BRE the dots of
     # `herald-creds.service` are wildcards and a `/` would close the `s///` delimiter early. awk's
