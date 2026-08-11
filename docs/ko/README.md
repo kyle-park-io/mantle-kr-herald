@@ -9,6 +9,7 @@
 | 이게 뭐 하는 물건인지 알고 싶다 | [`capabilities.md`](capabilities.md) | 필요 없음 |
 | **번역·문구를 검수하고 승인만 하면 된다** | [`review.md`](review.md) | **필요 없음** |
 | 내 컴퓨터에 설치해서 돌려보고 싶다 | [`quickstart.md`](quickstart.md) | 필요 |
+| **무엇이 자동으로 돌고 있는지 한 표로 보고 싶다** | [`schedulers.md`](schedulers.md) | 필요 없음 |
 | 팀 계정으로 매주 운영한다 | [`team-runbook.md`](team-runbook.md) | 필요 |
 | **호스팅 대시보드를 재배포하거나 비밀번호를 바꿔야 한다** | [`deploy.md`](deploy.md) | 필요 |
 | **팀 용어집·문체 규칙을 받아야 한다** | [`setup/steering.md`](setup/steering.md) | 필요 |
@@ -26,6 +27,8 @@ ko/
   capabilities.md    무엇을 할 수 있는가 — 파이프라인 단계, 하지 않는 것
   review.md          검수 가이드 — 브라우저 화면에서 읽고·고치고·승인하기
   quickstart.md      빠른 시작 — 자격 증명 없이 로컬 모드로 5분 안에
+  schedulers.md      스케줄러 개요 — 다섯 systemd 타이머와 각자의 주기·하는 일,
+                     공유하는 구조, 그리고 스케줄러가 하지 않는 것(자세한 건 runbook §6)
   team-runbook.md    팀 운영 매뉴얼 — 주간 루틴, 클라우드 모드, 사고 대응
   deploy.md          배포 운영 — 이미 올라간 뒤의 재배포·비밀번호 교체·발송 열기·롤백,
                      "배포가 정말 살아 있는지" 확인하는 법, 배포 전에는 안 보이는 함정

@@ -203,6 +203,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     evidence that anything is wrong; it is evidence that nothing has looked, which is why it never
     borrows the colour a dead credential uses. Ages past a day read coarsely (`⚠ 확인 1일 전`), since
     the age formatter the 수집 card already uses buckets by whole days rather than growing a second one.
+- **`docs/ko/schedulers.md` — the one place that answers "what schedulers exist and what does each
+  one do?"** All five were documented, and only inside `team-runbook.md`: four sections scattered
+  across a 1,700-line operational document, plus a fifth (`herald-translate-check`) that had shipped
+  with no section at all — just an install-list entry and an enable note. Nothing anywhere held the
+  list. The new document is an overview and stays one: cadences, the structure the five units share,
+  and what they deliberately **do not** do, with links out to the runbook for every detail rather
+  than a second copy of it. **Facts derived from `deploy/*.service` and `deploy/*.timer`, not from
+  the prose** — which is what rots, and which cost this repo a day of correcting stale claims.
+  Notable corrections found while writing it: `EnvironmentFile=%h/.herald/prod.env` is **not**
+  universal (`herald-creds` deliberately omits it — it opens no database), `x:reconcile` posts
+  nothing to X but its `--yes` does write the delivery ledger, the `history` sheet tab and
+  translation status, and the schedulers' one exception to "never sends" is the ops-room Telegram
+  traffic every unit's `OnFailure=` hook depends on.
+- **`tests/docs/schedulerOverview.test.ts` — the overview's table pinned against `deploy/`.** An
+  overview table is the most rot-prone thing this repository writes down: it restates in Markdown a
+  fact whose only home is a timer file, and editing a timer prompts nobody to open a document. The
+  failure is silent in the worst direction — a sixth timer added without a doc update leaves a list
+  that reads as complete, which is worse than no list, because the reader stops checking. Derived in
+  both directions from `deploy/*.timer` the way `koDocs.test.ts` pins the systemd install list:
+  the set of units, each unit's `OnCalendar=`, and every `pnpm` script its `ExecStart=` lines name.
+  Also fixed a claim it does not cover: the runbook said `herald-translate-check`'s two `ExecStart=`
+  lines append to **one** log file. `herald-run-logged.sh` stamps `RUN_STAMP` per process, so a fire
+  leaves **two** — which is also why the 60-run cap is about 30 fires for that unit.
 
 ### Changed
 
