@@ -631,7 +631,7 @@ function DestinationPreview(props: {
                       that item; when a reason exists the wrapper is, and the button's own copy goes
                       inert inside it. Dropping either one moves this button off the right edge in
                       exactly one of the two states. */}
-                  <Tip text={props.disabledReason} className="ml-auto">
+                  <Tip text={props.disabledReason} className="ml-auto" align="right">
                     <button
                       className={`ml-auto ${btn}`}
                       disabled={!!props.disabledReason}

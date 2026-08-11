@@ -177,17 +177,30 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
 export function Tip({
   text,
   className,
+  align = "left",
   children,
 }: {
   text: string | undefined;
   className?: string;
+  /**
+   * Which edge the card hangs from. `left` (the default) opens down and to the right, which is where
+   * the eye already is after reading the control — and matches the board's other three hover cards
+   * (`CollectedBreakdownCard`, `MarkerText`, the env panel in `App.tsx`), all `left-0 top-full`.
+   *
+   * `right` is for a control pinned to the right edge of its container, where a `w-64` card opening
+   * rightward would run off the card. There is exactly one today: `DestinationPreview`'s `ml-auto`
+   * [복사].
+   */
+  align?: "left" | "right";
   children: React.ReactNode;
 }) {
   if (text === undefined) return <>{children}</>;
   return (
     <span className={`group/tip relative inline-flex ${className ?? ""}`.trim()}>
       {children}
-      <span className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 hidden w-64 rounded-lg border border-line bg-surface px-3 py-2 text-[12px] font-normal leading-relaxed text-muted shadow-lg group-hover/tip:block">
+      <span
+        className={`pointer-events-none absolute top-full ${align === "right" ? "right-0" : "left-0"} z-30 mt-1.5 hidden w-64 rounded-lg border border-line bg-surface px-3 py-2 text-[12px] font-normal leading-relaxed text-muted shadow-lg group-hover/tip:block`}
+      >
         {text}
       </span>
     </span>
