@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { compileQuery } from "../hangulSearch";
 import { datePrefix, type Translation } from "../types";
+import { SearchBox } from "./SearchBox";
 
 type Filter = "all" | "translated" | "approved" | "posted";
 
@@ -80,9 +82,17 @@ export function TranslationList(props: {
   onSelect: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
+  const [search, setSearch] = useState("");
   const matches = (t: Translation, f: Filter) => f === "all" || t.status === f;
+  /**
+   * 검색 대상은 `preview()`가 쓰는 `koreanText || sourceText`가 아니라 **둘 다**이다. 번역이 붙은
+   * 뒤에도 영문 원문의 단어로 찾을 수 있어야 하고, 검수자가 기억하는 구절이 어느 쪽 언어일지는
+   * 정해져 있지 않다. `itemId`는 링크를 타고 온 id를 그대로 붙여넣는 경로를 위해.
+   */
+  const re = compileQuery(search);
+  const found = re === null ? props.items : props.items.filter((t) => re.test(`${t.itemId} ${t.koreanText} ${t.sourceText}`));
   // Copied before sorting: `props.items` is App's state array, and sorting in place would mutate it.
-  const shown = props.items.filter((t) => matches(t, filter)).slice().sort(newestFirst);
+  const shown = found.filter((t) => matches(t, filter)).slice().sort(newestFirst);
   /**
    * Same predicate as `shown`, so a tab can never promise a row it does not then show.
    *
@@ -90,11 +100,14 @@ export function TranslationList(props: {
    * reconcile started retiring hand-published items to `posted`, 전체 could read 23 while 검수 대기
    * held 2, and the only way to learn that was to click. `pnpm status` had the same blind spot on
    * the same data (`src/status/pipeline.ts`).
+   *
+   * 검색 중에도 같은 계약이다 — `props.items`가 아니라 `found` 위에서 센다. 아니면 `전체 23`이 뜬
+   * 채 아래에 두 줄만 보이고, 카운트가 생긴 이유였던 착시가 그대로 돌아온다.
    */
-  const count = (f: Filter) => props.items.filter((t) => matches(t, f)).length;
+  const count = (f: Filter) => found.filter((t) => matches(t, f)).length;
   return (
     <div className="flex h-full flex-col">
-      <div className="sticky top-0 z-10 border-b border-line bg-surface/90 px-3 py-2.5 backdrop-blur">
+      <div className="sticky top-0 z-10 space-y-2 border-b border-line bg-surface/90 px-3 py-2.5 backdrop-blur">
         <div className="inline-flex w-full rounded-lg border border-line bg-bg p-0.5">
           {FILTERS.map(([f, label]) => (
             <button
@@ -108,6 +121,7 @@ export function TranslationList(props: {
             </button>
           ))}
         </div>
+        <SearchBox value={search} onChange={setSearch} />
       </div>
 
       {shown.length === 0 ? (

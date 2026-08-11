@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { TranslationList } from "../src/components/TranslationList";
 import type { Translation } from "../src/types";
@@ -107,5 +107,61 @@ describe("TranslationList filter counts", () => {
     screen.getByRole("button", { name: "대기 2" });
     screen.getByRole("button", { name: "승인 0" });
     screen.getByRole("button", { name: "게시됨 21" });
+  });
+});
+
+/** 검색창에 값을 넣는다 — IME 조합 중에도 React가 보는 것과 같은 경로(onChange). */
+const type = (value: string) => fireEvent.change(screen.getByLabelText("검색"), { target: { value } });
+
+describe("TranslationList search", () => {
+  const items = [
+    t({ itemId: "x:1", koreanText: "맨틀 네트워크 메인넷 업데이트" }),
+    t({ itemId: "x:2", koreanText: "이더리움 수수료 이야기" }),
+    t({ itemId: "x:3", koreanText: "코스모스 소식", status: "approved" }),
+  ];
+
+  it("narrows the rows by initial consonants", () => {
+    const { container } = render(<TranslationList items={items} selectedId={null} onSelect={() => {}} />);
+    type("ㅁㅌ");
+    expect(shownIds(container)).toEqual(["x:1"]);
+  });
+
+  /**
+   * `count()`가 `props.items` 위에서 돌면 `전체 3`이 뜬 채 한 줄만 보인다 — 카운트가 생긴 이유였던
+   * 착시가 그대로 돌아온다. 이 컴포넌트의 주석이 계약으로 적어둔 바로 그것.
+   */
+  it("narrows the tab counts with the rows", () => {
+    render(<TranslationList items={items} selectedId={null} onSelect={() => {}} />);
+    expect(screen.getByRole("button", { name: "전체 3" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "승인 1" })).toBeTruthy();
+
+    type("ㅁㅌ");
+
+    expect(screen.getByRole("button", { name: "전체 1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "승인 0" })).toBeTruthy();
+  });
+
+  it("finds a row by its English source when the Korean does not say it", () => {
+    const { container } = render(
+      <TranslationList
+        items={[t({ itemId: "x:9", koreanText: "한국어 본문", sourceText: "Mantle mainnet is live" })]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    type("mainnet");
+    expect(shownIds(container)).toEqual(["x:9"]);
+  });
+
+  it("finds a row by the itemId a reviewer pasted in", () => {
+    const { container } = render(<TranslationList items={items} selectedId={null} onSelect={() => {}} />);
+    type("x:2");
+    expect(shownIds(container)).toEqual(["x:2"]);
+  });
+
+  it("says nothing matched rather than showing a stale list", () => {
+    render(<TranslationList items={items} selectedId={null} onSelect={() => {}} />);
+    type("ㅋㅋㅋㅋ");
+    expect(screen.getByText("해당하는 항목이 없습니다.")).toBeTruthy();
   });
 });
