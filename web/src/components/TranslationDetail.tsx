@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { datePrefix, itemUrl, kstStamp } from "../types";
 import type { Translation, PublishStateRow } from "../types";
 import { StatusChip, KindBadge } from "./TranslationList";
+import { Tip } from "./ConfirmDialog";
 import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
 import { diffPublished } from "../publishedDiff";
 
@@ -274,20 +275,25 @@ export function TranslationDetail(props: {
       <PublishedCopy item={props.item} posted={posted} />
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <button
-          className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:opacity-40"
-          disabled={busy || !dirty || approved || posted}
-          onClick={() => run(() => props.onSave(props.item.itemId, korean))}
-          title={
-            posted
-              ? POSTED_LOCK
-              : approved
-                ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요."
-                : "편집한 번역을 저장합니다. Drive/로컬 파일은 오른쪽 발행 버튼을 눌러야 갱신됩니다."
-          }
+        {/* Split by whether the message survives its own control: `posted` and `approved` are both in
+            the `disabled` expression, so those two only reach a reviewer through `Tip`. The third is
+            the ordinary hint on a live 저장 button and stays a `title`. */}
+        <Tip
+          text={posted ? POSTED_LOCK : approved ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요." : undefined}
         >
-          저장
-        </button>
+          <button
+            className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:opacity-40"
+            disabled={busy || !dirty || approved || posted}
+            onClick={() => run(() => props.onSave(props.item.itemId, korean))}
+            title={
+              posted || approved
+                ? undefined
+                : "편집한 번역을 저장합니다. Drive/로컬 파일은 오른쪽 발행 버튼을 눌러야 갱신됩니다."
+            }
+          >
+            저장
+          </button>
+        </Tip>
         {posted ? (
           <>
             {/* Not a button — 게시됨 is a fact about this item, not a toggle a click could undo the
@@ -324,14 +330,15 @@ export function TranslationDetail(props: {
             </span>
           </button>
         ) : (
-          <button
-            className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-mint px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40"
-            disabled={busy || dirty}
-            onClick={() => run(() => props.onApprove(props.item.itemId))}
-            title={dirty ? "편집 내용을 먼저 저장하세요" : undefined}
-          >
-            승인하기
-          </button>
+          <Tip text={dirty ? "편집 내용을 먼저 저장하세요" : undefined}>
+            <button
+              className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-mint px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40"
+              disabled={busy || dirty}
+              onClick={() => run(() => props.onApprove(props.item.itemId))}
+            >
+              승인하기
+            </button>
+          </Tip>
         )}
 
         <span className="mx-1 h-5 w-px bg-line" />
@@ -343,9 +350,7 @@ export function TranslationDetail(props: {
            * ALSO forces `disabled`, and a disabled button dispatches no pointer events, so the browser
            * never renders its native tooltip. All three messages were dead — including the one that
            * explains the hosted board's greyed `[로컬 폴더]`, the single thing standing between a
-           * reviewer and "why is this button broken". Hung on the wrapper instead, which is not
-           * disabled and so does receive the hover: the `group/tip` idiom `OpenLink` above already
-           * uses for exactly this shape (deliberately not actionable, still has to say why).
+           * reviewer and "why is this button broken". `Tip` carries it on the wrapper instead.
            */
           const blocked = posted
             ? POSTED_LOCK
@@ -355,12 +360,9 @@ export function TranslationDetail(props: {
                 ? "편집 내용을 먼저 저장하세요"
                 : undefined;
           return (
-            <span key={t} className="group/tip relative inline-flex">
+            <Tip key={t} text={blocked}>
               <button
-                // `disabled:pointer-events-none` so the hit test lands on the wrapper rather than on
-                // the button: Chrome propagates `:hover` to the ancestor of a disabled child anyway,
-                // but this does not depend on that.
-                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:pointer-events-none disabled:border-line disabled:bg-bg disabled:text-faint disabled:opacity-60"
+                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:border-line disabled:bg-bg disabled:text-faint disabled:opacity-60"
                 // `posted` disables these for the same reason it disables 저장 and 승인 above: the item
                 // is terminal for the Drive path. The server refuses it too (409) — this is the half
                 // that stops a reviewer being invited into it in the first place. Leaving them live was
@@ -372,14 +374,7 @@ export function TranslationDetail(props: {
               >
                 {TARGET_LABEL[t]}
               </button>
-              {blocked !== undefined && (
-                // `ConfirmDialog`'s wording of the same idiom, not `OpenLink`'s: `POSTED_LOCK` is a
-                // two-sentence message, and `whitespace-nowrap` would run it off the viewport.
-                <span className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 hidden w-64 rounded-lg border border-line bg-surface px-3 py-2 text-[12px] font-normal leading-relaxed text-muted shadow-lg group-hover/tip:block">
-                  {blocked}
-                </span>
-              )}
-            </span>
+            </Tip>
           );
         })}
       </div>
