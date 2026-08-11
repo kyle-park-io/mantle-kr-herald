@@ -1,0 +1,66 @@
+# deploy/herald-translate-check.timer
+#
+# Fires herald-translate-check.service once a week, Monday at 06:53.
+#
+# WHY WEEKLY, and not daily or hourly like everything else in this directory. The other four timers
+# poll something that moves on its own: new threads appear, a queue drains, a credential dies. This
+# one re-derives a report from two inputs that barely move.
+#
+# The first is `publishedText`, and only `x:reconcile` fills it on a schedule (CapturePublishedText,
+# src/cli/x-reconcile.ts) — so the override half of the report can only change after a reconcile
+# matched a live thread, at most four times a day and in practice only when the Korean account
+# actually posted. The second is a human: a decided term overridden in review, or a glossary entry
+# edited, and the edit does not even reach the deploy checkout until someone runs herald-deploy.sh.
+# Nothing between those two events changes a single line of the output.
+#
+# And the report is cumulative, not a delta. Every finding stays a finding until someone fixes the
+# translation or changes the glossary entry — `translate:check` has no "seen" state and no cursor, it
+# reads the whole ledger every time. A daily fire would therefore re-send the same standing list six
+# extra times a week: the 2026-08-07 batch of nineteen translations across four decided terms would
+# have arrived every single morning until someone got to it. That is how an ops room becomes noise
+# people stop reading, which is the argument herald-creds.timer makes for daily over hourly — one
+# step further along here, because nothing this reports is an outage. Nothing is blocked on these
+# findings, nothing degrades while they wait, and they are read as a batch before 1차 검수 anyway.
+#
+# Weekly is also the floor, not just the ceiling. Monthly would be cheaper still and wrong: the point
+# is to catch drift before more of it is published, and a month of unread drift is a month of posts
+# that already went out carrying it.
+#
+# WHY MONDAY 06:53. Monday because the digest is a reading list for the week's review work, so it
+# should be waiting when that week starts rather than landing in the middle of it. 06:53 because
+# measured human activity on this pipeline spans 10:00–04:00 KST, and 06:53 is inside the one quiet
+# gap — herald-creds.timer's 06:23 makes the same "before the working day" choice for the same
+# reason.
+#
+# :53 is off :00 for the reason herald-watch.timer's :17 is, and off :07/:37 (convert), :17 (watch),
+# :41 (x-reconcile) and :23 (creds) specifically: units sharing a minute buy nothing and invite two
+# pnpm processes starting at once on a cold Neon compute. tests/deploy/credsTiming.test.ts and
+# tests/deploy/translateCheckTiming.test.ts both derive the other timers' minutes from deploy/ rather
+# than listing them, so a later edit to any file here cannot re-collide unnoticed.
+#
+# The hour is not arbitrary either: 06:53 is twelve minutes after the 06:41 x-reconcile fire, so the
+# last publishedText the week captured is in the database before this reads it. A reconcile that ran
+# all the way to its own 600s bound would still be going — harmless, because this command only reads,
+# and the few rows it missed are in next Monday's digest.
+#
+# Verified before committing: `systemd-analyze calendar --iterations=3 'Mon *-*-* 06:53:00'`
+# normalises to itself and elapses Mon 2026-08-17, Mon 08-24, Mon 08-31 — exactly seven days apart,
+# which a single "Next elapse" line would not have shown.
+#
+# NOT installed by any committed script — see herald-translate-check.service's header.
+
+[Unit]
+Description=Timer for herald-translate-check.service — weekly Mantle KR Herald glossary drift digest
+
+[Timer]
+OnCalendar=Mon *-*-* 06:53:00
+# Runs once on the next boot/login if the machine was off (or the user manager wasn't running —
+# WSL2's usual failure mode) through the scheduled fire, instead of silently skipping it. Same
+# reasoning as the other four timers, and it bites hardest here: a missed fire on a two-hour timer
+# costs two hours, a missed fire on this one costs the whole week's digest, and a week with no report
+# is indistinguishable from a week with nothing to report. Note this coalesces — a machine that was
+# off for three weeks fires this once on login, not three times.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

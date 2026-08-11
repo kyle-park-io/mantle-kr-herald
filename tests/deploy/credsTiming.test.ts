@@ -39,12 +39,20 @@ const onCalendarSpecs = (unit: string): string[] =>
  * matches *nothing* in a comma list, so convert's two minutes would drop out of the collision check
  * while the check still looked like it covered every timer in the directory.
  *
- * `undefined` rather than `[]` for an unreadable spec, so a shape this parser does not know (a
- * weekday prefix, say) fails the guard below instead of quietly contributing no minutes. An empty
- * report reading as a clean pass is the exact failure `checkLiveness` was hardened against.
+ * `undefined` rather than `[]` for an unreadable spec, so a shape this parser does not know fails
+ * the guard below instead of quietly contributing no minutes. An empty report reading as a clean
+ * pass is the exact failure `checkLiveness` was hardened against.
+ *
+ * The optional leading weekday list is one such shape, taught to this parser on 2026-08-11 rather
+ * than worked around: `herald-translate-check.timer` fires `Mon *-*-* 06:53:00`, which is the only
+ * way systemd expresses a weekly cadence, and refusing it here would have tripped the guard below —
+ * which is the correct behaviour for an unknown shape, and exactly what its message asks for. A
+ * weekday narrows WHICH days a fire lands on and never moves the minute, so it is stripped before
+ * the time fields are read; the collision check below compares minutes across timers of every
+ * cadence, and a weekly fire shares a cold Neon compute with an hourly one just as badly.
  */
 function minutesOf(spec: string): string[] | undefined {
-  const fields = /^\S+ ([^\s:]+):([^\s:]+):([^\s:]+)$/.exec(spec.trim());
+  const fields = /^(?:[A-Za-z]{3}(?:(?:\.\.|,)[A-Za-z]{3})* )?\S+ ([^\s:]+):([^\s:]+):([^\s:]+)$/.exec(spec.trim());
   if (!fields) return undefined;
   const minutes = fields[2].split(",");
   if (!minutes.every((m) => /^\d{1,2}$/.test(m))) return undefined;
@@ -153,7 +161,13 @@ describe("herald-creds.timer", () => {
     expect(minutesOf("*-*-* 06:23:00")).toEqual(["23"]);
     expect(minutesOf("*-*-* 0/2:17:00")).toEqual(["17"]);
     expect(minutesOf("*-*-* *:07,37:00")).toEqual(["07", "37"]);
-    for (const spec of ["Mon *-*-* 17:00:00", "hourly", "daily", "*-*-* 0/6:41", ""]) {
+    // The weekly shape, moved out of the refusal list below when herald-translate-check.timer
+    // introduced it — see this parser's own comment. The range and list forms are read too, since a
+    // timer written later is written by copying one of these.
+    expect(minutesOf("Mon *-*-* 06:53:00")).toEqual(["53"]);
+    expect(minutesOf("Mon..Fri *-*-* 17:00:00")).toEqual(["00"]);
+    expect(minutesOf("Mon,Thu *-*-* 17:05:00")).toEqual(["05"]);
+    for (const spec of ["Mondays *-*-* 17:00:00", "hourly", "daily", "*-*-* 0/6:41", ""]) {
       expect(minutesOf(spec), spec).toBeUndefined();
     }
   });
