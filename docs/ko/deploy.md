@@ -192,7 +192,8 @@ done
 로그인까지 포함한 전체 확인입니다. **비밀번호를 프롬프트로 받으므로 사람이 직접 실행합니다.**
 
 정상이면 `28 ok · 2 warn · 0 fail`. warn 2개는 둘 다 의도된 것입니다 —
-`TWITTERAPI_IO_KEY` 미등록(호스팅은 수집하지 않음)과 `--lockout` 건너뜀.
+`TWITTERAPI_IO_KEY` 미등록(등록하지 않았다면 대시보드의 `링크 수집` 탭만 잠깁니다 — 나머지 기능은
+그대로 동작하므로 배포 자체를 막는 것은 아닙니다)과 `--lockout` 건너뜀.
 
 확인하는 것: 익명 401 · 외부 Origin 403 · 로그인 200 · `storageMode: cloud` ·
 `dbEnv: production` · `sendsEnabled: false` · `conversionEnabled: false` · google/lark 타깃 ·
@@ -464,6 +465,7 @@ npx vercel env add HERALD_TRUST_PROXY        production -y --value 'true'
 ```bash
 for k in TYPEFULLY_API_KEY TYPEFULLY_SOCIAL_SET_ID X_PREMIUM \
          TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID_COMMUNITY TELEGRAM_CHAT_ID_DEV \
+         TWITTERAPI_IO_KEY \
          GOOGLE_AUTH_MODE \
          GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET GOOGLE_OAUTH_REFRESH_TOKEN \
          GDRIVE_APPROVED_FOLDER_ID GDRIVE_CONFIG_FOLDER_ID GDRIVE_PARENT_FOLDER_NAME \
@@ -484,11 +486,12 @@ done
 | `DATABASE_URL` | Neon 통합이 주입합니다. 직접 추가하지 마세요 |
 | `GOOGLE_SA_KEY_FILE` | 로컬 파일 경로라 함수에는 그 파일이 없습니다 |
 | `HERALD_SENDS_ENABLED` | 첫 배포는 발송이 닫힌 채로 |
-| `TWITTERAPI_IO_KEY` | 호스팅은 수집하지 않습니다 |
 
-늦게 발견해서 추가한 셋: `X_PREMIUM`(없으면 호스팅만 280자 제한이 걸려 롱폼이 발송에서 거부됨),
+늦게 발견해서 추가한 넷: `X_PREMIUM`(없으면 호스팅만 280자 제한이 걸려 롱폼이 발송에서 거부됨),
 `LARK_*` 전체(없으면 `loadLarkDriveConfig()`가 던지고 lark 타깃이 조용히 빠져 발행 버튼만
-비활성), `GOOGLE_AUTH_MODE`(추론으로도 동작하지만 명시).
+비활성), `GOOGLE_AUTH_MODE`(추론으로도 동작하지만 명시), `TWITTERAPI_IO_KEY`(없어도 함수는 뜨고
+나머지는 그대로 동작하지만, 대시보드의 `링크 수집` 탭만 잠깁니다 — `HERALD_TRUST_PROXY`류의
+기동 조건과는 다릅니다. 자세한 내용은 [`setup/vercel.md`](setup/vercel.md)).
 
 ### 4. 실데이터 이관
 

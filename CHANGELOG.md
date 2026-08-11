@@ -226,6 +226,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Also fixed a claim it does not cover: the runbook said `herald-translate-check`'s two `ExecStart=`
   lines append to **one** log file. `herald-run-logged.sh` stamps `RUN_STAMP` per process, so a fire
   leaves **two** — which is also why the 60-run cap is about 30 fires for that unit.
+- **A third dashboard tab, `링크 수집` (`#intake`), lets a hand-picked x.com post skip the wait for
+  `Mantle_Official`'s own timeline.** Pasting a post URL and pressing `[넣기]` calls the new
+  `POST /api/intake/x`, which resolves the URL to a tweet id (`parsePostUrl`), fetches the whole
+  thread — and, for an article, its body — through the same `SourceGateway` `pnpm collect` already
+  uses, and upserts one row into `x_threads`. From there the item is indistinguishable from one the
+  scheduled sweep collected. **No account restriction**: a link to any X account works, which is the
+  entire point — the timeline-only path had no way to bring in a post from outside
+  `Mantle_Official`. A thread whose first tweet is a reply to someone else's conversation is refused
+  up front (`이 글은 다른 대화에 단 답글이라...`) rather than silently dropped two hours later by the
+  same rule `flattenXThreads` applies downstream — the predicate (`isCommenterReply`) is imported,
+  not re-implemented, because a copy drifts from the original and drift here means the screen and no
+  code agree on what got skipped.
+  - **Deliberately touches neither the collect watermark (`output/x/state.json`) nor the run ledger
+    (`output/x/runs.json`).** The watermark means "how far down the timeline `pnpm collect` has
+    read"; a link intake reads no timeline, so advancing it would make the next scheduled sweep skip
+    everything posted in between — the same call `CollectAuthoredContent` already makes for its own
+    `--since`/`--limit` ad-hoc runs. Touching neither file is also what keeps this path off the
+    filesystem entirely, which is what lets it run inside a Vercel function's read-only FS — the
+    condition that makes "the dashboard fetches it directly" possible at all.
+  - **Gated on `TWITTERAPI_IO_KEY` the same way `sendToOutlet`/`prepareConversionRun` are gated on
+    their own credentials.** `createDeps` builds the gateway inside a try/catch and simply omits the
+    `collectLinkedThread` dependency when the key is absent, rather than letting the whole deployment
+    fail to boot. The route refuses with a 400 and a Korean reason before it would ever reach the
+    missing dependency; the same boolean rides along as `StatusView.intakeEnabled` so the tab's
+    `[넣기]` locks with the identical reason printed up front — never something discovered by
+    clicking. Unlike `HERALD_TRUST_PROXY`, `TWITTERAPI_IO_KEY`'s absence is not a boot condition: the
+    function still starts, every other tab still works, and only this one closes.
+  - **A waiting list, not a black hole.** `GET /api/intake/pending` — reachable without the
+    credential, since it only reads the database — lists everything collected but not yet translated,
+    because a linked-in item does not reach 1차 검수 until `herald-watch`'s next tick
+    (`translate:prepare`, every two hours at `*:17`) builds its translation row. Without this list a
+    submitted link reads as "I pasted it and it vanished"; the `POST` reply carries the same
+    refreshed list so the tab self-corrects in one round trip.
 
 ### Changed
 

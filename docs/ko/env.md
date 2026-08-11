@@ -189,16 +189,28 @@
 
 ## 4. 수집 — 쓰는 명령에서만 필요합니다
 
-**배포본은 수집하지 않습니다.** 수집은 전부 CLI 작업이라, C에서 이 절은 대시보드 배지 호버
-카드의 표시(§7)에만 영향을 줍니다.
+**배포본은 정기 수집을 하지 않습니다** — `pnpm collect`는 C에서 실행되는 일이 없습니다. 이 절의
+나머지 변수는 그래서 C에서 대시보드 배지 호버 카드의 표시(§7)에만 영향을 줍니다. **한 가지
+예외가 `TWITTERAPI_IO_KEY`입니다** — 아래 참고.
 
 | 변수 | 기본값 | 없으면 |
 |---|---|---|
-| `TWITTERAPI_IO_KEY` | 없음 | `pnpm collect` **실패**. 다른 명령은 무관 |
+| `TWITTERAPI_IO_KEY` | 없음 | ⚠ 아래 참고 |
 | `REFERENCE_X_HANDLE` | **`0xMantleKR`** | 기본값으로 동작합니다. `tm:measure`·`collect:reference`·`metrics:record`가 읽습니다. `@`는 붙여도 떼고 씁니다 |
 | `LARK_APP_ID` + `LARK_APP_SECRET` | 없음 | `collect-lark`·`lark:chats`·`lark:send` 실패. **Lark Drive 발행도 같이 죽습니다**(§3) |
 | `LARK_CHAT_IDS` | 없음 | `collect-lark` **실패**. `lark:chats`는 앱 크레덴셜만으로 도니까 **첫 실행 때는 비워두는 게 맞습니다** — 그걸로 id를 찾습니다. `lark:send`는 동작하되 `--chat`이 필수가 됩니다 |
 | `LARK_BASE_URL` | **`https://open.larksuite.com`** | 기본값(Larksuite 인터내셔널). 중국 Feishu면 `https://open.feishu.cn` |
+
+### ⚠ `TWITTERAPI_IO_KEY`
+
+- **A·B(로컬)** — 없으면 `pnpm collect`가 **실패**합니다. 다른 CLI 명령은 무관합니다
+- **C(호스팅)** — 정기 수집(`pnpm collect`)은 애초에 C에서 돌지 않으므로 이 프로파일에서는 위
+  실패가 일어나지 않습니다. 대신 대시보드 `링크 수집` 탭이 이 키로 직접 twitterapi.io를
+  부릅니다(`POST /api/intake/x`) — 없으면 **조용한 축소**: 함수는 정상적으로 뜨고 나머지 탭도
+  그대로 동작하지만, 이 탭의 `[넣기]`만 잠기고 이유가 버튼 아래에 보입니다. `HERALD_TRUST_PROXY`
+  같은 기동 조건이 아닙니다
+- **근거** — `src/config.ts:12`(A·B의 `loadConfig()` 실패), `src/app/createDeps.ts`(C의 try/catch
+  게이팅), [`setup/vercel.md`](setup/vercel.md)
 
 번역·변환·포맷 단계는 **외부 API를 하나도 부르지 않습니다.** 이 절이 통째로 비어 있어도 돕니다.
 

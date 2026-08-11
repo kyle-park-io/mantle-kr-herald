@@ -128,6 +128,7 @@ HERALD_STORAGE_MODE=local|cloud
 | 명령어 | 읽는 것 | 쓰는 것 | 외부 시스템 |
 |---|---|---|---|
 | `pnpm collect [target] [--since <3d\|12h\|1w\|ISO>] [--limit <n>]` | `TWITTERAPI_IO_KEY`(env); 기존 스레드 병합을 위한 `output/x/items.json`; 워터마크 조회를 위한 `output/x/state.json`(`--since`가 있으면 워터마크 대신 그 값을 floor로 사용) | `output/x/items.json`(upsert); `output/x/runs.json`(append — 실행마다 커버리지 레코드 1건 기록); `output/x/state.json`(워터마크 갱신 — `--since`/`--limit` 중 하나라도 주면 ad-hoc 실행이라 갱신하지 않고, 플래그 없는 실행만 갱신) | twitterapi.io API |
+| 대시보드 `링크 수집` 탭 — `POST /api/intake/x` (`GET /api/intake/pending`은 대기 목록 조회, 아래 참고) | `TWITTERAPI_IO_KEY`(env — 없으면 `createDeps`가 `collectLinkedThread` 의존성을 아예 만들지 않고, `POST`는 그 부재를 보고 400으로 거부됨); 요청 본문의 URL이 가리키는 트윗 id 하나의 스레드 전체(twitterapi.io `fetchThread`, 아티클이면 `fetchArticle`로 본문도); 이미 수집됐는지 판정을 위한 수집 저장소(`x_threads`) 전체; 이미 번역됐는지 판정을 위한 번역 원장(`translations`) | `x_threads`에 스레드 **한 행**만 upsert(재수집 안전 — 이미 있던 스레드면 본문·미디어만 갱신). **`output/x/state.json`(수집 워터마크)도 `output/x/runs.json`(실행 로그)도 건드리지 않습니다** — 링크 수집은 계정 타임라인을 훑지 않으므로 "어디까지 읽었나"를 바꿀 이유가 없고, 이 정기 수집과의 접점을 남기지 않는 덕에 이 경로는 파일시스템을 전혀 만지지 않아 읽기 전용 FS인 Vercel 함수 안에서도 그대로 동작합니다. `GET /api/intake/pending`은 위 세 가지 중 `x_threads`+`translations`만 **읽기만** 하며 `TWITTERAPI_IO_KEY` 없이도 동작(대기 목록은 키가 없어도 보여야 하므로) | twitterapi.io API(`POST`만 — `GET .../pending`은 호출 없음) |
 | `pnpm collect-lark` | `LARK_APP_ID`/`LARK_APP_SECRET`/`LARK_CHAT_IDS`(env); `output/lark/items.json`; 채팅방별 워터마크를 위한 `output/lark/state.json` | `output/lark/items.json`(upsert); `output/lark/state.json` | Lark Open API(테넌트 토큰 발급 + 메시지 조회) |
 | `pnpm lark:chats` | `LARK_APP_ID`/`LARK_APP_SECRET`(env) | 없음(표준 출력만) | Lark Open API(봇이 속한 채팅방 목록 조회) |
 | `pnpm lark:send` | `LARK_APP_ID`/`LARK_APP_SECRET`(env); `--chat`/`--text` 인자 또는 `LARK_CHAT_IDS`의 첫 값 | 없음 | Lark Open API(메시지 전송) |
@@ -191,10 +192,13 @@ X 수집은 `pnpm collect` 하나가 단일 창구입니다. (다만 twitterapi�
 위해 각각 트윗을 재조회합니다. "수집"만 collect가 담당합니다.)
 
 `x_threads`에 쓰는 명령도 collect뿐은 아닙니다 — `pnpm reconcile`이 삭제 표시를,
-`pnpm x:video-backfill`이 이미 수집된 영상 미디어의 `videoUrl` 한 칸을 채웁니다. 둘 다 새 스레드나
-새 트윗을 만들지 않으므로 "수집"의 단일 창구는 여전히 collect이지만, 저장된 영상의 mp4가 비어
-있을 때 collect만 들여다보면 답이 나오지 않습니다(타임라인 조회에 안 잡히는 글은 재수집으로
-닿지 못합니다 — §3의 `x:video-backfill` 행 참고).
+`pnpm x:video-backfill`이 이미 수집된 영상 미디어의 `videoUrl` 한 칸을 채웁니다. 이 둘은 새
+스레드나 새 트윗을 만들지 않지만, 위 표의 대시보드 `링크 수집` 탭(`POST /api/intake/x`)은
+만듭니다 — 사람이 고른 글 하나를 그 자리에서 새 행으로 upsert합니다. 그래도 "계정 타임라인을
+훑어 증분 수집하는" 창구는 여전히 collect 하나뿐입니다: 링크 수집은 사람이 지정한 글 하나만
+받아오고 워터마크·런 원장 어느 쪽도 갱신하지 않으므로, 정기 스케줄러의 증분 수집 흐름과 겹치지
+않습니다. 저장된 영상의 mp4가 비어 있을 때 collect만 들여다보면 답이 나오지 않는 것도 그대로입니다
+(타임라인 조회에 안 잡히는 글은 재수집으로 닿지 못합니다 — §3의 `x:video-backfill` 행 참고).
 
 `collect`은 명령도 코드 경로도 하나이며, **플래그 유무라는 분기 하나**로 두 모드로 갈립니다.
 
