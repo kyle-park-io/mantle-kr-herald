@@ -1,7 +1,7 @@
 // src/app/createDeps.ts
 import { mkdir, writeFile } from "node:fs/promises";
 import type { Db } from "../adapters/db/Db";
-import type { ApiDeps, StatusView, PublishStateRow, IntegrationStatus } from "../adapters/web/apiHandlers";
+import type { ApiDeps, StatusView, PublishStateRow, IntegrationStatus, IntakePendingItem } from "../adapters/web/apiHandlers";
 import { createStores } from "../cli/stores";
 import { PgAttemptLimiter, ipRowId } from "../adapters/store/PgAttemptLimiter";
 import { PgTranslateFloorReport } from "../adapters/store/PgTranslateFloorReport";
@@ -53,7 +53,7 @@ import {
   type TranslateFloorReport,
   type TranslateFloorStatus,
 } from "../status/translateFloor";
-import { xThreadIntake } from "../adapters/content/XContentSource";
+import { xThreadIntake, flattenXThreads } from "../adapters/content/XContentSource";
 import { realSystemdShow } from "../cli/systemdShow";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { contentHash, isStale } from "../domain/publish/syncLedger";
@@ -497,6 +497,31 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     };
   };
 
+  /**
+   * What has been collected but has no translation row yet — the 링크 수집 tab's waiting list.
+   *
+   * The same negative join `translate:prepare` selects with, through the same function, so the tab
+   * cannot show a queue the next tick disagrees with. Trimmed to what the tab renders: an article's
+   * source text runs to thousands of characters and the list only needs to be recognisable.
+   *
+   * Needs no credential, unlike `collectLinkedThread` below: it only reads `stores.collectionRepository`
+   * and `translationStore`, both already built above. The scheduled `pnpm collect` sweep populates
+   * `x_threads` independently of whether this deployment can take a link, so a stub here would report
+   * a real, possibly large backlog as an empty list — wrong, not merely disabled.
+   */
+  const loadIntakePending = async (): Promise<IntakePendingItem[]> => {
+    const [threads, translatedIds] = await Promise.all([
+      stores.collectionRepository.loadAll(),
+      translationStore.listTranslatedIds(),
+    ]);
+    return flattenXThreads(threads, translatedIds).map((item) => ({
+      itemId: item.id,
+      text: item.text.slice(0, 300),
+      createdAt: item.createdAt,
+      kind: item.kind,
+    }));
+  };
+
   const publishOne = async (itemId: string, target: string): Promise<PublishResult> => {
     const targets = resolveTargets(target, storageMode);
     // The other half of `localPublishEnabled` — see its own comment for why hosted has nowhere to
@@ -816,10 +841,10 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     prepareConversionRun,
     // `collectLinkedThread` is left unset — its optionality on `ApiDeps` is exactly the "absent means
     // not built yet" shape `sendToOutlet`/`prepareConversionRun` already use, and constructing the
-    // real one is the next task on this branch. `loadIntakePending` has no such optionality (a
-    // deployment with no X credential still reads the queue), so it needs a body now; an empty list
-    // is honest today, since nothing here writes to the collection repository through this door yet.
-    loadIntakePending: async () => [],
+    // real one (behind its own `TWITTERAPI_IO_KEY` guard) is the next task on this branch.
+    // `loadIntakePending` has no such optionality — a deployment with no X credential still reads the
+    // queue — and needs no credential itself, so it is wired for real above rather than stubbed.
+    loadIntakePending,
     formatVariants,
     // Absent (not a function that would just refuse every call) when sends are closed — see
     // `ApiDeps.sendToOutlet`'s own doc comment (`apiHandlers.ts`) for why this mirrors

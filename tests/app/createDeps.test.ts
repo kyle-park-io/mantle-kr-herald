@@ -4,6 +4,7 @@ import { createTestDb } from "../support/testDb";
 import { createDeps } from "../../src/app/createDeps";
 import { handleApi, type ApiDeps } from "../../src/adapters/web/apiHandlers";
 import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
+import { PgCollectionRepository } from "../../src/adapters/store/PgCollectionRepository";
 import { PgTranslateFloorReport } from "../../src/adapters/store/PgTranslateFloorReport";
 import { PgCredentialLiveness } from "../../src/adapters/store/PgCredentialLiveness";
 import type { Db } from "../../src/adapters/db/Db";
@@ -50,6 +51,54 @@ describe("createDeps", () => {
     const deps = createDeps({ db, routes: "local" });
     const result = await handleApi(authenticated(deps), "GET", "/api/translations", undefined);
     expect(result.status).toBe(200);
+  });
+
+  /**
+   * `loadIntakePending` reads `x_threads` through `PgCollectionRepository` — the same table
+   * `pnpm collect`'s scheduled sweep writes, independently of whether this deployment can take a
+   * link. A review round on this task flagged that an earlier version of `createDeps.ts` stubbed
+   * this function to `async () => []`, which is a false statement about a real backlog rather than a
+   * disabled capability (`intakeEnabled: false` is the honest way to say "closed"; an empty list
+   * from a real seeded thread is not). These drive the actual `PgCollectionRepository`/
+   * `PgTranslationStore` pair over PGlite, so a regression back to a stub — or to the negative join
+   * silently dropping — fails here.
+   */
+  describe("loadIntakePending", () => {
+    const tweet = {
+      id: "100",
+      conversationId: "100",
+      text: "Mantle ships something",
+      createdAt: "2026-08-12T00:00:00.000Z",
+      url: "https://x.com/someone/status/100",
+      authorUserName: "someone",
+      isReply: false,
+      isQuote: false,
+    };
+
+    it("reports a real collected thread with no translation row yet", async () => {
+      db = await createTestDb();
+      await new PgCollectionRepository(db).upsert([
+        { rootId: "100", tweets: [tweet], status: "active", firstSeenAt: "2026-08-01T00:00:00.000Z" },
+      ]);
+      const deps = createDeps({ db, routes: "local" });
+
+      const pending = await deps.loadIntakePending();
+
+      expect(pending).toEqual([
+        { itemId: "x:100", text: "Mantle ships something", createdAt: "2026-08-12T00:00:00.000Z", kind: "post" },
+      ]);
+    });
+
+    it("excludes an item once it has a translation row — the negative join, not a raw dump", async () => {
+      db = await createTestDb();
+      await new PgCollectionRepository(db).upsert([
+        { rootId: "100", tweets: [tweet], status: "active", firstSeenAt: "2026-08-01T00:00:00.000Z" },
+      ]);
+      const deps = createDeps({ db, routes: "local" });
+      await deps.translationStore.upsert({ itemId: "x:100", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" });
+
+      expect(await deps.loadIntakePending()).toEqual([]);
+    });
   });
 
   /**
