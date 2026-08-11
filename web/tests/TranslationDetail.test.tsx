@@ -23,13 +23,14 @@ function mount(
     onUnretire?: (id: string) => Promise<void>;
     onRetire?: (id: string) => Promise<void>;
     publishRows?: PublishStateRow[];
+    availableTargets?: ("local" | "google" | "lark")[];
   } = {},
 ) {
   return render(
     <TranslationDetail
       item={item}
       publishRows={o.publishRows ?? []}
-      availableTargets={["local"]}
+      availableTargets={o.availableTargets ?? ["local"]}
       onSave={async () => {}}
       onApprove={async () => {}}
       onUnapprove={async () => {}}
@@ -225,6 +226,50 @@ describe("TranslationDetail — 게시됨 (posted)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "되돌리기" }));
     await vi.waitFor(() => expect(calls).toEqual(["x:2081711456320655644"]));
+  });
+});
+
+/**
+ * Why a disabled 발행 button says why, and why that has to be RENDERED TEXT rather than a `title`.
+ *
+ * Every reason the button carries also forces `disabled`, and a disabled button dispatches no
+ * pointer events — so the browser never draws its native tooltip. The message existed in the markup
+ * and no reviewer could ever see it. That is invisible to a test that asserts on the attribute,
+ * which is why these assert on `textContent`: the reason has to be in the DOM as text the
+ * `group/tip` wrapper can reveal on hover.
+ *
+ * jsdom applies no CSS, so what these pin is the half a unit test CAN see — the message is present,
+ * and it is present only when it applies. The reveal itself is CSS (`group-hover/tip:block`) and is
+ * NOT pinned here, nor could it usefully be: the shape it replaces was a native `title` tooltip,
+ * which the OS draws outside the DOM, so no automated check can see the old behaviour to contrast
+ * against. `disabled:pointer-events-none` on the button is what keeps the reveal from depending on
+ * how a given browser propagates `:hover` out of a disabled child — the hit test lands on the
+ * wrapper instead. Confirm by hovering a greyed 발행 button on the deployed board.
+ */
+describe("TranslationDetail — why a 발행 target is unavailable", () => {
+  const HOSTED: ("local" | "google" | "lark")[] = ["google", "lark"];
+  const POSTED_URL = "https://x.com/0xMantleKR/status/1999999999999999999";
+
+  it("says why the hosted board's [로컬 폴더] is greyed, as text and not a dead title", () => {
+    const { container } = mount(translation(), { availableTargets: HOSTED });
+    const button = screen.getByRole("button", { name: "로컬 폴더" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    // Not `getAttribute("title")` — that is exactly the shape that did not work.
+    expect(container.textContent).toContain("이 모드에서는 사용할 수 없는 타깃");
+  });
+
+  it("stays quiet about a target this deployment does offer", () => {
+    // The scope check: without it, "render the reason unconditionally" would pass the test above and
+    // park a permanent tooltip over the buttons a reviewer actually uses.
+    const { container } = mount(translation(), { availableTargets: ["local", ...HOSTED] });
+    expect((screen.getByRole("button", { name: "로컬 폴더" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(container.textContent).not.toContain("이 모드에서는 사용할 수 없는 타깃");
+  });
+
+  it("explains the posted lock on the 발행 buttons too", () => {
+    // The same dead-`title` bug covered all three reasons, not just the unavailable-target one.
+    const { container } = mount(translation({ status: "posted", postedUrl: POSTED_URL }));
+    expect(container.textContent).toContain("이미 X에 직접 게시된 것으로 확인되어");
   });
 });
 
