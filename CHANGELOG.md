@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A fifth scheduled unit runs that check on its own, once a week — `herald-translate-check.timer`,
+  Monday 06:53.** Weekly and not daily, because the report has no cursor: it re-reads the whole
+  ledger and re-reports every standing finding, and its inputs only move when `x:reconcile` captures
+  a published text or a human edits the glossary. A daily fire would re-send the same list six extra
+  times a week, which is how an ops room becomes noise people stop reading. `TimeoutStartSec=420` is
+  sized by the alert path rather than the work — `notifyOps` calls `fetch` with no timeout of its
+  own, so an unanswered Telegram send runs to undici's 300s ceiling, and reaching it is the *good*
+  outcome (the send is swallowed, the run still exits 0 with its report intact) where a shorter
+  bound would `SIGTERM` a healthy check and page about a failure that did not happen. The unit sets
+  no `HERALD_OUTPUT_DIR`: the translations come from Postgres and the glossary from a repo-root
+  path, so nothing it reads is output-relative. **Installing it means copying eleven unit files
+  now, not nine** — the runbook's `cp` block is the complete list, and
+  `systemctl --user start herald-translate-check.service` is safe to run by hand as its own dry run,
+  unlike `herald-x-reconcile.service`, because this command only reads.
+- **`pnpm translate:check --notify` sends one ops-room alert when the published posts overrode a
+  decided glossary term — and only then.** The override list is the half of that report that goes
+  stale in a direction that matters: a term the humans keep taking back out stays wrong in
+  `translation/glossary.json` until somebody looks, and nobody reads a timer's journal. The alert
+  names the term, what the glossary decided, and **how many items it was overridden in** — the count
+  is the argument (one item is an anecdote, four is a pattern), so the item ids and the post text
+  stay out and it stays readable on a phone. Glossary **drift** deliberately never pages: the
+  command prints "not every line is a defect" under that list because a term inside a quoted English
+  sentence lands there routinely, and paging on it would train the room to ignore the alert. Off by
+  default — without the flag the command is byte-for-byte what it was, stdout and exit 0 — and it
+  still exits 0 when it does page, including when the send fails. The message is built by
+  `overrideNotification` (`src/cli/translateCheckReport.ts`), pure and pinned in
+  `tests/cli/translateCheckReport.test.ts`, for the reason `xReconcileReport.ts` exists: a top-level
+  script has no coverage of its own, so its load-bearing wording cannot live inside it.
 - **Both review sidebars have a search box under their filter tabs, and it understands Korean the way
   a Korean keyboard produces it — `ㅁㅌ` finds 맨틀, and so does every state the IME passes through on
   the way there (`매`, `맨`, `맨ㅌ`, `맨트`).** The tabs answered "what is left" but never "where is

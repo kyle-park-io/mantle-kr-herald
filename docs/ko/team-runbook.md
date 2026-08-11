@@ -783,7 +783,7 @@ pnpm x:link --item x:2081711456320655644 --post https://x.com/0xMantleKR/status/
 
 ### 배포 체크아웃 — 스케줄러는 개발 트리에서 돌지 않습니다
 
-**네 스케줄 유닛과 실패 훅은 `~/.herald/app`에서 돕니다.** 이건 머지된 `main`만 들어 있는 별도
+**다섯 스케줄 유닛과 실패 훅은 `~/.herald/app`에서 돕니다.** 이건 머지된 `main`만 들어 있는 별도
 체크아웃이고, 아무도 여기서 편집하지 않습니다. 개발 체크아웃(`~/code/mantle-kr-herald`)은 브랜치를
 자유롭게 오갈 수 있습니다.
 
@@ -956,7 +956,7 @@ bash deploy/herald-deploy.sh
    기록이고 지금 그대로 돌리면 실패합니다.** `deploy/herald-notify-failure.service`는 더는
    존재하지 않아서, 이 `cp`는 앞의 두 파일만 복사한 뒤 그 자리에서 멈춥니다 — **알림 훅이 없는
    반쪽 설치**이고, 실패해도 아무 데도 알리지 않는 상태입니다. **지금 설치하는 사람은 아래
-   "X 발행 재확인" 절의 아홉 개짜리 목록을 쓰세요.** 아래 블록은 그때 무엇이 깔렸는지를 남겨 둔
+   "X 발행 재확인" 절의 열한 개짜리 목록을 쓰세요.** 아래 블록은 그때 무엇이 깔렸는지를 남겨 둔
    것이고, 이어지는 설명(`.sh`는 왜 복사하지 않는지 등)은 지금도 그대로 유효합니다:
    ```bash
    cp deploy/herald-watch.service deploy/herald-watch.timer \
@@ -981,9 +981,9 @@ bash deploy/herald-deploy.sh
 
    **왜 저 목록이 낡았는지** — 이후 이 훅이 다른 스케줄 유닛과 공유되도록 템플릿화되면서
    `herald-notify-failure.service`는 `herald-notify-failure@.service`로 이름이 바뀌었고, 그 사이
-   타이머도 넷으로 늘었습니다. 아래 아홉 개짜리 목록이 네 스케줄러
-   (`herald-watch`·`herald-convert`·`herald-x-reconcile`·`herald-creds`)와 공용 실패 훅을 한 번에
-   까는 유일한 완전한 목록입니다. 이 절의 나머지 단계(1~3, 5~7)는 그대로 유효합니다.
+   타이머도 다섯으로 늘었습니다. 아래 열한 개짜리 목록이 다섯 스케줄러
+   (`herald-watch`·`herald-convert`·`herald-x-reconcile`·`herald-creds`·`herald-translate-check`)와
+   공용 실패 훅을 한 번에 까는 유일한 완전한 목록입니다. 이 절의 나머지 단계(1~3, 5~7)는 그대로 유효합니다.
 
 5. **타이머를 켜기 전에 손으로 한 번 돌려봅니다.** `daemon-reload`만 하고, `enable`은 아직입니다:
    ```bash
@@ -1368,8 +1368,8 @@ pnpm x:reconcile --since 7d
 `~/.config/systemd/user/`의 사본이고, `deploy/`가 아닙니다.** 저장소 쪽만 고치고
 `daemon-reload`를 돌려도 설치된 유닛은 바뀌지 않습니다.
 
-**이 목록이 이 저장소의 완전한 설치 목록입니다 — 파일 아홉 개.** 네 스케줄러의 서비스·타이머
-여덟 개와 공용 실패 훅 하나입니다. 한때 이 자리에 네 개짜리 목록이 있었는데,
+**이 목록이 이 저장소의 완전한 설치 목록입니다 — 파일 열한 개.** 다섯 스케줄러의 서비스·타이머
+열 개와 공용 실패 훅 하나입니다. 한때 이 자리에 네 개짜리 목록이 있었는데,
 `herald-watch.timer`와 `herald-convert.*`가 빠져 있었고 그 셋은 다른 절의 산문으로만 언급돼
 있었습니다 — 그대로 따르면 **타이머 없는 서비스**가 깔립니다. 설치는 된 것처럼 보이고 영원히 아무
 것도 안 도는, 이 §6이 통째로 막으려는 그 실패입니다. 필요 없는 파일을 다시 복사하는 비용은
@@ -1380,6 +1380,7 @@ cp deploy/herald-watch.service deploy/herald-watch.timer \
    deploy/herald-convert.service deploy/herald-convert.timer \
    deploy/herald-x-reconcile.service deploy/herald-x-reconcile.timer \
    deploy/herald-creds.service deploy/herald-creds.timer \
+   deploy/herald-translate-check.service deploy/herald-translate-check.timer \
    deploy/herald-notify-failure@.service \
    ~/.config/systemd/user/
 rm -f ~/.config/systemd/user/herald-notify-failure.service   # 템플릿과 같이 두면 안 됩니다
@@ -1394,7 +1395,14 @@ systemctl --user daemon-reload
 `herald-x-reconcile`는 바로 아래, `herald-creds`는 아래 "크레덴셜 상시 점검"). 켜기 전에 손으로 한
 번 돌려 보는 게이트가 유닛마다 다르기 때문에 한 줄로 묶지 않았습니다.
 
-**순서 주의 — 유닛을 복사하기 전에 `bash deploy/herald-deploy.sh`를 먼저 돌리세요.** 네 스케줄
+`herald-translate-check`만 예외적으로 그 게이트가 가장 단순합니다 — `translate:check`는 아무것도
+쓰지 않고 발견 사항이 있어도 종료 코드가 `0`이라, `systemctl --user start
+herald-translate-check.service` 자체가 곧 "확인용 실행"입니다(`--yes`가 붙은
+`herald-x-reconcile`와 정반대). 한 번 돌려 보고 `~/.herald/logs/herald-translate-check/`의 로그와
+ops 방에 온 알림을 확인한 뒤 `systemctl --user enable --now herald-translate-check.timer`.
+타이머는 월요일 06:53에 주 1회만 돌므로, 켠 직후에 아무 일도 일어나지 않는 것이 정상입니다.
+
+**순서 주의 — 유닛을 복사하기 전에 `bash deploy/herald-deploy.sh`를 먼저 돌리세요.** 다섯 스케줄
 유닛의 `ExecStart=`는 모두 배포 체크아웃 안의 래퍼
 (`%h/.herald/app/deploy/herald-run-logged.sh`, 위 "로그" 항목 참고)를 거쳐 명령을 실행합니다.
 `~/.herald/app`이 아직 그 스크립트가 없는 커밋에 머물러 있는 상태에서 유닛만 복사하면, 다음 타이머
@@ -1544,7 +1552,7 @@ set -a && . ~/.herald/prod.env && set +a && pnpm db:migrate
 `HERALD_DEPLOYMENT_ORIGIN`을 씁니다 — `deploy:check`가 이미 실제 Vercel 도메인과 대조하는 그
 값이고, 한 곳에 하나만 둡니다.
 
-**설치는 위 "X 발행 재확인" 절의 아홉 개짜리 `cp` 목록에 이미 들어 있습니다**
+**설치는 위 "X 발행 재확인" 절의 열한 개짜리 `cp` 목록에 이미 들어 있습니다**
 (`deploy/herald-creds.service`, `deploy/herald-creds.timer`). 다른 유닛과 달리 이 유닛은
 `EnvironmentFile=%h/.herald/prod.env`를 걸지 **않습니다** — 데이터베이스를 열지 않고 배포본에
 HTTP로 묻기만 하므로, 걸어 두면 없는 의존성을 있는 것처럼 적는 셈이 됩니다.

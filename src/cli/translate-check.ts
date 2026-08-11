@@ -6,10 +6,12 @@ import { createStores } from "./stores";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { paths } from "../paths";
 import { checkGlossary, checkPublishedOverrides, type GlossaryMiss, type GlossaryOverride } from "../domain/translation/glossaryCompliance";
+import { overrideNotification } from "./translateCheckReport";
+import { notifyOps } from "../shared/notifyOps";
 
 /**
- * `pnpm translate:check [--status <s>] [--since <ISO>] [--published]` — answers two questions
- * about the glossary.
+ * `pnpm translate:check [--status <s>] [--since <ISO>] [--published] [--notify]` — answers two
+ * questions about the glossary.
  *
  * 1. Did our draft use a decided term the source called for? (`checkGlossary`, over `koreanText`
  *    by default, or over `publishedText` under `--published` — see below.)
@@ -20,6 +22,12 @@ import { checkGlossary, checkPublishedOverrides, type GlossaryMiss, type Glossar
  *
  * Read-only. Writes nothing, changes no status, and never exits non-zero on a finding: a glossary
  * has real exceptions, so this is a list a human reads before 1차 검수, not a gate.
+ *
+ * `--notify` adds one ops-room alert for question 2's findings only, for the scheduled run: nobody
+ * reads a timer's journal, and the override list is the half of this report that goes stale in a
+ * direction that matters (a glossary entry the humans keep undoing stays wrong until someone looks).
+ * Question 1's drift never pages — see `overrideNotification`'s own doc comment. Off by default, so
+ * an interactive run is exactly what it was: stdout, exit 0.
  *
  * Why it exists. The drift it catches is invisible one item at a time — `narrative` rendered `이야기`
  * is a perfectly good sentence, wrong only against a decision recorded elsewhere. Measured on
@@ -33,6 +41,7 @@ import { checkGlossary, checkPublishedOverrides, type GlossaryMiss, type Glossar
 const wantStatus = argValue("--status");
 const since = argValue("--since");
 const usePublished = process.argv.includes("--published");
+const notify = process.argv.includes("--notify");
 
 const dbConfig = loadDbConfig();
 console.log(`translate:check — database ${dbConfig.env} · ${tryDescribeDbTarget(dbConfig) ?? INVALID_DB_URL}`);
@@ -119,6 +128,16 @@ try {
     }
     console.log(`\nThis is a statement about the glossary entry, not about these translations — a term`);
     console.log(`the humans keep overriding may be a decision worth revisiting.`);
+  }
+
+  // After the whole report is on stdout, and only under --notify: one alert for the batch, not one
+  // per finding, and only when `overrideNotification` (translateCheckReport.ts) says there is
+  // something to send — the threshold and the overrides-not-drift decision live there, where a test
+  // can fail on them. `notifyOps` never throws and this sets no exit code, so a run that pages and
+  // a run whose page failed both still exit 0: this command is a report, and it stays one.
+  if (notify) {
+    const notification = overrideNotification(overrides);
+    if (notification !== undefined) await notifyOps(notification);
   }
 } finally {
   await db.close();

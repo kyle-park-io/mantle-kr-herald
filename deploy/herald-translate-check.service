@@ -1,0 +1,164 @@
+# deploy/herald-translate-check.service
+#
+# systemd --user unit for one `pnpm translate:check --notify` — the weekly glossary digest. It asks
+# the two questions src/cli/translate-check.ts's own doc comment names: did our draft use the decided
+# term the source called for (`checkGlossary`), and which decided terms do the humans keep dropping
+# once a post actually goes out (`checkPublishedOverrides`). Read-only from start to finish.
+#
+# Why it needs a schedule at all: the drift it catches is invisible one item at a time — `narrative`
+# rendered 이야기 is a perfectly good sentence, wrong only against a decision recorded elsewhere.
+# Measured on 2026-08-07, a batch of nineteen translations had drifted from four decided terms and
+# every individual sentence read fine. The command has existed since then and gets run when somebody
+# remembers, which for a report whose entire value is catching slow drift is close to not at all.
+#
+# WHAT THIS UNIT NEVER DOES: change anything. `translate:check` writes nothing, changes no status,
+# and never exits non-zero on a finding — a glossary has real exceptions, so this is a list a human
+# reads before 1차 검수, not a gate. That has a useful consequence for the hook below: a non-zero exit
+# from this unit can only ever mean the run itself broke (no database, no glossary, timeout), never
+# that the report had something in it. The alert is therefore never a weekly false alarm, and the
+# findings reach a human the other way — `--notify` pages the ops room about question 2's overrides
+# (`overrideNotification`, src/cli/translateCheckReport.ts), while question 1's drift deliberately
+# never pages and is read out of the run log this unit's wrapper keeps.
+#
+# NOT installed by any committed script. Copying this into ~/.config/systemd/user/ and running
+# `systemctl --user daemon-reload` is a human-supervised step (see the team runbook), same as the
+# four units already in this directory.
+#
+# Machine-specific by design, not templated: node and pnpm are reached through `%h/.herald/bin` on
+# the one machine this runs on — see the PATH= comment below, and herald-watch.service's longer
+# version of it.
+
+[Unit]
+Description=Mantle KR Herald glossary drift digest — one weekly `pnpm translate:check --notify`
+# The same templated hook the other four scheduled units use. `%n` expands to this unit's own name
+# before systemd resolves the target, so the alert names this unit and tails this unit's journal, not
+# another's — the `OnFailure=bar@%n.service` idiom `man systemd.unit` documents, and the reason the
+# hook became a template at all (see deploy/herald-notify-failure@.service's header).
+#
+# Worth more here than the once-a-day units it copies, not less, and for a reason specific to what
+# `--notify` sends: `overrideNotification` returns undefined when there are no overrides, so a
+# healthy week with a clean glossary sends NOTHING. Silence is therefore the normal successful
+# outcome, which means silence cannot also be how a dead fire announces itself. This hook is the only
+# thing that separates the two, for seven days at a time.
+OnFailure=herald-notify-failure@%n.service
+
+[Service]
+Type=oneshot
+# The deploy checkout — merged `main` only. Same reasoning as every other unit: whatever is checked
+# out here IS what runs at the next fire, and on 2026-08-07 a unit pointed at the development
+# checkout ran an unmerged branch's query against production. tests/deploy/workingDirectory.test.ts
+# fails if this ever names a development checkout.
+#
+# It decides more than the code for THIS command. `translation/glossary.json` is resolved relative to
+# the repo root (`paths.translationConfigDir`, src/paths.ts), so this directory is also where the
+# glossary the report is measured against comes from — the copy `pnpm deploy:freeze` lands here from
+# the development tree's git-ignored `translation/`, not whatever anyone edited since. A glossary
+# edit therefore reaches this report at the next deploy, not the next fire, which is the same
+# deliberate delay every other steering value has had since 2026-08-09.
+WorkingDirectory=%h/.herald/app
+
+# node and pnpm are reached through %h/.herald/bin, a directory of symlinks, NOT an nvm version
+# directory — see herald-watch.service's own PATH comment for the 2026-08-09 rebuild that made this
+# necessary. node must be reachable even though pnpm is named by absolute path below: pnpm's own file
+# starts `#!/usr/bin/env node`, and `env` resolves that through this PATH. `claude` is deliberately
+# not on this path: this command spawns no agent, exactly like herald-creds.service and
+# herald-x-reconcile.service and unlike the two units that do.
+Environment=PATH=%h/.herald/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# No HERALD_OUTPUT_DIR here, and it is not an oversight — it was checked against what the command
+# actually reads before being left out, the same way herald-x-reconcile.service argues its own
+# omission and herald-convert.service argues the three variables it drops.
+#
+# `translate:check` reads exactly two things. The translations come from `createStores(db)
+# .translationStore`, which is `PgTranslationStore` — Postgres, not OUTPUT_DIR's
+# `translations/translations.json`, which stopped being the ledger when the eleven stores moved (see
+# src/cli/stores.ts's own module comment). The glossary comes from `new JsonGlossaryStore(paths
+# .translationConfigDir)`, and that path is `join(REPO_ROOT, "translation")` — repo-root-relative, so
+# HERALD_OUTPUT_DIR would not redirect it even if someone set it hoping to. Nothing this command
+# touches is OUTPUT_DIR-relative, so setting the variable would only imply an artifact tree this run
+# has no relationship with.
+#
+# No HERALD_TRANSLATE_SINCE, HERALD_WATCH_BATCH, HERALD_CONVERT_BATCH or HERALD_COLLECT_MAX_PAGES
+# either. All four bound a `--limit` or a page count belonging to translate:prepare/translate:align,
+# convert:prepare or collect, and this command runs none of them — it selects with its own
+# `--status`/`--since` flags, which this unit deliberately does not pass (see ExecStart= below).
+
+# Exactly two lines — DATABASE_URL and HERALD_DB_ENV=production — chmod 600, created by Kyle by hand
+# (a production connection string does not pass through an agent session). This unit needs it for the
+# reason a read-only command needs it most: without it the fire succeeds, exits 0, and reports
+# cheerfully on the local Docker database's handful of rows instead of production's — a green weekly
+# digest about the wrong data, and the only sign is the database name on the command's first line,
+# which nobody reads on a run that found nothing. Everything else comes from the repo's own .env via
+# `pnpm translate:check`'s `tsx --env-file-if-exists=.env`, including the TELEGRAM_BOT_TOKEN and
+# TELEGRAM_CHAT_ID_OPS that `--notify` needs; a shell-exported variable wins over Node's --env-file
+# (verified on this machine), so these two override .env's local-Docker DATABASE_URL without this
+# unit ever touching .env itself.
+EnvironmentFile=%h/.herald/prod.env
+
+# Outer bound on a wedged run, and unusually for this directory the number is set by the ALERT path
+# rather than by the work. Two parts:
+#
+#   120s — the database half. One `translationStore.loadAll()` plus connect and close; the checks
+#          themselves are in-memory string work over rows already fetched, and the glossary is a
+#          local file read. What this has to absorb is a cold Neon compute: at this timer's Monday
+#          06:53 slot the last thing to touch the database was the 06:41 reconcile, and Neon
+#          autosuspends after about five minutes, so essentially every fire pays a wake-up.
+#          herald-convert.service budgets 240s for three round trips including that wake; this is one
+#          query, so 120s is the same generosity at a third of the traffic.
+#
+#   300s — the Telegram half, which is the part that actually sizes this directive. `notifyOps`
+#          (src/shared/notifyOps.ts) calls global `fetch` with no timeout of its own, so a Telegram
+#          endpoint that accepts the connection and then never answers is bounded only by undici's
+#          300s headers timeout. Reaching that timeout is the GOOD outcome: notifyOps never throws —
+#          it logs `[notifyOps] failed to notify` and returns — so the run still exits 0 and the
+#          report is still in the run log. A TimeoutStartSec below 300 would instead SIGTERM the
+#          process mid-send, which turns a working check into a failed unit and fires the OnFailure=
+#          hook to say the glossary check failed, when the check had already finished and printed —
+#          a false alarm about the one subsystem (Telegram) that is demonstrably down and therefore
+#          least likely to deliver the alarm anyway.
+#
+# 120 + 300 = 420. The retry inside notifyOps does not double the 300: a second attempt only happens
+# when the first got a real response back, and a response means it did not hang. The one shape that
+# overruns this is Telegram answering slowly AND then hanging the plain-text retry, and at that point
+# being killed is the right answer.
+#
+# The upper bound the rest of this directory argues for — timeout at or under half the fire period,
+# or one wedged run holds the unit active across the next OnCalendar= and systemd skips it — is not
+# close to binding here: 420s against a 604800s week is 1/1440th of the period.
+TimeoutStartSec=420
+
+# Wrapped in herald-run-logged.sh for the reason every other unit is, and more so than any of them:
+# journald on this box holds roughly eight minutes of history (it rotates on every backwards clock
+# step, and this machine's WSL2 host sync and timesyncd both step the clock constantly), so a report
+# printed at 06:53 on Monday is unreadable by 07:05 and the next one is seven days away. This is also
+# the only unit here whose SUCCESSFUL output is the entire point — the Telegram notice is a summary,
+# and `%h/.herald/logs/herald-translate-check/` is where the full grouped list of drifts and
+# overrides actually lives when someone wants to read them item by item.
+#
+# Argument order is that wrapper's contract, not a convention: `$1` is the unit name and everything
+# after it is the command, run verbatim. Reversed, the wrapper names its log directory after pnpm and
+# tries to run the unit name as a command (measured: exit 127). `%n` also keys the per-unit log
+# directory, the same key deploy/herald-notify-failure.sh derives its fallback excerpt from, so the
+# two agree without either hardcoding a unit list. tests/deploy/runLogging.test.ts holds the property
+# that matters most — the command's exit status reaches systemd unchanged, since a wrapper that
+# swallowed it would switch this unit's alert off permanently and invisibly.
+#
+# `--notify` is not optional decoration, and it is spelled out here for the reason
+# herald-x-reconcile.service spells out `--yes`: it is off by default (an interactive run stays
+# stdout-only), so without it every fire writes a report into a log nobody is tailing and exits 0 — a
+# scheduler that looks armed and delivers nothing. It sends one grouped ops message for the
+# published-override half and nothing at all when there are none, so the flag costs nothing on a
+# clean week and is the only reason a dirty one reaches anybody.
+#
+# No `--status`, no `--since`, no `--published`. `--status`/`--since` narrow the row set, and the
+# standing whole-ledger view is exactly what a weekly digest is for — a narrowed one would answer
+# "did last week drift?" while the question this report exists for is "what has drifted?".
+# `--published` is not passed either: it would restrict question 1 to rows that already carry a
+# published text and skip the rest, and the published-override half of the report (question 2) runs
+# unconditionally anyway, so it would cost coverage and buy nothing. Anyone who wants either view
+# runs the command by hand — this unit's job is the standing one.
+#
+# Ordering note for whoever installs this: the wrapper lives in the deploy checkout, so
+# `bash deploy/herald-deploy.sh` must have run (landing this commit in %h/.herald/app) BEFORE this
+# unit file is copied into ~/.config/systemd/user/.
+ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n %h/.herald/bin/pnpm translate:check --notify
