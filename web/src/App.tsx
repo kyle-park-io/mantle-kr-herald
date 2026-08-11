@@ -4,6 +4,7 @@ import type { Translation, AppStatus, PublishStateRow } from "./types";
 import { TranslationList } from "./components/TranslationList";
 import { TranslationDetail } from "./components/TranslationDetail";
 import { RenderingsView } from "./components/RenderingsView";
+import { IntakeView } from "./components/IntakeView";
 import { EnvironmentBanner } from "./components/EnvironmentBanner";
 import { CollectedBreakdownCard } from "./components/CollectedBreakdownCard";
 import { btn } from "./buttonStyles";
@@ -21,6 +22,7 @@ import { livenessChip, livenessHeadline, probeLabel } from "./liveness";
 const TABS = [
   { id: "translations", hash: "", label: "1차 검수 · 번역" },
   { id: "renderings", hash: "#renderings", label: "2차 검수 · 채널" },
+  { id: "intake", hash: "#intake", label: "링크 수집" },
 ] as const;
 
 type Mode = (typeof TABS)[number]["id"];
@@ -474,7 +476,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
         <div className="shrink-0 border-b border-red-200 bg-red-50 px-5 py-2 text-sm text-red-700">{error}</div>
       )}
 
-      {mode === "translations" ? (
+      {mode === "translations" && (
         <div className="flex min-h-0 flex-1">
           <aside className="w-80 shrink-0 overflow-y-auto border-r border-line bg-surface [scrollbar-gutter:stable]">
             <TranslationList items={items} selectedId={selectedId} onSelect={handleSelect} />
@@ -498,7 +500,9 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
             )}
           </section>
         </div>
-      ) : (
+      )}
+
+      {mode === "renderings" && (
         <RenderingsView
           onDirtyChange={setDirty}
           authEpoch={authEpoch}
@@ -507,6 +511,15 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
           // what this reads, so an over-optimistic default here costs nothing but a stale tooltip.
           sendsEnabled={status?.sendsEnabled ?? true}
           conversionEnabled={status?.conversionEnabled ?? true}
+        />
+      )}
+
+      {mode === "intake" && (
+        <IntakeView
+          authEpoch={authEpoch}
+          // Defaults open while `status` has not loaded, the same reason the two flags above do:
+          // the route enforces the real gate regardless, so an optimistic default costs a stale tip.
+          intakeEnabled={status?.intakeEnabled ?? true}
         />
       )}
     </div>

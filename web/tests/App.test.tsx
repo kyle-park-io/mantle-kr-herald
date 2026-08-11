@@ -24,6 +24,26 @@ vi.mock("../src/components/RenderingsView", async () => {
   };
 });
 
+/**
+ * A stand-in for `IntakeView`, on the same pattern as the `RenderingsView` fake above (own mount
+ * counter, `-fake` testid), even though Task 5's `IntakeView` holds no editable state of its own —
+ * this proves `App`'s render branch reaches the real import and mounts it, without pulling in its
+ * `api.intakePending()` network call.
+ */
+const { intakeMountCounter } = vi.hoisted(() => ({ intakeMountCounter: { current: 0 } }));
+
+vi.mock("../src/components/IntakeView", async () => {
+  const { useEffect } = await import("react");
+  return {
+    IntakeView: () => {
+      useEffect(() => {
+        intakeMountCounter.current += 1;
+      }, []);
+      return <div data-testid="intake-fake" />;
+    },
+  };
+});
+
 import { App } from "../src/App";
 
 /**
@@ -119,6 +139,45 @@ describe("App's hash-driven mode router", () => {
     });
     expect(mountCounter.current).toBe(1);
     expect(screen.getByTestId("renderings-fake")).toBeTruthy();
+  });
+});
+
+/**
+ * Task 6's own half of the router: `TABS` grew a third entry (`intake`, `#intake`), and the render
+ * branch went from a two-arm ternary to three explicit `{mode === "..." &&}` guards. Neither change
+ * has a failure mode that shows up by reading the diff — a ternary's `else` silently becomes "every
+ * other mode" once there are three, and a hash typo in `TABS` would compile fine while the tab never
+ * opens. `window.location.hash` is reset in `afterEach` because both tests below set it directly
+ * (one before render, one via a click), and this file's other `describe` blocks never reset it
+ * themselves — left dirty, `"#intake"` would leak into whichever test runs next.
+ */
+describe("App's 링크 수집 tab", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    window.location.hash = "";
+  });
+
+  it("opens 링크 수집 from its hash", async () => {
+    stubFetch();
+    await act(async () => {
+      window.location.hash = "#intake";
+    });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    expect(await screen.findByTestId("intake-fake")).toBeTruthy();
+    expect(intakeMountCounter.current).toBe(1);
+  });
+
+  it("switches to 링크 수집 and back without losing 1차", async () => {
+    stubFetch();
+    await act(async () => {
+      window.location.hash = "";
+    });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "링크 수집" }));
+    expect(await screen.findByTestId("intake-fake")).toBeTruthy();
+    expect(window.location.hash).toBe("#intake");
   });
 });
 
