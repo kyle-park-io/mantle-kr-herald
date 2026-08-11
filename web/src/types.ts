@@ -313,6 +313,11 @@ export interface AppStatus {
    */
   conversionEnabled?: boolean;
   /**
+   * `StatusView.intakeEnabled`. Drives whether 링크 수집 offers [넣기] at all. Same optionality as
+   * its neighbours: a status payload predating this field reads as absent, not as false.
+   */
+  intakeEnabled?: boolean;
+  /**
    * How the deployment's credentials answered the last time anything probed them — mirrors the
    * server's `StatusView.liveness` (`apiHandlers.ts`), graded there. Optional for the same reason as
    * `dbEnv` above, and absent also means "nothing has ever looked", which the badge renders as
@@ -650,3 +655,30 @@ export interface HeadroomView {
 
 /** Mirrors `LOW_PUBLISHING_QUOTA` in src/doctor/checks.ts — the CLI and the board agree on "low". */
 export const LOW_PUBLISHING_QUOTA = 3;
+
+/** One row of 링크 수집's waiting list. Mirrors `IntakePendingItem` in `src/adapters/web/apiHandlers.ts`. */
+export interface IntakePendingItem {
+  itemId: string;
+  text: string;
+  createdAt: string;
+  kind?: "post" | "article";
+}
+
+export type IntakeOutcome = "collected" | "already-pending" | "already-translated";
+
+export interface IntakeReply {
+  itemId: string;
+  tweets: number;
+  outcome: IntakeOutcome;
+  pending: IntakePendingItem[];
+}
+
+/**
+ * What each outcome means on screen. `already-*` are not errors — the thread was re-collected either
+ * way — so they read as "where your item already is", never as a rejection.
+ */
+export const INTAKE_OUTCOME_MESSAGE: Record<IntakeOutcome, string> = {
+  collected: "수집됐습니다 — 다음 번역 틱에서 초안이 만들어집니다",
+  "already-pending": "이미 들어와 있습니다 — 다음 번역 틱에서 처리됩니다",
+  "already-translated": "이미 번역돼 1차 검수에 있습니다",
+};
