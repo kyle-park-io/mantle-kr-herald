@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm doctor` now says whether the steering config the *scheduler* runs with is still the one
+  this checkout holds — a new `Steering deploy sync` line.** Since 0.5.0 the deploy checkout's
+  configuration is a copy taken at deploy time rather than a symlink, which closed one exposure and
+  opened a quieter one: `pnpm glossary add` or `pnpm tm:promote` with no `bash deploy/herald-deploy.sh`
+  after it leaves the timers translating against the old glossary, and nothing anywhere reports it —
+  a term that was never applied does not look wrong, it is simply absent. The comparison is the
+  deploy gate's own (`src/deploy/steeringSnapshot.ts`, lifted out of `deploy-freeze.ts` so a second
+  command could reuse it instead of reimplementing it), so the two cannot disagree: one
+  `steeringFilesIn` — `git check-ignore` narrowed by `isSteeringConfigFile`, few-shot carve-out and
+  all — one pair of opposite symlink rules, one set of sha-256s, and the same rule that **only names
+  are ever printed**. **The deploy path is not in `src/` and never will
+  be** — doctor asks systemd for `herald-watch.service`'s `WorkingDirectory`, which is what the
+  scheduler actually runs from and needs no configuration on the machine that has one; `.env`'s new
+  `HERALD_DEPLOY_DIR` states it explicitly where there are no units to ask, and wins where both
+  exist. **Drift is a `warn`, never a `fail`** (the minutes between an edit and its deploy are the
+  intended state, and a check that exits 1 on healthy work gets switched off), and the three ways the
+  question cannot be answered from here each say "not applicable" in their own words rather than
+  implying agreement: no second checkout is identified (every fresh clone, every CI run), doctor is
+  running *inside* the deploy checkout (the tree it was copied from is known to `herald-deploy.sh`
+  and to nothing in `src/`), or this checkout holds no steering config of its own (a git worktree —
+  the check above already grades that, and reporting it twice would name an empty worktree the record
+  of truth). Both paths appear in the drift line, labelled: which tree is the source and which one
+  the schedulers run flips depending on where you typed the command. **The grading is by direction,
+  not by "the diff is non-empty":** files the deploy tree holds and this checkout no longer syncs are
+  their own `ok` state, worded as something the next deploy sweeps rather than as a fault, because
+  nothing the scheduler reads is affected by them. That state is not hypothetical — it is what every
+  machine deployed before the few-shot carve-out above reports on its first run, seven files' worth,
+  and grading it ⚠ would have made the check's debut a false alarm about files nothing reads.
 - **A fifth scheduled unit runs that check on its own, once a week — `herald-translate-check.timer`,
   Monday 06:53.** Weekly and not daily, because the report has no cursor: it re-reads the whole
   ledger and re-reports every standing finding, and its inputs only move when `x:reconcile` captures

@@ -60,8 +60,13 @@ export interface TranslateFloorStatus {
 }
 
 /** One `Key=Value` line out of `systemctl show` output. Absent key → undefined; present-but-empty
- *  key → "", and the two mean different things (`Environment=` is a unit that sets nothing). */
-function property(show: string, key: string): string | undefined {
+ *  key → "", and the two mean different things (`Environment=` is a unit that sets nothing).
+ *
+ *  Exported under a qualified name for `src/doctor/deploySteering.ts`, which reads a different
+ *  property of the same unit out of the same output format. Two parsers of one format is how the
+ *  present-but-empty distinction above gets quietly dropped in one of them — and that distinction is
+ *  load-bearing on both sides. */
+export function unitProperty(show: string, key: string): string | undefined {
   const prefix = `${key}=`;
   const line = show.split(/\r?\n/).find((l) => l.startsWith(prefix));
   return line?.slice(prefix.length);
@@ -124,7 +129,7 @@ function fromUnit(show: string | undefined): TranslateFloorStatus {
   // has never heard of and prints a bare `Environment=` for it, identical to a loaded unit that
   // sets nothing. Guessing from the Environment line alone would report the most alarming state
   // there is for every machine that simply has no scheduler on it.
-  const loadState = property(show, "LoadState");
+  const loadState = unitProperty(show, "LoadState");
   if (loadState === undefined) {
     return { kind: "unreadable", detail: `systemctl said nothing about ${WATCH_UNIT}'s LoadState` };
   }
@@ -136,7 +141,7 @@ function fromUnit(show: string | undefined): TranslateFloorStatus {
     return { kind: "unreadable", detail: `${WATCH_UNIT} is ${loadState}, not loaded` };
   }
 
-  const raw = floorFromEnvironment(property(show, "Environment") ?? "");
+  const raw = floorFromEnvironment(unitProperty(show, "Environment") ?? "");
   const parsed = tryParse(raw);
   if (!parsed.ok) return { kind: "invalid", detail: parsed.detail };
   if (parsed.value === undefined) return { kind: "none" };

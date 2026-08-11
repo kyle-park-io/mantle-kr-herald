@@ -10,46 +10,14 @@
  * from leaving the deploy checkout's code already moved to origin/main — that script's header calls
  * a half-finished deploy worse than none.
  */
-import { readFileSync, readdirSync, existsSync, lstatSync, statSync, writeFileSync, chmodSync, renameSync, rmSync, mkdirSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { readFileSync, existsSync, lstatSync, statSync, writeFileSync, chmodSync, renameSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 import { diffEnv, diffFiles, isEmptyDiff, formatFreezeDiff, type NameDiff } from "../deploy/configFreeze";
-import { isSteeringConfigFile } from "../domain/config/steering";
-
-/** The same three the old `link_ignored_config` walked, in the same order. */
-export const STEERING_DIRS = ["translation", "conversion", "keys"] as const;
-
-/**
- * Which of the two trees a path is being examined in. **This is not one predicate wearing a
- * parameter — the two trees are asked opposite questions and must get opposite symlink semantics.**
- * Collapsing them back into a single "is it a file?" test is the bug this type exists to prevent:
- * the first version of this command did exactly that, and one `isFile()` produced three separate
- * silent failures at once — one per call site below. They are pinned in `deployFreeze.test.ts` under
- * "the two trees' opposite symlink rules".
- *
- * - `"dev"` asks *what will the scheduler actually read?* A development `.env` or glossary that is
- *   itself a symlink is configuration like any other, so every decision about it must **follow the
- *   link** — `apply()` copies with `readFileSync`, which follows, and the bash this replaced gated
- *   on `[ -f "$src" ]`, which also follows and would have linked it. Deciding with `lstat` here
- *   skips the file in `apply()` while reporting it as absent in the diff, both silently.
- * - `"app"` asks *is there a real snapshot here?* A symlink in the deploy checkout is never a
- *   snapshot — it is the pre-2026-08-09 layout, left by `ln -sfn`, waiting to be migrated — so this
- *   side must **not follow**. It must still *enumerate* links, though: `ln -sfn` never removed
- *   anything, so a link whose development file has since been deleted is exactly what the sweep in
- *   `apply()` exists to clear, and a link filtered out of the listing survives every deploy forever.
- */
-export type Tree = "dev" | "app";
-
-/**
- * Stands where the content hash of a deploy-checkout entry would go when that entry is a symlink.
- * It can never collide with a sha-256, so the entry reports as `changed` against a development file
- * of the same name (`--apply` replaces the link with a copy) and as `removed` when the development
- * checkout no longer has one (`--apply` sweeps the link). Deliberately not the target's hash: the
- * link is the old layout regardless of what it currently resolves to, and the stale case resolves to
- * nothing at all, so reading through it would throw `ENOENT` on precisely the entry that matters.
- */
-const UNMIGRATED_LINK = "symlink — pre-freeze layout, not a snapshot";
+// The file listing, the `db:export` carve-out, the symlink rules and the hashing all live in
+// `src/deploy/steeringSnapshot.ts` — moved there so `pnpm doctor` can ask the same question this
+// gate asks without importing a module that runs a deploy at import time. Nothing about them
+// changed in the move; that file carries the reasoning this one used to.
+import { STEERING_DIRS, steeringFilesIn, readSteeringSnapshot, type Tree } from "../deploy/steeringSnapshot";
 
 function flag(name: string): boolean {
   return process.argv.includes(`--${name}`);
@@ -63,62 +31,6 @@ function option(name: string): string | undefined {
 function fail(message: string, code: number): never {
   console.error(message);
   process.exit(code);
-}
-
-/**
- * Every git-ignored file in a checkout's steering directory — derived, never hardcoded, so a
- * steering file added later needs no edit here. `check-ignore` exits 1 when it matches nothing,
- * which is not an error — it means the directory holds only committed examples.
- *
- * The raw listing. `steeringFilesIn` below is what callers want: git-ignored is *nearly* the same
- * question as "is it configuration", but not quite, and the gap is the `db:export` few-shot
- * artifacts.
- *
- * `tree` picks the symlink rule; see the `Tree` doc comment for why the two differ. On the
- * development side a dangling link is skipped, because `[ -f ]` and `readFileSync` both agree there
- * is nothing there to copy; on the deploy side it is listed, because clearing it is the job.
- */
-export function ignoredFilesIn(root: string, rel: string, tree: Tree): string[] {
-  const dir = join(root, rel);
-  if (!existsSync(dir)) return [];
-  const entries = readdirSync(dir, { withFileTypes: true });
-  const names = entries
-    .filter((e) =>
-      tree === "dev"
-        ? statSync(join(dir, e.name), { throwIfNoEntry: false })?.isFile() === true
-        : e.isFile() || e.isSymbolicLink(),
-    )
-    .map((e) => e.name);
-  if (names.length === 0) return [];
-  const res = spawnSync("git", ["-C", root, "check-ignore", ...names.map((n) => join(dir, n))], {
-    encoding: "utf8",
-  });
-  const ignored = new Set(res.stdout.split("\n").map((s) => s.trim()).filter(Boolean));
-  return names.filter((n) => ignored.has(join(dir, n))).sort();
-}
-
-/**
- * The two of `STEERING_DIRS` whose git-ignored contents are not all configuration: they also hold
- * the `few-shot*.json` files `pnpm db:export` writes for the rollback path. `keys/` is deliberately
- * absent — everything git-ignored there is a credential, and a name-shaped filter over it could only
- * ever drop one silently.
- */
-const CORPUS_DIRS = new Set<string>(["translation", "conversion"]);
-
-/**
- * `ignoredFilesIn` narrowed to what the deploy checkout should actually be *given*.
- *
- * **Asymmetric on purpose, and the asymmetry is the cleanup mechanism.** The development side is
- * filtered, so a `db:export` artifact is never frozen into production. The deploy side is not, so
- * copies frozen by earlier deploys still appear in `readSnapshot` — reported once as `- ` removals
- * by `--check`, then swept by `apply()`, exactly as it already sweeps a file deleted upstream.
- * Filtering both sides would instead leave every already-frozen copy sitting in the deploy checkout
- * forever, invisible to the diff that is supposed to describe that tree.
- */
-export function steeringFilesIn(root: string, rel: string, tree: Tree): string[] {
-  const names = ignoredFilesIn(root, rel, tree);
-  if (tree === "app" || !CORPUS_DIRS.has(rel)) return names;
-  return names.filter(isSteeringConfigFile);
 }
 
 export interface Snapshot {
@@ -139,18 +51,10 @@ export function readSnapshot(dir: string, tree: Tree): Snapshot {
   const envStat = tree === "dev"
     ? statSync(envPath, { throwIfNoEntry: false })
     : lstatSync(envPath, { throwIfNoEntry: false });
-  const steering = new Map<string, string>();
-  for (const rel of STEERING_DIRS) {
-    for (const name of steeringFilesIn(dir, rel, tree)) {
-      const path = join(dir, rel, name);
-      const isLink = tree === "app" && lstatSync(path).isSymbolicLink();
-      steering.set(
-        `${rel}/${name}`,
-        isLink ? UNMIGRATED_LINK : createHash("sha256").update(readFileSync(path)).digest("hex"),
-      );
-    }
-  }
-  return { env: envStat?.isFile() ? readFileSync(envPath, "utf8") : undefined, steering };
+  return {
+    env: envStat?.isFile() ? readFileSync(envPath, "utf8") : undefined,
+    steering: readSteeringSnapshot(dir, tree),
+  };
 }
 
 /**
