@@ -26,6 +26,7 @@ import type { SessionConfig } from "../../config";
 import { buildSessionCookie, CLEARED_SESSION_COOKIE } from "./sessionCookie";
 import type { LiveProbeResult } from "../../doctor/liveProbes";
 import type { LivenessSummary } from "../../status/liveness";
+import type { CollectLinkedThread } from "../../app/CollectLinkedThread";
 
 /** Whether a given integration's credentials are present in the env (independent of storage mode). */
 export interface IntegrationStatus {
@@ -71,6 +72,14 @@ export interface StatusView {
    */
   conversionEnabled: boolean;
   /**
+   * Whether `POST /api/intake/x` will actually take a link on this deployment — mirrors
+   * `deps.collectLinkedThread !== undefined` (`createDeps.ts` computes the one boolean and uses it
+   * for both), so the 링크 수집 tab never offers a [넣기] button whose route answers a bare refusal.
+   * False means `TWITTERAPI_IO_KEY` is not set here; the pending list still works, since it reads
+   * only the database.
+   */
+  intakeEnabled: boolean;
+  /**
    * How the deployment's credentials answered the last time anything asked — the counterpart to
    * `integrations` above, which reports only that a key is present. Absent when nothing has ever
    * probed (a database predating this field, an install that has never deployed) and when the read
@@ -94,6 +103,19 @@ export interface PublishStateRow {
   /** Whether this row is up to date with the item's current status + content (else: needs republish). */
   synced?: boolean;
 }
+
+/**
+ * One row of the 링크 수집 tab's waiting list. A trimmed `ContentItem` — the tab needs to recognise
+ * an item, not to review it, and the full source text of an article runs to thousands of characters.
+ */
+export interface IntakePendingItem {
+  itemId: string;
+  text: string;
+  createdAt: string;
+  kind?: "post" | "article";
+}
+
+export const INTAKE_DISABLED_MESSAGE = "이 배포에는 TWITTERAPI_IO_KEY가 없어 링크 수집을 할 수 없습니다";
 
 export interface ApiResult {
   status: number;
@@ -171,6 +193,17 @@ export interface ApiDeps {
    * frontend, an actually-missing route, since there is no agent on the other end of it to reach.
    */
   prepareConversionRun?: PrepareConversionRun;
+  /**
+   * Absent — not a function that refuses every call — when this deployment has no `TWITTERAPI_IO_KEY`,
+   * the same shape `sendToOutlet` and `prepareConversionRun` use. The route checks for it before
+   * reading the body, so the capability is genuinely missing rather than merely unhelpful.
+   */
+  collectLinkedThread?: CollectLinkedThread;
+  /**
+   * Threads sitting in the collection repository with no translation row yet. Always present: it
+   * reads the database only, so a deployment that cannot take a link can still show the queue.
+   */
+  loadIntakePending: () => Promise<IntakePendingItem[]>;
   /** Pure code — unlike conversion, the dashboard can run this one itself. */
   formatVariants: FormatVariants;
   /**
@@ -343,6 +376,36 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
 
   if (method === "GET" && segments.length === 3 && segments[1] === "publish" && segments[2] === "state") {
     return { status: 200, json: await deps.loadPublishState() };
+  }
+
+  if (segments[1] === "intake" && segments.length === 3) {
+    // Not gated on `deps.collectLinkedThread`, unlike the POST below: this reads the collection
+    // repository only, so an install with no `TWITTERAPI_IO_KEY` can still show the operator what is
+    // queued instead of a blank tab that looks broken.
+    if (method === "GET" && segments[2] === "pending") {
+      return { status: 200, json: await deps.loadIntakePending() };
+    }
+
+    if (method === "POST" && segments[2] === "x") {
+      // Checked before the body is read, the way `convert-prepare` checks `prepareConversionRun`:
+      // a deployment without the credential has no intake, and saying so is the whole message.
+      if (!deps.collectLinkedThread) return { status: 400, json: { error: INTAKE_DISABLED_MESSAGE } };
+      const url = (body as { url?: unknown })?.url;
+      if (typeof url !== "string" || url.trim() === "") {
+        return { status: 400, json: { error: "url (string) required" } };
+      }
+      try {
+        const result = await deps.collectLinkedThread.run(url);
+        // The refreshed list rides along so the tab self-corrects in one round trip — the same
+        // reason `sendToOutlet`'s reply carries a rebuilt `board`.
+        return { status: 200, json: { ...result, pending: await deps.loadIntakePending() } };
+      } catch (err) {
+        // The use case's refusals are the operator asking for something impossible (a url that is
+        // not a post, a deleted thread, a commenter reply), not a server fault — 400 with the reason
+        // so the tab can print it, rather than the 500 an uncaught throw would produce.
+        return { status: 400, json: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
   }
 
   if (method === "GET" && segments.length === 2 && segments[1] === "translations") {

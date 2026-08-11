@@ -17,6 +17,7 @@ const writeRoutes: [string, string][] = [
   ["PUT", "/api/outlets/x:1/announcement/tg-community"],
   ["POST", "/api/outlets/x:1/announcement/tg-community/send"],
   ["POST", "/api/outlets/x:1/announcement/tg-community/mark"],
+  ["POST", "/api/intake/x"],
 ];
 
 // Every read (GET) route in the API. The brief only spot-checked one of these; the board is not
@@ -35,6 +36,7 @@ const readRoutes: [string, string][] = [
   ["GET", "/api/renderings/x:1/announcement/telegram/emissions"],
   ["GET", "/api/renderings/x:1/announcement/telegram/emissions/tg-dev"],
   ["GET", "/api/items/x:1/board"],
+  ["GET", "/api/intake/pending"],
 ];
 
 /**

@@ -488,6 +488,11 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       dbEnv,
       sendsEnabled,
       conversionEnabled,
+      // Hard-coded `false` rather than computed: constructing `CollectLinkedThread` behind its own
+      // `TWITTERAPI_IO_KEY` guard is the next task on this branch (link-intake), not this one. This
+      // keeps `StatusView` satisfied — and honest, since nothing here builds the dep yet — without
+      // reaching ahead into work that task owns.
+      intakeEnabled: false,
       liveness: liveness === undefined ? undefined : summarizeLiveness(liveness, sendsEnabled),
     };
   };
@@ -809,6 +814,12 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     saveOutletOverride: new SaveOutletOverride(overrideStore, undefined, stores.lineageStore),
     markDelivery: new MarkDelivery(deliveryLedger),
     prepareConversionRun,
+    // `collectLinkedThread` is left unset — its optionality on `ApiDeps` is exactly the "absent means
+    // not built yet" shape `sendToOutlet`/`prepareConversionRun` already use, and constructing the
+    // real one is the next task on this branch. `loadIntakePending` has no such optionality (a
+    // deployment with no X credential still reads the queue), so it needs a body now; an empty list
+    // is honest today, since nothing here writes to the collection repository through this door yet.
+    loadIntakePending: async () => [],
     formatVariants,
     // Absent (not a function that would just refuse every call) when sends are closed — see
     // `ApiDeps.sendToOutlet`'s own doc comment (`apiHandlers.ts`) for why this mirrors

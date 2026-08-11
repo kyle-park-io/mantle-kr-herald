@@ -1,6 +1,6 @@
 // tests/adapters/web/apiHandlers.test.ts
 import { describe, it, expect } from "vitest";
-import { handleApi, type ApiDeps } from "../../../src/adapters/web/apiHandlers";
+import { handleApi, INTAKE_DISABLED_MESSAGE, type ApiDeps } from "../../../src/adapters/web/apiHandlers";
 import type { BoardView } from "../../../src/adapters/web/board";
 import type { Translation } from "../../../src/domain/translation/models";
 import type { ChannelRendering } from "../../../src/domain/formatting/models";
@@ -136,6 +136,7 @@ function makeDeps(
       dbEnv: "development" as const,
       sendsEnabled: true,
       conversionEnabled: true,
+      intakeEnabled: true,
     }),
     loadPublishState: async () => [
       { itemId: "x:1", status: "approved", target: "google", url: "https://drive/x1" },
@@ -188,6 +189,10 @@ function makeDeps(
         return { worksheetPath: "/ws/batch-1.md", pending: 1 };
       },
     } as unknown as ApiDeps["prepareConversionRun"],
+    collectLinkedThread: {
+      run: async () => ({ itemId: "x:1", tweets: 1, outcome: "collected" as const }),
+    } as unknown as ApiDeps["collectLinkedThread"],
+    loadIntakePending: async () => [],
     formatVariants: {
       run: async (input: unknown) => {
         spy.formats.push(input);
@@ -471,6 +476,7 @@ describe("handleApi", () => {
       dbEnv: "development",
       sendsEnabled: true,
       conversionEnabled: true,
+      intakeEnabled: true,
     });
   });
 
@@ -924,5 +930,82 @@ describe("GET /api/typefully/quota", () => {
     const d = makeDeps([]);
     const res = await handleApi(d, "GET", "/api/typefully/quota/nope", undefined);
     expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /api/intake/x", () => {
+  it("collects the linked thread and answers with the outcome and the refreshed pending list", async () => {
+    const d = makeDeps([]);
+    d.collectLinkedThread = {
+      run: async (url: string) => {
+        expect(url).toBe("https://x.com/someone/status/7");
+        return { itemId: "x:7", tweets: 3, outcome: "collected" as const };
+      },
+    } as unknown as ApiDeps["collectLinkedThread"];
+    d.loadIntakePending = async () => [
+      { itemId: "x:7", text: "hello", createdAt: "2026-08-12T00:00:00.000Z", kind: "post" as const },
+    ];
+
+    const res = await handleApi(d, "POST", "/api/intake/x", { url: "https://x.com/someone/status/7" });
+
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({
+      itemId: "x:7",
+      tweets: 3,
+      outcome: "collected",
+      pending: [{ itemId: "x:7", text: "hello", createdAt: "2026-08-12T00:00:00.000Z", kind: "post" }],
+    });
+  });
+
+  it("turns a use-case refusal into a 400 carrying its message", async () => {
+    const d = makeDeps([]);
+    d.collectLinkedThread = {
+      run: async () => { throw new Error("이 글은 다른 대화에 단 답글이라 파이프라인에 올릴 수 없습니다"); },
+    } as unknown as ApiDeps["collectLinkedThread"];
+
+    const res = await handleApi(d, "POST", "/api/intake/x", { url: "https://x.com/someone/status/7" });
+
+    expect(res.status).toBe(400);
+    expect(res.json).toEqual({ error: "이 글은 다른 대화에 단 답글이라 파이프라인에 올릴 수 없습니다" });
+  });
+
+  it("400s with a reason when the deployment has no X credentials", async () => {
+    const d = makeDeps([]);
+    d.collectLinkedThread = undefined;
+
+    const res = await handleApi(d, "POST", "/api/intake/x", { url: "https://x.com/someone/status/7" });
+
+    expect(res.status).toBe(400);
+    expect(res.json).toEqual({ error: INTAKE_DISABLED_MESSAGE });
+  });
+
+  it("400s on a missing or non-string url before reaching the use case", async () => {
+    let called = false;
+    const d = makeDeps([]);
+    d.collectLinkedThread = {
+      run: async () => { called = true; throw new Error("unreachable"); },
+    } as unknown as ApiDeps["collectLinkedThread"];
+
+    const res = await handleApi(d, "POST", "/api/intake/x", { url: 42 });
+
+    expect(res.status).toBe(400);
+    expect(called).toBe(false);
+  });
+});
+
+describe("GET /api/intake/pending", () => {
+  it("answers the pending list even where intake itself is closed", async () => {
+    // The list reads the database only. A deployment with no X key cannot take a link, but the
+    // operator can still see what is queued — so this route is not gated on the credential.
+    const d = makeDeps([]);
+    d.collectLinkedThread = undefined;
+    d.loadIntakePending = async () => [
+      { itemId: "x:9", text: "queued", createdAt: "2026-08-12T00:00:00.000Z", kind: "post" as const },
+    ];
+
+    const res = await handleApi(d, "GET", "/api/intake/pending", undefined);
+
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual([{ itemId: "x:9", text: "queued", createdAt: "2026-08-12T00:00:00.000Z", kind: "post" }]);
   });
 });

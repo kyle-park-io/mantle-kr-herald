@@ -285,7 +285,8 @@ describe("startServer", () => {
       ...fakeRenderingDeps(),
       ...fakeBoardDeps(),
       ...fakeConvertFormatDeps(),
-      loadStatus: async () => ({ storageMode: "cloud", funnel: EMPTY_FUNNEL, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true }),
+      loadStatus: async () => ({ storageMode: "cloud", funnel: EMPTY_FUNNEL, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true, intakeEnabled: true }),
+      loadIntakePending: async () => [],
       loadPublishState: async () => [],
       loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
       xMaxWeighted: 280,
@@ -333,7 +334,8 @@ describe("startServer", () => {
       ...fakeRenderingDeps(),
       ...fakeBoardDeps(),
       ...fakeConvertFormatDeps(),
-      loadStatus: async () => ({ storageMode: "cloud", funnel: EMPTY_FUNNEL, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true }),
+      loadStatus: async () => ({ storageMode: "cloud", funnel: EMPTY_FUNNEL, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true, intakeEnabled: true }),
+      loadIntakePending: async () => [],
       loadPublishState: async () => [],
       loadTranslations: async () => {
         throw new Error("boom");
