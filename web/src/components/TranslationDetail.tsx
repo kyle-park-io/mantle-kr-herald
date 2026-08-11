@@ -338,30 +338,48 @@ export function TranslationDetail(props: {
         <span className="text-[11px] font-medium text-faint">발행</span>
         {(["local", "google", "lark"] as const).map((t) => {
           const usable = props.availableTargets.includes(t);
+          /**
+           * Why this is not a `title` on the button, which is what it used to be: every reason below
+           * ALSO forces `disabled`, and a disabled button dispatches no pointer events, so the browser
+           * never renders its native tooltip. All three messages were dead — including the one that
+           * explains the hosted board's greyed `[로컬 폴더]`, the single thing standing between a
+           * reviewer and "why is this button broken". Hung on the wrapper instead, which is not
+           * disabled and so does receive the hover: the `group/tip` idiom `OpenLink` above already
+           * uses for exactly this shape (deliberately not actionable, still has to say why).
+           */
+          const blocked = posted
+            ? POSTED_LOCK
+            : !usable
+              ? "이 모드에서는 사용할 수 없는 타깃"
+              : dirty
+                ? "편집 내용을 먼저 저장하세요"
+                : undefined;
           return (
-            <button
-              key={t}
-              className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:border-line disabled:bg-bg disabled:text-faint disabled:opacity-60"
-              // `posted` disables these for the same reason it disables 저장 and 승인 above: the item
-              // is terminal for the Drive path. The server refuses it too (409) — this is the half
-              // that stops a reviewer being invited into it in the first place. Leaving them live was
-              // the sharp edge: a retired-but-previously-approved item used to read "재발행 필요", and
-              // pressing 발행 re-rendered it as a review doc, uploaded it to review/, and deleted the
-              // approved doc that recorded the copy actually published.
-              disabled={busy || !usable || dirty || posted}
-              onClick={() => run(() => props.onPublish(props.item.itemId, t))}
-              title={
-                posted
-                  ? POSTED_LOCK
-                  : !usable
-                    ? "이 모드에서는 사용할 수 없는 타깃"
-                    : dirty
-                      ? "편집 내용을 먼저 저장하세요"
-                      : undefined
-              }
-            >
-              {TARGET_LABEL[t]}
-            </button>
+            <span key={t} className="group/tip relative inline-flex">
+              <button
+                // `disabled:pointer-events-none` so the hit test lands on the wrapper rather than on
+                // the button: Chrome propagates `:hover` to the ancestor of a disabled child anyway,
+                // but this does not depend on that.
+                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:pointer-events-none disabled:border-line disabled:bg-bg disabled:text-faint disabled:opacity-60"
+                // `posted` disables these for the same reason it disables 저장 and 승인 above: the item
+                // is terminal for the Drive path. The server refuses it too (409) — this is the half
+                // that stops a reviewer being invited into it in the first place. Leaving them live was
+                // the sharp edge: a retired-but-previously-approved item used to read "재발행 필요", and
+                // pressing 발행 re-rendered it as a review doc, uploaded it to review/, and deleted the
+                // approved doc that recorded the copy actually published.
+                disabled={busy || !usable || dirty || posted}
+                onClick={() => run(() => props.onPublish(props.item.itemId, t))}
+              >
+                {TARGET_LABEL[t]}
+              </button>
+              {blocked !== undefined && (
+                // `ConfirmDialog`'s wording of the same idiom, not `OpenLink`'s: `POSTED_LOCK` is a
+                // two-sentence message, and `whitespace-nowrap` would run it off the viewport.
+                <span className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 hidden w-64 rounded-lg border border-line bg-surface px-3 py-2 text-[12px] font-normal leading-relaxed text-muted shadow-lg group-hover/tip:block">
+                  {blocked}
+                </span>
+              )}
+            </span>
           );
         })}
       </div>
