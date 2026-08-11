@@ -159,6 +159,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Translation-memory pairs are now picked by the *proportion* of anchors they share with the
+  target, not the raw count — so one long post stops being the precedent for everything.** Anchors
+  (cashtags/hashtags/mentions) are the signal that ties an EN post to its KO translation, but a post
+  that name-drops fifteen projects shares an anchor with almost anything, and the raw count made that
+  breadth look like relevance. In the live ten-pair `tm.json` anchor count tracks pair size almost
+  exactly — 62 anchors/22,976자, 47/4,939, 30/2,291, … 2/581 — and the 62-anchor pair is a **monthly
+  recap thread**, a lede plus fifteen numbered blurbs. It was a precedent for 8 of the 14 recorded
+  drafts that share any anchor at all. That is worse than its bulk: the alignment pass's whole
+  instruction is "match the phrasing and terminology of the 선례", so a recap's register was being
+  taught to ordinary posts. `anchorSimilarity` (`src/domain/tm/anchors.ts`) now scores **Jaccard over
+  the two anchor sets**, `|shared| / |union|` — the same measure `lexicalSimilarity` next door already
+  uses over content tokens and `kol/attribution.ts` uses over character 3-grams, rather than a third
+  scheme. Not `|shared| / |candidate anchors|`, which would only mirror the bias: it scores a 1-of-1
+  coincidence 1.0 and an 8-of-10 match 0.8. **Measured on the real corpus:** the one
+  alignment-eligible draft of 2026-08-11 goes from a 28,521자 precedent block led by the recap to
+  2,369자 without it; the recap's presence across recorded drafts falls 8/14 → 5/14. For the batch
+  translation prompt the gain depends on batch width, because the batch's anchor *union* sits on the
+  denominator for every candidate alike: a 5-item batch goes 32,636자 → 15,524자 and a single
+  two-anchor item 17,379자 → 13,046자, while a full 20-item `translate:prepare` batch (41 distinct
+  anchors) selects the identical six pairs as before. **Nothing else about selection moved**: Jaccard
+  is positive exactly when the raw count was, so the `> 0` filter admits and rejects the same
+  candidates and only reorders them — which is why `selectPrecedents`'s lexical fallback still fires
+  for exactly the same drafts (15 of the 26 recorded translations, before and after, attaching 0
+  precedents in both because every remaining pair scores under `LEXICAL_MIN_SIMILARITY`) — and ties
+  still resolve to input order, so two runs cannot hand the alignment pass different worksheets.
+
 - **The steering sync no longer treats `db:export`'s few-shot files as configuration.**
   `translation/few-shot.json` and `conversion/few-shot.<type>.json` are git-ignored and sit in the
   steering tree, so both derived lists — `FsConfigFileStore.list()` (every non-`.example.` file) and
