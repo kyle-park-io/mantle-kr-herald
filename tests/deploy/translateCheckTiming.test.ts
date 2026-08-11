@@ -233,7 +233,9 @@ describe("translate-check service — the lines whose absence fails silently", (
     // and runs the unit name as a command (measured: exit 127). This unit needs the durable log more
     // than its siblings do — the successful run's output IS the deliverable, and the journal on this
     // box holds about eight minutes of it against a seven-day cadence. Both lines carry the same `%n`
-    // so the two reports land in one chronological file rather than two half-length histories.
+    // so both land in one per-unit directory — and under the one key deploy/herald-notify-failure.sh
+    // derives its fallback excerpt from. Not one FILE: the wrapper stamps RUN_STAMP per process, so a
+    // fire leaves two adjacent logs, which is also why the 60-run cap is ~30 fires here.
     for (const line of execStarts(service)) {
       expect(line).toContain("%h/.herald/app/deploy/herald-run-logged.sh %n");
     }
