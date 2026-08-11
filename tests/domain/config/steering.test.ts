@@ -43,4 +43,22 @@ describe("isSteeringConfigFile", () => {
     expect(isExampleFile("tm.example.json")).toBe(true);
     expect(isExampleFile("tm.json")).toBe(false);
   });
+
+  it("carries glossary-dismissed.json, and not its skeleton", () => {
+    // The dismissal list `glossary:mine` reads (`JsonGlossaryDismissalStore`) is hand-curated
+    // steering config in exactly the sense this module's doc comment defines: read at runtime, never
+    // written by the pipeline, and lost forever if this machine dies. It has to ride `config:push`,
+    // `config:pull` and `deploy:freeze` with the glossary it belongs to — losing it silently
+    // un-dismisses every candidate a human has already said no to, and the symptom is next Monday's
+    // digest quietly growing back the lines somebody spent an afternoon rejecting.
+    //
+    // Pinned explicitly even though `isSteeringConfigFile` accepts it by default, because "accepts
+    // everything that isn't an example or a few-shot export" is a rule somebody could narrow to an
+    // allow-list later, and this file's membership would then vanish with no test failing.
+    expect(isSteeringConfigFile("glossary-dismissed.json")).toBe(true);
+    expect(isSteeringConfigFile("glossary-dismissed.example.json")).toBe(false);
+    // Not a few-shot export, despite living beside them in `translation/` — the same trap
+    // `isFewShotExport` is written around for `tm.json`.
+    expect(isFewShotExport("glossary-dismissed.json")).toBe(false);
+  });
 });

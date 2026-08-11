@@ -2,8 +2,13 @@
 //
 // The fifth member of the tests/deploy/*Timing family (watchTiming, xReconcileTiming, convertTiming,
 // credsTiming), for the glossary-digest pair. Same constraint, same reason: these unit files are the
-// only place the schedule exists, `tests/cli/` can run the command but cannot see whether anything
-// runs it on Monday morning, and that is the half of the feature that fails silently.
+// only place the schedule exists, `tests/cli/` can run the commands but cannot see whether anything
+// runs them on Monday morning, and that is the half of the feature that fails silently.
+//
+// The unit runs TWO commands as of `glossary:mine` — `translate:check --notify` (is the glossary
+// right?) then `glossary:mine --notify` (is it complete?) — so several checks below are per-ExecStart
+// rather than per-unit. `Type=oneshot` is what makes that legal, and it is asserted at the bottom for
+// a second reason now: without it only the first ExecStart= would be tracked at all.
 //
 // This one carries a shape none of its siblings do — a WEEKDAY-scoped spec (`Mon *-*-* 06:53:00`),
 // which is the only way systemd expresses a seven-day cadence. A period parser that ignored the
@@ -32,6 +37,9 @@ const onCalendarLines = (unit: string): string[] =>
   directives(unit).filter((l) => l.startsWith("OnCalendar="));
 
 const onCalendar = (unit: string): string => onCalendarLines(unit)[0].slice("OnCalendar=".length).trim();
+
+/** Every ExecStart= line, in the order systemd will run them for a `Type=oneshot`. */
+const execStarts = (unit: string): string[] => directives(unit).filter((l) => l.startsWith("ExecStart="));
 
 function timeoutStartSec(): number | undefined {
   const raw = /^TimeoutStartSec=(\d+)$/m.exec(directives(service).join("\n"))?.[1];
@@ -132,14 +140,21 @@ describe("translate-check timer", () => {
     expect(timeoutStartSec()!).toBeLessThanOrEqual(periodSeconds(onCalendar(timer))! / 2);
   });
 
-  it("leaves room for a Telegram send that hangs rather than refusing", () => {
+  it("leaves room for EVERY command's Telegram send to hang rather than refusing", () => {
     // The lower bound, which the check above says nothing about, and the number that actually sized
     // this unit's timeout. `notifyOps` calls global `fetch` with no timeout of its own, so an
     // unanswered send is bounded only by undici's 300s headers timeout — and reaching that is the
     // good outcome, because notifyOps swallows the failure and the run still exits 0 with its report
     // intact. A timeout at or below 300 would SIGTERM the process mid-send instead, failing the unit
     // and firing the OnFailure= hook to report a check that had in fact already finished.
-    expect(timeoutStartSec()!).toBeGreaterThan(300);
+    //
+    // Derived from the ExecStart= COUNT rather than written as 600, because for a `Type=oneshot`
+    // TimeoutStartSec covers the whole sequence: each notifying command is a separate process making
+    // its own send, so a Telegram outage hangs them one after another and adding a third command
+    // without raising this would silently start killing the second one mid-send.
+    const notifying = execStarts(service).filter((l) => l.endsWith("--notify")).length;
+    expect(notifying, "no --notify command found — the bound below would be vacuous").toBeGreaterThan(0);
+    expect(timeoutStartSec()!).toBeGreaterThan(300 * notifying);
   });
 
   it("does not share a minute with any other scheduled unit", () => {
@@ -197,32 +212,44 @@ describe("translate-check timer", () => {
 // The lines whose *absence* is silent — the set every sibling in this family pins for its own unit,
 // because nothing else in the suite would notice any of them being deleted.
 describe("translate-check service — the lines whose absence fails silently", () => {
-  it("runs the check with --notify, so the digest actually reaches a human", () => {
-    // Without the flag every fire writes a report into a log nobody is tailing and exits 0: a
-    // scheduler that looks armed and delivers nothing, the same shape herald-x-reconcile.service
-    // spells `--yes` out for. Anchored on the tail of the line, where `pnpm` will actually forward
-    // it — tests/deploy/runLogging.test.ts owns the other half (that the wrapper is what runs it).
-    expect(service).toMatch(/^ExecStart=.*\/pnpm translate:check --notify$/m);
+  it("runs BOTH halves of the digest, in order, each with --notify", () => {
+    // Without the flag a fire writes its report into a log nobody is tailing and exits 0: a scheduler
+    // that looks armed and delivers nothing, the same shape herald-x-reconcile.service spells `--yes`
+    // out for. Both are pinned, and so is the ORDER — `translate:check` first, because a oneshot stops
+    // at the first ExecStart= that fails and both commands need the same database and the same
+    // glossary, so a broken environment should produce one failure rather than two.
+    //
+    // `glossary:mine` is the half that fails invisibly if it is dropped: `translate:check` measures
+    // translations against decisions already recorded and is silent about a term nobody has decided,
+    // so a unit running only the first command still looks like a working glossary digest.
+    expect(execStarts(service)).toHaveLength(2);
+    expect(execStarts(service)[0]).toMatch(/\/pnpm translate:check --notify$/);
+    expect(execStarts(service)[1]).toMatch(/\/pnpm glossary:mine --notify$/);
   });
 
-  it("goes through the run-logging wrapper with its own unit name", () => {
+  it("runs every command through the run-logging wrapper with this unit's own name", () => {
     // Argument order is the wrapper's contract, not a convention: `$1` is the unit name and
     // everything after it is the command. Reversed, the wrapper names its log directory after pnpm
     // and runs the unit name as a command (measured: exit 127). This unit needs the durable log more
     // than its siblings do — the successful run's output IS the deliverable, and the journal on this
-    // box holds about eight minutes of it against a seven-day cadence.
-    const execStart = directives(service).find((l) => l.startsWith("ExecStart="));
-    expect(execStart).toContain("%h/.herald/app/deploy/herald-run-logged.sh %n");
+    // box holds about eight minutes of it against a seven-day cadence. Both lines carry the same `%n`
+    // so the two reports land in one chronological file rather than two half-length histories.
+    for (const line of execStarts(service)) {
+      expect(line).toContain("%h/.herald/app/deploy/herald-run-logged.sh %n");
+    }
   });
 
   it("narrows nothing, because the standing whole-ledger view is what a weekly digest is", () => {
-    // `--status`/`--since` answer "did last week drift?"; the question this report exists for is
-    // "what has drifted?". `--published` would restrict the drift half to rows that already carry a
-    // published text and skip the rest, while the override half runs unconditionally anyway — so it
-    // would cost coverage and buy nothing.
-    const execStart = directives(service).find((l) => l.startsWith("ExecStart="))!;
-    for (const narrowing of ["--status", "--since", "--published"]) {
-      expect(execStart, narrowing).not.toContain(narrowing);
+    // `--status`/`--since` answer "did last week drift?"; the question these reports exist for is
+    // "what has drifted?" and "what has never been decided?". `--published` would restrict the drift
+    // half to rows that already carry a published text and skip the rest, while the override half runs
+    // unconditionally anyway — so it would cost coverage and buy nothing. Applied to every ExecStart=,
+    // not just the first: `glossary:mine` has no such flags today, and this is what says it must not
+    // grow one on this unit.
+    for (const line of execStarts(service)) {
+      for (const narrowing of ["--status", "--since", "--published", "--limit"]) {
+        expect(line, narrowing).not.toContain(narrowing);
+      }
     }
   });
 
@@ -243,14 +270,29 @@ describe("translate-check service — the lines whose absence fails silently", (
     expect(service).toMatch(/^OnFailure=herald-notify-failure@%n\.service$/m);
   });
 
-  it("sets no variable this command never reads", () => {
-    // HERALD_OUTPUT_DIR is the interesting omission, and it was checked rather than assumed: the
-    // translations come from PgTranslationStore (Postgres, not output/translations/translations.json)
-    // and the glossary from paths.translationConfigDir, which is REPO_ROOT-relative — so the variable
-    // would not even redirect the one file this command opens. The other four bound a --limit or a
-    // page count belonging to translate:prepare, convert:prepare or collect, none of which this runs.
+  it("points the scheduler at its own output root, which glossary:mine both reads and writes", () => {
+    // This assertion is a REVERSAL of the one that used to sit here, and the reversal is the point.
+    // While `translate:check` was the only command on this unit, HERALD_OUTPUT_DIR was pinned ABSENT
+    // and correctly so: the translations come from PgTranslationStore (Postgres, not
+    // output/translations/translations.json) and the glossary from paths.translationConfigDir, which
+    // is REPO_ROOT-relative, so the variable would not have redirected anything.
+    //
+    // `glossary:mine` changed the fact. It reads $OUTPUT_DIR/x/reference/{items,runs}.json — the
+    // corpus its cross-validation grades against, which only the manual `collect:reference` writes and
+    // only ever into the scheduler's root — and it WRITES $OUTPUT_DIR/glossary/candidates-<date>.json,
+    // the review file that is the whole deliverable. Without this line the mine reads a reference
+    // directory that does not exist and degrades to "no corpus" every single week, silently, while
+    // dropping its review file inside the deploy checkout that herald-deploy.sh resets.
+    expect(service).toMatch(/^Environment=HERALD_OUTPUT_DIR=%h\/\.herald\/output$/m);
+  });
+
+  it("sets no variable neither command ever reads", () => {
+    // All four bound a --limit or a page count belonging to translate:prepare, convert:prepare or
+    // collect, none of which either command runs. HERALD_COLLECT_MAX_PAGES is the one worth keeping
+    // named: `glossary:mine` deliberately does not collect — refreshing the reference corpus weekly
+    // would spend twitterapi.io budget on data that is overwhelmingly historical — so it reads
+    // whatever `collect:reference` last left and reports staleness instead of quietly fixing it.
     for (const dead of [
-      "HERALD_OUTPUT_DIR",
       "HERALD_TRANSLATE_SINCE",
       "HERALD_WATCH_BATCH",
       "HERALD_CONVERT_BATCH",
@@ -260,9 +302,11 @@ describe("translate-check service — the lines whose absence fails silently", (
     }
   });
 
-  it("is a oneshot, so systemd knows the run has finished", () => {
+  it("is a oneshot, so systemd knows the run has finished and runs both commands", () => {
     // Without Type=oneshot systemd treats the unit as started the moment the process is spawned, and
-    // TimeoutStartSec= — the whole bound this file checks — stops applying to the run at all.
+    // TimeoutStartSec= — the whole bound this file checks — stops applying to the run at all. It is
+    // also what makes multiple ExecStart= lines legal: any other Type= rejects the second one, so a
+    // Type= edit would drop `glossary:mine` entirely rather than merely changing the timing model.
     expect(service).toMatch(/^Type=oneshot$/m);
   });
 });

@@ -9,6 +9,29 @@ export interface GlossaryEntry {
   source?: string;
 }
 
+/**
+ * A glossary candidate a human has looked at and said no to — `translation/glossary-dismissed.json`.
+ *
+ * Steering config, not state, and it is what keeps `glossary:mine` worth reading. That command has no
+ * cursor and no "seen" memory: it re-derives every candidate from the whole ledger each week, so a
+ * term nobody wants in the glossary arrives again next Monday, and the Monday after that, until the
+ * alert is noise people scroll past — the exact failure `translate:check --notify` was designed
+ * around when it refused to page on drift (see `overrideNotification`, src/cli/translateCheckReport.ts).
+ * Recording the "no" is the only thing that makes a repeated report converge.
+ */
+export interface GlossaryDismissal {
+  /**
+   * The candidate's key exactly as `glossary:mine` prints it: a term (`Turing Test`) for a proper
+   * noun, or `초안 → 발행` (`규모 → 사이즈`) for a substitution. Matched case-insensitively with
+   * whitespace collapsed, so a copy-paste that picks up a double space still silences the candidate.
+   */
+  term: string;
+  /** Why. Nothing reads it — it is for whoever wonders, a year later, why this never shows up. */
+  note?: string;
+  /** `YYYY-MM-DD`. Same hand-written shape as `GlossaryEntry.updatedAt`. */
+  dismissedAt?: string;
+}
+
 export interface StyleGuide {
   text: string;
 }

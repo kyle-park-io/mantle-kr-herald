@@ -1409,12 +1409,29 @@ systemctl --user daemon-reload
 `herald-x-reconcile`는 바로 아래, `herald-creds`는 아래 "크레덴셜 상시 점검"). 켜기 전에 손으로 한
 번 돌려 보는 게이트가 유닛마다 다르기 때문에 한 줄로 묶지 않았습니다.
 
-`herald-translate-check`만 예외적으로 그 게이트가 가장 단순합니다 — `translate:check`는 아무것도
+`herald-translate-check`만 예외적으로 그 게이트가 가장 단순합니다 — 이 유닛이 돌리는 두 명령
+(`pnpm translate:check --notify`, 이어서 `pnpm glossary:mine --notify`)은 파이프라인 데이터를 아무것도
 쓰지 않고 발견 사항이 있어도 종료 코드가 `0`이라, `systemctl --user start
 herald-translate-check.service` 자체가 곧 "확인용 실행"입니다(`--yes`가 붙은
 `herald-x-reconcile`와 정반대). 한 번 돌려 보고 `~/.herald/logs/herald-translate-check/`의 로그와
 ops 방에 온 알림을 확인한 뒤 `systemctl --user enable --now herald-translate-check.timer`.
 타이머는 월요일 06:53에 주 1회만 돌므로, 켠 직후에 아무 일도 일어나지 않는 것이 정상입니다.
+
+> **이 유닛만 `ExecStart=`가 두 줄입니다.** `Type=oneshot`이라 순서대로 돌고, 앞 줄이 실패하면 뒤
+> 줄은 아예 실행되지 않습니다(둘 다 같은 DB와 같은 용어집을 읽으므로, 환경이 깨졌으면 알림도 하나만
+> 오는 게 맞습니다). 두 줄 모두 같은 `%n`으로 래퍼를 거치므로 로그는
+> `~/.herald/logs/herald-translate-check/` 안 **한 파일**에 시간순으로 이어 붙습니다.
+>
+> 확인용 실행 뒤에 볼 것이 하나 더 있습니다 — `glossary:mine`이 남긴 **검토 파일의 절대경로**가
+> 로그 끝(`review file: …`)과 ops 알림 마지막 줄에 찍힙니다. 이 유닛은
+> `Environment=HERALD_OUTPUT_DIR=%h/.herald/output`을 받으므로 그 경로는
+> `~/.herald/output/glossary/candidates-<날짜>.json`이지, 개발 트리의 `output/` 아래가
+> **아닙니다.** 후보가 하나도 없으면 알림은 오지 않는 것이 정상이고, 그때도 검토 파일과 로그 줄은
+> 남습니다.
+>
+> 참조 코퍼스가 오래되면(28일) 알림과 로그에 `⚠ 참조 코퍼스 … 지남` 줄이 붙고 등급이 전부 B로
+> 떨어집니다. 고치는 방법은 이 머신에서 `pnpm collect:reference`를 한 번 돌리는 것뿐입니다 —
+> 타이머가 없는 수동 명령입니다(주마다 수집하면 대부분 과거 데이터에 API 예산을 씁니다).
 
 **순서 주의 — 유닛을 복사하기 전에 `bash deploy/herald-deploy.sh`를 먼저 돌리세요.** 다섯 스케줄
 유닛의 `ExecStart=`는 모두 배포 체크아웃 안의 래퍼
@@ -1517,6 +1534,22 @@ systemctl --user enable --now herald-x-reconcile.timer
 ```bash
 pnpm translate:check --published
 ```
+
+**같은 발행 원문을 두 번째로 쓰는 명령이 `pnpm glossary:mine`입니다.** 이쪽은 결정을 지켰는지가
+아니라 **아직 결정되지 않은 용어**를 찾습니다 — 초안과 발행본을 문장 단위로 정렬해 사람이 바꾼
+낱말을 뽑고(빈도 문턱 없음: 2026-08-11 실측에서 가장 값진 발견 `낸슨 → 난센`은 딱 한 번 있었습니다),
+용어집에 없는데 원문에서 반복되는 고유명사를 세고, 둘 다 참조 코퍼스(@0xMantleKR)와 대조해
+등급을 매기거나 기각합니다. 자세한 건 [`capabilities.md`](capabilities.md) §6.
+
+```bash
+pnpm glossary:mine
+```
+
+결과는 파일 하나(`$OUTPUT_DIR/glossary/candidates-<날짜>.json`)이고, 표준 출력 마지막에 그 절대경로가
+찍힙니다. 원하는 줄만 남기고 고쳐서 `pnpm glossary add …`로 넣으시면 됩니다. **아니라고 판단한
+후보는 반드시 `translation/glossary-dismissed.json`에 적어 주세요** — 이 명령은 매주 원장 전체를
+다시 훑기 때문에, 적지 않으면 같은 줄이 다음 주에도 옵니다([`setup/steering.md`](setup/steering.md)
+§1-1). 주간 자동 실행은 `herald-translate-check.service`의 두 번째 `ExecStart=`입니다.
 
 **이 기능도 스키마에 컬럼을 하나 더 추가합니다.** `herald-x-reconcile.timer`를 이미 켜 두었다면,
 이 변경이 배포된 뒤 다음 tick이 돌기 전에 프로덕션 환경변수를 한 번 더 셸에 불러 `db:migrate`를
