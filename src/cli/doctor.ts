@@ -13,8 +13,10 @@ import {
   type DbConfig,
 } from "../config";
 import { createDb } from "../adapters/db/createDb";
-import { paths, OUTPUT_DIR } from "../paths";
+import { paths, OUTPUT_DIR, REPO_ROOT } from "../paths";
 import { steeringFiles, missingSteeringFiles, skeletonSteeringFiles } from "../doctor/steering";
+import { resolveDeployTree, deploySteeringStatus, deploySteeringResult } from "../doctor/deploySteering";
+import { realDeployTreeShow } from "./systemdShow";
 import {
   configCheck,
   cloudCheck,
@@ -121,6 +123,29 @@ results.push(
           detail: `present but empty: ${skeletons.join(", ")} — skeletons steer nothing (docs/ko/setup/steering.md)`,
         }
       : { name: "Steering config", status: "ok", detail: "translation/ + conversion/ present" },
+);
+
+// The check above grades the files in THIS checkout. On the machine that runs the timers there is a
+// second copy of all of them — `deploy/herald-deploy.sh` copies this tree's into the deploy checkout
+// the units set as their WorkingDirectory — and only that script ever moves it. So a `pnpm glossary
+// add` with no deploy after it leaves the two graded ✓ and the scheduler translating with the old
+// one, which is the failure this line reports and nothing else does.
+//
+// `REPO_ROOT`, not a constant: doctor's own tree is wherever this module was loaded from, so running
+// the command in the deploy checkout asks the question the other way round — see `same-tree`. The
+// deploy tree's location is never in `src/` at all; it is systemd's answer, or this variable.
+//
+// Spelled out here rather than indexed with `deploySteering.ts`'s own constant, even though that is
+// the one place the name is defined: `tests/config/envExample.test.ts` finds a variable by scanning
+// source text for a literal `process.env.<NAME>` read, so an indexed one would be invisible to it
+// and `.env.example`'s entry would be reported as documenting a variable nothing reads.
+results.push(
+  deploySteeringResult(
+    deploySteeringStatus(
+      REPO_ROOT,
+      resolveDeployTree({ override: process.env.HERALD_DEPLOY_DIR, unitShow: realDeployTreeShow() }),
+    ),
+  ),
 );
 
 // --- live checks (network, read-only) ---
