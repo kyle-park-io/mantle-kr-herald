@@ -9,7 +9,21 @@ import { CollectedBreakdownCard } from "./components/CollectedBreakdownCard";
 import { btn } from "./buttonStyles";
 import { livenessChip, livenessHeadline, probeLabel } from "./liveness";
 
-type Mode = "translations" | "renderings";
+/**
+ * Every tab, once. The four things a tab needs — its id, the hash that addresses it, the label on
+ * the button, and the fact that it exists at all — were four separate literals in this file, and a
+ * new tab meant finding all four. `modeFromHash` folding *every* unrecognised hash into
+ * `"translations"` made the miss silent: a tab whose hash arm was forgotten does not error, it
+ * quietly opens 1차 검수 instead.
+ *
+ * The first entry is the default, and its hash is "" — the bare url is 1차 검수.
+ */
+const TABS = [
+  { id: "translations", hash: "", label: "1차 검수 · 번역" },
+  { id: "renderings", hash: "#renderings", label: "2차 검수 · 채널" },
+] as const;
+
+type Mode = (typeof TABS)[number]["id"];
 
 /**
  * The mode lives in the URL hash so a reload comes back to it. A reviewer working through 2차 who
@@ -19,7 +33,7 @@ type Mode = "translations" | "renderings";
  * The hash rather than localStorage: it survives a reload the same way, it makes the two modes
  * linkable and back-button-able, and it keeps two windows independent, which storage would not.
  */
-const modeFromHash = (): Mode => (window.location.hash === "#renderings" ? "renderings" : "translations");
+const modeFromHash = (): Mode => TABS.find((t) => t.hash === window.location.hash)?.id ?? TABS[0].id;
 
 /**
  * Not a funnel, despite the name it kept: the stages after 번역 branch rather than narrow, and 발행
@@ -85,7 +99,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
     if (dirty && !window.confirm("저장하지 않은 편집이 있습니다. 모드를 바꿀까요?")) return;
     setDirty(false);
     setMode(m);
-    window.location.hash = m === "renderings" ? "#renderings" : "";
+    window.location.hash = TABS.find((t) => t.id === m)?.hash ?? "";
   };
 
   // Back/forward, or the hash edited by hand. The confirm above is deliberately not repeated: the
@@ -342,17 +356,12 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
           )}
 
           <nav className="ml-2 inline-flex shrink-0 rounded-lg border border-line bg-bg p-0.5">
-            {(
-              [
-                ["translations", "1차 검수 · 번역"],
-                ["renderings", "2차 검수 · 채널"],
-              ] as const
-            ).map(([m, label]) => (
+            {TABS.map(({ id, label }) => (
               <button
-                key={m}
-                onClick={() => switchMode(m)}
+                key={id}
+                onClick={() => switchMode(id)}
                 className={`whitespace-nowrap rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors ${
-                  mode === m ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
+                  mode === id ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
                 }`}
               >
                 {label}
