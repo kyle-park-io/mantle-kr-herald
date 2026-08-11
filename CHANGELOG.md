@@ -252,6 +252,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`glossary:mine` no longer proposes every capitalized word that happens to open a line — a
+  proper-noun candidate must appear mid-sentence at least once.** The first real production fire
+  produced **170 candidates of which 110 were ordinary English words** — `Together`, `Tomorrow`,
+  `Weekly`, `Winners`, `Everything`, `Still`, `Head`, `Register`, `Featuring` — capitalized because
+  of where they sat, not because they are names. Extending `PROPER_NOUN_STOPWORDS` is not the fix:
+  that list is endless and always one week behind whoever writes the tweets. **Position is the
+  principled discriminator** — a name survives being written inside a clause, and only a name does.
+  Measured against the same 525-tweet corpus that produced the 170: **170 → 90** (proper nouns
+  154 → 74, the 16 substitution candidates untouched), with the sentence-initial noise class falling
+  from 110 to ~24 residual words that genuinely do appear mid-clause somewhere. The rule is **"at
+  least once", never "always"**: `RWA` opens five of its seven source lines, and an "always"
+  reading throws away every product name the account puts in a heading (mutation-checked — that
+  variant fails six tests). The converse is an accepted, measured cost: a term that is line-initial
+  in all 525 tweets is indistinguishable from a common word by anything this module can see, so
+  `AGNI`, `Liftoff` and `RWAlly` are dropped along with `ICYMI` — and none of them is lost forever,
+  since the week the account writes one inside a clause it is proposed again. Line-opening
+  *decoration* is skipped before the test, which is where the precision actually came from: `→`/`•`
+  bullets, `12)` numbering, `---` rules, `$`/`#` sigils and — the one that was wrong first time —
+  keycap and ZWJ emoji, whose combining marks (`1️⃣` is `1` + U+FE0F + U+20E3) made `1️⃣ Follow` read
+  as prose and kept `Follow` and `Make` in the list. A second sentence on the same line
+  (`Knockouts on the pitch. Knockouts on the leaderboard.`) is sentence-initial too; a term after
+  `:` or an em dash is not (measured: cutting there removes four more junk words and takes the real
+  `AI Trading` with them). Nothing is dropped silently — the count is on stdout and in the review
+  file's header, as a count rather than 80 more lines. **None of #188's measured thresholds moved**;
+  this is an additional filter.
+- **The reference corpus now reaches the scheduler, as its own deploy step.** `glossary:mine`
+  cross-validates against `$OUTPUT_DIR/x/reference/`, which only `pnpm collect:reference` writes —
+  manually, in the development checkout, where `OUTPUT_DIR` is `<repo>/output`. The units run with
+  `HERALD_OUTPUT_DIR=%h/.herald/output` and found nothing there, so the first real fire's whole
+  discriminator was blind. `bash deploy/herald-deploy.sh` now carries it (step 4,
+  `deploy/herald-copy-corpus.sh`, one `corpus:` line in the deploy output). **Emphatically not by
+  pointing the scheduler at the development tree** — that is the 2026-08-07 (code) and 2026-08-09
+  (config) incident, and a deploy-time copy is how both were closed. It is **data, not steering
+  config**, and gets its own step rather than a line in `deploy:freeze`'s diff for three reasons that
+  each matter: a different root (`OUTPUT_DIR`, so the destination is *outside* `~/.herald/app` and
+  does not follow from `APP_DIR`), a difference that means "older" rather than "wrong" (so it must
+  not gate the deploy), and a deletion that means housekeeping rather than a decision (so, unlike the
+  freeze, it never sweeps the deploy side). All three files `collect:reference` writes travel
+  together — `items.json`, `runs.json`, `state.json` — because copying the corpus without its
+  coverage ledger lands it in the `undated` state, which caps every candidate at tier B just as
+  surely as having no corpus at all; `tm:pair`'s `pairs-*` review artifacts share the directory and
+  are deliberately left behind. A missing development corpus reports and continues rather than
+  failing a deploy whose code has already moved. The corpus is deliberately **not** added to
+  `pnpm doctor`'s `Steering deploy sync` check: different root, a difference there is not a fault,
+  and a hash comparison is weaker evidence than the staleness the miner already reads out of the
+  corpus's own run ledger — the reasoning is recorded in `src/doctor/deploySteering.ts`.
 - **The hosted board no longer offers a `[local]` 발행 button, and refuses the request outright if
   one is sent anyway.** The button was live on Vercel and did something worse than nothing: `local`
   resolves to a `LocalFileUploader` writing under `paths.publishLocalDir`, and inside the Function

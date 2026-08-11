@@ -16,6 +16,7 @@ import {
   countProse,
   gradeCorpus,
   mineGlossaryCandidates,
+  properNounOccurrences,
   properNounRuns,
   proseText,
   sentenceSimilarity,
@@ -110,14 +111,31 @@ const TRANSLATIONS: MinedTranslation[] = [
   },
 ];
 
-/** English source tweets, at the frequencies the sweep measured across ~523 collected tweets. */
+/**
+ * English source tweets, at the frequencies the sweep measured across ~523 collected tweets — and,
+ * since 2026-08-12, in the POSITIONS the real corpus puts them in.
+ *
+ * Position is now a signal, so a fixture where every term opens its line would exercise the opposite
+ * of the real data. Both shapes here are measured off the 525-tweet production corpus:
+ *
+ * - `RWA` and `AMM` open a line most times they appear ("RWA volume keeps climbing…") and sit inside
+ *   a clause some of the time ("Mantle leads every L2 in RWA capital deployed…", "…through Atomic RFQ
+ *   and AMM."). Real hits, quoted almost verbatim.
+ * - `Together` and `Tomorrow` are two of the 110 words that only ever opened a line on the first real
+ *   run. They are here so the filter has something real to remove; without them the drop count below
+ *   would be zero and every assertion about it would pass vacuously.
+ */
 const SOURCE_TWEETS: string[] = [
-  ...repeat("RWA volume keeps climbing on Mantle.", 7),
+  ...repeat("RWA volume keeps climbing on Mantle.", 5),
+  ...repeat("Mantle leads every L2 in RWA capital deployed onchain.", 2),
   ...repeat("Every order fills at an Atomic RFQ firm quote.", 5),
-  ...repeat("AMM or Atomic RFQ, your choice.", 4),
+  ...repeat("AMM or Atomic RFQ, your choice.", 2),
+  ...repeat("Trade it 24/7 through Atomic RFQ and AMM.", 2),
   ...repeat("Join the Mentor Clinic this week.", 3),
   ...repeat("The Turing Test hackathon is live.", 3),
   "A single Fluxion mention that should never become a candidate.",
+  ...repeat("Together we ship.", 3),
+  ...repeat("Tomorrow we open registrations.", 3),
 ];
 
 const input = (over: Partial<MiningInput> = {}): MiningInput => ({
@@ -190,6 +208,127 @@ describe("properNounRuns", () => {
 
   it("never reads a term out of a handle or a link", () => {
     expect(properNounRuns("shipped with @Fluxion_network https://x.com/Mantle_Official/status/1")).toEqual([]);
+  });
+});
+
+// ── signal 1's positional rule ───────────────────────────────────────────────────────────────────
+//
+// The filter that took the first real production fire from 170 candidates to 90. 110 of those 170
+// were ordinary English words capitalized only because they opened a line or a heading — `Together`,
+// `Tomorrow`, `Weekly`, `Winners`, `Everything`, `Still`, `Head`, `Register`, `Featuring` — and a
+// longer stopword list is not the answer, because that list is endless and always one week behind
+// whoever writes the tweets. Position is the property that separates the two: a name survives being
+// written inside a clause, and a word that opens a line is just a word.
+
+/** Every occurrence's verdict for one run, so a test can say "this one, in this line". */
+const midVerdicts = (text: string, run: string): boolean[] =>
+  properNounOccurrences(text).filter((o) => o.run === run).map((o) => o.midSentence);
+
+describe("the positional rule", () => {
+  it("calls a line-opening word line-initial and the same word inside a clause mid-sentence", () => {
+    // The whole rule in one assertion, and it is a mutation check on itself: a rule stuck at `false`
+    // fails the second expectation, a rule stuck at `true` fails the first. `Together` is a real
+    // 2026-08-11 candidate; `Mantle` is the name it has to be told apart from.
+    expect(midVerdicts("Together we ship.", "Together")).toEqual([false]);
+    expect(midVerdicts("Built on Mantle since day one.", "Mantle")).toEqual([true]);
+  });
+
+  it("reads a bullet, a numbered item, a rule and a keycap emoji as decoration, not as prose", () => {
+    // Every one of these opens a line in the real corpus: `→ Treasury yield`, `• Ran Mentor Clinic`,
+    // `1️⃣ Follow`, `20) Head of Product`, and the `---` the account separates sections with. The
+    // emoji case is the one that was actually wrong first time round: `1️⃣` is `1` + U+FE0F (Mn) +
+    // U+20E3 (Me), so a decoration class of `[\s\p{N}\p{P}\p{S}]` leaves a mark behind, reads the
+    // prefix as prose, and kept `Follow` and `Make` in the candidate list.
+    expect(midVerdicts("→ Treasury yield", "Treasury")).toEqual([false]);
+    expect(midVerdicts("• Ran Mentor Clinic Session 3", "Ran Mentor Clinic")).toEqual([false]);
+    expect(midVerdicts("1️⃣ Follow the thread", "Follow")).toEqual([false]);
+    expect(midVerdicts("20) Head of Product led it", "Head")).toEqual([false]);
+    expect(midVerdicts("---\nWinners announced", "Winners")).toEqual([false]);
+    expect(midVerdicts("$COOK holders vote", "COOK")).toEqual([false]);
+  });
+
+  it("reads the second sentence on a line as sentence-initial too", () => {
+    // The line test alone cannot see this, and the real corpus has it: both occurrences of
+    // `Knockouts` open a sentence and the word is not a name. `…` is in the terminator class with
+    // `[.!?]` because the account writes it; without it the word after an ellipsis reads as prose.
+    expect(midVerdicts("Knockouts on the pitch. Knockouts on the leaderboard.", "Knockouts")).toEqual([
+      false,
+      false,
+    ]);
+    expect(midVerdicts("we are close… Tomorrow it lands", "Tomorrow")).toEqual([false]);
+    expect(midVerdicts("(finally!) Register here", "Register")).toEqual([false]);
+  });
+
+  it("counts a term after a colon or an em dash as mid-sentence", () => {
+    // The edge case that could defensibly go either way, decided by measurement: cutting the line
+    // prefix at the last `:`/`—` removes four more junk words from the real run and takes `AI Trading`
+    // — a real hackathon track — with them. A review file survives four skimmable words far better
+    // than it survives a missing name.
+    expect(midVerdicts("Register: Mantle Super Portal", "Mantle Super Portal")).toEqual([true]);
+    expect(midVerdicts("Speaker — Merchant Moe", "Merchant Moe")).toEqual([true]);
+  });
+
+  it("positions a shaved run where the survivor is, not where its stopword was", () => {
+    // `The Chainlink CCIP` at the head of a line: the shave (see `properNounOccurrences`) leaves
+    // `Chainlink CCIP`, which IS capitalized mid-sentence — the sentence opens with `The`. Measuring
+    // the whole match's start instead loses `Chainlink CCIP` and `Absolute Mantle` from the real
+    // corpus while removing exactly one junk word, so the survivor's own position is what is read.
+    expect(midVerdicts("The Chainlink CCIP route is live", "Chainlink CCIP")).toEqual([true]);
+    // ...and the shave itself still only takes LEADING stopwords, so this is not a way to smuggle a
+    // line-initial name through: with no stopword to shave, position is the match's own.
+    expect(midVerdicts("Chainlink CCIP is live", "Chainlink CCIP")).toEqual([false]);
+  });
+
+  it("drops a candidate no occurrence of which is ever mid-sentence", () => {
+    // `Together` and `Tomorrow` clear every other filter in SOURCE_TWEETS — three occurrences each,
+    // un-glossed, un-dismissed — and are removed by this rule alone.
+    const result = mineGlossaryCandidates(input());
+    expect(byKey(result, "Together")).toBeUndefined();
+    expect(byKey(result, "Tomorrow")).toBeUndefined();
+    // The mutation check from the other side: they really are in the source at a frequency that
+    // would otherwise propose them, so this test cannot pass because the fixture is empty.
+    const counts = new Map<string, number>();
+    for (const t of SOURCE_TWEETS) for (const r of properNounRuns(t)) counts.set(r, (counts.get(r) ?? 0) + 1);
+    expect(counts.get("Together")).toBe(3);
+    expect(counts.get("Tomorrow")).toBe(3);
+    expect(MIN_PROPER_NOUN_OCCURRENCES).toBeLessThanOrEqual(3);
+  });
+
+  it("keeps a term that opens the line in one tweet and sits mid-clause in another", () => {
+    // **At least once, not always** — the half of the rule that costs the most to get wrong. `RWA`
+    // opens five of its seven source lines and would be thrown away by an "always mid-sentence"
+    // reading, along with every product name the account puts in a heading.
+    const result = mineGlossaryCandidates(input());
+    expect(byKey(result, "RWA")).toBeDefined();
+    expect(byKey(result, "AMM")).toBeDefined();
+    // Both really do open a line most of the time, so the assertion above is about the rule and not
+    // about a fixture that never exercises it.
+    expect(midVerdicts("RWA volume keeps climbing on Mantle.", "RWA")).toEqual([false]);
+    expect(midVerdicts("Mantle leads every L2 in RWA capital deployed onchain.", "RWA")).toEqual([true]);
+  });
+
+  it("reports how many candidates it removed rather than removing them silently", () => {
+    // A count, not a list — `rejected` is for an argument about one term a human may overrule, this is
+    // a bulk property of the corpus (80 words on the first real run). Silence would leave "why is this
+    // term missing" unanswerable, which is how a filter nobody trusts gets switched back off.
+    const result = mineGlossaryCandidates(input());
+    expect(result.sentenceInitialOnly).toBe(2);
+    // ...and it counts CANDIDATES, not runs: a word the glossary already decides was never going to be
+    // proposed, so removing it is not this rule's doing.
+    const glossed = mineGlossaryCandidates(
+      input({ glossary: [...GLOSSARY, entry("Together", "keep")] }),
+    );
+    expect(glossed.sentenceInitialOnly).toBe(1);
+  });
+
+  it("does not filter the source-term hints a substitution carries", () => {
+    // Different question, different rule. `_원문_후보` answers "which English term is this Korean edit
+    // about?" from ONE item's own text, next to the edit, for a human who is already reading the pair
+    // — `Nansen` opens its source sentence and is still the right hint. The positional rule governs
+    // what this module proposes UNPROMPTED, which is a claim about the whole corpus.
+    const nansen = byKey(mineGlossaryCandidates(input()), "낸슨 → 난센")!;
+    expect(nansen.sourceTerms).toContain("Nansen");
+    expect(midVerdicts(TRANSLATIONS[0].sourceText, "Nansen")).toEqual([false]);
   });
 });
 

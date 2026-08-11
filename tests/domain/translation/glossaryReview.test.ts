@@ -25,6 +25,7 @@ const OPTS = {
 
 const RESULT: MiningResult = {
   corpus: FRESH,
+  sentenceInitialOnly: 80,
   candidates: [
     {
       key: "RWA",
@@ -126,9 +127,21 @@ describe("renderCandidateReview", () => {
   });
 
   it("says so plainly when there is nothing to decide", () => {
-    const empty = render({ candidates: [], rejected: [], corpus: FRESH });
+    const empty = render({ candidates: [], rejected: [], corpus: FRESH, sentenceInitialOnly: 0 });
     expect(empty).toHaveLength(2);
     expect(empty[1]._구간).toContain("이번 주 결정할 후보 없음");
+  });
+
+  it("says how many capitalized words the positional rule removed, and stays quiet at zero", () => {
+    // The filter is the difference between the 170-line first fire and a 90-line one, so a reader
+    // wondering why a term they expected is missing has to be able to see that something was removed
+    // at all. A count rather than 80 more lines — and no line whatsoever on a week that removed
+    // nothing, because a standing "0건" is the kind of noise that teaches people to skip the header.
+    expect(String(render()[0]._근거)).toContain("80");
+    const none = render({ ...RESULT, sentenceInitialOnly: 0 });
+    expect(String(none[0]._근거)).not.toContain("줄·문장 첫머리");
+    // ...and the sentence it does print says what was removed and how it comes back, not just a number.
+    expect(String(render()[0]._근거)).toContain("문장 중간");
   });
 });
 

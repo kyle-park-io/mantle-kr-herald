@@ -108,16 +108,26 @@ Environment=PATH=%h/.herald/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local
 #
 #   reads  `$OUTPUT_DIR/x/reference/items.json` + `runs.json` — the @0xMantleKR corpus its
 #          cross-validation grades against, and the run ledger it reads staleness out of. Only
-#          `collect:reference` writes those, only by hand, and only ever into the scheduler's own root
-#          on this machine. Without this variable the mine would read `%h/.herald/app/output/x/reference/`
-#          — which does not exist — and degrade to "no corpus" every single week, silently grading
-#          every candidate B forever.
+#          `collect:reference` writes those, and only by hand. Without this variable the mine would
+#          read `%h/.herald/app/output/x/reference/` — which does not exist — and degrade to "no
+#          corpus" every single week, silently grading every candidate B forever.
+#
+#          This variable is necessary and was not sufficient, which cost the first real fire. A
+#          hand-run `pnpm collect:reference` sets no HERALD_OUTPUT_DIR, so it writes into the
+#          DEVELOPMENT checkout's `<repo>/output/x/reference/` — not into this root. On 2026-08-11
+#          this directory had never been written to at all, cross-validation was blind, and the run
+#          graded every candidate B with nothing but its own `참조 코퍼스 없음` line to say so.
+#          `bash deploy/herald-deploy.sh` now copies the corpus across as its step 4
+#          (deploy/herald-copy-corpus.sh) — the same deploy-time copy the steering config gets, for
+#          the same reason: production must not read live files out of the tree someone edits.
 #   writes `$OUTPUT_DIR/glossary/candidates-<YYYY-MM-DD>.json`, the review file that IS this job's
 #          deliverable. Without the variable it would land inside the deploy checkout, which
 #          `deploy/herald-deploy.sh` owns and `pnpm deploy:check` refuses to deploy over when dirty.
 #
 # %h/.herald/output, the same root herald-watch.service and herald-convert.service already name, so
-# the corpus the scheduler reads is the corpus the scheduler collected. The review file's absolute
+# every scheduled command shares one artifact tree and the deploy has one place to put the corpus in.
+# It is emphatically NOT a corpus this scheduler collected — nothing here runs `collect:reference`,
+# by design (see HERALD_COLLECT_MAX_PAGES below). The review file's absolute
 # path is printed on stdout and carried in the Telegram notice for exactly this reason: the path an
 # interactive `pnpm glossary:mine` writes is NOT this one, and an alert that says "open the draft"
 # without saying which one is a trap.
