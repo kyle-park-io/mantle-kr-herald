@@ -203,6 +203,81 @@ describe("createDeps", () => {
   });
 
   /**
+   * The `local` publish target, which is a property of the entry point rather than of the storage
+   * mode — see `createDeps.ts`'s `localPublishEnabled`. On the hosted deployment the target resolves
+   * to a `LocalFileUploader` writing under `/var/task/output/publish/local/` (read-only), and the one
+   * route that could read those files back (`GET /api/publish/local/*`) is served outside `handleApi`
+   * and so does not exist there at all.
+   *
+   * Both halves are pinned separately, and the local half is the one that must not move: publishing
+   * to the filesystem is the documented, intended behaviour of `pnpm serve` and `pnpm drive:publish`
+   * (`src/cli/publish.ts`: "in local mode publishing is not skipped, it targets the filesystem").
+   */
+  describe("the local publish target", () => {
+    const MODE_KEY = "HERALD_STORAGE_MODE" as const;
+    let savedMode: string | undefined;
+
+    beforeEach(() => {
+      savedMode = process.env[MODE_KEY];
+    });
+    afterEach(() => {
+      if (savedMode === undefined) delete process.env[MODE_KEY];
+      else process.env[MODE_KEY] = savedMode;
+    });
+
+    it("is offered on the local route set, and publishing to it is accepted", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      expect((await deps.loadStatus()).availableTargets).toContain("local");
+      // An itemId no translation has: `PublishTranslations.run` filters to it, finds nothing, and
+      // returns an all-zero result WITHOUT writing a byte — which is the only way to drive the real
+      // closure here without a real markdown file landing in the developer's own
+      // `output/publish/local/`. `paths.OUTPUT_DIR` is fixed when `paths.ts` is imported, so
+      // `HERALD_OUTPUT_DIR` cannot be redirected from inside a test to make a real publish safe. What
+      // this still pins is the only thing this change could break locally: the target is not refused.
+      await expect(deps.publishOne("x:not-in-the-store", "local")).resolves.toMatchObject({ failed: 0 });
+    });
+
+    it("is withheld from the hosted route set, so the board never offers the button", async () => {
+      // The mode the hosted entry point is forced into (`assertCloudStorage`) — and the reason
+      // `resolveTargets` cannot be the layer that catches this: in `cloud` mode it passes `local`
+      // through, deliberately, because `--target both,local` is a real CLI use.
+      process.env[MODE_KEY] = "cloud";
+      db = await createTestDb();
+      const targets = (await createDeps({ db, routes: "hosted" }).loadStatus()).availableTargets;
+      expect(targets).not.toContain("local");
+    });
+
+    it("refuses a hosted request that names it anyway, loudly, rather than writing", async () => {
+      // The half the withheld button cannot cover — the button is the only caller that reads
+      // `availableTargets`, and `POST /api/translations/:id/publish` forwards `body.target` verbatim
+      // (`apiHandlers.ts`). A tab left open across the deploy that shipped this, a replayed request,
+      // `curl`. It must THROW: both entry points turn an uncaught error into a 500 carrying the
+      // message for a signed-in operator, where a refusal shaped as a `PublishResult` would arrive as
+      // the same 200 the read-only write already produced — `PublishTranslations` records each
+      // uploader's error into `failures` rather than rethrowing, so the board read a publish onto a
+      // filesystem that does not exist as an ordinary attempt that did not take.
+      //
+      // Same unknown itemId as the local test above, and here it does double duty: the refusal must
+      // land before `createUploaders` regardless, so a regression fails on `.rejects` rather than by
+      // leaving a stray markdown file in whoever ran the suite.
+      process.env[MODE_KEY] = "cloud";
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "hosted" });
+      await expect(deps.publishOne("x:not-in-the-store", "local")).rejects.toThrow(
+        /"local" is not available on the hosted deployment/,
+      );
+      // The scope check: this withholds ONE target, it does not close hosted publishing. A target
+      // this gate has no opinion about still fails the way it always did, with `resolveTargets`'
+      // own message. `google`/`lark` are not asserted here on purpose — reaching their branch means
+      // `createUploaders` reading real credentials, and on a developer machine with the deployment's
+      // env exported that is a live outbound call, which an ordinary `vitest run` must never make
+      // (the same hazard `credential liveness` below clears `PROBE_ENV_KEYS` for).
+      await expect(deps.publishOne("x:not-in-the-store", "dropbox")).rejects.toThrow(/Unknown publish target: dropbox/);
+    });
+  });
+
+  /**
    * The 수집 card's floor half on the deployment that has no systemd to ask. `routes: "hosted"` skips
    * the `systemctl` probe entirely (spawning one in a Vercel function costs a process to learn
    * nothing), so everything this screen can say about the floor comes from what the scheduler wrote
