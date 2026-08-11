@@ -8,6 +8,9 @@ import { PgTranslateFloorReport } from "../adapters/store/PgTranslateFloorReport
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
+import { CollectLinkedThread } from "./CollectLinkedThread";
+import { TwitterApiSourceGateway } from "../adapters/twitterapi/TwitterApiSourceGateway";
+import { TwitterClient } from "../adapters/twitterapi/TwitterClient";
 import { SaveTranslation } from "./SaveTranslation";
 import { PublishTranslations, type PublishResult } from "./PublishTranslations";
 import { SaveRendering } from "./SaveRendering";
@@ -275,6 +278,29 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   const deliveryLedger = stores.deliveryLedger;
   const xArticleLedger = stores.xArticleLedger;
 
+  /**
+   * Whether `POST /api/intake/x` can take a link here — same "computed once, used for both" shape as
+   * `sendsEnabled` and `conversionEnabled` above, for the same reason: it decides both whether the
+   * dep exists (which is what makes the route refuse) and `StatusView.intakeEnabled` (which is what
+   * makes the tab say why before anyone clicks).
+   *
+   * Constructed in its own try/catch, the way `reconcilePublished` and `headroomReader` guard theirs:
+   * `loadConfig()` throws when `TWITTERAPI_IO_KEY` is absent, and an install that never collects —
+   * a review-only hosted deployment — must still boot. A throw on this line would take the whole
+   * dashboard down over a credential only one tab needs.
+   */
+  let collectLinkedThread: CollectLinkedThread | undefined;
+  try {
+    collectLinkedThread = new CollectLinkedThread(
+      new TwitterApiSourceGateway(new TwitterClient(loadConfig().apiKey)),
+      stores.collectionRepository,
+      translationStore,
+    );
+  } catch {
+    collectLinkedThread = undefined;
+  }
+  const intakeEnabled = collectLinkedThread !== undefined;
+
   const storageMode = loadStorageMode();
 
   /**
@@ -488,11 +514,7 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       dbEnv,
       sendsEnabled,
       conversionEnabled,
-      // Hard-coded `false` rather than computed: constructing `CollectLinkedThread` behind its own
-      // `TWITTERAPI_IO_KEY` guard is the next task on this branch (link-intake), not this one. This
-      // keeps `StatusView` satisfied — and honest, since nothing here builds the dep yet — without
-      // reaching ahead into work that task owns.
-      intakeEnabled: false,
+      intakeEnabled,
       liveness: liveness === undefined ? undefined : summarizeLiveness(liveness, sendsEnabled),
     };
   };
@@ -839,11 +861,12 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     saveOutletOverride: new SaveOutletOverride(overrideStore, undefined, stores.lineageStore),
     markDelivery: new MarkDelivery(deliveryLedger),
     prepareConversionRun,
-    // `collectLinkedThread` is left unset — its optionality on `ApiDeps` is exactly the "absent means
-    // not built yet" shape `sendToOutlet`/`prepareConversionRun` already use, and constructing the
-    // real one (behind its own `TWITTERAPI_IO_KEY` guard) is the next task on this branch.
-    // `loadIntakePending` has no such optionality — a deployment with no X credential still reads the
-    // queue — and needs no credential itself, so it is wired for real above rather than stubbed.
+    // `collectLinkedThread`'s optionality on `ApiDeps` is the same "absent means not built here" shape
+    // `sendToOutlet`/`prepareConversionRun` already use — `undefined` when `TWITTERAPI_IO_KEY` is
+    // absent, per the try/catch above, which is also what `intakeEnabled` reports. `loadIntakePending`
+    // has no such optionality — a deployment with no X credential still reads the queue — and needs no
+    // credential itself, so it is wired for real above rather than stubbed.
+    collectLinkedThread,
     loadIntakePending,
     formatVariants,
     // Absent (not a function that would just refuse every call) when sends are closed — see

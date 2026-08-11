@@ -102,6 +102,41 @@ describe("createDeps", () => {
   });
 
   /**
+   * The credential guard Task 3 wires: `intakeEnabled` and `collectLinkedThread` are computed once
+   * (`createDeps.ts`, the block above `storageMode`) and must agree, in both directions. The
+   * dangerous half is the absent-key case — `loadConfig()` throws, and `createDeps`'s own comment
+   * insists that throw must not escape, because a review-only hosted deployment with no
+   * `TWITTERAPI_IO_KEY` still has to boot. This pins that it does not throw, and that both halves
+   * land on the same answer either way, rather than trusting the try/catch by inspection.
+   */
+  describe("intakeEnabled", () => {
+    let savedKey: string | undefined;
+    beforeEach(() => {
+      savedKey = process.env.TWITTERAPI_IO_KEY;
+    });
+    afterEach(() => {
+      if (savedKey === undefined) delete process.env.TWITTERAPI_IO_KEY;
+      else process.env.TWITTERAPI_IO_KEY = savedKey;
+    });
+
+    it("boots without throwing and reports the capability closed when the key is absent", async () => {
+      delete process.env.TWITTERAPI_IO_KEY;
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      expect(deps.collectLinkedThread).toBeUndefined();
+      expect((await deps.loadStatus()).intakeEnabled).toBe(false);
+    });
+
+    it("builds the dep and reports the capability open when the key is present", async () => {
+      process.env.TWITTERAPI_IO_KEY = "test-only-key";
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      expect(deps.collectLinkedThread).toBeDefined();
+      expect((await deps.loadStatus()).intakeEnabled).toBe(true);
+    });
+  });
+
+  /**
    * The whole point of 되돌리기 is that `postedUrl` survives it — that is what stops the next
    * unattended `x:reconcile` tick from re-retiring an item a human just disputed (see
    * `RetireTranslation`'s own doc comment). `tests/adapters/web/apiHandlers.test.ts`'s equivalent
