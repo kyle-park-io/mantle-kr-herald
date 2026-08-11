@@ -337,23 +337,23 @@ export function OutletCard(props: {
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           <Tip text={groupApproved ? APPROVED_LOCK : undefined}>
-          <button
-            className={btn}
-            disabled={busy || !groupDirty || groupApproved}
-            onClick={() =>
-              run(async () => {
-                // Adopt what the server actually stored. `toCanonical` trims and collapses blank
-                // lines, so a save can legitimately return the string that was already there —
-                // and waiting for `group.text` to change would then leave the card `편집 중`
-                // forever, with 저장 inert and 승인 greyed until a reload.
-                const saved = await api.editRendering(itemId, type, channel, text);
-                setText(toEditor(saved.text));
-                await props.onGroupChanged();
-              })
-            }
-          >
-            저장
-          </button>
+            <button
+              className={btn}
+              disabled={busy || !groupDirty || groupApproved}
+              onClick={() =>
+                run(async () => {
+                  // Adopt what the server actually stored. `toCanonical` trims and collapses blank
+                  // lines, so a save can legitimately return the string that was already there —
+                  // and waiting for `group.text` to change would then leave the card `편집 중`
+                  // forever, with 저장 inert and 승인 greyed until a reload.
+                  const saved = await api.editRendering(itemId, type, channel, text);
+                  setText(toEditor(saved.text));
+                  await props.onGroupChanged();
+                })
+              }
+            >
+              저장
+            </button>
           </Tip>
           {group.status === "approved" ? (
             // Same hover-swap control as 1차: one grid cell holds both labels so the button sizes to
