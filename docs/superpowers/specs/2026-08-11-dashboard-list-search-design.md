@@ -85,7 +85,7 @@ U+AC00부터의 한글 음절은 `0xAC00 + 초성×588 + 중성×28 + 종성` �
 두 리스트가 공유하는 제어 입력 하나. `value`/`onChange`만 받는다.
 
 placeholder는 `본문 · ID 검색`. 값이 있을 때만 오른쪽에 × 버튼이 뜨고, Esc로도 비운다. 테두리·라운드·
-12px 텍스트·`focus:border-mint`는 `RenderingList.tsx:62`의 `selectClass`와 같은 조합을 쓴다 — 한 헤더
+13px 텍스트·`focus:border-mint`는 `RenderingList.tsx:62`의 `selectClass`와 같은 조합을 쓴다 — 한 헤더
 안에서 셀렉트와 입력이 다른 테두리를 갖고 있으면 눈에 띈다. 그 문자열을 `SearchBox.tsx`가 import하는
 방향은 만들지 않고(공용 컴포넌트가 2차 전용 파일에 의존하게 된다) 자기 파일에 둔다. `buttonStyles.ts`가
 이 저장소에서 공유 스타일 상수를 두는 자리이지만, 두 군데서 쓰이는 값 하나를 위해 세 번째 소비자를

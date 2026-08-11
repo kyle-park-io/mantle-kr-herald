@@ -107,11 +107,20 @@ function pattern(c: string, last: boolean): string {
 /**
  * 질의 → 정규식. 빈 질의(공백만인 경우 포함)는 `null`이고, 호출부는 그것을 "필터 없음"으로 읽는다.
  *
+ * 컴파일하기 전에 질의 안의 연속된 공백은 하나로 뭉친다. `pattern()`은 공백 문자 하나마다
+ * `\s+` 조각 하나를 내놓으므로, 뭉치지 않으면 질의의 공백 N개가 정규식에 나란한 `\s+` N개로
+ * 남는다. 이것이 두 가지로 문제다. 하나는 결과가 틀린다는 것 — 나란한 `\s+`는 본문에도 공백이
+ * N개 **이상** 있어야 한다는 뜻이 되어 지나치게 좁아진다(브라우저에서 두 줄을 복사하면 그
+ * 사이에 `\n\n`이 들어가는데, 저장된 본문은 줄바꿈 하나뿐인 식으로 실제로 부딪힌다). 다른
+ * 하나는 성능이다 — 나란한 `\s+` N개가 길이 L짜리 공백 구간과 만나면 정규식 엔진이 시도할 나눔의
+ * 수가 C(L,N)으로 폭발한다(질의에 공백 8개, 본문에 공백 40자면 10초 단위). `compileQuery`는
+ * 매 렌더마다, 즉 매 키 입력마다 동기로 도는 함수이므로 이는 곧 탭이 멈추는 것과 같다.
+ *
  * `g` 플래그는 붙이지 않는다 — `lastIndex`가 남아 같은 문자열에 대한 `.test()`가 호출마다 다른
  * 답을 내게 된다. `i`는 한글 범위에 영향이 없고 영문 대소문자만 무시한다.
  */
 export function compileQuery(query: string): RegExp | null {
-  const q = query.trim();
+  const q = query.trim().replace(/\s+/g, " ");
   if (q === "") return null;
   const chars = [...q];
   return new RegExp(chars.map((c, i) => pattern(c, i === chars.length - 1)).join(""), "i");

@@ -17,7 +17,12 @@ export function SearchBox(props: { value: string; onChange: (value: string) => v
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Escape") props.onChange("");
+          // 조합 중인 Escape는 입력을 비우라는 뜻이 아니라 조합 중인 음절을 취소하라는 뜻이다.
+          // 이 컴포넌트가 붙는 매처(`hangulSearch.ts`)는 조합 중간 상태를 1급으로 다루는 것이
+          // 전제이므로, IME의 취소를 가로채면 그 전제와 부딪힌다. 오늘날 브라우저는 조합 중
+          // keydown을 `key: "Process"`로 주기 때문에 이 가드가 실제로 걸릴 일은 드물지만,
+          // 방어적으로 남겨둔다 — 나중에 죽은 코드로 보고 지우지 않도록.
+          if (e.key === "Escape" && !e.nativeEvent.isComposing) props.onChange("");
         }}
         placeholder="본문 · ID 검색"
         // 초성 힌트는 placeholder에 넣지 않는다 — `w-80` 사이드바에서 잘리고, 잘린 힌트는 힌트가

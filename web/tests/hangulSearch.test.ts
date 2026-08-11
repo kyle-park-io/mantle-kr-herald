@@ -86,5 +86,9 @@ describe("compileQuery", () => {
 
   it("collapses whitespace so a typed space matches a wrapped one", () => {
     expect(hit("맨틀 네", "맨틀  네트워크")).toBe(true);
+    // 반대 방향: 질의 쪽에 공백이 여러 개 있어도(줄 두 개를 복사하면 사이에 `\n\n`이 낀다) 본문의
+    // 공백 하나에 걸려야 한다. 뭉치지 않으면 나란한 `\s+`가 "공백 N개 이상"을 요구하게 되어 실패한다.
+    expect(hit("맨틀  네", "맨틀 네트워크")).toBe(true);
+    expect(hit("맨틀\n\n네", "맨틀 네트워크")).toBe(true);
   });
 });
