@@ -176,7 +176,7 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 |---|---|---|---|
 | **A. X 데이터 수집** | twitterapi.io로 지정한 계정의 트윗을 스레드 단위로 재구성해 증분 수집하고, 삭제된 트윗을 소프트 마크로 반영. X 아티클은 본문(Draft.js 블록)을 별도로 받아 마크다운으로 변환 | `pnpm collect [handle]`, `pnpm reconcile` | — |
 | **B. Lark 데이터 수집** | 지정한 Lark 그룹 채팅들의 텍스트/포스트 메시지를 채팅방별로 증분 수집 | `pnpm collect-lark` | [`setup/lark.md`](setup/lark.md) |
-| **C. 한국어 번역** | 수집된 X/Lark 콘텐츠로 번역 워크시트를 만들고, 로컬 에이전트가 채운 한국어 번역을 저장. 승인 시 few-shot 예시로 승격. `translate:align`(선택)은 `translate:save`와 1차 검수 사이에서 초안을 가장 가까운 TM 선례에 맞춰 다듬음 | `pnpm translate:prepare`, `pnpm translate:save`, `pnpm translate:align`, `pnpm glossary` | — |
+| **C. 한국어 번역** | 수집된 X/Lark 콘텐츠로 번역 워크시트를 만들고, 로컬 에이전트가 채운 한국어 번역을 저장. 승인 시 few-shot 예시로 승격. `translate:align`(선택)은 `translate:save`와 1차 검수 사이에서 초안을 가장 가까운 TM 선례에 맞춰 다듬음. `glossary:mine`은 아직 결정되지 않은 용어 후보를 주간으로 발굴 | `pnpm translate:prepare`, `pnpm translate:save`, `pnpm translate:align`, `pnpm glossary`, `pnpm glossary:mine` | — |
 | **D. Drive 업로드** | 승인/번역 완료된 결과를 마크다운으로 저장 — `cloud` 모드면 Google Drive와 Lark Drive에 업로드, `local` 모드면 `output/publish/local/{review,approved}/`에 파일로 저장(발송된 렌더링의 2차 완성본은 `sent/`에 별도로 best-effort 아카이브 — §8 참고) | `pnpm drive:publish`, `pnpm drive:init`, `pnpm google:auth` | [`setup/README.md`](setup/README.md), [`setup/google-drive.md`](setup/google-drive.md), [`setup/lark.md`](setup/lark.md) |
 | **E. 검수 대시보드** | 번역(1차)·채널 포맷(2차)을 검수·수정·승인·발행하는 로컬 웹 대시보드 | `pnpm serve`, `pnpm build:web`, `pnpm dev:web` | — |
 | **F. 콘텐츠 가공** | 승인된 번역을 §5 항목 변환(타입별 X/공지/해설/소통/KOL/PR)과 §6 채널 포맷(코드 변환 + 선택적 에이전트 다듬기) 두 단계로 채널용 게시물로 가공 | `pnpm convert:prepare`, `pnpm convert:save`, `pnpm format`, `pnpm format:save` | — |
@@ -258,6 +258,41 @@ Mantle KR의 한국어 X 계정 `@0xMantleKR`은 `Mantle_Official`의 영어 게
 판단해야 하는 목록이라 알림으로 띄우면 곧 아무도 안 보게 됩니다. TM의 few-shot 승격과는 별개입니다 — 이
 대조로 자동 승격되는 예시는 없고, few-shot에 반영하려면 여전히 위 `tm:promote`(사람이 확인한
 페어만)를 거쳐야 합니다.
+
+### 용어집 후보 발굴 — `pnpm glossary:mine [--notify]`
+
+`translate:check`가 **이미 내린 결정**을 지켰는지 보는 점검이라면, 이쪽은 **아직 아무도 결정하지
+않은 용어**를 찾아옵니다. 두 명령은 서로의 질문에 답하지 못합니다: 용어집에 없는 말은
+`translate:check`에게 그냥 보이지 않습니다.
+
+신호는 셋입니다.
+
+1. **용어집에 없는데 원문에서 반복되는 고유명사** — 수집된 영어 트윗 전체에서 대문자로 시작하는
+   1~3어절 덩어리를 세어 2회 이상인 것만.
+2. **초안↔발행본 사이에서 사람이 바꾼 낱말** — 문장 단위로 정렬해 같은 문장인데 낱말만 다른 자리를
+   찾습니다. **빈도 문턱이 없습니다**: 2026-08-11 실측에서 가장 값진 발견(`낸슨 → 난센`)은 딱 한 번
+   있었고, 3회 이상을 요구한 초기 시도는 그걸 통째로 놓쳤습니다.
+3. **참조 코퍼스(@0xMantleKR) 대조** — 계정이 실제로 어느 쪽 표기를 쓰는지 세어 등급을 매기고,
+   **사람이 고친 표현이 코퍼스에 0회인데 우리 초안 표기는 여러 번 나오면 그 교정을 1회성으로 보고
+   기각합니다.** 이 규칙이 실측에서 `시장 가격→시장가`(2:0)와 `규모→사이즈`(13:0)를 걸러냈습니다 —
+   없었으면 둘 다 틀린 역어로 용어집에 들어갔을 겁니다. 기각한 것도 검토 파일에는 이유와 함께
+   남습니다.
+
+결과는 `$OUTPUT_DIR/glossary/candidates-<날짜>.json` 한 파일입니다. 원하는 줄만 남기고 고친 다음
+`pnpm glossary add …`로 넣으시면 됩니다. **UI는 없습니다** — 병목은 "어디에 입력하나"가 아니라
+"어느 용어를 결정해야 하나"였습니다.
+
+**아니라고 판단한 후보는 `translation/glossary-dismissed.json`에 적어 주세요.** 이 명령은 커서도
+"본 적 있음" 상태도 없어서 매주 원장 전체를 다시 훑습니다 — 적어 두지 않으면 같은 줄이 다음 주에도,
+그다음 주에도 옵니다. 검토 파일의 각 후보에 붙은 `_후보` 값을 그대로 `term`에 넣으면 됩니다.
+
+**참조 코퍼스가 오래됐거나 없으면** 표준 출력과 알림 양쪽에 그렇게 적고 등급을 전부 B로 낮춥니다
+(기준 28일 — 주간 발화 네 번). 이 명령은 코퍼스를 **수집하지 않습니다**: 주마다 수집하면 대부분
+과거 데이터에 twitterapi.io 예산을 쓰게 되므로, `pnpm collect:reference`는 그대로 수동입니다.
+
+`--notify`는 정기 실행용이며 **후보가 있을 때만** ops 방으로 한 통 보냅니다. 그 메시지에는 검토
+파일의 **절대경로**가 들어갑니다 — 스케줄러는 `~/.herald/output` 아래에 쓰고 손으로 돌리면 저장소의
+`output/` 아래에 쓰기 때문에, 경로 없는 "초안 파일을 열어 보세요"는 함정입니다.
 
 ## 7. X 성과 지표
 

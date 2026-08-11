@@ -60,6 +60,21 @@ export const paths = {
   publishState: join(OUTPUT_DIR, "publish", "state.json"),
   archiveDir: join(OUTPUT_DIR, "archive"),
   lineageDir: join(OUTPUT_DIR, "lineage"),
+  /** Where `glossary:mine` leaves its weekly review file. OUTPUT_DIR-relative, never repo-relative:
+   *  it is a dated artifact of one run, not steering config, and the scheduled run must not write
+   *  into the deploy checkout that `herald-deploy.sh` resets. */
+  glossaryDir: join(OUTPUT_DIR, "glossary"),
   translationConfigDir: join(REPO_ROOT, "translation"),
   conversionConfigDir: join(REPO_ROOT, "conversion"),
 } as const;
+
+/**
+ * The review file for one `glossary:mine` run, named by the UTC day it was mined.
+ *
+ * Dated rather than a single rolling `candidates.json`, because the file is something a human EDITS —
+ * they delete the lines they do not want and rewrite the ones they do, over however many days it
+ * takes to get to it. A fixed name means the next Monday's fire silently overwrites work in progress.
+ * A same-day re-run does overwrite, which is the intended behaviour: re-mining today replaces today's
+ * answer.
+ */
+export const glossaryCandidatesPath = (day: string): string => join(paths.glossaryDir, `candidates-${day}.json`);

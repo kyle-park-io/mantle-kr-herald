@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pnpm glossary:mine [--notify]` — which terms are still waiting on a glossary *decision*.**
+  `translate:check` measures translations against decisions already recorded and is, by construction,
+  silent about a term nobody has decided; that silence was the actual bottleneck. Prototyped by hand
+  against production on 2026-08-11: ten proposals, all ten applied, glossary 96 → 106 entries in an
+  afternoon — not because anybody lacked a place to type them, but because nobody knew which ten
+  terms to type. **No UI**, deliberately. Three signals, all pure and unit-tested in
+  `src/domain/translation/glossaryMining.ts`: un-glossed proper nouns the English source repeats
+  (≥2 occurrences), word-level substitutions a human made between our draft and the published post
+  (**no frequency threshold at all** — the run's best find, `낸슨 → 난센`, occurred exactly once, and
+  an earlier attempt requiring three found nothing), and cross-validation of both against the
+  @0xMantleKR reference corpus. **The cross-validation is a discriminator, not decoration:** when the
+  human's edit has zero corpus occurrences while our draft's form has two or more, the edit was a
+  one-off and our draft was right — that rule threw out `시장 가격→시장가` (2:0) and `규모→사이즈`
+  (13:0), both of which would otherwise have entered the glossary as wrong renderings, while
+  deliberately keeping `낸슨 → 난센` (0:0, no evidence either way). Rejections are listed in the
+  review file with their numbers rather than dropped. Counting strips `@handles` and links first,
+  which is load-bearing: `Nansen` matches the real corpus six times and every one of them is
+  `@nansen_ai`. Output is one file — `$OUTPUT_DIR/glossary/candidates-<YYYY-MM-DD>.json`, in the same
+  shape the human filled in and applied — and its **absolute path** is on stdout and in the alert,
+  because the scheduler writes under `~/.herald/output` while a hand-run writes under the checkout's
+  own `output/`. Read-only otherwise; exit 0 always.
+- **`translation/glossary-dismissed.json` — the "no" that makes a repeating report converge.**
+  `glossary:mine` has no cursor and no seen-state, so without somewhere to record a rejected
+  candidate the same line arrives every Monday forever, which is precisely the failure
+  `translate:check --notify` was designed around when it refused to page on drift. Hand-edited only —
+  nothing in the pipeline may write it, or a run could silence its own findings. It is **steering
+  config**: `isSteeringConfigFile` accepts it, so `config:push`, `config:pull` and `deploy:freeze`
+  carry it with the glossary it belongs to (pinned by a test, because "accepts everything that isn't
+  an example or a few-shot export" is a rule somebody could later narrow into an allow-list). It is
+  also the one input here that **refuses** a wrong shape rather than degrading: a file that parses as
+  `{}` instead of `[]` would otherwise read as "nothing dismissed", which puts every rejected
+  candidate straight back into the next alert — silently, and looking exactly like the dismissal file
+  not working. A failed unit naming the file is the better Monday.
+- **The reference corpus's own staleness is now reported rather than assumed.** `collect:reference`
+  is manual by design — collecting weekly would spend twitterapi.io budget on data that is
+  overwhelmingly historical — so `glossary:mine` reads coverage out of `x/reference/runs.json`
+  (widest `covered.to` across runs, never the last entry's: a `--since` backfill appended after an
+  incremental run covers older ground while being newer in the file) and says so in stdout *and* the
+  alert when the newest content is more than 28 days old. A missing corpus, an unreadable run ledger
+  and a stale one all **cap every candidate at tier B** rather than silently grading on less
+  evidence, and a corrupt corpus file degrades with a printed warning instead of failing the run.
+  A clean week stays silent even on a stale corpus: the corpus only ever *grades* candidates, it
+  never produces one, so there is nothing a stale corpus could be hiding.
+
 - **`pnpm doctor` now says whether the steering config the *scheduler* runs with is still the one
   this checkout holds — a new `Steering deploy sync` line.** Since 0.5.0 the deploy checkout's
   configuration is a copy taken at deploy time rather than a symlink, which closed one exposure and
@@ -37,20 +81,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing the scheduler reads is affected by them. That state is not hypothetical — it is what every
   machine deployed before the few-shot carve-out above reports on its first run, seven files' worth,
   and grading it ⚠ would have made the check's debut a false alarm about files nothing reads.
-- **A fifth scheduled unit runs that check on its own, once a week — `herald-translate-check.timer`,
-  Monday 06:53.** Weekly and not daily, because the report has no cursor: it re-reads the whole
-  ledger and re-reports every standing finding, and its inputs only move when `x:reconcile` captures
-  a published text or a human edits the glossary. A daily fire would re-send the same list six extra
-  times a week, which is how an ops room becomes noise people stop reading. `TimeoutStartSec=420` is
-  sized by the alert path rather than the work — `notifyOps` calls `fetch` with no timeout of its
-  own, so an unanswered Telegram send runs to undici's 300s ceiling, and reaching it is the *good*
-  outcome (the send is swallowed, the run still exits 0 with its report intact) where a shorter
-  bound would `SIGTERM` a healthy check and page about a failure that did not happen. The unit sets
-  no `HERALD_OUTPUT_DIR`: the translations come from Postgres and the glossary from a repo-root
-  path, so nothing it reads is output-relative. **Installing it means copying eleven unit files
+- **A fifth scheduled unit runs the weekly glossary digest — `herald-translate-check.timer`,
+  Monday 06:53 — and it carries two commands, not one.** `pnpm translate:check --notify` asks whether
+  the glossary's decisions were kept; `pnpm glossary:mine --notify` (below) asks what has never been
+  decided. Weekly and not daily, because neither report has a cursor: both re-read the whole ledger
+  and re-report every standing finding, and their inputs only move when `x:reconcile` captures a
+  published text or a human edits the glossary. A daily fire would re-send the same lists six extra
+  times a week, which is how an ops room becomes noise people stop reading. One `Type=oneshot` unit
+  rather than a sixth timer: the two are halves of one question read in one sitting, and a oneshot
+  runs multiple `ExecStart=` lines in order — stopping at the first failure, which is right, since
+  both need the same database and the same glossary. `TimeoutStartSec=840` is sized by the alert path
+  rather than the work, and by the *number of alerting commands*: `notifyOps` calls `fetch` with no
+  timeout of its own, so an unanswered Telegram send runs to undici's 300s ceiling, reaching it is
+  the *good* outcome (the send is swallowed, the run still exits 0 with its report intact), and each
+  command makes its own send — 120 + 300 twice over. **Installing it means copying eleven unit files
   now, not nine** — the runbook's `cp` block is the complete list, and
   `systemctl --user start herald-translate-check.service` is safe to run by hand as its own dry run,
-  unlike `herald-x-reconcile.service`, because this command only reads.
+  unlike `herald-x-reconcile.service`, because these commands only read.
 - **`pnpm translate:check --notify` sends one ops-room alert when the published posts overrode a
   decided glossary term — and only then.** The override list is the half of that report that goes
   stale in a direction that matters: a term the humans keep taking back out stays wrong in

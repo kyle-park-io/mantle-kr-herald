@@ -19,6 +19,7 @@
 | --- | --- |
 | `translation/tm.json` | **반자동** — `tm:promote`(사람이 pair를 확인한 뒤) |
 | `translation/glossary.json` | **수기** — `pnpm glossary add …` 또는 직접 편집 |
+| `translation/glossary-dismissed.json` | **수기** — 직접 편집만. 쓰는 코드가 아예 없습니다(§1-1) |
 | `translation/style-guide.md` · `locale.json` · `conversion/*.md` · `checklist.*.md` | **수기** — 직접 편집만 |
 
 용어집·문체·로케일·채널 지침은 **의도적으로 사람이 큐레이션**합니다(승인된 번역에서 용어를 자동
@@ -34,6 +35,25 @@
 > 읽는 코드는 없고, `pnpm config:push`도 `pnpm deploy:freeze`도 이 두 이름은 제외합니다. 지우지는
 > 마세요 — `db:export` → `db:import` 롤백 경로의 입력입니다. (`tm.json`은 헷갈리기 쉽지만
 > **진짜 설정**이고, 그대로 동기화됩니다.)
+
+### 1-1. `glossary-dismissed.json` — 잃으면 조용히 되살아나는 파일
+
+주간 `pnpm glossary:mine`(용어집 후보 발굴, [`capabilities.md`](../capabilities.md) §6)은 커서도
+"본 적 있음" 상태도 없습니다. 매주 원장 전체를 다시 훑어 후보를 새로 뽑기 때문에, **아니라고 판단한
+후보를 어딘가 적어 두지 않으면 같은 줄이 영원히 다시 옵니다** — 그러면 알림은 아무도 안 읽는
+잡음이 됩니다. 그 "아니오"를 적는 곳이 이 파일입니다.
+
+```json
+[
+  { "term": "규모 → 사이즈", "note": "코퍼스가 우리 초안 편. 1회성 교정", "dismissedAt": "2026-08-11" },
+  { "term": "Mentor Clinic", "note": "이벤트 이름이라 매번 달라짐", "dismissedAt": "2026-08-11" }
+]
+```
+
+`term`에는 검토 파일의 각 후보에 붙은 `_후보` 값을 그대로 넣으세요(대소문자와 공백은 알아서
+맞춥니다). 쓰는 코드는 없습니다 — 파이프라인이 스스로 후보를 잠재울 수 있으면 이 파일을 믿을 수
+없게 되므로, 편집기로 사람이 적는 것이 유일한 경로입니다. 다른 스티어링 파일과 똑같이
+`config:push`/`config:pull`/`deploy:freeze`가 함께 나릅니다.
 
 ## 2. 어떻게 받나 — 두 갈래입니다
 
@@ -53,16 +73,16 @@ pnpm config:init
 > 그 상태를 `warn`으로 잡아 주지만(§3), 팀 파일을 받기 전에 스켈레톤부터 깔아 두면 `config:init`은
 > **이미 있는 파일을 덮어쓰지 않으므로** 나중에 진짜 파일을 풀 때 뭘 덮어써야 하는지 헷갈립니다.
 
-팀 담당자에게 **실제 파일 12개를 받으세요.** 압축해서 전달받아 저장소 루트에 그대로 풉니다.
+팀 담당자에게 **실제 파일 13개를 받으세요.** 압축해서 전달받아 저장소 루트에 그대로 풉니다.
 
 ```
-translation/glossary.json          conversion/x.md
-translation/style-guide.md         conversion/announcement.md
-translation/locale.json            conversion/explainer.md
-translation/tm.json                conversion/casual.md
-                                   conversion/kol.md
-                                   conversion/pr.md
-                                   conversion/checklist.{x,announcement}.md
+translation/glossary.json             conversion/x.md
+translation/glossary-dismissed.json   conversion/announcement.md
+translation/style-guide.md            conversion/explainer.md
+translation/locale.json               conversion/casual.md
+translation/tm.json                   conversion/kol.md
+                                      conversion/pr.md
+                                      conversion/checklist.{x,announcement}.md
 ```
 
 정확한 목록은 `pnpm config:push`가 묶는 파일과 같습니다 — `translation/`과 `conversion/`에서

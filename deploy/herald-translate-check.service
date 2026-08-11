@@ -1,24 +1,49 @@
 # deploy/herald-translate-check.service
 #
-# systemd --user unit for one `pnpm translate:check --notify` — the weekly glossary digest. It asks
-# the two questions src/cli/translate-check.ts's own doc comment names: did our draft use the decided
-# term the source called for (`checkGlossary`), and which decided terms do the humans keep dropping
-# once a post actually goes out (`checkPublishedOverrides`). Read-only from start to finish.
+# systemd --user unit for the weekly GLOSSARY digest — two commands, one fire, one reading slot.
 #
-# Why it needs a schedule at all: the drift it catches is invisible one item at a time — `narrative`
-# rendered 이야기 is a perfectly good sentence, wrong only against a decision recorded elsewhere.
-# Measured on 2026-08-07, a batch of nineteen translations had drifted from four decided terms and
-# every individual sentence read fine. The command has existed since then and gets run when somebody
-# remembers, which for a report whose entire value is catching slow drift is close to not at all.
+#   1. `pnpm translate:check --notify` asks the two questions src/cli/translate-check.ts's own doc
+#      comment names: did our draft use the decided term the source called for (`checkGlossary`), and
+#      which decided terms do the humans keep dropping once a post actually goes out
+#      (`checkPublishedOverrides`).
+#   2. `pnpm glossary:mine --notify` asks the question neither of those can: which terms have never
+#      been decided at all. Un-glossed proper nouns the source keeps repeating, word-level
+#      substitutions a human made between our draft and the published post, both cross-validated
+#      against the @0xMantleKR reference corpus (src/domain/translation/glossaryMining.ts).
 #
-# WHAT THIS UNIT NEVER DOES: change anything. `translate:check` writes nothing, changes no status,
-# and never exits non-zero on a finding — a glossary has real exceptions, so this is a list a human
-# reads before 1차 검수, not a gate. That has a useful consequence for the hook below: a non-zero exit
-# from this unit can only ever mean the run itself broke (no database, no glossary, timeout), never
-# that the report had something in it. The alert is therefore never a weekly false alarm, and the
-# findings reach a human the other way — `--notify` pages the ops room about question 2's overrides
-# (`overrideNotification`, src/cli/translateCheckReport.ts), while question 1's drift deliberately
-# never pages and is read out of the run log this unit's wrapper keeps.
+# Both are read-only against the pipeline; the only thing written anywhere is `glossary:mine`'s review
+# file under HERALD_OUTPUT_DIR (see that variable below, which this unit did NOT set until the second
+# command joined it).
+#
+# WHY THEY SHARE A UNIT rather than getting a fifth timer. They are two halves of one question — "is
+# the glossary right, and is it complete?" — read by the same person in the same sitting, and they are
+# driven by the same two slow inputs (a human editing the glossary, and `x:reconcile` capturing a
+# published text). A separate timer would buy an independent schedule nobody wants and cost a second
+# weekly interruption; `Type=oneshot` runs multiple ExecStart= lines in order, which is exactly the
+# "one digest slot, two related reports" shape this wants. The ordering consequence is deliberate too:
+# a oneshot stops at the first ExecStart= that fails, so a broken `translate:check` (no database, no
+# glossary) skips the mine — correct, because both read the same two things and the mine would fail
+# for the same reason one line later, with a second, more confusing alert.
+#
+# Why it needs a schedule at all: the drift `translate:check` catches is invisible one item at a time
+# — `narrative` rendered 이야기 is a perfectly good sentence, wrong only against a decision recorded
+# elsewhere. Measured on 2026-08-07, a batch of nineteen translations had drifted from four decided
+# terms and every individual sentence read fine. And the gap `glossary:mine` catches is invisible from
+# every direction: on 2026-08-11 a single hand-run of the same three signals took the glossary from 96
+# entries to 106, not because anyone lacked a place to type them but because nobody knew which ten
+# terms to type. Both commands then get run when somebody remembers, which for reports whose entire
+# value is catching slow drift is close to not at all.
+#
+# WHAT THIS UNIT NEVER DOES: change anything a human curates, and never gate. Neither command writes a
+# database row or changes a status, and neither exits non-zero on a finding — a glossary has real
+# exceptions and an un-decided term is a question, so these are lists a human reads before 1차 검수,
+# not gates. That has a useful consequence for the hook below: a non-zero exit from this unit can only
+# ever mean a run itself broke (no database, no glossary, timeout), never that a report had something
+# in it. The alert is therefore never a weekly false alarm, and the findings reach a human the other
+# way — each command's `--notify` sends at most one grouped ops message of its own
+# (`overrideNotification`, src/cli/translateCheckReport.ts; `miningNotification`,
+# src/cli/glossaryMineReport.ts), while `translate:check`'s drift half deliberately never pages and is
+# read out of the run log this unit's wrapper keeps.
 #
 # NOT installed by any committed script. Copying this into ~/.config/systemd/user/ and running
 # `systemctl --user daemon-reload` is a human-supervised step (see the team runbook), same as the
@@ -29,15 +54,16 @@
 # version of it.
 
 [Unit]
-Description=Mantle KR Herald glossary drift digest — one weekly `pnpm translate:check --notify`
+Description=Mantle KR Herald weekly glossary digest — `pnpm translate:check --notify` then `pnpm glossary:mine --notify`
 # The same templated hook the other four scheduled units use. `%n` expands to this unit's own name
 # before systemd resolves the target, so the alert names this unit and tails this unit's journal, not
 # another's — the `OnFailure=bar@%n.service` idiom `man systemd.unit` documents, and the reason the
 # hook became a template at all (see deploy/herald-notify-failure@.service's header).
 #
 # Worth more here than the once-a-day units it copies, not less, and for a reason specific to what
-# `--notify` sends: `overrideNotification` returns undefined when there are no overrides, so a
-# healthy week with a clean glossary sends NOTHING. Silence is therefore the normal successful
+# `--notify` sends: `overrideNotification` returns undefined when there are no overrides and
+# `miningNotification` returns undefined when there are no candidates, so a healthy week with a clean,
+# complete glossary sends NOTHING from either command. Silence is therefore the normal successful
 # outcome, which means silence cannot also be how a dead fire announces itself. This hook is the only
 # thing that separates the two, for seven days at a time.
 OnFailure=herald-notify-failure@%n.service
@@ -61,79 +87,115 @@ WorkingDirectory=%h/.herald/app
 # directory — see herald-watch.service's own PATH comment for the 2026-08-09 rebuild that made this
 # necessary. node must be reachable even though pnpm is named by absolute path below: pnpm's own file
 # starts `#!/usr/bin/env node`, and `env` resolves that through this PATH. `claude` is deliberately
-# not on this path: this command spawns no agent, exactly like herald-creds.service and
-# herald-x-reconcile.service and unlike the two units that do.
+# not on this path: neither command spawns an agent, exactly like herald-creds.service and
+# herald-x-reconcile.service and unlike the two units that do. `glossary:mine` is worth checking
+# against that claim rather than assuming it — everything it does is regexes over strings, and the
+# judgement calls it cannot make are the ones it leaves blank for a human in the review file.
 Environment=PATH=%h/.herald/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# No HERALD_OUTPUT_DIR here, and it is not an oversight — it was checked against what the command
-# actually reads before being left out, the same way herald-x-reconcile.service argues its own
-# omission and herald-convert.service argues the three variables it drops.
-#
-# `translate:check` reads exactly two things. The translations come from `createStores(db)
-# .translationStore`, which is `PgTranslationStore` — Postgres, not OUTPUT_DIR's
+# This line is a REVERSAL, and the reasoning it replaces is worth keeping visible. Until
+# `glossary:mine` joined this unit there was no HERALD_OUTPUT_DIR here, argued at length and correctly:
+# `translate:check` reads exactly two things, and neither is OUTPUT_DIR-relative. Its translations come
+# from `createStores(db).translationStore` — `PgTranslationStore`, Postgres, not OUTPUT_DIR's
 # `translations/translations.json`, which stopped being the ledger when the eleven stores moved (see
-# src/cli/stores.ts's own module comment). The glossary comes from `new JsonGlossaryStore(paths
-# .translationConfigDir)`, and that path is `join(REPO_ROOT, "translation")` — repo-root-relative, so
-# HERALD_OUTPUT_DIR would not redirect it even if someone set it hoping to. Nothing this command
-# touches is OUTPUT_DIR-relative, so setting the variable would only imply an artifact tree this run
-# has no relationship with.
+# src/cli/stores.ts). Its glossary comes from `new JsonGlossaryStore(paths.translationConfigDir)`, and
+# that path is `join(REPO_ROOT, "translation")` — repo-root-relative, so the variable would not have
+# redirected it even if someone set it hoping to. Setting it then would have implied an artifact tree
+# that run had no relationship with.
 #
-# No HERALD_TRANSLATE_SINCE, HERALD_WATCH_BATCH, HERALD_CONVERT_BATCH or HERALD_COLLECT_MAX_PAGES
-# either. All four bound a `--limit` or a page count belonging to translate:prepare/translate:align,
-# convert:prepare or collect, and this command runs none of them — it selects with its own
-# `--status`/`--since` flags, which this unit deliberately does not pass (see ExecStart= below).
+# The second ExecStart= changes that fact, so the line changes with it. `glossary:mine` reads two more
+# things and WRITES one, and all three are OUTPUT_DIR-relative:
+#
+#   reads  `$OUTPUT_DIR/x/reference/items.json` + `runs.json` — the @0xMantleKR corpus its
+#          cross-validation grades against, and the run ledger it reads staleness out of. Only
+#          `collect:reference` writes those, only by hand, and only ever into the scheduler's own root
+#          on this machine. Without this variable the mine would read `%h/.herald/app/output/x/reference/`
+#          — which does not exist — and degrade to "no corpus" every single week, silently grading
+#          every candidate B forever.
+#   writes `$OUTPUT_DIR/glossary/candidates-<YYYY-MM-DD>.json`, the review file that IS this job's
+#          deliverable. Without the variable it would land inside the deploy checkout, which
+#          `deploy/herald-deploy.sh` owns and `pnpm deploy:check` refuses to deploy over when dirty.
+#
+# %h/.herald/output, the same root herald-watch.service and herald-convert.service already name, so
+# the corpus the scheduler reads is the corpus the scheduler collected. The review file's absolute
+# path is printed on stdout and carried in the Telegram notice for exactly this reason: the path an
+# interactive `pnpm glossary:mine` writes is NOT this one, and an alert that says "open the draft"
+# without saying which one is a trap.
+Environment=HERALD_OUTPUT_DIR=%h/.herald/output
+
+# No HERALD_TRANSLATE_SINCE, HERALD_WATCH_BATCH, HERALD_CONVERT_BATCH or HERALD_COLLECT_MAX_PAGES.
+# All four bound a `--limit` or a page count belonging to translate:prepare/translate:align,
+# convert:prepare or collect, and neither command here runs any of them — `translate:check` selects
+# with its own `--status`/`--since` flags, which this unit deliberately does not pass (see ExecStart=
+# below), and `glossary:mine` has no selection flags at all. HERALD_COLLECT_MAX_PAGES is the one worth
+# naming twice: `glossary:mine` deliberately does NOT collect. Refreshing the reference corpus weekly
+# would spend twitterapi.io budget on data that is overwhelmingly historical, so the job reads whatever
+# `collect:reference` last left and says out loud when that is stale (28 days,
+# REFERENCE_STALE_AFTER_DAYS) instead of quietly fixing it.
 
 # Exactly two lines — DATABASE_URL and HERALD_DB_ENV=production — chmod 600, created by Kyle by hand
 # (a production connection string does not pass through an agent session). This unit needs it for the
 # reason a read-only command needs it most: without it the fire succeeds, exits 0, and reports
 # cheerfully on the local Docker database's handful of rows instead of production's — a green weekly
-# digest about the wrong data, and the only sign is the database name on the command's first line,
+# digest about the wrong data, and the only sign is the database name on each command's first line,
 # which nobody reads on a run that found nothing. Everything else comes from the repo's own .env via
-# `pnpm translate:check`'s `tsx --env-file-if-exists=.env`, including the TELEGRAM_BOT_TOKEN and
-# TELEGRAM_CHAT_ID_OPS that `--notify` needs; a shell-exported variable wins over Node's --env-file
-# (verified on this machine), so these two override .env's local-Docker DATABASE_URL without this
-# unit ever touching .env itself.
+# each command's `tsx --env-file-if-exists=.env` (both scripts carry it in package.json), including the
+# TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID_OPS that `--notify` needs; a shell-exported variable wins
+# over Node's --env-file (verified on this machine), so these two override .env's local-Docker
+# DATABASE_URL without this unit ever touching .env itself.
 EnvironmentFile=%h/.herald/prod.env
 
-# Outer bound on a wedged run, and unusually for this directory the number is set by the ALERT path
-# rather than by the work. Two parts:
+# Outer bound on a wedged run. For Type=oneshot this covers the WHOLE ExecStart= sequence, not each
+# line, so adding the second command re-opened this number — and unusually for this directory it is
+# still the ALERT path that sizes it, now twice over. Four parts:
 #
-#   120s — the database half. One `translationStore.loadAll()` plus connect and close; the checks
-#          themselves are in-memory string work over rows already fetched, and the glossary is a
-#          local file read. What this has to absorb is a cold Neon compute: at this timer's Monday
+#   120s — translate:check's database half. One `translationStore.loadAll()` plus connect and close;
+#          the checks themselves are in-memory string work over rows already fetched, and the glossary
+#          is a local file read. What this has to absorb is a cold Neon compute: at this timer's Monday
 #          06:53 slot the last thing to touch the database was the 06:41 reconcile, and Neon
 #          autosuspends after about five minutes, so essentially every fire pays a wake-up.
 #          herald-convert.service budgets 240s for three round trips including that wake; this is one
 #          query, so 120s is the same generosity at a third of the traffic.
 #
-#   300s — the Telegram half, which is the part that actually sizes this directive. `notifyOps`
-#          (src/shared/notifyOps.ts) calls global `fetch` with no timeout of its own, so a Telegram
-#          endpoint that accepts the connection and then never answers is bounded only by undici's
-#          300s headers timeout. Reaching that timeout is the GOOD outcome: notifyOps never throws —
-#          it logs `[notifyOps] failed to notify` and returns — so the run still exits 0 and the
-#          report is still in the run log. A TimeoutStartSec below 300 would instead SIGTERM the
-#          process mid-send, which turns a working check into a failed unit and fires the OnFailure=
-#          hook to say the glossary check failed, when the check had already finished and printed —
-#          a false alarm about the one subsystem (Telegram) that is demonstrably down and therefore
-#          least likely to deliver the alarm anyway.
+#   300s — translate:check's Telegram half. `notifyOps` (src/shared/notifyOps.ts) calls global `fetch`
+#          with no timeout of its own, so a Telegram endpoint that accepts the connection and then
+#          never answers is bounded only by undici's 300s headers timeout. Reaching that timeout is the
+#          GOOD outcome: notifyOps never throws — it logs `[notifyOps] failed to notify` and returns —
+#          so the run still exits 0 and the report is still in the run log. A bound below 300 would
+#          instead SIGTERM the process mid-send, which turns a working check into a failed unit and
+#          fires the OnFailure= hook to say the glossary check failed, when the check had already
+#          finished and printed — a false alarm about the one subsystem (Telegram) that is demonstrably
+#          down and therefore least likely to deliver the alarm anyway.
 #
-# 120 + 300 = 420. The retry inside notifyOps does not double the 300: a second attempt only happens
-# when the first got a real response back, and a response means it did not hang. The one shape that
-# overruns this is Telegram answering slowly AND then hanging the plain-text retry, and at that point
-# being killed is the right answer.
+#   120s — glossary:mine's database half. TWO queries, not one — `collectionRepository.loadAll()`
+#          (every thread in `x_threads`, ~523 tweets of JSON, by far the larger payload) and a second
+#          `translationStore.loadAll()` — but no cold-start to pay: translate:check woke the compute
+#          one command earlier and Neon's autosuspend is minutes away. Two warm queries against one
+#          cold query is the same 120s of headroom, spent differently. The mining itself is regexes
+#          over strings already in memory; the corpus and the review file are local disk.
 #
-# The upper bound the rest of this directory argues for — timeout at or under half the fire period,
-# or one wedged run holds the unit active across the next OnCalendar= and systemd skips it — is not
-# close to binding here: 420s against a 604800s week is 1/1440th of the period.
-TimeoutStartSec=420
+#   300s — glossary:mine's Telegram half, identical reasoning to translate:check's, and NOT shared with
+#          it. Two separate processes each make their own send, so a Telegram outage can hang both,
+#          one after the other.
+#
+# 120 + 300 + 120 + 300 = 840. The retry inside notifyOps does not double either 300: a second attempt
+# only happens when the first got a real response back, and a response means it did not hang. The one
+# shape that overruns this is Telegram answering slowly AND then hanging the plain-text retry, and at
+# that point being killed is the right answer.
+#
+# The upper bound the rest of this directory argues for — timeout at or under half the fire period, or
+# one wedged run holds the unit active across the next OnCalendar= and systemd skips it — is still
+# nowhere near binding: 840s against a 604800s week is 1/720th of the period.
+TimeoutStartSec=840
 
 # Wrapped in herald-run-logged.sh for the reason every other unit is, and more so than any of them:
 # journald on this box holds roughly eight minutes of history (it rotates on every backwards clock
 # step, and this machine's WSL2 host sync and timesyncd both step the clock constantly), so a report
 # printed at 06:53 on Monday is unreadable by 07:05 and the next one is seven days away. This is also
-# the only unit here whose SUCCESSFUL output is the entire point — the Telegram notice is a summary,
-# and `%h/.herald/logs/herald-translate-check/` is where the full grouped list of drifts and
-# overrides actually lives when someone wants to read them item by item.
+# the only unit here whose SUCCESSFUL output is the entire point — the Telegram notices are summaries,
+# and `%h/.herald/logs/herald-translate-check/` is where the full grouped list of drifts and overrides
+# actually lives when someone wants to read them item by item, alongside the line naming the review
+# file `glossary:mine` wrote.
 #
 # Argument order is that wrapper's contract, not a convention: `$1` is the unit name and everything
 # after it is the command, run verbatim. Reversed, the wrapper names its log directory after pnpm and
@@ -162,3 +224,29 @@ TimeoutStartSec=420
 # `bash deploy/herald-deploy.sh` must have run (landing this commit in %h/.herald/app) BEFORE this
 # unit file is copied into ~/.config/systemd/user/.
 ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n %h/.herald/bin/pnpm translate:check --notify
+
+# The second half of the digest, through the SAME wrapper with the same %n. Two consequences worth
+# stating, because both are properties of herald-run-logged.sh rather than of this file:
+#
+#   - TWO log files per fire, not one. The wrapper stamps `RUN_STAMP` per process, so each ExecStart=
+#     gets its own `%h/.herald/logs/herald-translate-check/<stamp>.log` with its own started/exited
+#     header pair. They sort adjacent (same fire, seconds apart) and carry the same `invocation` id —
+#     systemd assigns one per unit START, not per Exec line — so the pair is still attributable to one
+#     fire, which is exactly what deploy/herald-notify-failure.sh's attribution check needs.
+#   - The 60-run retention cap is per unit directory, so this unit's history is now ~30 fires rather
+#     than 60. At a weekly cadence that is still over half a year, which is far past the point anyone
+#     reads back to.
+#
+# On a failing first command the second never runs, so the newest file by name IS the failure — the
+# ordering the hook assumes still holds.
+#
+# `--notify` for the same reason the line above carries it: off by default, so without it every fire
+# writes a review file into a tree nobody is watching and exits 0. It sends one grouped message naming
+# the tiers and the review file's absolute path, and NOTHING when there are no candidates — so a clean
+# week still costs zero interruptions even though this unit now runs two notifying commands.
+#
+# No flags beyond it, and there are none to pass: `glossary:mine` has no `--since`, no `--status` and
+# no `--limit`. The standing whole-ledger view is the only view it has, deliberately, for the same
+# reason `translate:check` is not narrowed here — the question is "what has never been decided?", not
+# "what came up last week?".
+ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n %h/.herald/bin/pnpm glossary:mine --notify
