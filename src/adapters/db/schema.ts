@@ -297,6 +297,35 @@ const STATEMENTS: readonly string[] = [
     floor text,
     reported_at text not null
   )`,
+
+  // credential_liveness — LivenessObservation (status/liveness.ts). One row, id 'singleton',
+  // upserted by whatever last called `GET /api/diagnostics/live` (the daily `creds:check`, a
+  // `deploy:smoke`, or the board's own [지금 확인]).
+  //
+  // What it is for: liveness is observable from exactly one place — inside the deployment, where the
+  // credential is — and the board renders later, somewhere else. On 2026-08-10 the deployment's
+  // Google, Typefully and Telegram credentials answered 401 for four days while the header showed
+  // every key `설정됨`, because presence is all `/api/status` could see. This is the deployment
+  // *recording* what it observed so that screen can read it.
+  //
+  // Why not a field computed at read time: the probes are ~11 outbound requests under a five-second
+  // deadline, and `/api/status` is called on every board load and after every 1차 mutation.
+  // `apiHandlers.ts`'s own comment on the diagnostics route refuses that trade in writing.
+  //
+  // Why its own table rather than `lineage`: `lineage` is `item_id NOT NULL, content NOT NULL` and
+  // models per-item content events; a credential observation has neither, and `pnpm lineage
+  // --activity` would grow a row per date forever.
+  //
+  // One row, not one per probe run, for the reason `translate_floor_reports` gives for its own: what
+  // a reader needs is the latest observation and how old it is. `probes` is JSON text — `[{ key,
+  // status, detail }]`, the three fields the board renders — and every string in it was already
+  // redacted by `liveProbes.ts` before it left that module. `observed_at` is never null: a status
+  // without its instant reads as though it had just been checked.
+  `create table if not exists credential_liveness (
+    id text primary key,
+    probes text not null,
+    observed_at text not null
+  )`,
 ];
 
 export async function applySchema(db: Db): Promise<void> {

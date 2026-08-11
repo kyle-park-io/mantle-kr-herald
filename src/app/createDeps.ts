@@ -66,6 +66,61 @@ import { TypefullyDraftLookup } from "../adapters/send/TypefullyDraftLookup";
 import type { DraftLookup } from "../ports/DraftLookup";
 import { createGoogleAuth } from "../adapters/drive/createGoogleAuth";
 import { runLiveProbes, buildLiveProbeInput, type LiveProbeResult } from "../doctor/liveProbes";
+import { PgCredentialLiveness } from "../adapters/store/PgCredentialLiveness";
+import { summarizeLiveness, type LivenessObservation } from "../status/liveness";
+
+/**
+ * How long `probeLiveness` below waits for the credential observation to land before giving up on
+ * it and answering anyway. The `pg` `Pool` behind `db` (`createDb.ts`, `vercel/entry.ts`,
+ * `serve-hosted.ts`) sets neither `connectionTimeoutMillis` nor `query_timeout`, so a connection
+ * that stalls rather than errors — pool exhaustion, a blackholed socket, Neon mid-restart — would
+ * otherwise hang this call with nothing to bound it.
+ *
+ * The number is sized against what the write actually is, not guessed: one indexed single-row
+ * `upsert`, the cheapest write Postgres does. The only extra latency a HEALTHY connection can add
+ * on top of that is Neon waking a suspended compute — Neon's own docs put that at "a few hundred
+ * milliseconds" — and this deployment's Vercel region (`sin1`) and Neon project region
+ * (`ap-southeast-1`, `docs/ko/deploy.md`) are the same Singapore hop every other query already
+ * makes, so there is no cross-region RTT to add on top. 2s is generous headroom over that combined
+ * worst case. It is also well inside `runLiveProbes`' own 5s `DEFAULT_TIMEOUT_MS` (`liveProbes.ts`),
+ * which exists for the identical reason (no `maxDuration` in `vercel.json`, so an unbounded hang
+ * becomes a platform 504 indistinguishable from a deployment too old to have this route) — so a
+ * stalled write cannot quietly turn that same promise into a lie for `probeLiveness` specifically.
+ */
+const LIVENESS_WRITE_TIMEOUT_MS = 2_000;
+
+/**
+ * Races `promise` against `ms`, rejecting with a plain, sayable message if the timer wins. Does not
+ * — cannot — cancel `promise` itself: `Db.query` has no cancellation hook, so a write that loses
+ * this race keeps running in the background and either lands late or fails on its own later, either
+ * way harmlessly (the `.then` below still consumes its settlement, so a late rejection never
+ * surfaces as an unhandled one). What this buys is bounding how long the CALLER waits — see
+ * `LIVENESS_WRITE_TIMEOUT_MS` for why `probeLiveness` needs exactly that.
+ *
+ * A second copy of `withDeadline` in `src/doctor/liveProbes.ts` rather than an import of it: that
+ * module's own header names its contract as two exports, `runLiveProbes` and `buildLiveProbeInput`,
+ * and `withDeadline` — like the private `DeadlineError` it rejects with — is deliberately not one of
+ * them. Importing it would mean widening that module's surface to reuse a five-line race, for a
+ * caller that does not even want the same failure shape: `withDeadline` rejects with a `DeadlineError`
+ * naming *what* timed out, where this rejects with a plain `Error` naming the millisecond bound —
+ * the two are worded for different readers (a probe report vs. a `console.warn`), not accidentally
+ * different.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`did not settle within ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 /** Which route set an entry point serves. See `prepareConversionRun`'s construction below — this is
  *  the one axis the route set currently varies on. */
@@ -282,14 +337,52 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     ];
   })();
 
+  /** Reads and (from `probeLiveness` below) writes the deployment's last credential observation —
+   *  see that class's own doc comment for the one-writer rule. */
+  const credentialLiveness = new PgCredentialLiveness(db);
+
   /**
    * Live credential checks — the counterpart to `integrations` above, which only reports presence.
    *
    * Both halves come from `src/doctor/liveProbes.ts`, including the environment-reading half. This
    * used to be a verbatim copy of `src/cli/doctor.ts`'s block, and a copy is exactly what that
    * module's header rules out: the drifted one would be this one, the one running in production.
+   *
+   * Records what it just observed before answering, which is what makes the daily `creds:check` and
+   * every `deploy:smoke` populate the board's badge for free — no new command, no new unit, and no
+   * second place that knows how to probe.
+   *
+   * The write is best-effort and deliberately cannot fail the call: this route's whole purpose is to
+   * answer when things are broken. Bounded by `LIVENESS_WRITE_TIMEOUT_MS`, and not just against a
+   * throw — the same reasoning `runLiveProbes`' own deadline rests on applies here too, see that
+   * constant's comment.
    */
-  const probeLiveness = async (): Promise<LiveProbeResult[]> => runLiveProbes(buildLiveProbeInput());
+  const probeLiveness = async (): Promise<LiveProbeResult[]> => {
+    const probes = await runLiveProbes(buildLiveProbeInput());
+    try {
+      await withTimeout(
+        credentialLiveness.write({
+          observedAt: new Date().toISOString(),
+          probes: probes.map(({ key, status, detail }) => ({ key, status, detail })),
+        }),
+        LIVENESS_WRITE_TIMEOUT_MS,
+      );
+    } catch (err) {
+      console.warn(`[diagnostics] could not record the credential observation: ${(err as Error).message}`);
+    }
+    return probes;
+  };
+
+  /** The read above, degraded to `undefined` rather than allowed to take `/api/status` down with it —
+   *  the same window, and the same argument, as `readFloorReport`. */
+  const readLiveness = async (): Promise<LivenessObservation | undefined> => {
+    try {
+      return await credentialLiveness.read();
+    } catch (err) {
+      console.warn(`[status] could not read the credential liveness observation: ${(err as Error).message}`);
+      return undefined;
+    }
+  };
 
   const linkCfg: PublishLinkConfig = {};
   if (storageMode === "cloud") {
@@ -329,11 +422,13 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     // the Lark term. `pnpm status` reads them in this same order, for this same reason — hence one
     // sequential round trip here rather than a sixth entry in the `Promise.all` above.
     const threads = await stores.collectionRepository.loadAll();
-    // Not in the `Promise.all` above either, but for a different reason than `threads`: this one is
-    // a plain single-row read with no ordering constraint at all. It sits here so the two reads
-    // whose ORDER is load-bearing stay visibly adjacent and nothing later mistakes this for part of
-    // that pairing.
+    // Not in the `Promise.all` above either, but for a different reason than `threads`: these next
+    // two are plain single-row reads, each with no ordering constraint of its own — not on `threads`,
+    // and not on each other. They sit here, after `threads`, so the one pair above whose ORDER is
+    // load-bearing stays visibly adjacent and nothing later mistakes either of these for part of that
+    // pairing.
     const floorReport = await readFloorReport();
+    const liveness = await readLiveness();
     const sync = syncSummary({ translations, entries, render: renderFor });
     return {
       storageMode,
@@ -357,6 +452,7 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       dbEnv,
       sendsEnabled,
       conversionEnabled,
+      liveness: liveness === undefined ? undefined : summarizeLiveness(liveness, sendsEnabled),
     };
   };
 

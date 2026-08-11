@@ -5,6 +5,7 @@ import { createDeps } from "../../src/app/createDeps";
 import { handleApi, type ApiDeps } from "../../src/adapters/web/apiHandlers";
 import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
 import { PgTranslateFloorReport } from "../../src/adapters/store/PgTranslateFloorReport";
+import { PgCredentialLiveness } from "../../src/adapters/store/PgCredentialLiveness";
 import type { Db } from "../../src/adapters/db/Db";
 import { VALID_PASSWORD_HASH } from "../support/authFixtures";
 
@@ -261,6 +262,136 @@ describe("createDeps", () => {
       // derived from tables that are all still there.
       expect(status.funnel.translated).toBeDefined();
       expect(status.sync).toBeDefined();
+    });
+  });
+
+  describe("credential liveness", () => {
+    /**
+     * Every env var `buildLiveProbeInput()` (`liveProbes.ts`) can read across the seven probes it
+     * builds — cleared for this whole block, the same guard `the send flag` above applies to
+     * `HERALD_SENDS_ENABLED`. Without this, a developer who has exported the deployment's own env
+     * (`set -a; . .env`) and runs `pnpm test` would have `deps.probeLiveness()` below make up to
+     * seven live outbound calls against production credentials — exactly what an ordinary `vitest
+     * run` must never do (`vitest.probe.config.ts`'s whole reason to exist as a separate config).
+     */
+    const PROBE_ENV_KEYS = [
+      "GOOGLE_AUTH_MODE",
+      "GOOGLE_OAUTH_REFRESH_TOKEN",
+      "GOOGLE_OAUTH_CLIENT_ID",
+      "GOOGLE_OAUTH_CLIENT_SECRET",
+      "GOOGLE_SA_KEY_FILE",
+      "GDRIVE_REVIEW_FOLDER_ID",
+      "GDRIVE_APPROVED_FOLDER_ID",
+      "GSHEET_ID",
+      "LARK_APP_ID",
+      "LARK_APP_SECRET",
+      "TYPEFULLY_API_KEY",
+      "TYPEFULLY_SOCIAL_SET_ID",
+      "TELEGRAM_BOT_TOKEN",
+    ] as const;
+    let savedProbeEnv: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+      savedProbeEnv = Object.fromEntries(PROBE_ENV_KEYS.map((k) => [k, process.env[k]]));
+      for (const k of PROBE_ENV_KEYS) delete process.env[k];
+    });
+    afterEach(() => {
+      for (const k of PROBE_ENV_KEYS) {
+        if (savedProbeEnv[k] === undefined) delete process.env[k];
+        else process.env[k] = savedProbeEnv[k];
+      }
+    });
+
+    /**
+     * A `Db` that answers a real 42P01 for `credential_liveness` and forwards everything else to
+     * `real` — NOT a genuine `drop table`. `createTestDb`'s pool truncates every name in
+     * `TABLE_NAMES` on release (see that file's own comment), so a real drop here would fail this
+     * test's own teardown instead of the assertion below, same as the reason
+     * `the scheduler's reported translation floor > degrades to unknown...` above injects rather
+     * than drops.
+     */
+    function missingCredentialLivenessTable(real: Db): Db {
+      return {
+        query: async (sql, params) => {
+          if (sql.includes("credential_liveness")) throw new Error('relation "credential_liveness" does not exist');
+          return real.query(sql, params);
+        },
+        tx: (fn) => real.tx(fn),
+      };
+    }
+
+    it("records what it just probed, so every caller of the diagnostics route populates the row", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      const probes = await deps.probeLiveness();
+      // Pins this describe block's own precondition: with `PROBE_ENV_KEYS` cleared above, every one
+      // of the seven probes must come back `skipped` — never a live call — so this test (and every
+      // other one below that calls the real `probeLiveness`) cannot silently start spending
+      // production credentials if that guard ever stops covering a key `liveProbes.ts` reads.
+      expect(probes).toHaveLength(7);
+      expect(probes.every((p) => p.status === "skipped")).toBe(true);
+      const observation = await new PgCredentialLiveness(db).read();
+      expect(observation?.probes.map((p) => p.key)).toContain("google_auth");
+      expect(observation?.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it("still answers with the probes when recording them throws", async () => {
+      // The route exists to answer when things are broken. A diagnostic that fails because it could
+      // not write its own answer down is the same mistake as one that 500s because a probe failed,
+      // which `diagnosticsRoute.test.ts` already pins against.
+      db = await createTestDb();
+      const deps = createDeps({ db: missingCredentialLivenessTable(db), routes: "local" });
+      await expect(deps.probeLiveness()).resolves.toBeInstanceOf(Array);
+    });
+
+    it("returns the probes promptly rather than hanging when the write stalls", async () => {
+      // The other axis a bounded write has to cover, and the one `missingCredentialLivenessTable`
+      // above cannot exercise: a `Db.query` that never settles at all — a stalled connection (pool
+      // exhaustion, a blackholed socket, Neon mid-restart), not one that answers with an error.
+      // `LIVENESS_WRITE_TIMEOUT_MS` (`createDeps.ts`) is what stops this from hanging `probeLiveness`
+      // — and therefore `GET /api/diagnostics/live` itself — indefinitely.
+      db = await createTestDb();
+      const stallingDb: Db = { query: () => new Promise<never>(() => {}), tx: (fn) => db!.tx(fn) };
+      const deps = createDeps({ db: stallingDb, routes: "local" });
+      // `performance.now()`, not `Date.now()` — monotonic, so a wall-clock step mid-test cannot
+      // manufacture (or hide) a slow result. See `tests/cli/claudeSpawnKill.test.ts`'s own comment
+      // on this exact substitution.
+      const startedAt = performance.now();
+      const probes = await deps.probeLiveness();
+      // The exact number here does not matter — a hang is unbounded, so anything comfortably above
+      // the 2s write budget proves the same thing a tighter bound would. What matters is that this
+      // stays well short of "hanging": 5s is 2.5x the budget, generous enough not to flake in a
+      // fork-contended CI suite, and still an assertion that fails if the bound were ever dropped or
+      // made unbounded again.
+      expect(performance.now() - startedAt).toBeLessThan(5_000);
+      expect(probes.every((p) => p.status === "skipped")).toBe(true);
+    });
+
+    it("reports no liveness at all on a database that has never been probed", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      expect((await deps.loadStatus()).liveness).toBeUndefined();
+    });
+
+    it("grades a recorded observation into the status payload", async () => {
+      db = await createTestDb();
+      await new PgCredentialLiveness(db).write({
+        observedAt: "2026-08-11T06:23:04.000Z",
+        probes: [{ key: "google_auth", status: "dead", detail: "400 invalid_grant" }],
+      });
+      const deps = createDeps({ db, routes: "local" });
+      const status = await deps.loadStatus();
+      expect(status.liveness?.worst).toBe("fail");
+      expect(status.liveness?.dead[0]).toMatchObject({ key: "google_auth", tier: "publish" });
+    });
+
+    it("degrades to no liveness rather than 500ing the header when the table is missing", async () => {
+      // The hosted deployment is the one reader that does not apply the schema at startup, so between
+      // a Vercel deploy and the next `pnpm db:migrate` this code talks to a database without the
+      // table. An uncaught 42P01 there renders no header at all. Same window `readFloorReport` closes.
+      db = await createTestDb();
+      const deps = createDeps({ db: missingCredentialLivenessTable(db), routes: "local" });
+      await expect(deps.loadStatus()).resolves.toMatchObject({ liveness: undefined });
     });
   });
 });

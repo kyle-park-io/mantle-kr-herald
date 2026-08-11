@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 /**
  * A stand-in for `RenderingsView` with its own internal state (a mount counter, via an
@@ -35,7 +35,7 @@ import { App } from "../src/App";
  */
 const NO_SCHEDULER_COLLECTED = { items: 0, rows: 0, breakdown: { total: 0, reach: { kind: "unknown" } } };
 
-function stubFetch() {
+function stubFetch(extra: Record<string, unknown> = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/api/translations")) return new Response(JSON.stringify([]), { status: 200 });
@@ -55,15 +55,27 @@ function stubFetch() {
           integrations: [],
           sheetLinks: {},
           dbEnv: "development",
+          ...extra,
         }),
         { status: 200 },
       );
     }
     if (url.endsWith("/api/publish/state")) return new Response(JSON.stringify([]), { status: 200 });
+    // The re-probe route [지금 확인] calls — never read for its body (App.tsx re-reads /api/status
+    // instead), so an empty probes array is enough for every test that does not click the button.
+    if (url.endsWith("/api/diagnostics/live")) return new Response(JSON.stringify({ probes: [] }), { status: 200 });
     throw new Error(`unexpected fetch: ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+/**
+ * A thin wrapper over `stubFetch` for tests that only need to vary the `/api/status` body —
+ * merges `extra` into it rather than duplicating the dispatch above.
+ */
+function stubFetchWithStatus(extra: Record<string, unknown>) {
+  return stubFetch(extra);
 }
 
 /**
@@ -496,5 +508,185 @@ describe("App's 수집 breakdown card", () => {
     expect(el.textContent).toContain("2026-06-01 09:00 KST");
     expect(el.textContent).toContain("다릅니다");
     expect(el.textContent).toContain("⚠");
+  });
+});
+
+/**
+ * The chip beside the mode pill (Task 5's `livenessChip`), the hover card's key-by-key detail
+ * (`livenessHeadline` + `probeLabel`), and the [지금 확인] button that re-probes and re-reads
+ * `/api/status`. `stubFetchWithStatus` merges a `liveness` summary into an otherwise-ordinary
+ * status body so each test states only what differs.
+ *
+ * Waits are on the [지금 확인] button (unconditionally rendered once `status` loads), not on
+ * `storageMode`'s text — the hover card's own "현재 local 모드" note already repeats that word a
+ * second time, so `findByText("local")`/`findByText("cloud")` would always be ambiguous here.
+ */
+describe("App's liveness chip", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows no liveness chip when the last observation found everything alive", async () => {
+    stubFetchWithStatus({ liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 7 } });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    expect(await screen.findByRole("button", { name: "지금 확인" })).toBeTruthy();
+    expect(screen.queryByText(/응답 없음/)).toBeNull();
+  });
+
+  /**
+   * A Telegram-only install: three probes contacted, four skipped for missing config. Before this
+   * fix, `contacted` (then `total`) was `observation.probes.length`, so the hover card would have
+   * printed "7개 모두 응답" here — a false green one line below the false green this whole feature
+   * exists to remove. The card must report what was actually asked.
+   */
+  it("counts only the probes actually contacted, not every probe key this build knows about", async () => {
+    stubFetchWithStatus({ liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 3 } });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    expect(await screen.findByText(/3개 모두 응답/)).toBeTruthy();
+    expect(screen.queryByText(/7개 모두 응답/)).toBeNull();
+  });
+
+  it("shows a red chip naming the tier when a publishing credential is dead", async () => {
+    stubFetchWithStatus({
+      liveness: {
+        observedAt: new Date().toISOString(),
+        worst: "fail",
+        dead: [{ key: "google_auth", tier: "publish", severity: "fail", detail: "400 invalid_grant" }],
+        contacted: 7,
+      },
+    });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    expect(await screen.findByText("⚠ 발행 키 1개 응답 없음")).toBeTruthy();
+  });
+
+  it("names the dead credential and its reason in the hover card", async () => {
+    stubFetchWithStatus({
+      liveness: {
+        observedAt: new Date().toISOString(),
+        worst: "fail",
+        dead: [{ key: "google_auth", tier: "publish", severity: "fail", detail: "400 invalid_grant" }],
+        contacted: 7,
+      },
+    });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    expect(await screen.findByText("Google 인증")).toBeTruthy();
+    expect(screen.getByText("400 invalid_grant")).toBeTruthy();
+  });
+
+  it("re-probes and re-reads the status when [지금 확인] is clicked", async () => {
+    const fetchMock = stubFetchWithStatus({
+      liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 7 },
+    });
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    await screen.findByRole("button", { name: "지금 확인" });
+    fetchMock.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
+    // Order is the load-bearing part of this flow — the deployment must record what it observed
+    // (`/api/diagnostics/live`) before the graded summary is re-read (`/api/status`), or the second
+    // request could race the first and read back a stale observation.
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map(([input]) => String(input));
+      const liveIndex = urls.indexOf("/api/diagnostics/live");
+      const statusIndex = urls.indexOf("/api/status");
+      expect(liveIndex).toBeGreaterThanOrEqual(0);
+      expect(statusIndex).toBeGreaterThan(liveIndex);
+    });
+  });
+
+  /**
+   * Task 4's own pinned state: a database that has never been probed reports no `liveness` at all —
+   * not a contrived fixture, the ordinary state of a fresh deployment. The very first [지금 확인]
+   * can fail (server error, or a session that lapsed mid-click), and `checkError`'s only render path
+   * used to sit inside `{status.liveness && (...)}` — which never runs when `status.liveness` is
+   * undefined, so the operator this button exists to help most (nothing has ever looked) saw the
+   * button quietly return to its resting label with nothing on screen saying anything went wrong.
+   */
+  it("shows the failure inline when the very first check fails, with nothing ever observed yet", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/translations")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.endsWith("/api/publish/state")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.endsWith("/api/status")) {
+        return new Response(
+          JSON.stringify({
+            storageMode: "local",
+            funnel: {
+              collected: NO_SCHEDULER_COLLECTED,
+              translated: { items: 0, rows: 0 },
+              converted: { items: 0, rows: 0 },
+              rendered: { items: 0, rows: 0 },
+              published: { items: 0, rows: 0 },
+            },
+            sync: { synced: 0, needsRepublish: 0, unpublished: 0 },
+            availableTargets: ["local"],
+            integrations: [],
+            sheetLinks: {},
+            dbEnv: "development",
+            // `liveness` genuinely absent — JSON has no way to send `undefined`, so an omitted key is
+            // what "never probed" actually looks like on the wire (matches Task 4's fixture for this
+            // exact state).
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/api/diagnostics/live")) {
+        return new Response(JSON.stringify({ error: "credential probe timed out" }), { status: 500 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    await screen.findByRole("button", { name: "지금 확인" });
+    fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
+    expect(await screen.findByText("⚠ credential probe timed out")).toBeTruthy();
+  });
+
+  /**
+   * The other half of the fix above: once an observation exists, a later failed re-check must not
+   * blank out what the earlier successful one found — `recheckLiveness` deliberately does not call
+   * `setStatus` on failure, so the preserved summary and the new error render side by side.
+   */
+  it("keeps the last-known summary and adds the failure beside it when a later check fails", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/translations")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.endsWith("/api/publish/state")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.endsWith("/api/status")) {
+        return new Response(
+          JSON.stringify({
+            storageMode: "local",
+            funnel: {
+              collected: NO_SCHEDULER_COLLECTED,
+              translated: { items: 0, rows: 0 },
+              converted: { items: 0, rows: 0 },
+              rendered: { items: 0, rows: 0 },
+              published: { items: 0, rows: 0 },
+            },
+            sync: { synced: 0, needsRepublish: 0, unpublished: 0 },
+            availableTargets: ["local"],
+            integrations: [],
+            sheetLinks: {},
+            dbEnv: "development",
+            liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 7 },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/api/diagnostics/live")) {
+        return new Response(JSON.stringify({ error: "credential probe timed out" }), { status: 500 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+    await screen.findByRole("button", { name: "지금 확인" });
+    fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
+    expect(await screen.findByText("⚠ credential probe timed out")).toBeTruthy();
+    // "방금 전" (reportAge's under-a-minute wording) — the preserved summary from the fixture above,
+    // proof `setStatus` was not called on this failed re-check.
+    expect(screen.getByText("7개 모두 응답 · 방금 전 확인")).toBeTruthy();
   });
 });

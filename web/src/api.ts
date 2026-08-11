@@ -130,6 +130,13 @@ export const api = {
   publishState: () => json<PublishStateRow[]>("/api/publish/state"),
 
   /**
+   * Runs the deployment's credential probes — ~11 outbound requests under a five-second deadline, so
+   * only ever from a click. The response body is not read: the route records what it observed, and
+   * the caller re-reads `/api/status` for the graded summary rather than grading in the browser.
+   */
+  liveness: () => json<{ probes: unknown[] }>("/api/diagnostics/live"),
+
+  /**
    * How much Typefully publishing headroom is left, for the board banner. Always resolves — a
    * non-401 error from the server itself already answers 200 with `{ error }` (unreadable headroom
    * is information for the banner, not a client error), and the `catch` below absorbs everything

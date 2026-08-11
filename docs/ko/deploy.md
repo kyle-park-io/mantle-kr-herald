@@ -206,6 +206,16 @@ done
 warn), Sheet는 헤더 링크뿐이라 언제나 warn. **미설정(`skipped`)은 fail도 warn도 아닙니다** —
 존재 여부는 `deploy:check`의 몫이고, Telegram만 쓰는 설치가 Lark가 없다고 빨개지면 안 됩니다.
 
+**이 표를 읽는 곳은 이제 셋입니다** — `deploy:smoke`의 `live:` 줄, `pnpm creds:check`의 텔레그램
+알림, 그리고 **대시보드 헤더의 배지**. 표 자체는 `src/doctor/liveSeverity.ts` 한 곳에만 있고,
+터미널용 채점기(`src/deploy/smokeChecks.ts`)와 보드용 채점기(`src/status/liveness.ts`의
+`summarizeLiveness`)가 거기서 같은 걸 가져다 씁니다 — 판정은 서버에서 끝나고, 화면 쪽은 색과 문구만
+고르지 등급을 다시 계산하지 않습니다. 게다가 보드는 **같은 관측을 읽습니다**: 이 라우트(`GET
+/api/diagnostics/live`)가 찔러본 직후 자기가 본 걸 `credential_liveness` 한 행에 기록하고, 보드는
+그 행을 읽을 뿐 다시 확인하지 않습니다. 그래서 여기서 fail인 자격 증명이 보드에서 warn으로 보이는
+일은 있을 수 없고, 방금 이 명령이 본 결과가 그대로 헤더에 뜹니다
+([`env.md`](env.md) §7의 "같은 카드의 `키 응답`").
+
 > **`live:` 줄이 하나도 없고 `credential liveness`가 fail이면** 배포본이 `GET
 > /api/diagnostics/live`를 모르는 옛 버전이거나, 라우트가 에러를 답한 것입니다. detail에 실제 HTTP
 > 코드가 찍히니 그것부터 보세요 — 401이면 배포본이 아니라 `deploy:smoke`가 세션을 안 보낸 것이고,
@@ -236,6 +246,15 @@ warn), Sheet는 헤더 링크뿐이라 언제나 warn. **미설정(`skipped`)은
 06:23에 돌리는 `herald-creds.timer`가 그 자리를 맡습니다**(설치와 등급표는
 [`team-runbook.md`](team-runbook.md)의 "크레덴셜 상시 점검"). 같은 `live:` 판정을 쓰지만 배포
 파이프라인이 아니라 타이머에서 돌고, 발행 크레덴셜이 죽어 있으면 텔레그램으로 알립니다.
+
+**그리고 그 답이 이제 화면에도 남습니다.** 두 명령의 결과는 터미널과, 이 컴퓨터가 8분마다
+갈아치우는 journal에만 있었습니다 — 정작 팀이 하루 종일 보는 화면은 아무 말도 안 했고,
+2026-08-10에 나흘 동안 그랬습니다. 이제 대시보드 헤더의 배지가 위에서 기록된 그 행을 읽어서, 죽은
+키가 있으면 알약 옆에 ⚠ 칩을 띄웁니다. **26시간 넘게 아무도 안 찔러봤으면 그것도 노랑으로
+뜹니다** — 이 컴퓨터가 꺼져 있으면 실패하는 유닛이 없어서 `OnFailure=` 알림도 안 오고, 그 침묵이
+보이는 곳은 보드뿐이기 때문입니다([`env.md`](env.md) §7). 기존 설치는 `pnpm db:migrate`가 한 번
+돌아야 새 표(`credential_liveness`)가 생깁니다 — `deploy/herald-deploy.sh`가 배포마다 돌리니
+스케줄러 쪽은 자동입니다.
 
 ---
 

@@ -11,6 +11,9 @@ import { ALL_TRANSLATION_STATUSES } from "../../src/domain/translation/models";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
 import type { FormatWarning } from "../../src/app/FormatVariants";
 import type { CollectedTally, FunnelCounts } from "../../src/status/pipeline";
+import type { LivenessSummary, DeadProbe } from "../../src/status/liveness";
+import { EXPECTED_PROBE_KEYS, PROBE_TIER, type ProbeTier } from "../../src/doctor/liveSeverity";
+import { PROBE_LABEL, TIER_LABEL, TIER_ORDER } from "../../web/src/liveness";
 import {
   FLOOR_VAR,
   WATCH_UNIT,
@@ -48,6 +51,7 @@ import {
   type IntakeTerm as WebIntakeTerm,
   WATCH_UNIT as WEB_WATCH_UNIT,
   FLOOR_VAR as WEB_FLOOR_VAR,
+  type LivenessSummary as WebLivenessSummary,
 } from "../../web/src/types";
 
 /**
@@ -384,6 +388,63 @@ describe("web type mirror", () => {
    */
   it("excludes a row retired via droppedAt too — a shape the web mirror never receives", () => {
     expect(deliveredToRoom({ status: "sent", droppedAt: "2026-01-01T00:00:00.000Z" })).toBe(false);
+  });
+
+  /**
+   * The liveness badge's payload mirror. Unlike every other pair above, this one is deliberately
+   * NOT a same-shape mirror both ways: `key` and `tier` are `ProbeKey`/`ProbeTier` unions on the
+   * server and plain `string` on the web (`LivenessSummary`'s own doc comment in `web/src/types.ts`
+   * says why — the browser has no `ProbeKey` union, and an unrecognised key from a deployment one
+   * probe ahead of this bundle must render as its raw name rather than fail to type). So this test
+   * checks what a widened-on-purpose mirror can still promise: the key sets match at both levels (a
+   * field added to `LivenessSummary` or `DeadProbe` cannot silently vanish from the badge), a real
+   * server payload is assignable to the web type (the direction data actually flows on the wire),
+   * and — the check with real teeth — every `ProbeKey` the server can grade into has a Korean label
+   * in `PROBE_LABEL`, so a probe added to `liveProbes.ts` without a matching label here fails this
+   * test instead of rendering the raw English key on the header.
+   */
+  it("mirrors LivenessSummary field-for-field, and labels every probe the server can grade", () => {
+    const summaryKeys: SameKeys<WebLivenessSummary, LivenessSummary> = true;
+    const deadKeys: SameKeys<WebLivenessSummary["dead"][number], DeadProbe> = true;
+    const worstUnion: SameUnion<WebLivenessSummary["worst"], LivenessSummary["worst"]> = true;
+    const severityUnion: SameUnion<
+      WebLivenessSummary["dead"][number]["severity"],
+      DeadProbe["severity"]
+    > = true;
+
+    const serverPayload: LivenessSummary = {
+      observedAt: "2026-08-11T06:23:04.000Z",
+      worst: "fail",
+      dead: [{ key: "google_auth", tier: "publish", severity: "fail", detail: "401" }],
+      contacted: 7,
+    };
+    // The direction that matters at runtime: a real `/api/status` response has to type-check as the
+    // web mirror. The reverse assignment does not compile, on purpose — see the comment above.
+    const asWebPayload: WebLivenessSummary = serverPayload;
+    expect(asWebPayload.dead[0]?.key).toBe("google_auth");
+
+    expect([summaryKeys, deadKeys, worstUnion, severityUnion]).toEqual([true, true, true, true]);
+    for (const key of EXPECTED_PROBE_KEYS) {
+      expect(PROBE_LABEL[key], `Korean label for ${key}`).toBeTruthy();
+    }
+    expect(Object.keys(PROBE_LABEL).sort()).toEqual([...EXPECTED_PROBE_KEYS].sort());
+  });
+
+  /**
+   * Fix round 1: the pin above checks probe *keys* but had nothing checking probe *tiers* — which is
+   * exactly what let `livenessChip` default an unrecognised tier to `"publish"` and then filter
+   * `dead` for zero matching entries, rendering a self-contradictory chip (red tone, a claimed
+   * publish failure, and a count of zero). `PROBE_TIER`'s value set is `ProbeTier` in practice, but
+   * `SameUnion` pins the *type* — a `ProbeTier` added in `src/doctor/liveSeverity.ts` with no probe
+   * using it yet still fails this test, the same exhaustiveness argument `PROBE_TIER`'s own doc
+   * comment makes for why it is a `Record` rather than two arrays.
+   */
+  it("mirrors every tier the server can grade into, and labels each of them", () => {
+    const tierUnion: SameUnion<(typeof TIER_ORDER)[number], ProbeTier> = true;
+    expect(tierUnion).toBe(true);
+    // Every tier actually assigned to a probe today has a Korean label — the runtime half of the
+    // same check, since a compile-time union match says nothing about a table's own keys.
+    expect(Object.keys(TIER_LABEL).sort()).toEqual([...new Set(Object.values(PROBE_TIER))].sort());
   });
 
   /** [복사] hands a human the `_paste` spelling; the canonical text would paste raw markdown. */
