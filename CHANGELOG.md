@@ -129,6 +129,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     borrows the colour a dead credential uses. Ages past a day read coarsely (`⚠ 확인 1일 전`), since
     the age formatter the 수집 card already uses buckets by whole days rather than growing a second one.
 
+### Changed
+
+- **The steering sync no longer treats `db:export`'s few-shot files as configuration.**
+  `translation/few-shot.json` and `conversion/few-shot.<type>.json` are git-ignored and sit in the
+  steering tree, so both derived lists — `FsConfigFileStore.list()` (every non-`.example.` file) and
+  `deploy:freeze` (every `git check-ignore` hit) — called them config and shipped all seven: into the
+  Drive bundle on `config:push`, and into the deploy checkout the scheduler runs from. Since the
+  hosted-writes cutover the corpus is the `few_shot_examples` table; nothing reads those files at
+  runtime, so what shipped was a snapshot frozen at cutover, reported as success. `db-import.ts`'s
+  own doc comment had predicted exactly this. **They are not deleted** — `db:export` writes them and
+  `db:import` reads them, and that is the documented rollback path, untouched here. A shared
+  `isSteeringConfigFile` (`src/domain/config/steering.ts`) is now the one place that separates the
+  two kinds, used by `config:push`/`config:pull` and `deploy:freeze` alike. `translation/tm.json` is
+  the near miss the predicate is written around: it is a `FewShotStore` in the code too, but
+  `translate:prepare` and `translate:align` genuinely read it, so it keeps syncing. `config:pull`
+  also drops these paths out of an *incoming* bundle, since every snapshot pushed before this change
+  still carries them and would otherwise write a stale corpus back for `db:import` to resurrect. The
+  deploy side of the freeze listing is deliberately left unfiltered, so copies earlier deploys
+  already froze show up once as `- ` removals and are swept rather than sitting there forever.
+
 ### Fixed
 
 - **The hosted board no longer offers a `[local]` 발행 button, and refuses the request outright if
@@ -155,6 +175,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     replaces. **The local board is untouched**: `pnpm serve` builds `routes: "local"`, the target
     stays in `availableTargets`, the button stays live, and the write lands in `output/publish/local/`
     exactly as before.
+- **Documentation that had drifted from the code.** `skipIfLocal` gates nine commands, not seven —
+  `x:reconcile` and `x:link` were added after the docs were written (`docs/ko/env.md`,
+  `docs/ko/artifacts.md`, `docs/ko/quickstart.md`, `.env.example`), and the two new ones now carry
+  the "`local` 모드면 스킵" note in the command table like the other seven. `pnpm status` was
+  documented as reading `output/` files without consulting the storage mode; the mode half was right
+  but it reads the database exclusively through `createStores(db)`, which is also why it fails
+  outright on an unmigrated database. `docs/ko/env.md`'s `HERALD_STORAGE_MODE=local` bullet said
+  everything lives under `output/`, contradicting the `DATABASE_URL` box six lines above it that
+  correctly says the ledgers are in Postgres in either mode. `docs/ko/artifacts.md` §3's command
+  table names pipeline ledgers by their `output/*.json` export filenames, which now has a note at the
+  top of the table saying so — and the formatting-stage rows, which named the files as files, name
+  `PgConversionStore`/`PgTranslationStore`/`PgFormattingStore` instead (their `pending.json`,
+  worksheet and archive halves were accurate and are unchanged). `docs/ko/capabilities.md` used "8"
+  for two different things one sentence apart: `PrepareTranslations` still takes the last 8 curated
+  few-shots, and what the TM work replaced was the rule that those 8 were *all* the prompt got.
+  `.vercelignore` cross-referenced `createDeps.ts:356` for the `conversionEnabled` guard, which has
+  since moved — replaced with a search anchor rather than another line number. And
+  `docs/ko/setup/steering.md` said `pnpm doctor` "only checks that the file exists": it has checked
+  content since `skeletonSteeringFiles` landed, warning on an empty glossary or a guide still
+  identical to its skeleton.
 
 ## [0.5.0] - 2026-08-11
 

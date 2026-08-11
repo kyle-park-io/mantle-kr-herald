@@ -39,6 +39,35 @@ describe("PullConfig", () => {
     expect(res!.changes).toEqual([{ path: "translation/tm.json", kind: "new" }]);
   });
 
+  /**
+   * Every bundle pushed before the few-shot files stopped counting as configuration still carries
+   * them, and `files.list()` no longer reports the local copies — so without this filter a pull
+   * writes a corpus snapshot frozen at cutover back into the tree, reports it `new` on every run,
+   * and leaves `db:import` a stale corpus to resurrect into `few_shot_examples`.
+   */
+  it("ignores db:export few-shot artifacts carried by a pre-cutover bundle", async () => {
+    const legacy = assembleConfigBundle(
+      [
+        { path: "translation/tm.json", content: "NEW" },
+        { path: "translation/few-shot.json", content: "[STALE]" },
+        { path: "conversion/few-shot.x.json", content: "[STALE]" },
+      ],
+      () => "t",
+    );
+    const f = fakeFiles([{ path: "translation/tm.json", content: "OLD" }]);
+    const res = await new PullConfig(f.store, driveWith(legacy), "/arch", () => "2026-08-11T00-00-00").run("FOLDER");
+    expect(f.written.map((w) => w.path)).toEqual(["translation/tm.json"]);
+    expect(res!.pulled).toBe(1);
+    expect(res!.changes).toEqual([{ path: "translation/tm.json", kind: "modified" }]);
+  });
+
+  it("--dry-run does not offer the few-shot artifacts as changes either", async () => {
+    const legacy = assembleConfigBundle([{ path: "translation/few-shot.json", content: "[STALE]" }], () => "t");
+    const f = fakeFiles([]);
+    const res = await new PullConfig(f.store, driveWith(legacy), "/arch").run("FOLDER", { dryRun: true });
+    expect(res!.changes).toEqual([]);
+  });
+
   it("returns undefined when there is no snapshot", async () => {
     const f = fakeFiles([]);
     const drive: ConfigDrive = { upload: async () => ({ id: "x" }), latest: async () => undefined, download: async () => "" };

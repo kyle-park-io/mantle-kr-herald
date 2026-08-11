@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { diffEnv, diffFiles, isEmptyDiff, formatFreezeDiff, type NameDiff } from "../deploy/configFreeze";
+import { isSteeringConfigFile } from "../domain/config/steering";
 
 /** The same three the old `link_ignored_config` walked, in the same order. */
 export const STEERING_DIRS = ["translation", "conversion", "keys"] as const;
@@ -65,9 +66,13 @@ function fail(message: string, code: number): never {
 }
 
 /**
- * Derived, never hardcoded: any git-ignored file in a checkout's steering directory is config, and
- * a steering file added later needs no edit here. `check-ignore` exits 1 when it matches nothing,
+ * Every git-ignored file in a checkout's steering directory — derived, never hardcoded, so a
+ * steering file added later needs no edit here. `check-ignore` exits 1 when it matches nothing,
  * which is not an error — it means the directory holds only committed examples.
+ *
+ * The raw listing. `steeringFilesIn` below is what callers want: git-ignored is *nearly* the same
+ * question as "is it configuration", but not quite, and the gap is the `db:export` few-shot
+ * artifacts.
  *
  * `tree` picks the symlink rule; see the `Tree` doc comment for why the two differ. On the
  * development side a dangling link is skipped, because `[ -f ]` and `readFileSync` both agree there
@@ -92,6 +97,30 @@ export function ignoredFilesIn(root: string, rel: string, tree: Tree): string[] 
   return names.filter((n) => ignored.has(join(dir, n))).sort();
 }
 
+/**
+ * The two of `STEERING_DIRS` whose git-ignored contents are not all configuration: they also hold
+ * the `few-shot*.json` files `pnpm db:export` writes for the rollback path. `keys/` is deliberately
+ * absent — everything git-ignored there is a credential, and a name-shaped filter over it could only
+ * ever drop one silently.
+ */
+const CORPUS_DIRS = new Set<string>(["translation", "conversion"]);
+
+/**
+ * `ignoredFilesIn` narrowed to what the deploy checkout should actually be *given*.
+ *
+ * **Asymmetric on purpose, and the asymmetry is the cleanup mechanism.** The development side is
+ * filtered, so a `db:export` artifact is never frozen into production. The deploy side is not, so
+ * copies frozen by earlier deploys still appear in `readSnapshot` — reported once as `- ` removals
+ * by `--check`, then swept by `apply()`, exactly as it already sweeps a file deleted upstream.
+ * Filtering both sides would instead leave every already-frozen copy sitting in the deploy checkout
+ * forever, invisible to the diff that is supposed to describe that tree.
+ */
+export function steeringFilesIn(root: string, rel: string, tree: Tree): string[] {
+  const names = ignoredFilesIn(root, rel, tree);
+  if (tree === "app" || !CORPUS_DIRS.has(rel)) return names;
+  return names.filter(isSteeringConfigFile);
+}
+
 export interface Snapshot {
   env: string | undefined;
   steering: Map<string, string>;
@@ -112,7 +141,7 @@ export function readSnapshot(dir: string, tree: Tree): Snapshot {
     : lstatSync(envPath, { throwIfNoEntry: false });
   const steering = new Map<string, string>();
   for (const rel of STEERING_DIRS) {
-    for (const name of ignoredFilesIn(dir, rel, tree)) {
+    for (const name of steeringFilesIn(dir, rel, tree)) {
       const path = join(dir, rel, name);
       const isLink = tree === "app" && lstatSync(path).isSymbolicLink();
       steering.set(
@@ -154,7 +183,7 @@ function apply(devDir: string, appDir: string): void {
   console.log("  freeze: .env");
 
   for (const rel of STEERING_DIRS) {
-    const wanted = ignoredFilesIn(devDir, rel, "dev");
+    const wanted = steeringFilesIn(devDir, rel, "dev");
     if (wanted.length > 0) mkdirSync(join(appDir, rel), { recursive: true });
     for (const name of wanted) {
       writeFrozen(join(appDir, rel, name), readFileSync(join(devDir, rel, name)), modeFor(`${rel}/${name}`));
@@ -163,7 +192,9 @@ function apply(devDir: string, appDir: string): void {
     // Only ever the git-ignored ones: the committed `*.example.*` files came from the clone, and
     // deleting them would leave the deploy checkout permanently dirty. Symlinks are in this listing
     // and copies are not exempt from it: `rmSync` on a link removes the link, never its target.
-    for (const stale of ignoredFilesIn(appDir, rel, "app")) {
+    // Unfiltered (see `steeringFilesIn`), so a `few-shot*.json` left by a pre-2026-08-11 freeze is
+    // in this listing, never in `wanted`, and therefore removed here.
+    for (const stale of steeringFilesIn(appDir, rel, "app")) {
       if (wanted.includes(stale)) continue;
       rmSync(join(appDir, rel, stale));
       console.log(`  remove: ${rel}/${stale}`);

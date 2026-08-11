@@ -248,3 +248,67 @@ describe("deploy:freeze and the two trees' opposite symlink rules", () => {
     expect(readFileSync(join(app, "translation", "glossary.json"), "utf8")).toBe(`{"a":1}`);
   });
 });
+
+// `translation/few-shot.json` and `conversion/few-shot.<type>.json` are git-ignored and sit in the
+// steering tree, so `git check-ignore` calls them configuration — but since the hosted-writes
+// cutover the corpus is the `few_shot_examples` table and nothing reads these files at runtime.
+// They are what `pnpm db:export` writes for the rollback path. Freezing them copied a dead snapshot
+// into the tree the scheduler runs from, growing on every approval and read by nothing.
+describe("deploy:freeze and the db:export few-shot artifacts", () => {
+  it("does not freeze them, and does not mention them in the diff", async () => {
+    await writeFile(join(dev, ".env"), "A=1\n");
+    await writeFile(join(app, ".env"), "A=1\n");
+    await writeFile(join(dev, "translation", "few-shot.json"), "[]");
+    await writeFile(join(dev, "conversion", "few-shot.x.json"), "[]");
+
+    const check = freeze("--check", "--dev", dev, "--app", app);
+    expect(check.stdout).not.toContain("few-shot");
+    expect(check.stdout).toContain("steering: unchanged");
+    expect(check.status).toBe(0);
+
+    expect(freeze("--apply", "--dev", dev, "--app", app).status).toBe(0);
+    expect(existsSync(join(app, "translation", "few-shot.json"))).toBe(false);
+    expect(existsSync(join(app, "conversion", "few-shot.x.json"))).toBe(false);
+  });
+
+  it("still freezes tm.json, which IS read at runtime", async () => {
+    // The near miss: tm.json is a `FewShotStore` in the code too, and a `startsWith("few-shot")`-
+    // style filter that caught it would strip the translation-memory corpus out of every deploy —
+    // `translate:prepare` would then quietly prepare worksheets with no precedent pairs at all.
+    await writeFile(join(dev, ".env"), "A=1\n");
+    await writeFile(join(dev, "translation", "tm.json"), `[{"source":"a","target":"b"}]`);
+
+    const res = freeze("--apply", "--dev", dev, "--app", app);
+    expect(res.stdout).toContain("freeze: translation/tm.json");
+    expect(readFileSync(join(app, "translation", "tm.json"), "utf8")).toBe(`[{"source":"a","target":"b"}]`);
+  });
+
+  it("sweeps copies an earlier freeze already put in the deploy checkout", async () => {
+    // The migration case, and the reason the deploy side of the listing is deliberately NOT
+    // filtered: every deploy before this change left one of these in the tree. Filtering both sides
+    // would leave them there forever, invisible to the diff that describes that tree.
+    await writeFile(join(dev, ".env"), "A=1\n");
+    await writeFile(join(app, ".env"), "A=1\n");
+    await writeFile(join(dev, "translation", "few-shot.json"), "[]");
+    await writeFile(join(app, "translation", "few-shot.json"), "[]");
+
+    const check = freeze("--check", "--dev", dev, "--app", app);
+    expect(check.stdout).toContain("- translation/few-shot.json");
+    expect(check.status).toBe(2);
+
+    expect(freeze("--apply", "--dev", dev, "--app", app).status).toBe(0);
+    expect(existsSync(join(app, "translation", "few-shot.json"))).toBe(false);
+  });
+
+  it("does not filter keys/, where every git-ignored file is a credential", async () => {
+    // The carve-out is by directory, not by name alone: a name-shaped filter over `keys/` could only
+    // ever drop a credential silently, which is the one failure mode this whole command exists to
+    // rule out.
+    await writeFile(join(dev, ".env"), "A=1\n");
+    await writeFile(join(dev, "keys", "few-shot.json"), `{"private_key":"x"}`);
+
+    const res = freeze("--apply", "--dev", dev, "--app", app);
+    expect(res.stdout).toContain("freeze: keys/few-shot.json");
+    expect(readFileSync(join(app, "keys", "few-shot.json"), "utf8")).toBe(`{"private_key":"x"}`);
+  });
+});

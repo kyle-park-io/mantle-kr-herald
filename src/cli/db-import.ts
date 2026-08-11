@@ -120,11 +120,16 @@ async function loadIncoming(outputRoot: string, configRoot: string | undefined):
  *   `formatted/overrides.json`, the three `publish/*.json` ledgers, `lineage/*.jsonl` — the pipeline
  *   proper.
  * - `translation/few-shot.json`, `conversion/few-shot.<type>.json` — **not** configuration despite
- *   living in the config tree: `SaveTranslation.run` and `ApproveRendering.promoteVariant` write
- *   these on every approval. After Task 17 rewires those two to `PgFewShotStore`, nothing writes
- *   the files any more, so leaving them on disk would make `config:push` keep reporting success
- *   while syncing a snapshot frozen at cutover, and `few_shot_examples` would start (and silently
- *   stay) empty for every `translate:prepare`/`convert:prepare` prompt from that point on.
+ *   living in the config tree: `SaveTranslation.run` and `ApproveRendering.promoteVariant` used to
+ *   write these on every approval. Both now write `PgFewShotStore`, so nothing writes the files any
+ *   more, and leaving them on disk made `config:push` keep reporting success while syncing a
+ *   snapshot frozen at cutover.
+ *
+ *   That half is resolved: `isSteeringConfigFile` (`src/domain/config/steering.ts`) is what
+ *   `config:push`/`config:pull` and `deploy:freeze` now filter by, so the steering sync no longer
+ *   mistakes them for config. **The files themselves stay**, because this module and `db-export.ts`
+ *   are the rollback path and these two lines are how the corpus travels — addressed by exact path
+ *   below, never through that predicate.
  *
  * Not read through a `Json*` class directly but read here regardless: every source above is read
  * through `loadIncoming`, which is the single place this module and `previewImport` below both go
