@@ -1,6 +1,7 @@
 import type { ConfigFileStore } from "../ports/ConfigFileStore";
 import type { ConfigDrive } from "../ports/ConfigDrive";
 import { parseConfigBundle } from "../domain/config/bundle";
+import { isSteeringConfigFile } from "../domain/config/steering";
 
 export interface PullChange {
   path: string;
@@ -25,7 +26,14 @@ export class PullConfig {
   async run(folderId: string, opts: { dryRun?: boolean } = {}): Promise<PullResult | undefined> {
     const latest = await this.drive.latest(folderId, "steering-config-");
     if (!latest) return undefined;
-    const incoming = parseConfigBundle(await this.drive.download(latest.id));
+    // Filtered on the way IN, not only on the way out. Every bundle pushed before the few-shot files
+    // stopped being treated as configuration still carries them, and `files.list()` no longer
+    // reports the local copies — so an unfiltered pull would write a corpus snapshot frozen at
+    // cutover back into the tree, report it as `new` every single time (nothing local to compare
+    // against), and hand `db:import` a stale corpus to resurrect into `few_shot_examples`.
+    const incoming = parseConfigBundle(await this.drive.download(latest.id)).filter((f) =>
+      isSteeringConfigFile(f.path.slice(f.path.lastIndexOf("/") + 1)),
+    );
     const current = new Map((await this.files.list()).map((f) => [f.path, f.content]));
     const changes: PullChange[] = incoming.map((f) => ({
       path: f.path,

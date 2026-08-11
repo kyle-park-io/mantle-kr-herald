@@ -72,10 +72,13 @@ echo "  deps: pnpm install --frozen-lockfile"
 (cd "$APP_DIR" && pnpm install --frozen-lockfile --silent)
 
 # ── 3. Freeze the git-ignored configuration ───────────────────────────────────────────────────────
-# Copies .env and every git-ignored file under translation/, conversion/ and keys/ from the
-# development checkout. The list is DERIVED, never hardcoded — `git check-ignore` decides, so a
-# steering file added later is picked up with no edit here. Step 0 already showed and gated the
-# change; this is the write.
+# Copies .env and the git-ignored steering configuration under translation/, conversion/ and keys/
+# from the development checkout. The list is DERIVED, never hardcoded — `git check-ignore` decides,
+# so a steering file added later is picked up with no edit here. The one subtraction from that is
+# `translation/few-shot.json` / `conversion/few-shot.<type>.json`: git-ignored and in the steering
+# tree, but `pnpm db:export` artifacts rather than configuration (the corpus is the
+# `few_shot_examples` table), so freezing them shipped a dead snapshot. Step 0 already showed and
+# gated the change; this is the write.
 pnpm deploy:freeze --apply --dev "$DEV_DIR" --app "$APP_DIR"
 
 # ── 4. Schema ─────────────────────────────────────────────────────────────────────────────────────

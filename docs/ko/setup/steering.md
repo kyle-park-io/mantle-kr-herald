@@ -8,8 +8,8 @@
 ## 1. 왜 git에 없나
 
 - 이 저장소는 **공개(public)** 입니다. 팀 용어집과 승인된 번역 예시가 그대로 공개됩니다.
-- 검수하면서 승인할 때마다 few-shot 파일이 자동으로 늘어납니다. 추적되면 일상적인 승인이
-  매번 워킹트리를 더럽힙니다.
+- 예전에는 검수 승인마다 few-shot 파일이 자동으로 늘어나 일상적인 승인이 매번 워킹트리를
+  더럽혔습니다(지금 그 코퍼스는 데이터베이스에 있습니다 — 바로 아래).
 
 추적되는 것은 `*.example.*` 스켈레톤뿐입니다. 실제 파일은 `.gitignore`로 제외됩니다.
 
@@ -17,14 +17,23 @@
 
 | 파일 | 갱신 방식 |
 | --- | --- |
-| `translation/few-shot.json` | **자동** — `translate:save --approve` 시 예시로 승격 |
-| `conversion/few-shot.{x,announcement,explainer,casual,kol,pr}.json` | **자동** — 대시보드 2차 검수에서 승인할 때 승격 |
 | `translation/tm.json` | **반자동** — `tm:promote`(사람이 pair를 확인한 뒤) |
 | `translation/glossary.json` | **수기** — `pnpm glossary add …` 또는 직접 편집 |
 | `translation/style-guide.md` · `locale.json` · `conversion/*.md` · `checklist.*.md` | **수기** — 직접 편집만 |
 
-few-shot(자동 성장분)만 승인으로 자라고, 용어집·문체·로케일·채널 지침은 **의도적으로 사람이 큐레이션**합니다
-(승인된 번역에서 용어를 자동 추출하면 잘못된 역어가 섞일 수 있어서). 자동으로 자라는 만큼 §6 백업이 중요합니다.
+용어집·문체·로케일·채널 지침은 **의도적으로 사람이 큐레이션**합니다(승인된 번역에서 용어를 자동
+추출하면 잘못된 역어가 섞일 수 있어서). 즉 이 디렉터리에서 사람 손 없이 자라는 파일은 이제
+없습니다 — 그래도 이 머신에만 있는 것은 여전하므로 §6 백업은 그대로 중요합니다.
+
+> **few-shot 코퍼스는 더 이상 이 디렉터리의 파일이 아닙니다.** 승인이 키우는 예시 모음은
+> 데이터베이스의 `few_shot_examples` 테이블입니다 — `translate:save --approve`와 대시보드 2차
+> 검수 승인은 `PgFewShotStore`에 쓰고, `translate:prepare`/`convert:prepare`도 거기서 읽습니다.
+>
+> `translation/few-shot.json`과 `conversion/few-shot.<타입>.json`이 디렉터리에 보일 수 있는데,
+> 그것은 **`pnpm db:export`가 롤백용으로 써 놓은 산출물**이지 스티어링 설정이 아닙니다. 런타임에
+> 읽는 코드는 없고, `pnpm config:push`도 `pnpm deploy:freeze`도 이 두 이름은 제외합니다. 지우지는
+> 마세요 — `db:export` → `db:import` 롤백 경로의 입력입니다. (`tm.json`은 헷갈리기 쉽지만
+> **진짜 설정**이고, 그대로 동기화됩니다.)
 
 ## 2. 어떻게 받나 — 두 갈래입니다
 
@@ -40,31 +49,38 @@ pnpm config:init
 
 ### Mantle KR 팀원
 
-> ⚠️ **`pnpm config:init`을 실행하지 마세요.** 빈 스켈레톤이 생기고, `pnpm doctor`는
-> "파일이 있다"며 **✓ 를 띄웁니다.** 그 상태로 번역하면 팀 용어집·문체 규칙이 하나도 적용되지
-> 않은 결과가 나오는데, 아무 경고도 나지 않습니다.
+> ⚠️ **`pnpm config:init`을 실행하지 마세요.** 빈 스켈레톤이 생깁니다. 지금은 `pnpm doctor`가
+> 그 상태를 `warn`으로 잡아 주지만(§3), 팀 파일을 받기 전에 스켈레톤부터 깔아 두면 `config:init`은
+> **이미 있는 파일을 덮어쓰지 않으므로** 나중에 진짜 파일을 풀 때 뭘 덮어써야 하는지 헷갈립니다.
 
-팀 담당자에게 **실제 파일 19개를 받으세요.** 압축해서 전달받아 저장소 루트에 그대로 풉니다.
+팀 담당자에게 **실제 파일 12개를 받으세요.** 압축해서 전달받아 저장소 루트에 그대로 풉니다.
 
 ```
 translation/glossary.json          conversion/x.md
 translation/style-guide.md         conversion/announcement.md
 translation/locale.json            conversion/explainer.md
-translation/few-shot.json          conversion/casual.md
-translation/tm.json                conversion/kol.md
+translation/tm.json                conversion/casual.md
+                                   conversion/kol.md
                                    conversion/pr.md
-                                   conversion/few-shot.{x,announcement,explainer,casual,kol,pr}.json
                                    conversion/checklist.{x,announcement}.md
 ```
 
 정확한 목록은 `pnpm config:push`가 묶는 파일과 같습니다 — `translation/`과 `conversion/`에서
-`*.example.*`를 뺀 전부입니다.
+`*.example.*`와 `few-shot*.json`(§1의 `db:export` 산출물)을 뺀 전부입니다. few-shot 코퍼스는 이
+꾸러미에 들어 있지 않아도 됩니다 — 데이터베이스에 있습니다.
 
 ## 3. 제대로 받았는지 확인
 
-`pnpm doctor`는 **파일이 있는지만** 봅니다. 내용이 비었는지는 모릅니다. 그러니 직접 확인하세요.
+`pnpm doctor`는 존재 여부만 보지 않습니다. **내용도 봅니다** — 용어집이 빈 배열(`[]`)이거나 가이드가
+아직 `*.example.*` 스켈레톤과 글자 그대로 같으면 `Steering config`를 `warn`으로 내리고 어느 파일인지
+이름을 찍습니다(`present but empty: …`, `src/doctor/steering.ts`의 `skeletonSteeringFiles`).
+파일이 아예 없으면 그건 `fail`입니다.
+
+다만 `doctor`가 잡는 것은 **"스켈레톤 그대로냐"** 까지입니다. 스켈레톤에서 한 줄만 고쳐 놓아도
+`ok`가 되므로, 실제로 쓸 만한 내용인지는 눈으로 확인하세요.
 
 ```bash
+pnpm doctor            # Steering config가 ✓ 인지, present but empty 경고가 붙는지
 pnpm glossary          # "glossary: N entries" — N이 두 자리여야 정상. 0이면 스켈레톤입니다.
 wc -l translation/style-guide.md conversion/x.md conversion/announcement.md
 ```
@@ -81,8 +97,7 @@ wc -l translation/style-guide.md conversion/x.md conversion/announcement.md
 
 위 Lark 문서는 **이관 시점의 초기 레퍼런스**입니다. 거기를 고쳐서 되돌리는 흐름은 없습니다 —
 갱신은 언제나 이쪽이고, 밖으로 나가는 것은 §6의 `config:push` 스냅샷입니다. 방향이 한쪽인 이유는
-단순합니다: 승인으로 자동으로 자란 few-shot은 Lark에 없고, 정본이 두 군데면 어느 쪽이 최신인지
-아무도 모르게 됩니다.
+단순합니다: 정본이 두 군데면 어느 쪽이 최신인지 아무도 모르게 됩니다.
 
 **고쳤으면 바로 `pnpm config:push`를 돌리세요.**
 
@@ -119,8 +134,9 @@ done
 
 ## 6. 백업
 
-git은 더 이상 이 파일들을 지켜주지 않고(의도한 설계) few-shot 플라이휠로 계속 자라므로, **정기 백업이
-필요합니다.**
+git은 더 이상 이 파일들을 지켜주지 않고(의도한 설계) 이 머신 한 대에만 있으므로, **정기 백업이
+필요합니다.** few-shot 플라이휠은 이제 데이터베이스에 있어 이 백업의 대상이 아닙니다 — 그쪽은
+`pnpm state:push`/`db:export`가 챙깁니다.
 
 **권장 — Google Drive 스냅샷 (`config:push`/`config:pull`):**
 

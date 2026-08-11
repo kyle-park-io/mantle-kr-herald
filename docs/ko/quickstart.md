@@ -84,7 +84,7 @@ pnpm status
 
 - `pnpm install` — 의존성 설치.
 - `cp .env.example .env` — 환경변수 스켈레톤 복사. 기본값 `HERALD_STORAGE_MODE=local`이라
-  그대로 두면 `drive:init`/`sheet:init`/`targets:list`/`history:record`/`impressions:record`/`metrics:record`/`kol-telegram:record`는 스킵되지만 나머지는
+  그대로 두면 `drive:init`/`sheet:init`/`targets:list`/`history:record`/`impressions:record`/`metrics:record`/`kol-telegram:record`/`x:reconcile`/`x:link`는 스킵되지만 나머지는
   전부 동작합니다 — `pnpm drive:publish`도 포함해서, 결과물은 `output/publish/local/`에 쌓입니다.
   **`DATABASE_URL`은 비워두면 안 됩니다** — `pnpm doctor`가 `✗ Database`로 표시하고
   `pnpm status`는 아예 실패합니다.
@@ -117,8 +117,9 @@ pnpm translate:prepare --limit 3
 pnpm translate:save --id <itemId> --file <korean.txt> --approve
 ```
 
-`--approve`를 붙이면 상태가 `approved`로 바뀌고 동시에 `translation/few-shot.json`에 예시로
-승격됩니다 — 다음 배치의 번역 품질이 이 예시를 참고해 조금씩 좋아집니다.
+`--approve`를 붙이면 상태가 `approved`로 바뀌고 동시에 few-shot 코퍼스(데이터베이스의
+`few_shot_examples` 테이블)에 예시로 승격됩니다 — 다음 배치의 번역 품질이 이 예시를 참고해 조금씩
+좋아집니다.
 
 ## 4. 우리 팀에 맞추기
 

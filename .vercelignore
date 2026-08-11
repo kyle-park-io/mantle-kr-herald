@@ -28,8 +28,9 @@
 
 # --- steering corpus at the REPO ROOT (not `src/domain/conversion`, which the function needs).
 #     Read through `FileConversionConfig`/`JsonGlossaryStore`, which `createDeps` builds ONLY under
-#     `if (conversionEnabled)` — false on the hosted route set, where `convert-prepare` is a 404
-#     (src/app/createDeps.ts:356). The deployment cannot reach these.
+#     `if (conversionEnabled)` — `conversionEnabled` is `routes === "local"` (src/app/createDeps.ts,
+#     search `const conversionEnabled`), false on the hosted route set, where `convert-prepare` is a
+#     404. The deployment cannot reach these.
 /conversion/
 /translation/
 

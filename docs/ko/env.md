@@ -68,10 +68,10 @@
 - **무엇** — 승인 산출물이 어디에 보존되는가. `local` 또는 `cloud`
 - **기본값** — 없음. 추론하지 않습니다
 - **비어 있으면 / 다른 값이면** — 기동 거부 (`src/storage/mode.ts:18`)
-- **`local`** — 전부 `output/` 아래. 클라우드 크레덴셜이 하나도 필요 없습니다. **§3을 통째로 비워둬도 됩니다**
+- **`local`** — **승인 산출물**이 `output/publish/local/` 아래. 클라우드 크레덴셜이 하나도 필요 없습니다. **§3을 통째로 비워둬도 됩니다**. 위 `DATABASE_URL` 상자에 적힌 대로 원장(번역·변환·렌더링·발송 이력)은 이 모드에서도 Postgres에 있습니다 — 이 값이 가르는 것은 발행 산출물의 목적지 하나뿐입니다
 - **`cloud`** — Drive가 기록 원본. `drive:publish`가 거기로 올리고, 시트 명령이 살아납니다
 - **C(Vercel)에서 `local`이면** — **기동 거부.** `assertCloudStorage` (`api/[...path].ts`). 2026-08-03 이전에는 조용히 떠서 승인 문서를 함수의 임시 파일시스템에 쓰고, 업로드는 성공했다고 보고하고, 링크는 전부 죽어 있었습니다
-- **`local`일 때 스킵되는 명령 7개** — `drive:init`, `sheet:init`, `targets:list`, `history:record`, `impressions:record`, `metrics:record`, `kol-telegram:record`. `<명령>: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)`를 출력하고 **exit 0**입니다. 실패가 아니라 할 일이 없는 겁니다 (`src/cli/skipIfLocal.ts`)
+- **`local`일 때 스킵되는 명령 9개** — `drive:init`, `sheet:init`, `targets:list`, `history:record`, `impressions:record`, `metrics:record`, `kol-telegram:record`, `x:reconcile`, `x:link`. `<명령>: local mode — skipped (set HERALD_STORAGE_MODE=cloud to enable)`를 출력하고 **exit 0**입니다. 실패가 아니라 할 일이 없는 겁니다. 정확한 목록은 `skipIfLocal()` 호출부 그 자체입니다 — `grep -rn skipIfLocal src/cli` (`src/cli/skipIfLocal.ts`)
 - **`drive:publish`는 스킵되지 않습니다** — local 모드에서는 Drive 대신 파일시스템을 대상으로 삼아 계속 동작합니다
 
 > `local` 모드에서 `--target google`이나 `--target both`를 주면 **스킵이 아니라 실패**합니다.

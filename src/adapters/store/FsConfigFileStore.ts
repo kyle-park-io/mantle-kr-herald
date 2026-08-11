@@ -2,8 +2,7 @@ import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ConfigFile } from "../../domain/config/bundle";
 import type { ConfigFileStore } from "../../ports/ConfigFileStore";
-
-const isExample = (name: string) => name.includes(".example.");
+import { isSteeringConfigFile } from "../../domain/config/steering";
 
 export class FsConfigFileStore implements ConfigFileStore {
   constructor(
@@ -11,11 +10,17 @@ export class FsConfigFileStore implements ConfigFileStore {
     private readonly repoRoot: string,
   ) {}
 
+  /**
+   * Every steering-config file in the configured directories. `isSteeringConfigFile` is what keeps
+   * the `db:export` few-shot artifacts out — see its module doc; without it `config:push` uploads a
+   * corpus snapshot nothing reads and `backup()` (and so `config:pull`'s pre-write backup) treats
+   * the same dead files as team assets worth preserving.
+   */
   async list(): Promise<ConfigFile[]> {
     const out: ConfigFile[] = [];
     for (const d of this.dirs) {
       for (const entry of await readdir(d.abs, { withFileTypes: true })) {
-        if (!entry.isFile() || isExample(entry.name)) continue;
+        if (!entry.isFile() || !isSteeringConfigFile(entry.name)) continue;
         const content = await readFile(join(d.abs, entry.name), "utf8");
         out.push({ path: `${d.rel}/${entry.name}`, content });
       }
