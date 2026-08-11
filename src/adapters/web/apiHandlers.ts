@@ -41,6 +41,14 @@ export interface StatusView {
    *  `src/status/pipeline.ts`'s `funnelCounts`, which the CLI's own funnel is built from too. */
   funnel: FunnelCounts;
   sync: { synced: number; needsRepublish: number; unpublished: number };
+  /**
+   * Which publish targets this deployment will actually accept — the only thing that enables each
+   * `발행` button (`TranslationDetail.tsx`). Two axes, not one: `google`/`lark` are present when their
+   * credentials load, and `local` when the route set is `local` (`createDeps.ts`'s
+   * `localPublishEnabled` computes that one boolean and uses it for both this field and
+   * `publishOne`'s own refusal, the same pairing `sendsEnabled` below uses, so an offered button and
+   * an accepted request can never disagree).
+   */
   availableTargets: ("local" | "google" | "lark")[];
   integrations: IntegrationStatus[];
   /** Header links to the team workbooks. A key is absent when its id is not configured. */

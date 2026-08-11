@@ -29,6 +29,17 @@ describe("resolveTargets", () => {
     expect(resolveTargets("both,google", "cloud")).toEqual(["google", "lark"]);
   });
 
+  /**
+   * Load-bearing, not incidental: `pnpm drive:publish --target both,local` in cloud mode is how an
+   * operator keeps a readable copy on their own disk beside the Drive upload, and this line is what
+   * says so.
+   *
+   * It is also the reason the hosted deployment's `local` refusal is NOT here. Hosted runs in cloud
+   * mode too, so a rule keyed on the mode could not tell these two apart without breaking this one —
+   * what differs is where the process runs, which is `routes`, a fact this `--target` parser has no
+   * access to and no business acquiring. That gate lives in `createDeps.ts` (`localPublishEnabled`,
+   * pinned in `tests/app/createDeps.test.ts`), the one place that knows the entry point.
+   */
   it("allows local alongside cloud targets in cloud mode", () => {
     expect(resolveTargets("both,local", "cloud")).toEqual(["google", "lark", "local"]);
   });

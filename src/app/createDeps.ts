@@ -277,8 +277,44 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
 
   const storageMode = loadStorageMode();
 
+  /**
+   * Whether `local` is offered as a publish target at all — the third "computed once, used for both"
+   * gate on this axis, after `sendsEnabled` and `conversionEnabled` above, and it is that shape for
+   * the same reason: it feeds BOTH `StatusView.availableTargets` (the only thing that enables the
+   * board's `[local] 발행` button — `TranslationDetail.tsx`) and `publishOne`'s own refusal below, so
+   * the button and the route can never disagree about whether this deployment publishes to disk.
+   *
+   * Withheld on `hosted` because there is no disk there to publish to. The Vercel Function runs the
+   * `dist/api-entry.js` bundle (`api/[...path].ts`), so `paths.ts`'s `REPO_ROOT` — resolved from the
+   * running module's own location, deliberately not `process.cwd()` — is `/var/task`, and
+   * `createUploaders` hands `local` a `LocalFileUploader(paths.publishLocalDir)` pointed at
+   * `/var/task/output/publish/local/`, which is read-only. And nothing about that write was worth
+   * saving even had it succeeded: `GET /api/publish/local/*`, the route that reads those files back,
+   * is served by `HttpServer.ts` alone and sits deliberately outside `handleApi` (it needs the
+   * filesystem and its own session gate), so the hosted entry point — which only ever calls
+   * `handleApi` — has no route to serve one from, and the instance's filesystem leaves with the
+   * instance regardless. Publishing to disk is not degraded on hosted; it is meaningless there.
+   *
+   * Not fixed in `resolveTargets` (`src/cli/uploaders.ts`), the other candidate layer. That function
+   * takes a storage MODE, and the mode is not what is wrong here: `cloud` + `local` is a legitimate
+   * combination the CLI relies on and `tests/cli/uploaders.test.ts` pins ("allows local alongside
+   * cloud targets in cloud mode") — it is how `pnpm drive:publish --target both,local` keeps a
+   * readable copy on the operator's own disk beside the Drive upload. What differs on hosted is WHERE
+   * the process runs, which is the fact `routes` carries and a `--target` parser shared with the CLI
+   * has no business learning; teaching it would mean a third argument threaded through every CLI
+   * call site to express a property none of them vary on. `assertCloudStorage` (`src/vercel/entry.ts`)
+   * is the same shape one level up and is why this is not caught there either: it fires once at
+   * startup against the mode, and hosted's mode is `cloud` — the correct value — so a per-request
+   * `target: "local"` never passes in front of it.
+   *
+   * `local` publishing on the local board is untouched by all of this: `pnpm serve` builds
+   * `routes: "local"`, the target stays in `availableTargets`, the button stays live, and the write
+   * lands in the repo's own `output/publish/local/` exactly as `src/cli/publish.ts` intends.
+   */
+  const localPublishEnabled = routes === "local";
+
   const usableTargets = ((): ("local" | "google" | "lark")[] => {
-    const targets: ("local" | "google" | "lark")[] = ["local"];
+    const targets: ("local" | "google" | "lark")[] = localPublishEnabled ? ["local"] : [];
     if (storageMode === "cloud") {
       try {
         loadGoogleAuthConfig();
@@ -456,12 +492,31 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     };
   };
 
-  const publishOne = async (itemId: string, target: string): Promise<PublishResult> =>
-    new PublishTranslations(
-      translationStore,
-      await createUploaders(resolveTargets(target, storageMode)),
-      publishStore,
-    ).run({ itemId });
+  const publishOne = async (itemId: string, target: string): Promise<PublishResult> => {
+    const targets = resolveTargets(target, storageMode);
+    // The other half of `localPublishEnabled` — see its own comment for why hosted has nowhere to
+    // write. Withholding the target from `availableTargets` only disables a button; this refuses the
+    // request, which is what a caller naming `local` directly still meets: a tab left open across the
+    // deploy that added this, a replayed request, `curl`. Unlike `sendToOutlet`, the whole field
+    // cannot be withheld to get this — publishing to Google/Lark is the hosted board's entire purpose
+    // — so the withholding has to be per target, inside the closure, before `createUploaders` can
+    // construct a `LocalFileUploader`.
+    //
+    // Throws rather than returning a `PublishResult`, because a result is exactly how this failure
+    // used to hide: `PublishTranslations` catches each uploader's error INTO `result.failures` and
+    // the route answers 200, so the EROFS write already came back as a 200 carrying
+    // `{ uploaded: 0, failed: 1 }` — a shape the board renders as an ordinary publish attempt that
+    // did not take. A throw reaches the entry points' own catch (`HttpServer.ts`, `vercel/entry.ts`),
+    // both of which hand a signed-in operator the message verbatim in a 500.
+    if (!localPublishEnabled && targets.includes("local")) {
+      throw new Error(
+        'publish target "local" is not available on the hosted deployment: it would write approved ' +
+          `documents to this function's read-only filesystem (${paths.publishLocalDir}), and no hosted ` +
+          "route serves them back. Publish to google or lark, or run this from the local board.",
+      );
+    }
+    return new PublishTranslations(translationStore, await createUploaders(targets), publishStore).run({ itemId });
+  };
 
   const loadTranslations = async () =>
     attachKind(await translationStore.loadAll(), await contentSource.loadPending(new Set()));

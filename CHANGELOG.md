@@ -129,6 +129,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     borrows the colour a dead credential uses. Ages past a day read coarsely (`⚠ 확인 1일 전`), since
     the age formatter the 수집 card already uses buckets by whole days rather than growing a second one.
 
+### Fixed
+
+- **The hosted board no longer offers a `[local]` 발행 button, and refuses the request outright if
+  one is sent anyway.** The button was live on Vercel and did something worse than nothing: `local`
+  resolves to a `LocalFileUploader` writing under `paths.publishLocalDir`, and inside the Function
+  `REPO_ROOT` is `/var/task` (the bundle Vercel runs is `dist/api-entry.js`), which is read-only —
+  so a click spent a round trip to attempt a write that could not land. Nothing said so, either:
+  `PublishTranslations` records each uploader's error into `result.failures` rather than rethrowing,
+  so the route answered **200** and the board rendered a dead publish as an ordinary attempt that did
+  not take. Even a successful write would have been pointless there — `GET /api/publish/local/*`, the
+  route that reads those files back, is served by `HttpServer.ts` outside `handleApi`, so the hosted
+  entry point has no way to serve one, and the instance's disk leaves with the instance.
+  - **Fixed where the deployment is known, not where the target is parsed.** `createDeps.ts` computes
+    one `localPublishEnabled` boolean from `routes` and uses it for BOTH `StatusView.availableTargets`
+    (which is the only thing that enables the button) and `publishOne`'s own refusal — the same
+    "computed once, used for both" pairing `sendsEnabled` and `conversionEnabled` already use, so an
+    offered button and an accepted request cannot disagree. `resolveTargets` was the wrong layer: it
+    keys on the storage MODE, and hosted's mode is `cloud`, the correct value — the same blind spot
+    that let `assertCloudStorage` (which checks the mode once at startup) miss this. Tightening it
+    there would also have broken `pnpm drive:publish --target both,local`, a real CLI use that keeps
+    a readable copy on the operator's own disk beside the Drive upload.
+  - **A request that still names `local` throws rather than returning a result.** That is the
+    difference between a 500 carrying a sayable reason and the 200-with-a-swallowed-failure this
+    replaces. **The local board is untouched**: `pnpm serve` builds `routes: "local"`, the target
+    stays in `availableTargets`, the button stays live, and the write lands in `output/publish/local/`
+    exactly as before.
+
 ## [0.5.0] - 2026-08-11
 
 ### Upgrading — action required for existing installs
