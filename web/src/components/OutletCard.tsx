@@ -336,24 +336,25 @@ export function OutletCard(props: {
           <MediaEditNoticeSlot text={fromEditor(text)} where="변환 원문" />
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          <button
-            className={btn}
-            disabled={busy || !groupDirty || groupApproved}
-            title={groupApproved ? APPROVED_LOCK : undefined}
-            onClick={() =>
-              run(async () => {
-                // Adopt what the server actually stored. `toCanonical` trims and collapses blank
-                // lines, so a save can legitimately return the string that was already there —
-                // and waiting for `group.text` to change would then leave the card `편집 중`
-                // forever, with 저장 inert and 승인 greyed until a reload.
-                const saved = await api.editRendering(itemId, type, channel, text);
-                setText(toEditor(saved.text));
-                await props.onGroupChanged();
-              })
-            }
-          >
-            저장
-          </button>
+          <Tip text={groupApproved ? APPROVED_LOCK : undefined}>
+            <button
+              className={btn}
+              disabled={busy || !groupDirty || groupApproved}
+              onClick={() =>
+                run(async () => {
+                  // Adopt what the server actually stored. `toCanonical` trims and collapses blank
+                  // lines, so a save can legitimately return the string that was already there —
+                  // and waiting for `group.text` to change would then leave the card `편집 중`
+                  // forever, with 저장 inert and 승인 greyed until a reload.
+                  const saved = await api.editRendering(itemId, type, channel, text);
+                  setText(toEditor(saved.text));
+                  await props.onGroupChanged();
+                })
+              }
+            >
+              저장
+            </button>
+          </Tip>
           {group.status === "approved" ? (
             // Same hover-swap control as 1차: one grid cell holds both labels so the button sizes to
             // the wider and never jumps. Approval has to be withdrawable here — the editor above is
@@ -377,19 +378,20 @@ export function OutletCard(props: {
               </span>
             </button>
           ) : (
-            <button
-              className={btnApprove}
-              disabled={busy || groupDirty}
-              title={groupDirty ? SAVE_FIRST : undefined}
-              onClick={() =>
-                run(async () => {
-                  await api.approveRendering(itemId, type, channel);
-                  await props.onGroupChanged();
-                })
-              }
-            >
-              승인하기
-            </button>
+            <Tip text={groupDirty ? SAVE_FIRST : undefined}>
+              <button
+                className={btnApprove}
+                disabled={busy || groupDirty}
+                onClick={() =>
+                  run(async () => {
+                    await api.approveRendering(itemId, type, channel);
+                    await props.onGroupChanged();
+                  })
+                }
+              >
+                승인하기
+              </button>
+            </Tip>
           )}
           <CopyButton
             id="group"
@@ -521,14 +523,19 @@ function CopyButton(props: {
   const many = (props.segments?.length ?? 0) > 1;
   const reason = props.disabledReason ?? (props.segments ? undefined : "붙여넣기용 텍스트를 아직 불러오지 못했습니다");
   return (
-    <button
-      className={btn}
-      disabled={!!reason}
-      title={reason ?? "붙여넣기용 텍스트를 복사합니다"}
-      onClick={() => props.segments && props.onCopy(props.segments.join("\n\n"))}
-    >
-      {props.copied === props.id ? "복사됨 ✓" : many ? `전체 복사 (${props.segments!.length})` : "복사"}
-    </button>
+    // `reason` is the `disabled` condition itself, so it cannot ride on a `title` — see `Tip`. The
+    // enabled-state line still can, and stays one: it is an ordinary hint on a live button, not an
+    // explanation of why the button will not respond.
+    <Tip text={reason}>
+      <button
+        className={btn}
+        disabled={!!reason}
+        title={reason === undefined ? "붙여넣기용 텍스트를 복사합니다" : undefined}
+        onClick={() => props.segments && props.onCopy(props.segments.join("\n\n"))}
+      >
+        {props.copied === props.id ? "복사됨 ✓" : many ? `전체 복사 (${props.segments!.length})` : "복사"}
+      </button>
+    </Tip>
   );
 }
 
@@ -619,14 +626,20 @@ function DestinationPreview(props: {
                       />
                     </span>
                   </div>
-                  <button
-                    className={`ml-auto ${btn}`}
-                    disabled={!!props.disabledReason}
-                    title={props.disabledReason}
-                    onClick={() => props.onCopy(key, s.text)}
-                  >
-                    {props.copied === key ? "복사됨 ✓" : "복사"}
-                  </button>
+                  {/* `ml-auto` on BOTH: whichever of the two is the flex item here has to carry it.
+                      `Tip` renders `children` alone when there is no reason, and then the button is
+                      that item; when a reason exists the wrapper is, and the button's own copy goes
+                      inert inside it. Dropping either one moves this button off the right edge in
+                      exactly one of the two states. */}
+                  <Tip text={props.disabledReason} className="ml-auto">
+                    <button
+                      className={`ml-auto ${btn}`}
+                      disabled={!!props.disabledReason}
+                      onClick={() => props.onCopy(key, s.text)}
+                    >
+                      {props.copied === key ? "복사됨 ✓" : "복사"}
+                    </button>
+                  </Tip>
                 </div>
                 <div className="max-h-56 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[13px] leading-relaxed text-ink/80">
                   {s.text}
@@ -998,9 +1011,11 @@ function Row(props: {
             // Mint, not red: this is the row's ordinary next step, and every action on this board
             // is irreversible in the same way — colouring the expected one as a hazard just makes
             // the palette meaningless. The confirm carries the warning. 재발송 keeps the red.
-            <button className={btnPrimary} disabled={blocked} title={dirty ? SAVE_FIRST : undefined} onClick={askSend}>
-              발송
-            </button>
+            <Tip text={dirty ? SAVE_FIRST : undefined}>
+              <button className={btnPrimary} disabled={blocked} onClick={askSend}>
+                발송
+              </button>
+            </Tip>
           ) : (
             <>
               <CopyButton
@@ -1010,14 +1025,15 @@ function Row(props: {
                 disabledReason={dirty ? SAVE_FIRST : undefined}
                 onCopy={(v) => props.onCopy(row.outletId, v)}
               />
-              <button
-                className={btn}
-                disabled={blocked}
-                title={dirty ? SAVE_FIRST : undefined}
-                onClick={() => run(async () => apply(await api.markOutlet(itemId, type, row.outletId, true)))}
-              >
-                전달함 ☐
-              </button>
+              <Tip text={dirty ? SAVE_FIRST : undefined}>
+                <button
+                  className={btn}
+                  disabled={blocked}
+                  onClick={() => run(async () => apply(await api.markOutlet(itemId, type, row.outletId, true)))}
+                >
+                  전달함 ☐
+                </button>
+              </Tip>
             </>
           )}
           {/*
@@ -1124,14 +1140,18 @@ function Row(props: {
               )
             )}
             {gate.showApprove && (
-              <button
-                className={btnApprove}
-                disabled={gate.approveDisabled}
-                title={props.draft !== row.text ? SAVE_FIRST : undefined}
-                onClick={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId)))}
-              >
-                승인하기
-              </button>
+              // The condition below is `rowEditorGate`'s own `changed`, which is half of
+              // `approveDisabled` (`busy || changed`) — so this reason and the disabling are the same
+              // fact, and it could never have rendered as a `title`.
+              <Tip text={props.draft !== row.text ? SAVE_FIRST : undefined}>
+                <button
+                  className={btnApprove}
+                  disabled={gate.approveDisabled}
+                  onClick={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId)))}
+                >
+                  승인하기
+                </button>
+              </Tip>
             )}
             {gate.showRevert && (
               <button

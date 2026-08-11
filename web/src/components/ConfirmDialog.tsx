@@ -160,10 +160,32 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
  * Not a native `title`: that renders as an OS tooltip after a delay, in a size nobody reads, and a
  * **disabled** button does not reliably fire hover at all — which is why the wrapper carries it
  * rather than the control.
+ *
+ * That last sentence is the whole reason this exists, and it is worth stating what it costs to
+ * ignore: a `title` whose condition ALSO appears in the control's `disabled` expression never
+ * renders. The message is in the markup, reads correctly in review, and no operator has ever seen
+ * it. Nine of them had accumulated that way across this board and 1차 — every one a "why can't I
+ * press this" message, which is exactly the moment the explanation was needed. Reach for `Tip`
+ * whenever the reason and the disabling share a condition; a plain `title` is fine only on a
+ * control that is still enabled when it carries one.
+ *
+ * `text: undefined` renders `children` alone rather than an empty card, so a call site can pass a
+ * conditional straight through (`text={dirty ? SAVE_FIRST : undefined}`) without wrapping the
+ * wrapper in a ternary. `className` lands on the wrapper because it becomes the laid-out element in
+ * its parent — a control positioned by its own `ml-auto`/`flex-1` hands that class over here.
  */
-export function Tip({ text, children }: { text: string; children: React.ReactNode }) {
+export function Tip({
+  text,
+  className,
+  children,
+}: {
+  text: string | undefined;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  if (text === undefined) return <>{children}</>;
   return (
-    <span className="group/tip relative inline-flex">
+    <span className={`group/tip relative inline-flex ${className ?? ""}`.trim()}>
       {children}
       <span className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 hidden w-64 rounded-lg border border-line bg-surface px-3 py-2 text-[12px] font-normal leading-relaxed text-muted shadow-lg group-hover/tip:block">
         {text}
