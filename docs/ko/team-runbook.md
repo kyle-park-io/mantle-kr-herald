@@ -812,7 +812,8 @@ bash deploy/herald-deploy.sh
 
 `origin/main`으로 하드 리셋하고, `pnpm install --frozen-lockfile`을 돌리고, git-ignored 스티어링
 설정(`.env`·`translation/`·`conversion/`·`keys/`)을 개발 체크아웃에서 배포 시점 사본으로 다시 채우고,
-`pnpm db:migrate`까지 실행합니다. 전부 멱등이라 몇 번을 돌려도 안전합니다.
+**참조 코퍼스를 스케줄러의 산출물 트리로 복사한 뒤**, `pnpm db:migrate`까지 실행합니다. 전부
+멱등이라 몇 번을 돌려도 안전합니다.
 
 - **설정은 링크가 아니라 배포 시점 사본입니다.** 예전에는 심볼릭 링크라 개발 체크아웃의 `.env`를
   고치는 순간 다음 타이머 발화가 그 값으로 돌았습니다. 지금은 `pnpm deploy:freeze`가 배포할 때
@@ -844,6 +845,22 @@ bash deploy/herald-deploy.sh
   (그래서 이 머신에서는 아무 설정 없이 동작합니다), 유닛이 없는 머신에서만 `.env`의
   `HERALD_DEPLOY_DIR`로 알려주면 됩니다. 어느 쪽으로도 두 번째 체크아웃을 못 찾으면(새 클론, CI,
   worktree) `not applicable`이라고 적고 종료 코드는 그대로입니다.
+- **참조 코퍼스는 스티어링 설정이 아니라 데이터라서, 단계가 따로 있습니다**(4단계,
+  `deploy/herald-copy-corpus.sh` — 출력에도 `corpus:` 줄로 따로 찍힙니다). `pnpm glossary:mine`이
+  대조하는 `@0xMantleKR` 코퍼스이고, `pnpm collect:reference`가 손으로 돌릴 때 개발 체크아웃의
+  `<repo>/output/x/reference/`에 씁니다. 스티어링 파일과 세 가지가 다릅니다:
+  - **뿌리가 다릅니다.** 스티어링은 저장소 기준이라 `~/.herald/app/...`로 갑니다. 코퍼스는
+    `OUTPUT_DIR` 기준이라 목적지가 **`~/.herald/output/x/reference`** 로, 배포 체크아웃 바깥입니다.
+  - **달라도 "틀린" 게 아니라 "오래된" 것입니다.** 그래서 게이트가 없습니다 — 배포를 막지 않고,
+    `--yes`를 요구하지도 않습니다. 코퍼스가 낡았는지는 `glossary:mine`이 코퍼스에 들어 있는 수집
+    원장을 읽어 28일 기준으로 직접 말합니다.
+  - **지우지 않습니다.** 스티어링은 개발 쪽에서 사라진 파일을 배포 트리에서 쓸어내지만, 개발
+    `output/`을 비운 건 결정이 아니라 정리이므로 스케줄러의 코퍼스는 그대로 둡니다.
+
+  개발 쪽에 코퍼스가 없으면 **배포를 실패시키지 않고** 그렇게 적고 넘어갑니다(그 주의 등급은 전부
+  B가 됩니다). 옮기는 것은 `collect:reference`가 쓰는 세 파일
+  (`items.json`·`runs.json`·`state.json`)뿐이고, 같은 디렉터리의 `pairs-*`(=`tm:pair` 검토
+  산출물)는 일부러 뺍니다. `tests/deploy/referenceCorpus.test.ts`가 목적지와 파일 목록을 못 박습니다.
 - **`~/.herald/prod.env`는 그대로입니다.** `DATABASE_URL`과 `HERALD_DB_ENV=production` 두 줄,
   `EnvironmentFile=`로 주입되고 셸 환경이 Node의 `--env-file`을 이기므로 사본의 로컬 DB 주소를
   계속 덮습니다.
@@ -1430,8 +1447,17 @@ ops 방에 온 알림을 확인한 뒤 `systemctl --user enable --now herald-tra
 > 남습니다.
 >
 > 참조 코퍼스가 오래되면(28일) 알림과 로그에 `⚠ 참조 코퍼스 … 지남` 줄이 붙고 등급이 전부 B로
-> 떨어집니다. 고치는 방법은 이 머신에서 `pnpm collect:reference`를 한 번 돌리는 것뿐입니다 —
-> 타이머가 없는 수동 명령입니다(주마다 수집하면 대부분 과거 데이터에 API 예산을 씁니다).
+> 떨어집니다. 고치려면 **두 단계**입니다: 이 머신에서 `pnpm collect:reference`를 한 번 돌리고
+> (타이머가 없는 수동 명령입니다 — 주마다 수집하면 대부분 과거 데이터에 API 예산을 씁니다),
+> 이어서 `bash deploy/herald-deploy.sh`를 돌립니다. 손으로 돌린 수집은 개발 체크아웃의
+> `<repo>/output/x/reference/`에 쓰고, 이 유닛은 `~/.herald/output` 아래를 읽기 때문입니다 —
+> 배포 4단계(`deploy/herald-copy-corpus.sh`)가 그 사이를 잇습니다. 2026-08-11 첫 실제 발화가
+> 정확히 이 구멍에 빠졌습니다: 코퍼스가 그 자리에 아예 없어서 대조가 통째로 눈이 멀었고,
+> 후보 170건이 전부 B로 나왔습니다.
+>
+> 후보 목록이 지나치게 길면(그 첫 실행이 그랬습니다) 대부분은 줄머리 대문자 낱말이었는데, 지금은
+> 위치 규칙이 걸러 냅니다 — 몇 개를 걸렀는지는 로그의 `dropped … capitalized word(s)` 줄과 검토
+> 파일 머리말에 적힙니다([`capabilities.md` §6](capabilities.md#용어집-후보-발굴--pnpm-glossarymine---notify)).
 
 **순서 주의 — 유닛을 복사하기 전에 `bash deploy/herald-deploy.sh`를 먼저 돌리세요.** 다섯 스케줄
 유닛의 `ExecStart=`는 모두 배포 체크아웃 안의 래퍼

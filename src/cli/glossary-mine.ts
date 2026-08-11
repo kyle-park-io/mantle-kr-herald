@@ -137,6 +137,15 @@ try {
       `published translation(s) against ${glossary.length} glossary entries and ${dismissed.length} dismissal(s).`,
   );
   console.log(corpusSummary(result.corpus));
+  // The positional rule's bulk effect, on stdout as well as in the review file. It is the single
+  // biggest thing standing between this run and the 170-line first fire, so "why is the list short
+  // this week" must be answerable from the log alone, a week later, without the review file.
+  if (result.sentenceInitialOnly > 0) {
+    console.log(
+      `dropped ${result.sentenceInitialOnly} capitalized word(s) that never appear mid-sentence — ` +
+        `line-initial only, so nothing distinguishes them from ordinary words.`,
+    );
+  }
   console.log();
 
   if (result.candidates.length === 0) {

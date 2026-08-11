@@ -11,7 +11,9 @@ import type { GlossaryEntry, GlossaryDismissal, GlossaryRule } from "./models";
  * Three signals, prototyped by hand against production on 2026-08-11 and kept at the thresholds that
  * run produced. It proposed ten entries; every one was applied, taking the glossary from 96 to 106.
  *
- *   1. Un-glossed recurring proper nouns in the English source (`properNounCandidates`).
+ *   1. Un-glossed recurring proper nouns in the English source (`properNounOccurrences`), kept only
+ *      when the term appears mid-sentence at least once — the positional rule that took the first
+ *      real production run from 170 candidates to 90 (see `ProperNounOccurrence`).
  *   2. Word-level substitutions a human made between our draft and the published post
  *      (`substitutionEdits`) — the only signal that ever carries the human's own answer.
  *   3. Cross-validation against the @0xMantleKR reference corpus (`crossValidate`), which is what
@@ -100,15 +102,68 @@ export const PROPER_NOUN_STOPWORDS = new Set<string>([
 export const MIN_PROPER_NOUN_OCCURRENCES = 2;
 
 /**
- * Capitalized 1–3 word runs. Greedy on purpose: `Atomic RFQ` must arrive as one candidate, not as
- * `Atomic` and `RFQ` separately, because the decision the account actually made ("모든 주문은 Atomic
- * RFQ의 확정 호가로 체결됩니다") is about the phrase. The cost is that a genuinely standalone word
- * inside a longer run is never proposed on its own; that showed up in the real run as nothing at all,
- * since the sub-words are almost always stopwords or already glossed.
+ * A line prefix that is decoration rather than words, so a run behind one is still line-initial.
+ *
+ * Every shape the account actually opens a line with is in here, and each was read off the real
+ * corpus: `→ Treasury yield`, `• Ran Mentor Clinic`, `1️⃣ Follow`, `12) 낸슨…`, `--- ` section rules,
+ * and bare `$` / `#` sigils. They are all punctuation, symbols, digits or whitespace — except for
+ * two categories that are easy to leave out and cost the whole filter its precision:
+ *
+ * - `\p{M}` (marks) and `\p{C}` (format). `1️⃣` is `1` + U+FE0F (Mn) + U+20E3 (Me), and `👩‍💻` carries
+ *   a U+200D ZWJ (Cf). With a class of `[\s\p{N}\p{P}\p{S}]` alone, the leftover mark is a non-marker
+ *   character, the prefix reads as prose, and `1️⃣ Follow` counts as a mid-sentence occurrence. That
+ *   single omission kept `Follow` and `Make` in the candidate list when this filter was first
+ *   measured against the 525-tweet corpus.
  */
-export function properNounRuns(text: string): string[] {
-  const out: string[] = [];
-  for (const m of proseText(text).matchAll(/\b([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,2})\b/g)) {
+const LINE_DECORATION = /^[\s\p{N}\p{P}\p{S}\p{M}\p{C}]*$/u;
+
+/**
+ * The end of a sentence *inside* a line — the second way a capitalized word is sentence-initial
+ * without being line-initial, and one the line test alone cannot see.
+ *
+ * `Knockouts on the pitch. Knockouts on the leaderboard.` is the measured case: two occurrences, both
+ * sentence-initial, and the word is not a name. `…` is in the class alongside `[.!?]` because the
+ * account terminates with it and a `[.!?]`-only test reads the next word as mid-sentence. The
+ * optional closing quote or bracket covers `(…finally!) Register`.
+ *
+ * The trailing `\s+` is required rather than optional: `U.S. Treasury` and `Ep. 09` end in `. ` too,
+ * so this over-fires slightly on abbreviations. Accepted — it costs a term one occurrence's worth of
+ * evidence out of a 525-tweet corpus, and the rule needs only one surviving mid-sentence hit.
+ */
+const SENTENCE_END = /[.!?…]["')\]]?\s+$/u;
+
+/**
+ * One capitalized run and **where in its line it sat** — the discriminator a stopword list can never
+ * be, because that list is endless and always one week behind the account's copywriting.
+ *
+ * The first real production fire (2026-08-11, 525 source tweets) produced 170 candidates of which 110
+ * were ordinary English words that merely opened a line or a heading: `Together`, `Tomorrow`,
+ * `Weekly`, `Winners`, `Everything`, `Still`, `Head`, `Register`, `Featuring`… A name is not a longer
+ * word list; a name is a word that survives being written *inside* a clause. `Together` at the start
+ * of a line is a word. `Mantle` in the middle of one is a name.
+ */
+export interface ProperNounOccurrence {
+  run: string;
+  /**
+   * This occurrence is neither the first thing on its line (after `LINE_DECORATION`) nor the first
+   * thing after a sentence terminator. Aggregated across the whole corpus by `mineGlossaryCandidates`
+   * — see the "at least once" reasoning there.
+   */
+  midSentence: boolean;
+}
+
+/**
+ * Capitalized 1–3 word runs, each with its position graded. Greedy on purpose: `Atomic RFQ` must
+ * arrive as one candidate, not as `Atomic` and `RFQ` separately, because the decision the account
+ * actually made ("모든 주문은 Atomic RFQ의 확정 호가로 체결됩니다") is about the phrase. The cost is
+ * that a genuinely standalone word inside a longer run is never proposed on its own; that showed up
+ * in the real run as nothing at all, since the sub-words are almost always stopwords or already
+ * glossed.
+ */
+export function properNounOccurrences(text: string): ProperNounOccurrence[] {
+  const prose = proseText(text);
+  const out: ProperNounOccurrence[] = [];
+  for (const m of prose.matchAll(/\b([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,2})\b/g)) {
     // Leading stopwords are shaved off rather than disqualifying the run, because the noise they
     // cause is almost entirely sentence-initial capitalization: "The Mantle network…" produces the
     // run `The Mantle`, which is neither a stopword nor all-stopwords, so both filters below miss it
@@ -116,8 +171,19 @@ export function properNounRuns(text: string): string[] {
     // LEADING only, never trailing: a capitalized stopword mid-phrase is rare (a stopword mid-sentence
     // is lowercase), while trailing-shaving would turn a real event name like `Mantle Day` into
     // `Mantle`.
-    const words = m[1].trim().split(/\s+/);
-    while (words.length > 0 && PROPER_NOUN_STOPWORDS.has(words[0])) words.shift();
+    const matched = m[1];
+    const words = matched.trim().split(/\s+/);
+    // How far into the match the surviving run starts, so a shaved run is positioned where it really
+    // is and not where its stopword was. This is deliberate, not incidental: in `The Chainlink CCIP`
+    // at the head of a line, `Chainlink CCIP` IS capitalized mid-sentence — the sentence opens with
+    // `The`. Measuring the shaved match's own start instead loses `Chainlink CCIP` and
+    // `Absolute Mantle` from the real corpus while removing exactly one junk word (`Agenda`), so
+    // the survivor's position is the one that gets read.
+    let cursor = 0;
+    while (words.length > 0 && PROPER_NOUN_STOPWORDS.has(words[0])) {
+      cursor += words.shift()!.length;
+      while (cursor < matched.length && /\s/.test(matched[cursor])) cursor += 1;
+    }
     const run = words.join(" ");
     if (run.length < 3) continue;
     if (PROPER_NOUN_STOPWORDS.has(run)) continue;
@@ -125,9 +191,35 @@ export function properNounRuns(text: string): string[] {
     // check above cannot see it. Unreachable after the shave above for a leading stopword, kept
     // because the shave stops at the first non-stopword and a later one can still be there.
     if (words.every((w) => PROPER_NOUN_STOPWORDS.has(w))) continue;
-    out.push(run);
+    out.push({ run, midSentence: isMidSentence(prose, m.index + cursor) });
   }
   return out;
+}
+
+/**
+ * Is the character at `at` preceded, on its own line, by anything that is actually prose?
+ *
+ * Line-scoped rather than text-scoped, because a tweet is mostly lines and not mostly sentences: the
+ * account writes agendas, bullet lists and numbered brackets, and every one of those starts a fresh
+ * capitalization context that no `.`/`!`/`?` announces.
+ *
+ * A term after `:` or an em dash counts as mid-sentence, which is the one edge case here that could
+ * defensibly go the other way (`Register: Mantle Super Portal`, `Hint: Track 1`). Measured: cutting
+ * the prefix at the last `:`/`—`/`|` removes 4 more junk words but also takes `AI Trading` — a real
+ * hackathon track — with them. Losing a real name to trim four words the human can skim past is the
+ * wrong trade for a review file, so the colon counts.
+ */
+function isMidSentence(prose: string, at: number): boolean {
+  // `lastIndexOf("\n", -1)` is -1 for a run at index 0, so this is `0` there rather than throwing.
+  const lineStart = prose.lastIndexOf("\n", at - 1) + 1;
+  const before = prose.slice(lineStart, at);
+  if (LINE_DECORATION.test(before)) return false;
+  return !SENTENCE_END.test(before);
+}
+
+/** Just the runs, for callers that only need what a text names — see `sourceTermsByItem`. */
+export function properNounRuns(text: string): string[] {
+  return properNounOccurrences(text).map((o) => o.run);
 }
 
 // ── Signal 2: draft-vs-published substitutions ───────────────────────────────────────────────────
@@ -447,6 +539,17 @@ export interface MiningResult {
   candidates: GlossaryCandidate[];
   rejected: RejectedCandidate[];
   corpus: CorpusStatus;
+  /**
+   * How many proper-noun candidates the positional rule removed — terms that cleared every other
+   * filter and were dropped only because no occurrence anywhere in the corpus was mid-sentence.
+   *
+   * A count and not a list, unlike `rejected`. The two are different kinds of finding: a rejection is
+   * an argument about ONE term that a human may want to overrule, while this is a bulk property of
+   * the corpus (80 words on the first real run's data). Listing all 80 would bury the 90 candidates
+   * the file exists for; reporting nothing would make a filter that suddenly removed everything
+   * invisible.
+   */
+  sentenceInitialOnly: number;
 }
 
 /** What a glossary entry actually asks a translation to say — the same derivation `checkGlossary` uses. */
@@ -633,16 +736,37 @@ export function mineGlossaryCandidates(input: MiningInput): MiningResult {
   const spokenFor = new Set(candidates.filter((c) => c.signal === "substitution").map((c) => normalizeTerm(c.draft!)));
 
   // ── Signal 1 ──
+  //
+  // Counted and POSITIONED in one pass. The two answers are about the same occurrence and reading the
+  // corpus twice to get them separately would be two loops free to disagree about what a run is.
   const properNounCounts = new Map<string, number>();
+  const seenMidSentence = new Set<string>();
   for (const tweet of sourceTweets) {
-    for (const run of properNounRuns(tweet)) properNounCounts.set(run, (properNounCounts.get(run) ?? 0) + 1);
+    for (const { run, midSentence } of properNounOccurrences(tweet)) {
+      properNounCounts.set(run, (properNounCounts.get(run) ?? 0) + 1);
+      if (midSentence) seenMidSentence.add(run);
+    }
   }
+  let sentenceInitialOnly = 0;
   for (const [term, occurrences] of properNounCounts) {
     if (occurrences < MIN_PROPER_NOUN_OCCURRENCES) continue;
     const key = normalizeTerm(term);
     if (glossedTerms.has(key)) continue;
     if (dismissedKeys.has(key)) continue;
     if (spokenFor.has(key)) continue;
+    // **At least once across the whole corpus, not always.** A real product name that happens to open
+    // every line it appears in is still a name, and requiring "always mid-sentence" would throw away
+    // `Mantle Super Portal` for the crime of being a heading. The converse is the accepted cost: a
+    // term that is line-initial in all 525 tweets is indistinguishable from a common word by anything
+    // this module can see, and it is dropped. Measured casualties on the real corpus: `AGNI` (both
+    // occurrences alone on their line), `Liftoff`, `RWAlly` — and `ICYMI`, `Together`, `Tomorrow`,
+    // `Winners`, `Featuring` with them. A dropped name is not lost forever either: the moment the
+    // account writes it inside a clause, the next Monday's run proposes it. Last of the filters, so
+    // the count below means "candidates this rule removed" rather than "runs it saw".
+    if (!seenMidSentence.has(term)) {
+      sentenceInitialOnly += 1;
+      continue;
+    }
 
     const ours = count(term);
     const evidence: CorpusEvidence | undefined = ours === undefined ? undefined : { ours };
@@ -672,5 +796,5 @@ export function mineGlossaryCandidates(input: MiningInput): MiningResult {
   );
   rejected.sort((a, b) => b.corpus.ours - a.corpus.ours || a.key.localeCompare(b.key));
 
-  return { candidates, rejected, corpus };
+  return { candidates, rejected, corpus, sentenceInitialOnly };
 }

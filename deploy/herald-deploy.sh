@@ -36,6 +36,18 @@ DEV_DIR="/home/kyle/code/mantle-kr-herald"
 # agent session, and this script never writes it.
 PROD_ENV="$HOME/.herald/prod.env"
 
+# The two ARTIFACT trees, which are not the two checkouts above and do not follow from them.
+# `src/paths.ts` roots every artifact at `OUTPUT_DIR`: `<repo>/output` by default, or
+# `HERALD_OUTPUT_DIR` when set. The scheduled units set it to `%h/.herald/output` — deliberately
+# OUTSIDE `%h/.herald/app`, so step 1's `git reset --hard` cannot wipe the scheduler's own state — so
+# nothing derives the destination below from `$APP_DIR`, and step 4 needs its own pair of roots.
+# Hardcoded absolutes for the same reason `DEV_DIR` is: one box, and a parameterised version would be
+# a config file nobody maintains. tests/deploy/referenceCorpus.test.ts pins APP_OUTPUT_DIR equal to
+# the units' own `Environment=HERALD_OUTPUT_DIR`, the way workingDirectory.test.ts pins APP_DIR to
+# their `WorkingDirectory=`; if they ever drift, this script fills a directory nothing reads.
+DEV_OUTPUT_DIR="$DEV_DIR/output"
+APP_OUTPUT_DIR="$HOME/.herald/output"
+
 echo "herald-deploy: $DEV_DIR (config source) → $APP_DIR (runtime)"
 
 # ── 0. Configuration gate ─────────────────────────────────────────────────────────────────────────
@@ -81,7 +93,22 @@ echo "  deps: pnpm install --frozen-lockfile"
 # gated the change; this is the write.
 pnpm deploy:freeze --apply --dev "$DEV_DIR" --app "$APP_DIR"
 
-# ── 4. Schema ─────────────────────────────────────────────────────────────────────────────────────
+# ── 4. Reference corpus — DATA, not steering configuration ────────────────────────────────────────
+# The @0xMantleKR corpus `pnpm glossary:mine` cross-validates against. A separate step with its own
+# output line rather than another entry in step 3's steering diff, and the distinction is not
+# cosmetic: it has a different root (OUTPUT_DIR, not REPO_ROOT, so it does NOT land under $APP_DIR), a
+# difference between the trees means "older" rather than "wrong" so it must not gate the deploy, and a
+# file missing on the development side must not be swept from the scheduler's tree. All three are
+# spelled out in the script's own header, which is also where the never-fails-the-deploy rule lives —
+# a missing corpus is reported and the deploy carries on.
+#
+# Invoked as a sibling of THIS file rather than out of $APP_DIR: `bash deploy/herald-deploy.sh` is
+# typed in the development checkout, so its helper is the development checkout's too — the same tree
+# `pnpm deploy:freeze` runs from two steps above. Resolved the way herald-notify-failure.sh resolves
+# its own root, so the pair still works when the script is invoked by absolute path.
+bash "$(dirname "${BASH_SOURCE[0]}")/herald-copy-corpus.sh" "$DEV_OUTPUT_DIR" "$APP_OUTPUT_DIR"
+
+# ── 5. Schema ─────────────────────────────────────────────────────────────────────────────────────
 # Run on every deploy, not only when someone remembers a migration is pending. `applySchema` is
 # idempotent — every statement is `create table if not exists` / `add column if not exists` /
 # `insert ... on conflict do nothing` — so an already-current database gets a no-op. This step is

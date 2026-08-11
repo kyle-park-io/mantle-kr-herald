@@ -78,6 +78,19 @@ export interface ReviewFileOptions {
   translationCount: number;
 }
 
+/**
+ * What the positional rule removed, as one sentence in the header — a count, never a list.
+ *
+ * Silence here would be the wrong kind of quiet. The filter is the difference between 170 lines and
+ * 90, and a reader who does not know a term was dropped has no way to ask why it is missing. Omitted
+ * entirely when it removed nothing, so an ordinary week does not carry a "0건" nobody needs.
+ */
+const positionalNote = (dropped: number): string =>
+  dropped === 0
+    ? ""
+    : ` 줄·문장 첫머리에만 나오는 대문자 낱말 ${dropped}개는 후보에서 뺐습니다(문장 중간에 한 번도 ` +
+      `안 나오면 고유명사로 볼 근거가 없습니다 — 계정이 그 말을 문장 안에 쓰기 시작하면 다시 올라옵니다).`;
+
 export function renderCandidateReview(result: MiningResult, opts: ReviewFileOptions): unknown[] {
   const { candidates, rejected, corpus } = result;
   const a = candidates.filter((c) => c.tier === "A");
@@ -91,7 +104,9 @@ export function renderCandidateReview(result: MiningResult, opts: ReviewFileOpti
       _term_주의:
         "term은 반드시 **원문(영어) 표기**여야 합니다 — 용어집 검사는 원문 텍스트에 대고 매칭합니다. " +
         "치환 후보의 term에는 사람이 고쳐 쓴 한국어가 들어 있으니, `_원문_후보`를 보고 영어 쪽으로 바꿔 주세요.",
-      _근거: `수집된 원문 ${opts.sourceTweetCount}트윗과 발행본이 있는 번역 ${opts.translationCount}건에서 뽑았습니다. ${corpusSummary(corpus)}`,
+      _근거:
+        `수집된 원문 ${opts.sourceTweetCount}트윗과 발행본이 있는 번역 ${opts.translationCount}건에서 ` +
+        `뽑았습니다. ${corpusSummary(corpus)}${positionalNote(result.sentenceInitialOnly)}`,
       _신뢰도: "A = 코퍼스 증거 압도적 · B = 표본이 작거나, 코퍼스가 혼용이거나, 표기를 사람이 채워야 함",
       _이건_아니다_싶으면:
         'translation/glossary-dismissed.json에 {"term": "<아래 _후보 값>", "note": "왜", "dismissedAt": "YYYY-MM-DD"}를 ' +

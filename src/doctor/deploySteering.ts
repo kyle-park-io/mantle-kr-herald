@@ -21,6 +21,30 @@
  * (`herald-deploy.sh`'s own header says so, next to the `DEV_DIR` it hardcodes for a script that
  * runs on exactly one box); `src/` runs on laptops, on CI and in a Vercel function, and a constant
  * here would be wrong on all three. See `resolveDeployTree` for the two ways it is learned instead.
+ *
+ * ── Why the @0xMantleKR reference corpus is deliberately NOT compared here ────────────────────────
+ *
+ * It was considered when `deploy/herald-copy-corpus.sh` shipped (2026-08-12), because a corpus the
+ * deploy failed to carry degrades every `glossary:mine` candidate to tier B in silence — exactly this
+ * check's class of failure. Three things decided it out, and the third is the one that matters:
+ *
+ * 1. **Different root.** Steering files are REPO_ROOT-relative, so one `dir` locates both sides. The
+ *    corpus is OUTPUT_DIR-relative and lives at `%h/.herald/output/x/reference`, outside the deploy
+ *    checkout entirely — `tree.dir` cannot find it, and a second resolution (the unit's
+ *    `Environment=HERALD_OUTPUT_DIR`) inside one check would make `deployDir` mean two things.
+ * 2. **A difference here does not mean the same thing.** `drifted` says the scheduler is steering
+ *    with something the record of truth does not say. Two corpora that differ are not right and
+ *    wrong, they are newer and older — a `collect:reference` run on Tuesday and deployed on Friday is
+ *    ordinary, and a warn on it would be the crying-wolf `stale-in-deploy` exists to avoid.
+ * 3. **A hash comparison is the weaker evidence.** What actually harms grading is the corpus's AGE,
+ *    and two identical trees hash equal while both being three months stale. `gradeCorpus`
+ *    (glossaryMining.ts) reads the real answer out of the run ledger the corpus carries, and
+ *    `glossary:mine` already reports it on stdout, in the review file and in the ops alert.
+ *
+ * What that leaves uncovered is absence — the corpus never arriving, which is what happened on
+ * 2026-08-11 — and absence is reported by the deploy step itself ("corpus: none at …") and by the
+ * miner's own `참조 코퍼스 없음`. If that turns out to be too late too often, the answer is a check of
+ * its own with its own vocabulary, not another file list inside this one.
  */
 import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
