@@ -21,7 +21,25 @@ export class JsonGlossaryDismissalStore {
   constructor(dir: string) {
     this.path = join(dir, "glossary-dismissed.json");
   }
+  /**
+   * REFUSES a file that parses as something other than an array, rather than degrading to "nothing
+   * dismissed" — the opposite of how `glossary:mine` treats a malformed reference corpus, and the
+   * asymmetry is deliberate.
+   *
+   * This is the one input a human types by hand, and `{}` instead of `[]` is the obvious slip.
+   * `readJsonFile`'s cast would hand that back as an empty-looking `GlossaryDismissal[]`, which means
+   * every candidate somebody already rejected returns to Monday's alert — the exact flood this file
+   * exists to prevent, arriving silently and looking like the file simply does not work. A failed unit
+   * saying "your dismissal file is the wrong shape" is a far better Monday.
+   */
   async load(): Promise<GlossaryDismissal[]> {
-    return readJsonFile<GlossaryDismissal[]>(this.path, []);
+    const parsed = await readJsonFile<unknown>(this.path, []);
+    if (!Array.isArray(parsed)) {
+      throw new Error(
+        `${this.path} must be a JSON array of { "term": "…" } objects. Refusing rather than reading it ` +
+          `as "nothing dismissed", which would put every rejected glossary candidate back in the next alert.`,
+      );
+    }
+    return parsed as GlossaryDismissal[];
   }
 }

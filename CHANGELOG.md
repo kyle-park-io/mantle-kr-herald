@@ -37,7 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing in the pipeline may write it, or a run could silence its own findings. It is **steering
   config**: `isSteeringConfigFile` accepts it, so `config:push`, `config:pull` and `deploy:freeze`
   carry it with the glossary it belongs to (pinned by a test, because "accepts everything that isn't
-  an example or a few-shot export" is a rule somebody could later narrow into an allow-list).
+  an example or a few-shot export" is a rule somebody could later narrow into an allow-list). It is
+  also the one input here that **refuses** a wrong shape rather than degrading: a file that parses as
+  `{}` instead of `[]` would otherwise read as "nothing dismissed", which puts every rejected
+  candidate straight back into the next alert — silently, and looking exactly like the dismissal file
+  not working. A failed unit naming the file is the better Monday.
 - **The reference corpus's own staleness is now reported rather than assumed.** `collect:reference`
   is manual by design — collecting weekly would spend twitterapi.io budget on data that is
   overwhelmingly historical — so `glossary:mine` reads coverage out of `x/reference/runs.json`

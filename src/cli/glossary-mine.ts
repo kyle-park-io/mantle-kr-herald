@@ -58,12 +58,21 @@ console.log(
  * reason somebody can fix, and swallowing that without a word is how a run starts grading everything
  * B forever with no explanation. Degrade, say so, carry on.
  */
-async function readOptional<T>(path: string, fallback: T, label: string): Promise<T> {
+async function readOptionalArray<T>(path: string, label: string): Promise<T[]> {
   try {
-    return await readJsonFile<T>(path, fallback);
+    const value = await readJsonFile<unknown>(path, []);
+    // Parsing is not the same as being the right shape, and `readJsonFile` only guarantees the first.
+    // A hand-truncated `items.json` that parses as `{}` would otherwise throw out of `.flatMap` below
+    // — a corpus problem failing the whole digest, which is the one thing the degrade path exists to
+    // prevent.
+    if (!Array.isArray(value)) {
+      console.log(`⚠ ${label} is not a JSON array — continuing without it.`);
+      return [];
+    }
+    return value as T[];
   } catch (err) {
     console.log(`⚠ ${label} could not be read (${(err as Error).message}) — continuing without it.`);
-    return fallback;
+    return [];
   }
 }
 
@@ -75,9 +84,10 @@ try {
     stores.translationStore.loadAll(),
     new JsonGlossaryStore(paths.translationConfigDir).load(),
     new JsonGlossaryDismissalStore(paths.translationConfigDir).load(),
-    readOptional<CollectedThread[]>(paths.referenceItems, [], "reference corpus (x/reference/items.json)"),
-    readOptional<ReferenceRun[]>(paths.referenceRuns, [], "reference run ledger (x/reference/runs.json)"),
+    readOptionalArray<CollectedThread>(paths.referenceItems, "reference corpus (x/reference/items.json)"),
+    readOptionalArray<ReferenceRun>(paths.referenceRuns, "reference run ledger (x/reference/runs.json)"),
   ]);
+
 
   // The same refusal `translate:check` makes, for a mirrored reason. There it is a vacuous PASS — an
   // empty glossary makes every check succeed. Here it is a vacuous flood: every proper noun the
