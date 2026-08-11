@@ -345,6 +345,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     replaces. **The local board is untouched**: `pnpm serve` builds `routes: "local"`, the target
     stays in `availableTargets`, the button stays live, and the write lands in `output/publish/local/`
     exactly as before.
+- **A disabled control now says why it is disabled — nine messages that had never once rendered.**
+  Directly downstream of the entry above: that change greyed the hosted `[로컬 폴더]` button, and the
+  one sentence explaining the grey (`이 모드에서는 사용할 수 없는 타깃`) turned out to be unreachable,
+  so the fix shipped a button that looked broken. It was not one button. Every "why can't I press
+  this" message on both boards lived in a native `title` whose condition **also appeared in the same
+  control's `disabled` expression** — `groupApproved` on 저장, `groupDirty` and `gate.approveDisabled`
+  on 승인하기, `reason` on 복사, `blocked` on 발송/전달함, `posted`/`approved`/`dirty` in 1차. A
+  disabled button dispatches no pointer events, so the browser never draws its tooltip. All nine read
+  correctly in review, sat in the markup the whole time, and were invisible in precisely the moment
+  they were written for. The sharpest is `disabledReason`, a prop threaded through **four** call sites
+  whose entire purpose is explaining a disabled control and which had never once been seen.
+  - **The fix already existed and had simply never been used here.** `ConfirmDialog`'s `Tip` — a
+    hover card on a wrapper rather than the control — was introduced for exactly this and says so in
+    its own comment ("a **disabled** button does not fire hover at all"). Six call sites on 2차
+    already used it correctly. So this is nine controls moving onto an existing idiom, **not a new
+    component**; the hand-rolled copy of the same span that the first of these fixes added to
+    `TranslationDetail` was folded back into it too, along with its `disabled:pointer-events-none`,
+    since the six shipping call sites wrap disabled buttons without it and one idiom beats two.
+  - **What stayed a `title` is the test for whether it should have.** A message that survives its own
+    control keeps the attribute: 되돌리기, 승인 취소 and the row's 저장 hint are `disabled={busy}` or
+    unconditioned, so they appear whenever the button is live. Where one control carried both kinds
+    (1차 저장, 복사), only the blocking reasons moved and the enabled-state hint stayed put.
+  - **`Tip` gained the three things nine call sites needed**: `text: string | undefined`, rendering
+    `children` alone rather than an empty card so a call site passes its conditional straight through;
+    `className`, because a control positioned by its own `ml-auto` has to hand that class to whichever
+    element ends up being the flex item; and `align`, for a control pinned to the right edge where a
+    `w-64` card opening rightward would run off the card (exactly one today —
+    `DestinationPreview`'s [복사]).
+  - **The cards now open down and to the right**, which is where the eye is after reading a control
+    and what the board's other three hover cards (`CollectedBreakdownCard`, `MarkerText`, the env
+    panel) already did. `Tip` and `OpenLink` were the only two opening upward; both now match.
+  - **Tests assert on `textContent`, which is the whole distinction** between a message a reviewer can
+    reach and one only the markup has — a regression that puts a `title` back fails them, and both
+    positive tests were confirmed to fail against the previous code. The reveal itself is
+    `group-hover/tip:block` and is deliberately not pinned: jsdom applies no CSS, and the shape being
+    replaced was an OS-drawn tooltip living outside the DOM, so there is no old behaviour for an
+    automated check to contrast against.
 - **Documentation that had drifted from the code.** `skipIfLocal` gates nine commands, not seven —
   `x:reconcile` and `x:link` were added after the docs were written (`docs/ko/env.md`,
   `docs/ko/artifacts.md`, `docs/ko/quickstart.md`, `.env.example`), and the two new ones now carry
