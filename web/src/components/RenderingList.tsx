@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { compileQuery } from "../hangulSearch";
 import { ALL_CHANNELS, ALL_TYPES, CHANNEL_LABEL, TYPE_LABEL, datePrefix, type Rendering } from "../types";
+import { SearchBox } from "./SearchBox";
 import { KindBadge } from "./TranslationList";
 
 const STATUS_FILTERS: ["all" | Rendering["status"], string][] = [
@@ -28,6 +30,13 @@ interface ItemRow {
   approved: number;
   total: number;
   preview: string;
+  /**
+   * 검색이 훑는 문자열 — itemId와 이 아이템의 **모든** 카드 문구. `preview`는 첫 카드뿐이라,
+   * 오픈카톡 카드에만 있는 문구로 검색하면 행은 뜨지만 미리보기에는 그 문구가 안 보일 수 있다.
+   * 감수하는 성질이다: 행의 역할은 보드를 여는 것이지 매치를 증명하는 것이 아니고, 카드마다 행을
+   * 나누는 대안은 이 파일 위쪽 `ItemRow` 주석이 이미 기각했다.
+   */
+  haystack: string;
 }
 
 const rank = <T,>(order: readonly T[], v: T) => {
@@ -55,6 +64,7 @@ export function toItemRows(renderings: Rendering[]): ItemRow[] {
       approved: ordered.filter((r) => r.status === "approved").length,
       total: ordered.length,
       preview: (ordered[0]?.text ?? "").replace(/\s+/g, " ").trim(),
+      haystack: [itemId, ...ordered.map((r) => r.text)].join(" "),
     };
   });
 }
@@ -70,6 +80,7 @@ export function RenderingList(props: {
   const [status, setStatus] = useState<"all" | Rendering["status"]>("all");
   const [channel, setChannel] = useState<"all" | Rendering["channel"]>("all");
   const [type, setType] = useState<"all" | Rendering["type"]>("all");
+  const [search, setSearch] = useState("");
 
   // Filters still read per rendering — "items that have an approved 공지 for telegram" — but they
   // now decide which *items* are listed, because that is what the row stands for.
@@ -79,7 +90,10 @@ export function RenderingList(props: {
       (channel === "all" || r.channel === channel) &&
       (type === "all" || r.type === type),
   );
-  const shown = toItemRows(matching);
+  // 검색은 셀렉트 필터가 좁힌 집합 위에서, 아이템 행 단위로 걸린다 — 셋 다 AND다.
+  const re = compileQuery(search);
+  const rows = toItemRows(matching);
+  const shown = re === null ? rows : rows.filter((row) => re.test(row.haystack));
 
   return (
     <div className="flex h-full flex-col">
@@ -115,6 +129,7 @@ export function RenderingList(props: {
             ))}
           </select>
         </div>
+        <SearchBox value={search} onChange={setSearch} />
       </div>
 
       {shown.length === 0 ? (
