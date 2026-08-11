@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Both review sidebars have a search box under their filter tabs, and it understands Korean the way
+  a Korean keyboard produces it — `ㅁㅌ` finds 맨틀, and so does every state the IME passes through on
+  the way there (`매`, `맨`, `맨ㅌ`, `맨트`).** The tabs answered "what is left" but never "where is
+  that one item", so the only way to reach a specific row in a `w-80` column was to scroll it. 1차
+  searches the itemId and both languages of the body — `koreanText` *and* `sourceText`, so a
+  translated row is still reachable by the English word you remember — and its tab counts now count
+  the searched set, keeping the contract `TranslationList.tsx` already wrote down: a tab must never
+  promise a row it does not then show. 2차 searches every card an item still has after the
+  status/channel/type filters, not just the one the preview happens to show, because the row stands
+  for the whole board it opens. The matcher (`web/src/hangulSearch.ts`) is one compiled regex per
+  keystroke and no new dependency: a Hangul syllable's codepoint is `0xAC00 + 초성×588 + 중성×28 +
+  종성`, which makes "every syllable starting with ㅁ" a contiguous range, and makes "this last letter
+  is still being composed" one too. Handling the composing states is not a nicety — React's
+  `onChange` fires with the in-progress value, so a matcher that ignored them would blank the list
+  mid-word on every search.
 - **The dashboard's `local`/`cloud` badge now says whether the deployment's credentials still ANSWER,
   not merely that they exist — and a ⚠ chip appears beside it only when one of them stopped answering,
   or when nothing has asked in over a day.** On 2026-08-10 the deployment's Google, Typefully and
