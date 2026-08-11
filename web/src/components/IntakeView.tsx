@@ -25,10 +25,14 @@ export function IntakeView(props: { authEpoch: number; intakeEnabled: boolean })
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const refresh = useCallback(
-    () => api.intakePending().then(setPending).catch((e) => setError(String((e as Error).message ?? e))),
-    [],
-  );
+  const refresh = useCallback(() => {
+    // Cleared up front, mirroring `handleSubmit` below: a cold-start visit's first GET can 401
+    // before login (`Root.tsx` hides `<App>` across `#login` rather than unmounting it), and without
+    // this the stale error from that first failed read would sit on screen forever next to a list
+    // that the post-login retry populated correctly.
+    setError(null);
+    return api.intakePending().then(setPending).catch((e) => setError(String((e as Error)?.message ?? e)));
+  }, []);
   // `authEpoch` — see `RenderingsView`'s own doc comment on the same effect: `<App>` only ever hides
   // across a `#login` round trip rather than remounting, so without this a cold-start login landing
   // here first would 401 once and never retry.

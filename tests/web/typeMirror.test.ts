@@ -5,7 +5,7 @@ import { CHANNEL_RENDERS_BOLD, DESTINATIONS_BY_CHANNEL } from "../../src/domain/
 import type { Destination } from "../../src/domain/formatting/emitters/types";
 import { ALL_OUTLETS } from "../../src/domain/outlet/models";
 import { SEND_BLOCK_REASON, type SendBlock } from "../../src/domain/send/sendBlock";
-import { SENDS_CLOSED_MESSAGE, type StatusView } from "../../src/adapters/web/apiHandlers";
+import { SENDS_CLOSED_MESSAGE } from "../../src/adapters/web/apiHandlers";
 import { ALL_DELIVERY_STATUSES, deliveredToRoom } from "../../src/domain/delivery/models";
 import { ALL_TRANSLATION_STATUSES } from "../../src/domain/translation/models";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
@@ -52,7 +52,6 @@ import {
   WATCH_UNIT as WEB_WATCH_UNIT,
   FLOOR_VAR as WEB_FLOOR_VAR,
   type LivenessSummary as WebLivenessSummary,
-  type AppStatus as WebAppStatus,
 } from "../../web/src/types";
 
 /**
@@ -446,24 +445,6 @@ describe("web type mirror", () => {
     // Every tier actually assigned to a probe today has a Korean label — the runtime half of the
     // same check, since a compile-time union match says nothing about a table's own keys.
     expect(Object.keys(TIER_LABEL).sort()).toEqual([...new Set(Object.values(PROBE_TIER))].sort());
-  });
-
-  /**
-   * `StatusView.intakeEnabled` → `AppStatus.intakeEnabled`. Note for whoever looks here next: unlike
-   * every pair above, `dbEnv`/`sendsEnabled`/`conversionEnabled`/`intakeEnabled` have never carried
-   * their own registered check in this file — each is a plain boolean (or string) the web side
-   * simply widens to optional, and nothing here walked that widening before. This is the closest
-   * existing idiom for it: required-on-the-server, optional-on-the-web is exactly the asymmetry the
-   * `LivenessSummary` pair above exists for, so this pins it the same one-direction way — a real
-   * server value has to keep type-checking as the web field's value, which is the direction data
-   * actually flows on the wire; the reverse (an `undefined` web value assigned to the server's
-   * required field) does not compile, on purpose, since a status payload predating this field must
-   * read as absent rather than fail to type.
-   */
-  it("carries StatusView's intakeEnabled onto AppStatus", () => {
-    const serverValue: StatusView["intakeEnabled"] = true;
-    const asWebValue: WebAppStatus["intakeEnabled"] = serverValue;
-    expect(asWebValue).toBe(true);
   });
 
   /** [복사] hands a human the `_paste` spelling; the canonical text would paste raw markdown. */

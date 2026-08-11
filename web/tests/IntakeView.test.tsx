@@ -32,6 +32,40 @@ describe("IntakeView", () => {
     expect(await screen.findByText("waiting post")).toBeTruthy();
   });
 
+  /**
+   * The concrete cold-start failure `authEpoch`'s own doc comment in `IntakeView.tsx` exists to
+   * recover from: `<App>` hides across a `#login` round trip rather than unmounting, so this
+   * component's first mount can 401 before the user has logged in. Once they do, `authEpoch` bumps
+   * and `refresh()` reruns and succeeds — but if `refresh` only ever *sets* `error` and never clears
+   * it, the stale 401 banner from the first failed read sits on screen forever next to a list that is
+   * now populated correctly. Pins that `refresh` clears its own prior error, the same way
+   * `handleSubmit` already clears one before a new submit attempt.
+   */
+  it("clears a stale error once a later refresh succeeds", async () => {
+    let pendingCalls = 0;
+    const mock = vi.fn(async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`;
+      if (key === "GET /api/intake/pending") {
+        pendingCalls += 1;
+        // First read (the cold-start mount) 401s; every read after that succeeds.
+        return pendingCalls === 1
+          ? new Response(JSON.stringify({ error: "로그인이 필요합니다" }), { status: 401 })
+          : new Response(JSON.stringify(PENDING), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${key}`);
+    });
+    vi.stubGlobal("fetch", mock);
+
+    const { rerender } = render(<IntakeView authEpoch={0} intakeEnabled={true} />);
+    await screen.findByText("로그인이 필요합니다");
+
+    // The `#login` round trip bumps `authEpoch` without unmounting `<IntakeView>`.
+    rerender(<IntakeView authEpoch={1} intakeEnabled={true} />);
+
+    expect(await screen.findByText("waiting post")).toBeTruthy();
+    expect(screen.queryByText("로그인이 필요합니다")).toBeNull();
+  });
+
   it("submits a link and reports the outcome", async () => {
     stubFetch({
       "POST /api/intake/x": () =>
