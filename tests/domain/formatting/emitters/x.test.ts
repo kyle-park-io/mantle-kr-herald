@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emitXPaste, emitXTypefully } from "../../../../src/domain/formatting/emitters/x";
+import { emitXPaste, emitXTypefully, stripLinkIcon } from "../../../../src/domain/formatting/emitters/x";
 
 describe("emitXPaste", () => {
   it("strips bold to plain text — never unicode bold", () => {
@@ -86,5 +86,48 @@ describe("emitXTypefully", () => {
     expect(r.segments.map((s) => s.text)).toEqual(["하나", "둘 (https://x.io)"]);
     expect(r.segments.map((s) => s.limit)).toEqual([280, 280]);
     expect(r.warnings).toEqual([]);
+  });
+});
+
+describe("stripLinkIcon", () => {
+  it("strips an icon from a line that is only an icon and a url", () => {
+    expect(stripLinkIcon("🔗 https://fluxion.network/trade")).toBe("https://fluxion.network/trade");
+  });
+
+  it("leaves a bracketed media marker alone", () => {
+    const line = "[영상] https://video.twimg.com/amplify_video/1/vid.mp4";
+    expect(stripLinkIcon(line)).toBe(line);
+  });
+
+  it("leaves a url that follows words on the same line alone", () => {
+    const line = "· 거래: https://fluxion.network/trade";
+    expect(stripLinkIcon(line)).toBe(line);
+  });
+
+  it("leaves a url inside a sentence alone", () => {
+    const line = "자세한 내용은 https://fluxion.network/trade 에서 확인하세요.";
+    expect(stripLinkIcon(line)).toBe(line);
+  });
+
+  it("strips on every line of a multi-line text", () => {
+    expect(stripLinkIcon("본문\n\n🔗 https://a.example\n▶ https://b.example")).toBe(
+      "본문\n\nhttps://a.example\nhttps://b.example",
+    );
+  });
+
+  it("leaves a bare url with no icon untouched", () => {
+    expect(stripLinkIcon("https://fluxion.network/trade")).toBe("https://fluxion.network/trade");
+  });
+});
+
+describe("emitXPaste link icons", () => {
+  it("drops the icon before a trailing bare url", () => {
+    const { segments } = emitXPaste("자세한 내용은 아래에서 확인하세요.\n🔗 https://fluxion.network/trade");
+    expect(segments[0].text).toBe("자세한 내용은 아래에서 확인하세요.\nhttps://fluxion.network/trade");
+  });
+
+  it("applies to the typefully destination too", () => {
+    const { segments } = emitXTypefully("🔗 https://fluxion.network/trade");
+    expect(segments[0].text).toBe("https://fluxion.network/trade");
   });
 });

@@ -7,6 +7,7 @@ import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
 import { PgCollectionRepository } from "../../src/adapters/store/PgCollectionRepository";
 import { PgTranslateFloorReport } from "../../src/adapters/store/PgTranslateFloorReport";
 import { PgCredentialLiveness } from "../../src/adapters/store/PgCredentialLiveness";
+import { PgDeliveryLedger } from "../../src/adapters/store/PgDeliveryLedger";
 import type { Db } from "../../src/adapters/db/Db";
 import { VALID_PASSWORD_HASH } from "../support/authFixtures";
 
@@ -166,6 +167,54 @@ describe("createDeps", () => {
         // floor really does select the whole backlog, so the whole backlog really is waiting.
         expect(await listed(db)).toEqual(["x:1", "x:2", "x:3"]);
       });
+    });
+  });
+
+  /**
+   * The `/emissions` preview's half of the 공지 X-link CTA, driven over the real stores for the same
+   * reason `loadIntakePending` above is: every other test of this feature stubs `loadXPostUrl`, so a
+   * regression to `async () => undefined` — reading one source, or the wrong one — would leave every
+   * 공지 미리보기 showing `X 게시 후 채워짐` forever with the whole suite still green. That preview is
+   * the send path for every KakaoTalk room, so nobody would find out from a failing test.
+   */
+  describe("loadXPostUrl", () => {
+    const X_URL = "https://x.com/0xMantleKR/status/2087418810458382585";
+
+    it("finds a hand-posted item's url on its translation row", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      await deps.translationStore.upsert({ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "posted", translatedAt: "t", postedUrl: X_URL });
+
+      expect(await deps.loadXPostUrl("x:1")).toBe(X_URL);
+    });
+
+    it("finds a bot-sent item's url on its x-post delivery row", async () => {
+      db = await createTestDb();
+      await new PgDeliveryLedger(db).add({ itemId: "x:1", type: "x", outletId: "x-post", status: "sent", at: "2026-08-12T00:00:00.000Z", by: "auto", url: X_URL });
+      const deps = createDeps({ db, routes: "local" });
+
+      expect(await deps.loadXPostUrl("x:1")).toBe(X_URL);
+    });
+
+    /**
+     * The Typefully *share* url `SendChannels` writes at send time is not the post — it only becomes
+     * an x.com url minutes later, when the draft publishes. Reported as "not up yet" rather than
+     * linked, or a live 공지 would point every room at our own draft editor.
+     */
+    it("does not accept the Typefully share url the send path parks there first", async () => {
+      db = await createTestDb();
+      await new PgDeliveryLedger(db).add({ itemId: "x:1", type: "x", outletId: "x-post", status: "sent", at: "2026-08-12T00:00:00.000Z", by: "auto", url: "https://typefully.com/t/abc123" });
+      const deps = createDeps({ db, routes: "local" });
+
+      expect(await deps.loadXPostUrl("x:1")).toBeUndefined();
+    });
+
+    it("reports nothing for an item whose post is not up yet, and does not borrow another item's", async () => {
+      db = await createTestDb();
+      await new PgDeliveryLedger(db).add({ itemId: "x:2", type: "x", outletId: "x-post", status: "sent", at: "2026-08-12T00:00:00.000Z", by: "auto", url: X_URL });
+      const deps = createDeps({ db, routes: "local" });
+
+      expect(await deps.loadXPostUrl("x:1")).toBeUndefined();
     });
   });
 

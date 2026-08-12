@@ -227,5 +227,6 @@ pnpm send:channels --outlets tg-dev    # 특정 방만
 | Typefully `401`                         | API 키가 v1이거나 오타 → Settings → API에서 **v2** 키                         |
 | `social_set_id`를 모름                  | `GET /v2/social-sets`로 목록 조회(Y-3)                                        |
 | 발행했는데 아무 것도 안 나감 (`sent 0`) | 보낼 승인 렌더링 없음 → 2차 검수에서 telegram/x 렌더링을 approved로           |
+| 공지가 `X 게시물 URL이 없습니다 — X를 먼저 게시하세요`로 실패 | 그 항목의 X 게시물 URL이 아직 기록에 없음 → X에 먼저 게시하고 `pnpm x:reconcile`(또는 `pnpm x:link --item <id> --post <url>`)로 URL을 남기면 다음 실행 때 나감 |
 
 > **보안:** 봇 토큰·API 키·`.env`는 절대 공유·커밋하지 마세요. 각자 로컬에서만 사용합니다.

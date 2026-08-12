@@ -3,6 +3,28 @@ import { X_MAX_WEIGHTED, weightedLength } from "../weightedLength";
 import type { EmitResult, EmitSegment } from "./types";
 
 /**
+ * A line that is nothing but a symbol and a bare URL. `\p{L}`/`\p{N}` are excluded from the symbol
+ * class on purpose: that is what makes `[영상] https://…` (media marker) and `· 거래: https://…`
+ * (a labelled bullet) fall out — both open with a symbol, but a letter follows before the URL does.
+ * The lookahead pins the URL to end-of-line, so a URL sitting inside a sentence is never touched.
+ */
+const ICON_BEFORE_BARE_URL = /^[^\p{L}\p{N}\s]+[ \t]+(?=https?:\/\/\S+[ \t]*$)/gmu;
+
+/**
+ * Drop an icon written in front of a bare URL — `conversion/x.md:59-66` forbids it ("링크 앞에
+ * 아이콘을 붙이지 않고 URL을 그대로 씁니다"), and the conversion agent wrote one anyway, so the rule
+ * gets a guard here rather than a louder wording in the guide.
+ *
+ * X only. Telegram and KakaoTalk keep their emoji style, and their 공지 CTA opens with one by design
+ * (see `src/domain/formatting/xLinkCta.ts`).
+ *
+ * Exported for its own tests; `emitX` below is the only production caller.
+ */
+export function stripLinkIcon(text: string): string {
+  return text.replace(ICON_BEFORE_BARE_URL, "");
+}
+
+/**
  * X composers take plain text: pasted markdown is not parsed. Unicode "bold" is not a substitute
  * — screen readers skip the styled word entirely, X search does not match it, and every such
  * character costs 2 weighted units. Emphasis belongs in line breaks and structure instead.
@@ -11,7 +33,7 @@ import type { EmitResult, EmitSegment } from "./types";
  * silently here would never be reviewed by anyone; the writer splits, in `pnpm format --refine`.
  */
 function emitX(canonical: string, xMaxWeighted: number = X_MAX_WEIGHTED): EmitResult {
-  const posts = splitPosts(canonical);
+  const posts = splitPosts(stripLinkIcon(canonical));
   const warnings: string[] = [];
 
   // Decide, once and on the unsplit text, whether any leftover ** a segment shows below was

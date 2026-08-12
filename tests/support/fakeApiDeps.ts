@@ -84,6 +84,9 @@ export function fakeDeps(): ApiDeps {
     loadStatus: async () => ({ storageMode: "cloud", funnel: EMPTY_FUNNEL, sync: { synced: 0, needsRepublish: 0, unpublished: 0 }, availableTargets: ["local"], integrations: [], sheetLinks: {}, dbEnv: "development", sendsEnabled: true, conversionEnabled: true, intakeEnabled: true }),
     loadPublishState: async () => [],
     loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
+    // Read only by the `/emissions` routes, and only for a 공지 — irrelevant to the transport- and
+    // gate-level tests this fake serves, so it reports the "X post is not up yet" state.
+    loadXPostUrl: async () => undefined,
     collectLinkedThread: { run: async () => ({ itemId: "x:1", tweets: 1, outcome: "collected" as const }) } as unknown as ApiDeps["collectLinkedThread"],
     loadIntakePending: async () => [],
     xMaxWeighted: 280,

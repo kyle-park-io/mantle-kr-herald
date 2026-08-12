@@ -65,10 +65,17 @@ const rendering = (o: Partial<ChannelRendering>): ChannelRendering => ({
   createdAt: "2026-07-27T00:00:00Z", status: "approved", approvedAt: "2026-07-27T01:00:00Z", ...o,
 });
 
-/** An approved 1차 translation, stamped before `rendering`'s default `approvedAt` — the ordinary case. */
+/**
+ * An approved 1차 translation, stamped before `rendering`'s default `approvedAt` — the ordinary case.
+ *
+ * `postedUrl` is part of that ordinary case: `rendering`'s default type is `announcement`, and
+ * `SendChannels` refuses a telegram 공지 whose X post is not up yet (`xLinkCta.ts`). Without it every
+ * test in this file would measure that refusal instead of the resend/pin path it is about.
+ */
 const source = (itemId: string, o: Partial<Translation> = {}): Translation => ({
   itemId, source: "x", sourceText: "src", koreanText: "ko",
-  status: "approved", translatedAt: "2026-07-25T00:00:00Z", approvedAt: "2026-07-26T00:00:00Z", ...o,
+  status: "approved", translatedAt: "2026-07-25T00:00:00Z", approvedAt: "2026-07-26T00:00:00Z",
+  postedUrl: "https://x.com/0xMantleKR/status/2087418810458382585", ...o,
 });
 
 const sentRow = (o: Partial<DeliveryEntry> = {}): DeliveryEntry => ({

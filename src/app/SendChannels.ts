@@ -14,6 +14,7 @@ import type { OutletOverrideStore } from "../ports/OutletOverrideStore";
 import type { TranslationStore } from "../ports/TranslationStore";
 import { sendBlock } from "../domain/send/sendBlock";
 import { emit } from "../domain/formatting/emitters";
+import { appendXLinkCta, needsXLinkCta, resolveXPostUrl, xLinkCta } from "../domain/formatting/xLinkCta";
 import { matchesItemId } from "../domain/itemId";
 import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { PublishRecord } from "../domain/sheet/models";
@@ -214,6 +215,33 @@ export class SendChannels {
       skipped += outlets.length - pending.length;
       if (pending.length === 0) continue;
 
+      // 공지 points readers back at our own X post, and that URL does not exist when the rendering
+      // is written (see `xLinkCta.ts`). Resolved per rendering, before the per-text loop below, so
+      // one missing URL fails the item once rather than once per room or once per fork.
+      //
+      // BELOW the `pending.length === 0` guard, deliberately: a 공지 every room has already received
+      // still has no URL if it was hand-posted and never reconciled, and refusing it here would
+      // report a `failed` on every run forever with nothing left to send that could clear it.
+      let cta: string | undefined;
+      if (needsXLinkCta(r.type, r.channel)) {
+        const xUrl = resolveXPostUrl(
+          sourceByItem.get(r.itemId),
+          ledgered.filter((d) => d.itemId === r.itemId),
+        );
+        if (!xUrl) {
+          // Not a warning-and-send: a 공지 whose whole job is to route readers to the X post, sent
+          // without the link, is a live post nobody can recall and nobody would notice was wrong.
+          // Failing keeps it retryable — a failed send is never ledgered, so the next run picks it
+          // up as soon as the post is up and `x:reconcile` has run.
+          const reason = "X 게시물 URL이 없습니다 — X를 먼저 게시하세요";
+          console.warn(`[send] ${r.itemId}:${r.type} skipped for ${pending.map((o) => o.id).join(", ")}: ${reason}`);
+          failures.push({ key: `${r.itemId}:${r.type}`, error: reason });
+          failed += 1;
+          continue;
+        }
+        cta = xLinkCta(r.channel, xUrl);
+      }
+
       // Rooms that send the same text share one emit and one media parse. Unforked rooms all
       // resolve to the group copy, so the common case still does that work exactly once — but a
       // forked room now gets its own, which is the whole point of forking it.
@@ -226,7 +254,11 @@ export class SendChannels {
       }
 
       for (const [text, rooms] of byText) {
-        const emitResult = emit(text, DELIVERY_DESTINATION[r.channel], this.xMaxWeighted);
+        // The CTA rides through `emit` rather than being appended after it, so the over-limit check
+        // below weighs it. Appended after, a 공지 sitting just under 4096 would go out at 4096+N and
+        // Telegram would 400 it forever.
+        const sendText = cta ? appendXLinkCta(text, cta) : text;
+        const emitResult = emit(sendText, DELIVERY_DESTINATION[r.channel], this.xMaxWeighted);
         if (emitResult.segments.some((s) => s.overLimit)) {
           // Sending would just 400 forever (the emitter refuses to split further) — fail fast
           // instead of hammering the API on every rerun. A human has to edit the rendering.
@@ -240,6 +272,9 @@ export class SendChannels {
           continue;
         }
 
+        // `text`, not `sendText`: media markers only ever appear in the body a human wrote, and the
+        // CTA is a plain line with no marker in it. Parsing the appended copy would find the same
+        // media and say the same thing, just later.
         const { photos, videos } = extractMedia(text);
         // Only a marker that carries a url can be uploaded. A bare `[영상]` is a thread collected
         // before `XContentSource` captured `video_info`, and nothing re-derives stored text on read,
@@ -318,8 +353,9 @@ export class SendChannels {
             }
             if (this.archive) {
               try {
-                // The archive records what the room received, so a forked room archives its fork.
-                await this.archive({ itemId: r.itemId, type: r.type, channel: r.channel, outletId: outlet.id, text, postId: res.postId, url: res.url, sentAt });
+                // The archive records what the room received, so a forked room archives its fork —
+                // and a 공지 archives the CTA it went out with, not the pre-CTA body.
+                await this.archive({ itemId: r.itemId, type: r.type, channel: r.channel, outletId: outlet.id, text: sendText, postId: res.postId, url: res.url, sentAt });
               } catch (err) {
                 console.warn(`[send] ${key} sent, but archive failed: ${(err as Error).message}`);
               }
