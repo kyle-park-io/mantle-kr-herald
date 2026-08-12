@@ -240,7 +240,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same rule `flattenXThreads` applies downstream — the predicate (`isCommenterReply`) is imported,
   not re-implemented, because a copy drifts from the original and drift here means the screen and no
   code agree on what got skipped. **A link aimed at a commenter's reply *inside* a thread is refused
-  by that same predicate** (`이 주소가 가리키는 글은 스레드에 달린 답글이라...`), and with its own
+  by that same predicate** (`이 주소는 스레드 안의 답글이라...`), and with its own
   wording: matching by containment means such a link resolves to the parent thread, which is
   collectable — but `flattenXThreads` strips nested commenter replies from the item text, so
   accepting it would answer "수집됐습니다" about a thread assembled without the one tweet the operator
@@ -303,7 +303,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     column, no migration, and `ContentItem` simply carries the root tweet's `authorUserName` now. An
     item whose author cannot be read keeps the floor, which is the conservative direction.
   - **The one case that leaves — a pre-floor post by `Mantle_Official` — is refused at the door**
-    (`이 글은 번역 기준 시각(…)보다 오래돼…`), with the date in the message and
+    (`이 글은 번역 기준 시각(…)보다 오래됐습니다…`), with the date in the message and
     `HERALD_TRANSLATE_SINCE` named as the dial, because nothing distinguishes such a post from swept
     backlog and collecting it would queue something no tick will ever select. The floor comes from
     the scheduler's own report in Postgres (`translate_floor_reports`, written by `WatchTick`), which

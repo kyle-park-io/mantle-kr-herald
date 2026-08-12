@@ -27,7 +27,7 @@ export const INTAKE_REPLY = "이 글은 다른 대화에 단 답글이라 파이
  * conversation, so this says what becomes of the linked post and what to paste instead.
  */
 export const INTAKE_LINKED_REPLY =
-  "이 주소가 가리키는 글은 스레드에 달린 답글이라 번역 대상에서 빠집니다 — 스레드 본문 글의 주소를 넣어 주세요";
+  "이 주소는 스레드 안의 답글이라 번역 대상에서 빠집니다 — 스레드 본문 글 주소를 넣어 주세요";
 
 /**
  * The one refusal that carries a value, so it is a function where its neighbours above are
@@ -38,7 +38,7 @@ export const INTAKE_LINKED_REPLY =
  * here: this is the value to compare the unit file against, not a date to read aloud.
  */
 export function intakeBelowFloorMessage(floor: string): string {
-  return `이 글은 번역 기준 시각(${floor})보다 오래돼 자동 번역되지 않습니다 — 정말 필요하면 HERALD_TRANSLATE_SINCE를 내려야 합니다`;
+  return `이 글은 번역 기준 시각(${floor})보다 오래됐습니다 — HERALD_TRANSLATE_SINCE를 내리지 않는 한 처리되지 않습니다`;
 }
 
 /**
@@ -143,7 +143,7 @@ export class CollectLinkedThread {
 
     // Reads only, above — nothing has been written yet, which is what lets the floor refuse here.
     // It is skipped for an already-translated item on purpose: the refusal is a statement about what
-    // a tick will do, and "이 글은 …오래돼 자동 번역되지 않습니다" about a post already sitting in
+    // a tick will do, and "이 글은 …오래됐습니다" about a post already sitting in
     // 1차 검수 is simply false. `already-pending` is not skipped — a below-floor item waiting in
     // that queue is precisely one no tick will take, and saying so is more use than repeating
     // "번역 틱이 돌면 처리됩니다".

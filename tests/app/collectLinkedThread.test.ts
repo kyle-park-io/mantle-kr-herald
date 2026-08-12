@@ -382,8 +382,8 @@ describe("CollectLinkedThread", () => {
 
     it("says where an already-translated below-floor post is instead of calling it too old", async () => {
       // The refusal is a statement about what the next tick will do, and it has nothing to say about
-      // a post already sitting in 1차 검수. Telling the reviewer "이 글은 …오래돼 자동 번역되지
-      // 않습니다" about a post they can go and read would be false — the same kind of false the
+      // a post already sitting in 1차 검수. Telling the reviewer "이 글은 …오래됐습니다"
+      // about a post they can go and read would be false — the same kind of false the
       // whole wave is removing, just pointed the other way.
       const uc = new CollectLinkedThread(
         fakeGateway({ fetchThread: async () => [tweet({ createdAt: OLD })] }),
