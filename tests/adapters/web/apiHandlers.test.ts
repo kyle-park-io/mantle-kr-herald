@@ -419,6 +419,29 @@ describe("handleApi", () => {
     expect(list[0].convertedText).toBe("변환본");
   });
 
+  it("GET /api/renderings drops the cards of an item whose 1차 is 게시됨", async () => {
+    // The ordinary end of an item's life: approved, rendered, sent, then retired to `posted`. Its
+    // cards can no longer be sent (`sendBlock`) nor rebuilt (`FormatVariants`), so the 2차 board —
+    // which answers "what is left to review" — must not keep listing them.
+    const d = makeDeps(
+      [tr({ itemId: "x:1", status: "posted" }), tr({ itemId: "x:2", status: "approved" })],
+      [rnd({ itemId: "x:1", type: "x", channel: "x" }), rnd({ itemId: "x:2", type: "x", channel: "x" })],
+    );
+    const res = await handleApi(d, "GET", "/api/renderings", undefined);
+    expect((res.json as ChannelRendering[]).map((r) => r.itemId)).toEqual(["x:2"]);
+  });
+
+  it("GET /api/renderings keeps a 되돌리기'd item, and one with no 1차 row at all", async () => {
+    // Only an explicit `posted` means finished. `translated` is where 되돌리기 lands — the board is
+    // where its block gets explained — and a missing translation row is an anomaly, not an ending.
+    const d = makeDeps(
+      [tr({ itemId: "x:1", status: "translated" })],
+      [rnd({ itemId: "x:1", type: "x", channel: "x" }), rnd({ itemId: "x:9", type: "x", channel: "x" })],
+    );
+    const res = await handleApi(d, "GET", "/api/renderings", undefined);
+    expect((res.json as ChannelRendering[]).map((r) => r.itemId)).toEqual(["x:1", "x:9"]);
+  });
+
   it("PUT edits a rendering's text and reverts it to rendered", async () => {
     const d = makeDeps([], [rnd({ itemId: "x:1", type: "x", channel: "telegram", status: "approved" })]);
     const res = await handleApi(d, "PUT", "/api/renderings/x%3A1/x/telegram", { text: "수정된 텍스트" });

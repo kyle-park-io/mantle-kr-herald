@@ -518,13 +518,36 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
       const [renderings, variants, translations] = await Promise.all([
         deps.formattingStore.loadAll(),
         deps.conversionStore.loadAll(),
-        // For `sourcePostedAt`/`kind` only. The 2차 list is per *item*, like 1차, so it shows the
-        // same date prefix and 포스트/아티클 badge — which live on the source item, not the rendering.
+        // For `sourcePostedAt`/`kind`, and for the `posted` gate below. The 2차 list is per *item*,
+        // like 1차, so it shows the same date prefix and 포스트/아티클 badge — which live on the
+        // source item, not the rendering.
         deps.loadTranslations(),
       ]);
       const convertedByKey = new Map(variants.map((v) => [`${v.itemId}:${v.type}`, v.convertedText]));
       const sourceById = new Map(translations.map((t) => [t.itemId, t] as const));
-      const enriched = renderings.map((r) => ({
+      /**
+       * **A `posted` item is finished, and its cards do not belong on the 2차 board.**
+       *
+       * The same rule `FormatVariants` enforces on the write side — read that comment for why
+       * `posted` is terminal. It gates what gets *built*, which leaves the cards an item already had
+       * when 게시됨 retired it: the ordinary lifecycle is 승인 → 카드 렌더 → 발송 → 게시됨으로, so
+       * every item that ever finished left its whole board behind, forever, on the one screen whose
+       * job is to say what is left to review.
+       *
+       * They are not merely stale, they are inert: `sendBlock` answers `source-unapproved` for every
+       * room on a `posted` item, so nothing on those cards can be sent, and `pnpm format` refuses to
+       * rebuild them. A row that can neither be cleared nor acted on is noise.
+       *
+       * Filtered on READ rather than deleted, because 되돌리기 exists — it puts the item back to
+       * `translated`, and the cards (and their 2차 approvals) have to still be there when it does.
+       *
+       * `status === "posted"` and nothing else, again matching the write side: an item with no
+       * translation row at all is an anomaly, not a finished one, and `translated` is the state
+       * 되돌리기 lands in — `sendBlock` already paints that row's block as 원문이 1차 승인 상태가
+       * 아닙니다, which is a message written to be read on this board.
+       */
+      const visible = renderings.filter((r) => sourceById.get(r.itemId)?.status !== "posted");
+      const enriched = visible.map((r) => ({
         ...r,
         convertedText: convertedByKey.get(`${r.itemId}:${r.type}`) ?? "",
         // The wire key here stays `postedAt` — `Rendering.postedAt` (web/src/types.ts) has always

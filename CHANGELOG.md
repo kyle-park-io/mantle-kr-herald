@@ -493,6 +493,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/ko/setup/steering.md` said `pnpm doctor` "only checks that the file exists": it has checked
   content since `skeletonSteeringFiles` landed, warning on an empty glossary or a guide still
   identical to its skeleton.
+- **2차 검수 no longer lists items whose 1차 is 게시됨.** `FormatVariants` has refused to *build*
+  cards for a `posted` item since "stop rebuilding channel cards for an item that already went out"
+  (`a7412b2`), but that gate only ever covered writes, and the ordinary
+  lifecycle is 승인 → 카드 렌더 → 발송 → 게시됨으로 — so every item that ever finished left its whole
+  board behind on the one screen whose job is to say what is *left* to review. The rows are not
+  merely stale, they are inert in both directions: `sendBlock` answers `source-unapproved` for every
+  room on a `posted` item, so nothing on those cards can be sent, and `pnpm format` refuses to
+  rebuild them, so the board could be neither cleared nor acted on. `GET /api/renderings` now drops
+  them, using the translations it was already loading for the date prefix and 포스트/아티클 badge.
+  **Filtered on read, never deleted** — 되돌리기 puts the item back to `translated`, and the cards
+  and their 2차 approvals have to still be there when it does. `status === "posted"` and nothing
+  else, matching the write-side gate word for word: an item with no translation row is an anomaly
+  rather than a finished one, and a `translated` item stays listed because `sendBlock` already
+  paints its block as 원문이 1차 승인 상태가 아닙니다 — a message written to be read on this board.
 
 ## [0.5.0] - 2026-08-11
 
