@@ -18,13 +18,13 @@ export const INTAKE_REPLY = "이 글은 다른 대화에 단 답글이라 파이
  *
  * `INTAKE_REPLY` above is the thread that *opens* with a commenter reply: `flattenXThreads` throws
  * the whole thread away, so there is no item at all. This one is a link aimed at a commenter reply
- * *inside* a thread that is otherwise perfectly collectable — the thread becomes an item, and
- * `flattenXThreads` removes exactly that tweet from its text. Accepting it would answer
- * "수집됐습니다" about a thread assembled without the tweet the operator was looking at.
+ * *inside* a thread — the thread itself may be entirely collectable, and `flattenXThreads` keeps it
+ * while filtering that tweet, along with every other nested commenter reply, out of the item text.
+ * Accepting the link would answer with an outcome — "수집됐습니다", or one of the `already-*` — about
+ * a thread assembled without the tweet the operator was pointing at.
  *
  * Stretched, `INTAKE_REPLY` would say "다른 대화에 단 답글" about a reply that is in *this*
- * conversation, so this says what actually happens to the linked post and which address to use
- * instead — the same address the thread's own tweets carry.
+ * conversation, so this says what becomes of the linked post and what to paste instead.
  */
 export const INTAKE_LINKED_REPLY =
   "이 주소가 가리키는 글은 스레드에 달린 답글이라 번역 대상에서 빠집니다 — 스레드 본문 글의 주소를 넣어 주세요";
@@ -122,8 +122,8 @@ export class CollectLinkedThread {
 
     // The same silent drop, one tweet down. Containment matching above means a link to a stranger's
     // comment resolves to the thread that comment hangs off, and `flattenXThreads` filters nested
-    // commenter replies out of the item text — so the linked tweet is precisely the one the item
-    // would not contain, while the screen said the link was collected. Checked after the root, so a
+    // commenter replies out of the item text — so the linked tweet is one the item would not
+    // contain, while the screen said the link was collected. Checked after the root, so a
     // link to a root that is itself a commenter reply still gets `INTAKE_REPLY`'s wording.
     // `find` cannot miss here — `thread` was chosen for containing this id — and is written as a
     // guard rather than an assertion so the type says so too.
@@ -183,8 +183,9 @@ export class CollectLinkedThread {
    * `x_threads` on its own (`src/domain/sweptAccount.ts`). A pre-floor post by the swept account
    * does not, because nothing distinguishes it from the swept backlog the floor exists to hold back.
    * A pre-floor post whose author cannot be read goes the same way as the swept account's, which is
-   * the conservative direction and the one the tick takes. Either refusal, left to be collected,
-   * would sit in the 링크 수집 waiting list looking queued, forever.
+   * the conservative direction and the one the tick takes. Either of those, left to be collected,
+   * would be stored and then be nowhere: no tick selects it, and `loadIntakePending` applies this
+   * same rule, so it does not even appear in the 링크 수집 waiting list to be wondered about.
    *
    * So it is refused before `repo.upsert`, with the date in the message — the refusal names the one
    * setting that would change the answer instead of leaving the operator to guess.

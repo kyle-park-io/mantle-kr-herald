@@ -296,8 +296,8 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * dashboard down over a credential only one tab needs.
    *
    * `readFloorReport` is handed over because the use case refuses a link the floor rule says no tick
-   * would select, rather than collecting one that would then wait forever (see its own doc comment;
-   * it asks `meetsTranslateFloor`, the same function `loadIntakePending` above does). That reader,
+   * would select, rather than storing one nothing will ever pick up (see its own doc comment; it
+   * asks `meetsTranslateFloor`, the same function `loadIntakePending` above does). That reader,
    * not systemd, in both deployments: the Vercel function has no systemd to ask, and the report is
    * the scheduler's own record of the floor it ran with.
    */
@@ -547,8 +547,9 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * the swept account's pre-floor backlog rendered here looking queued, forever — the same silent
    * failure this tab exists to remove, aimed at the screen instead of at the pipeline.
    *
-   * Together with the door gate (`CollectLinkedThread` calls this same function and refuses whatever
-   * it answers no to), that makes the list what it claims to be: every item on it is one a
+   * Together with the door gate (`CollectLinkedThread` calls this same function and refuses a link
+   * it answers no to — bar an already-translated one, which is past the question), that makes the
+   * list what it claims to be: every item on it is one a
    * tick will take. **A tick, not necessarily the next one** — a queue longer than the tick's batch
    * drains over several, which changes when an item's turn comes and not whether it comes; the floor
    * is the only filter that drops one for good (see `meetsTranslateFloor`). The list is still
