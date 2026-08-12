@@ -7,8 +7,11 @@ import { RenderingsView } from "./components/RenderingsView";
 import { IntakeView } from "./components/IntakeView";
 import { EnvironmentBanner } from "./components/EnvironmentBanner";
 import { CollectedBreakdownCard } from "./components/CollectedBreakdownCard";
+import { TickPie } from "./components/TickPie";
 import { btn } from "./buttonStyles";
 import { livenessChip, livenessHeadline, probeLabel } from "./liveness";
+import { useNow } from "./useNow";
+import { CONVERT_TICK, WATCH_TICK, tickPhase, tickTooltip, type TickSchedule } from "./tickSchedule";
 
 /**
  * Every tab, once. The four things a tab needs — its id, the hash that addresses it, the label on
@@ -51,6 +54,25 @@ const FUNNEL_STEPS = [
   ["발행", "published"],
 ] as const;
 
+/**
+ * The two stages a systemd timer fills, and the tick that fills each — everything else on the strip
+ * advances because a person did something.
+ *
+ * 번역 is where `herald-watch` (`*-*-* 0/2:17:00`) leaves its work, so it is the head of the 1차 검수
+ * queue. 렌더 is where `herald-convert` (`*-*-* *:07,37:00`) leaves its own: that tick runs
+ * `convert:save` and `format` in one go, so 변환 is a waypoint it passes through rather than a place
+ * anything comes to rest — which is why the pie goes on 렌더 and not on both. 수집 moves when someone
+ * pastes a link, and 발행 when someone clicks 발행; a countdown on either would be counting down to
+ * nothing.
+ *
+ * The schedule itself is `tickSchedule.ts`, pinned against `deploy/*.timer` by
+ * `tests/deploy/dashboardTickTiming.test.ts`.
+ */
+const STAGE_TICK: Partial<Record<(typeof FUNNEL_STEPS)[number][1], { name: string; schedule: TickSchedule }>> = {
+  translated: { name: "번역 틱", schedule: WATCH_TICK },
+  rendered: { name: "변환 틱", schedule: CONVERT_TICK },
+};
+
 const GROUP_LABEL: Record<"collect" | "publish" | "send" | "data", string> = {
   collect: "수집",
   publish: "발행",
@@ -68,6 +90,9 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
   const [publishRows, setPublishRows] = useState<PublishStateRow[]>([]);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
+  // One clock for both countdown pies below — see `useNow` on why it is read here and passed down
+  // rather than called twice.
+  const now = useNow();
 
   // Clears on success, because the `authEpoch` effect below re-runs this after a login and the
   // failure it is recovering from is usually the cold-start 401 — leaving that set would park
@@ -422,6 +447,12 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                     // descendant of the stage but not one of its own two spans, so `수집 134` keeps
                     // its value, its density, and the way a test reads one stage at a time.
                     const collected = key === "collected";
+                    // Both `undefined` on the three stages no timer feeds. The sentence is built once
+                    // and used twice — as the pointer's tooltip and as the pie's accessible name —
+                    // because a screen reader and a hover must not be able to say different things.
+                    const tick = STAGE_TICK[key];
+                    const phase = tick && tickPhase(now, tick.schedule);
+                    const tickTip = tick && phase && tickTooltip(tick.name, phase);
                     return (
                       // The separator is a sibling of the stage, not a child of it, so a stage's own
                       // text is exactly its own — which is what lets a test read one stage at a time.
@@ -438,6 +469,20 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                           // inherits the nearest ancestor's, which is exactly what has to stop here.
                           title={collected ? "" : undefined}
                         >
+                          {/* The countdown's own tooltip, on a span of its own. Same problem 수집
+                              solves two lines up and a cheaper answer: the funnel's `title` explains
+                              items-vs-rows, and the nearest titled ancestor is what the pointer gets,
+                              so a `title` here simply wins for the pixels the pie occupies — no
+                              `title=""` and no hover card needed, because this one is a sentence
+                              rather than a table. */}
+                          {phase && tickTip && (
+                            <span
+                              className="flex shrink-0 cursor-help items-center"
+                              title={tickTip}
+                            >
+                              <TickPie fraction={phase.fraction} label={tickTip} />
+                            </span>
+                          )}
                           <span className="text-muted">{label}</span>
                           <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
                           {tally.rows !== tally.items && (
