@@ -8,9 +8,10 @@
  * as a reference corpus rather than translation input, so it never lands here.
  *
  * That is what makes the handle usable as a marker: a row in `x_threads` authored by anyone else
- * can only have arrived through 링크 수집, hand-picked by a person. `PrepareTranslations` uses
- * exactly that to decide who the translate floor (`HERALD_TRANSLATE_SINCE`) applies to — see the
- * spec's "번역 기준 시각(`HERALD_TRANSLATE_SINCE`)과의 관계" and `applySelector`.
+ * can only have arrived through 링크 수집, hand-picked by a person. `meetsTranslateFloor`
+ * (`src/domain/translation/translateFloor.ts`) uses exactly that to decide who the translate floor
+ * (`HERALD_TRANSLATE_SINCE`) applies to, for the translate tick and the 링크 수집 waiting list
+ * alike — see the spec's "번역 기준 시각(`HERALD_TRANSLATE_SINCE`)과의 관계".
  *
  * Named once rather than spelled in both places: the CLI default and the floor rule have to mean
  * the same account, and two literals drift without anything failing — the floor would simply start

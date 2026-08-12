@@ -15,11 +15,14 @@ export interface ContentItem {
    * X only. The root tweet's `authorUserName`. Undefined for Lark, which has no X handle, and for a
    * thread stored with no tweets at all.
    *
-   * Not shown to anyone: it is read by `PrepareTranslations.applySelector` to decide whether the
-   * translate floor applies to this item — it applies to the account the scheduled sweep reads
-   * (`src/domain/sweptAccount.ts`) and not to a post a person hand-picked from another account.
+   * Not shown to anyone: it is read by `meetsTranslateFloor` (`./translateFloor.ts`) to decide
+   * whether the translate floor applies to this item — it applies to the account the scheduled sweep
+   * reads (`src/domain/sweptAccount.ts`) and not to a post a person hand-picked from another
+   * account. Both the tick that selects (`PrepareTranslations.applySelector`) and the 링크 수집
+   * waiting list (`createDeps.loadIntakePending`) ask through that one function.
+   *
    * Undefined therefore means "assume the floor applies", which is the conservative direction: see
-   * `applySelector` for why the unreadable case must stay shut.
+   * `meetsTranslateFloor` for why the unreadable case must stay shut.
    */
   author?: string;
 }
