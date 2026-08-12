@@ -11,4 +11,15 @@ export interface ContentItem {
    * plain text under 280 — reviewers need to tell them apart in one queue. Undefined for Lark.
    */
   kind?: "post" | "article";
+  /**
+   * X only. The root tweet's `authorUserName`. Undefined for Lark, which has no X handle, and for a
+   * thread stored with no tweets at all.
+   *
+   * Not shown to anyone: it is read by `PrepareTranslations.applySelector` to decide whether the
+   * translate floor applies to this item — it applies to the account the scheduled sweep reads
+   * (`src/domain/sweptAccount.ts`) and not to a post a person hand-picked from another account.
+   * Undefined therefore means "assume the floor applies", which is the conservative direction: see
+   * `applySelector` for why the unreadable case must stay shut.
+   */
+  author?: string;
 }

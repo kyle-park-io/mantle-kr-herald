@@ -147,6 +147,10 @@ export function flattenXThreads(
       refUrl: first?.url,
       isReply: first?.isReply,
       kind: hasArticle ? "article" : "post",
+      // Read by nothing on screen — it is what lets `applySelector` apply the translate floor to the
+      // swept account only (see `ContentItem.author`). Taken from the root tweet, the same tweet
+      // `createdAt` above comes from, so the two facts the floor rule compares describe one post.
+      author: first?.authorUserName,
     });
   }
   return items;

@@ -34,6 +34,22 @@ describe("XContentSource isReply", () => {
     expect(item.isReply).toBe(false);
   });
 
+  /**
+   * The author is what decides whether the translate floor applies to this item
+   * (`PrepareTranslations.applySelector`, and `src/domain/sweptAccount.ts` for why the handle is the
+   * marker). Dropping it here is not a cosmetic loss: an item with no author is treated as the swept
+   * account's, so a hand-picked post from another account would be filtered out below the floor —
+   * silently, which is the whole failure mode 링크 수집's door gate exists to end.
+   */
+  it("carries the root tweet's author onto the ContentItem", async () => {
+    const path = await writeThreads([{ rootId: "100", status: "active", tweets: [
+      tweet({ id: "100", authorUserName: "someone_else" }),
+      tweet({ id: "101", authorUserName: "quoted_person" }),
+    ] }]);
+    const [item] = await new XContentSource(path).loadPending(new Set());
+    expect(item.author).toBe("someone_else");
+  });
+
   it("drops a nested commenter-reply entirely, keeping the root and self-continuations", async () => {
     // These used to be kept and prefixed "(댓글 · 지워도 됨)" — an instruction to the translator to
     // delete them by hand, on every worksheet, forever. Measured against production 2026-08-07:
