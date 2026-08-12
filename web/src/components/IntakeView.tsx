@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
-import { datePrefix, INTAKE_OUTCOME_MESSAGE, type IntakePendingItem } from "../types";
+import { datePrefix, INTAKE_DISABLED_MESSAGE, INTAKE_OUTCOME_MESSAGE, type IntakePendingItem } from "../types";
 import { btnPrimary } from "../buttonStyles";
 import { KindBadge } from "./TranslationList";
 
@@ -80,9 +80,7 @@ export function IntakeView(props: { authEpoch: number; intakeEnabled: boolean })
         {/* Visible text, not a hover — a reason you have to discover by hovering is a reason nobody
             reads, and a disabled button gives a keyboard user nothing else to read at all. */}
         {!intakeEnabled && (
-          <p className="mt-2 text-[13px] font-medium text-amber-ink">
-            이 배포에는 TWITTERAPI_IO_KEY가 없어 링크 수집을 할 수 없습니다
-          </p>
+          <p className="mt-2 text-[13px] font-medium text-amber-ink">{INTAKE_DISABLED_MESSAGE}</p>
         )}
         {outcome && <p className="mt-2 text-[13px] font-medium text-mint">{outcome}</p>}
         {error && (

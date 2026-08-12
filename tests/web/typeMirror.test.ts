@@ -5,7 +5,12 @@ import { CHANNEL_RENDERS_BOLD, DESTINATIONS_BY_CHANNEL } from "../../src/domain/
 import type { Destination } from "../../src/domain/formatting/emitters/types";
 import { ALL_OUTLETS } from "../../src/domain/outlet/models";
 import { SEND_BLOCK_REASON, type SendBlock } from "../../src/domain/send/sendBlock";
-import { SENDS_CLOSED_MESSAGE } from "../../src/adapters/web/apiHandlers";
+import {
+  INTAKE_DISABLED_MESSAGE,
+  SENDS_CLOSED_MESSAGE,
+  type IntakePendingItem,
+} from "../../src/adapters/web/apiHandlers";
+import type { IntakeOutcome, IntakeResult } from "../../src/app/CollectLinkedThread";
 import { ALL_DELIVERY_STATUSES, deliveredToRoom } from "../../src/domain/delivery/models";
 import { ALL_TRANSLATION_STATUSES } from "../../src/domain/translation/models";
 import type { BoardView, BoardGroup, BoardRow } from "../../src/adapters/web/board";
@@ -35,6 +40,7 @@ import {
   DESTINATION_LABEL as WEB_DESTINATION_LABEL,
   SEND_BLOCK_REASON as WEB_SEND_BLOCK_REASON,
   SENDS_CLOSED_MESSAGE as WEB_SENDS_CLOSED_MESSAGE,
+  INTAKE_DISABLED_MESSAGE as WEB_INTAKE_DISABLED_MESSAGE,
   CHANNEL_RENDERS_BOLD as WEB_CHANNEL_RENDERS_BOLD,
   CHANNEL_FORMAT_NOTE as WEB_CHANNEL_FORMAT_NOTE,
   deliveredToRoom as WEB_DELIVERED_TO_ROOM,
@@ -49,6 +55,9 @@ import {
   type CollectedBreakdown as WebCollectedBreakdown,
   type CollectedReach as WebCollectedReach,
   type IntakeTerm as WebIntakeTerm,
+  type IntakePendingItem as WebIntakePendingItem,
+  type IntakeReply as WebIntakeReply,
+  type IntakeOutcome as WebIntakeOutcome,
   WATCH_UNIT as WEB_WATCH_UNIT,
   FLOOR_VAR as WEB_FLOOR_VAR,
   type LivenessSummary as WebLivenessSummary,
@@ -445,6 +454,41 @@ describe("web type mirror", () => {
     // Every tier actually assigned to a probe today has a Korean label — the runtime half of the
     // same check, since a compile-time union match says nothing about a table's own keys.
     expect(Object.keys(TIER_LABEL).sort()).toEqual([...new Set(Object.values(PROBE_TIER))].sort());
+  });
+
+  /**
+   * 링크 수집's payloads. `GET /api/intake/pending` answers `IntakePendingItem[]` and
+   * `POST /api/intake/x` answers the use case's `IntakeResult` plus that same list, and the tab
+   * declares its own copy of all three — the identical setup the board payload check above exists
+   * for, and with the same blind spot: renaming `createdAt` to `postedAt` on the server leaves both
+   * typechecks green while the waiting list renders `Invalid Date` beside every row.
+   *
+   * `IntakeResult` is compared against the reply minus `pending`, because `pending` is the route's
+   * own addition to it (`apiHandlers.ts`, `{ ...result, pending }`) rather than something the use
+   * case returns — so `Omit` is what makes this a check on the two declarations and not on the
+   * spread.
+   */
+  it("mirrors the intake payloads field-for-field, in both directions", () => {
+    const pendingFromServer: WebIntakePendingItem = {} as IntakePendingItem;
+    const pendingToServer: IntakePendingItem = {} as WebIntakePendingItem;
+    const replyFromServer: Omit<WebIntakeReply, "pending"> = {} as IntakeResult;
+    const replyToServer: IntakeResult = {} as Omit<WebIntakeReply, "pending">;
+    const pendingKeys: SameKeys<WebIntakePendingItem, IntakePendingItem> = true;
+    const replyKeys: SameKeys<Omit<WebIntakeReply, "pending">, IntakeResult> = true;
+    const outcomes: SameUnion<WebIntakeOutcome, IntakeOutcome> = true;
+    // The assertion is the compile above; this only keeps the bindings live.
+    expect([pendingFromServer, pendingToServer, replyFromServer, replyToServer]).toHaveLength(4);
+    expect([pendingKeys, replyKeys, outcomes]).toEqual([true, true, true]);
+  });
+
+  /**
+   * The tab prints this before anyone clicks (`IntakeView`, under a disabled `[넣기]`) and the route
+   * answers it to anyone who posts anyway (`apiHandlers.ts`) — one deployment state, and an operator
+   * who meets it twice must read one sentence, not two independent wordings of it. Same check, same
+   * reason, as the closed-sends line above.
+   */
+  it("says the same thing about a deployment with no intake credential as the route that refuses it", () => {
+    expect(WEB_INTAKE_DISABLED_MESSAGE).toBe(INTAKE_DISABLED_MESSAGE);
   });
 
   /** [복사] hands a human the `_paste` spelling; the canonical text would paste raw markdown. */
