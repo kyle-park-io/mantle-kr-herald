@@ -63,9 +63,11 @@ export class PrepareTranslations {
       result = result.filter((i) => wanted.has(i.id));
     }
     // `selector.since` is the translate floor, and the rule for who it applies to lives in
-    // `meetsTranslateFloor` rather than here — `createDeps.loadIntakePending` asks the same function
-    // the same question, which is what lets the 링크 수집 waiting list promise that what it shows is
-    // what this line will take. See that function's own doc comment.
+    // `meetsTranslateFloor` rather than here — `createDeps.loadIntakePending` and `collectedScope`
+    // (`src/status/translateFloor.ts`) ask the same function the same question, which is what lets
+    // the 링크 수집 waiting list promise that what it shows is what this line will take, and what
+    // makes the Collected count a count of what this line can reach. See that function's own doc
+    // comment.
     if (selector.since) {
       const since = selector.since;
       result = result.filter((i) => meetsTranslateFloor(i, since));

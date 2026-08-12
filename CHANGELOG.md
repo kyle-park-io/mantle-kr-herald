@@ -261,18 +261,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     until `herald-watch`'s next tick (`translate:prepare`, every two hours at `*:17`) builds its
     translation row. Without this list a submitted link reads as "I pasted it and it vanished"; the
     `POST` reply carries the same refreshed list so the tab self-corrects in one round trip.
-  - **The list and the tick decide by one function, not by two copies of one rule.** The negative
-    join is not on its own the tick's answer — `applySelector` filters again by the translate floor —
-    so a list computing only the join showed the swept account's pre-floor backlog as though it were
-    queued, forever, with no error anywhere. That is the same silent failure the whole feature
-    exists to close, aimed at the screen instead of at the pipeline. The rule now lives in
-    `meetsTranslateFloor` (`src/domain/translation/translateFloor.ts`) and both call it, so they
-    cannot come to different conclusions about a row; it answers the whole question ("does the floor
-    let a tick take this item?") rather than handing back a predicate each caller combines with its
-    own date comparison. One predicate is enough because the floor is `applySelector`'s only
-    permanent filter — the batch `--limit` decides which tick's turn a queued item is, never whether
-    its turn comes. **No floor known filters nothing** — no report, or a tick that reported running
-    with none — matching the door gate's refusal to invent one.
+  - **The list, the tick and the Collected count decide by one function, not by three copies of one
+    rule.** The negative join is not on its own the tick's answer — `applySelector` filters again by
+    the translate floor — so a list computing only the join showed the swept account's pre-floor
+    backlog as though it were queued, forever, with no error anywhere. That is the same silent
+    failure the whole feature exists to close, aimed at the screen instead of at the pipeline. The
+    rule now lives in `meetsTranslateFloor` (`src/domain/translation/translateFloor.ts`) and all
+    three callers ask it, so they cannot come to different conclusions about a row; it answers the
+    whole question ("does the floor let a tick take this item?") rather than handing back a predicate
+    each caller combines with its own date comparison. One predicate is enough because the floor is
+    `applySelector`'s only permanent filter — the batch `--limit` decides which tick's turn a queued
+    item is, never whether its turn comes. **No floor known filters nothing** — no report, or a tick
+    that reported running with none — matching the door gate's refusal to invent one.
+  - **Fixed: two shipped screens counted a hand-picked pre-floor link as out of the scheduler's
+    reach.** `collectedScope` (`src/status/translateFloor.ts`) — the third caller above — ran a bare
+    `createdAt >= floor` while its own comment claimed to be "the identical expression
+    `applySelector` filters with". Once the floor started gating the swept account and nobody else
+    that claim was false, and so was the number: `pnpm status`'s `in scope N · below floor M` line
+    and the dashboard's 수집 hover card (`번역 대상 N건 · 하한 아래 M건`) both put a link somebody
+    pasted before the floor on the unreachable side, when the very next tick translates it. Both of
+    its counts — the systemd-measured one and the one taken against the scheduler's reported floor,
+    which is the one the hosted dashboard actually shows — now go through `meetsTranslateFloor`. The
+    error was bounded by how many below-floor links had been pasted, so it was small on the day it
+    shipped and grew with use of the tab.
   - **The translate floor (`HERALD_TRANSLATE_SINCE`) now gates the swept account and nobody else.**
     That floor filters on an item's own post date, after `loadPending` returns
     (`PrepareTranslations.applySelector`), so without this rule a link to anything published before
