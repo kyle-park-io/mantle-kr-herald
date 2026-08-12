@@ -286,7 +286,9 @@ export class SendChannels {
         // the [복사] preview (`apiHandlers.ts`'s `withKrLinks` / `withXLinkCta`). The two paths have
         // to produce identical bytes: a reviewer approves what the preview shows, and for a
         // `delivery: "manual"` room the preview IS the send, since a human copies it by hand.
-        // `tests/app/sendChannels.test.ts`'s "미리보기와 발송본이 같은 글자" pins them together.
+        // `tests/app/sendChannels.test.ts`'s "미리보기와 발송본이 같은 글자" pins that both paths apply
+        // the Korean-link rewrite identically — it uses `type: "x"`, for which `needsXLinkCta` is
+        // false, so it never exercises the CTA step and pins nothing about the order shown below.
         //
         // Before `emit` is the load-bearing part: `emit`'s segments ARE the deliverable — the exact
         // strings handed to `sender.send` — so a rewrite done afterwards would have to be re-applied
@@ -295,13 +297,14 @@ export class SendChannels {
         // url a flat t.co 23 whatever its real length, so substituting one url for another cannot
         // move the over-limit verdict below.)
         //
-        // Before the CTA is deliberate, though it cannot change a byte today: the two predicates are
-        // disjoint (`needsKrLinkRewrite` is `x` only, `needsXLinkCta` is 공지 only) and the CTA
-        // carries our own account's url in any case. Fixed in this order so a type that one day
-        // wants both does not get the answer by accident — the rewrite is a statement about copy this
-        // codebase did not author (a near-verbatim translation carrying the source tweet's own
-        // links), while the CTA is composed here from `resolveXPostUrl`; text we just wrote should
-        // not then be re-read as if it might need redirecting.
+        // Before the CTA is deliberate, though no test pins it: the two predicates are disjoint
+        // (`needsKrLinkRewrite` is `x` only, `needsXLinkCta` is 공지 only), so no conversion type takes
+        // both steps today and the order between them is provably byte-neutral — there is nothing to
+        // write a test against yet. Fixed in this order anyway so a type that one day wants both does
+        // not get the answer by accident — the rewrite is a statement about copy this codebase did not
+        // author (a near-verbatim translation carrying the source tweet's own links), while the CTA is
+        // composed here from `resolveXPostUrl`; text we just wrote should not then be re-read as if it
+        // might need redirecting.
         const { text: krText, unresolved } = withKrLinks(r.type, text);
         const notice = krLinkNotice(unresolved);
         if (notice) {

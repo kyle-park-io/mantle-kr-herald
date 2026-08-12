@@ -50,6 +50,10 @@ describe("linkedSweptItemIds", () => {
     expect(linkedSweptItemIds("https://www.x.com/Mantle_Official/status/111")).toEqual(["x:111"]);
   });
 
+  it("recognizes a www.twitter.com link", () => {
+    expect(linkedSweptItemIds("https://www.twitter.com/Mantle_Official/status/111")).toEqual(["x:111"]);
+  });
+
   it("resolves a mixed-case handle (isSweptAccount is case-insensitive)", () => {
     expect(linkedSweptItemIds("https://x.com/MANTLE_OFFICIAL/status/111")).toEqual(["x:111"]);
   });
@@ -113,6 +117,18 @@ describe("rewriteGlobalLinks", () => {
   it("preserves a trailing query string around the substitution", () => {
     const r = rewriteGlobalLinks(`${G("111")}?s=20`, new Map([["x:111", KR]]));
     expect(r.text).toBe(`${KR}?s=20`);
+  });
+
+  it("drops a photo-index suffix instead of carrying it onto the swapped post", () => {
+    const r = rewriteGlobalLinks(`${G("111")}/photo/1`, new Map([["x:111", KR]]));
+    expect(r.text).toBe(KR);
+    expect(r.unresolved).toBe(0);
+  });
+
+  it("drops a video-index suffix instead of carrying it onto the swapped post", () => {
+    const r = rewriteGlobalLinks(`${G("111")}/video/1`, new Map([["x:111", KR]]));
+    expect(r.text).toBe(KR);
+    expect(r.unresolved).toBe(0);
   });
 
   it("bounds the match correctly when a url abuts Korean text with no space", () => {

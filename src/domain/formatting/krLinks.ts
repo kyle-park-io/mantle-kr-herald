@@ -42,8 +42,23 @@ import { isSweptAccount } from "../sweptAccount";
  * half of this split. Matching loosely here and letting `parsePostUrl` own the strict shape (after
  * normalization) means this file never carries a second, competing definition of what a post URL is;
  * it only ever widens the *front door* into that one definition.
+ *
+ * The trailing `(?:\/(?:photo|video)\/\d+)?` bounds the match onto a known media-index path segment
+ * (`/photo/1`, `/video/1` — how X addresses one attachment within a tweet) when one follows the
+ * status id, so it becomes part of `match[0]` instead of trailing text `rewriteGlobalLinks` never
+ * looks at. That distinction is load-bearing for the swap: `String#replace` only touches the matched
+ * span, so anything left outside it survives verbatim onto whatever the match is replaced with. A
+ * media index is an offset into *this* post's attachments and means nothing on a different post, so
+ * pulling it into the match lets the swap discard it along with the rest of the matched url rather
+ * than silently gluing it onto the Korean url, where it would point at the wrong attachment (or
+ * nothing at all). A trailing `?s=20` is the mirror-image case, handled the opposite way on purpose:
+ * it is X's generic share-tracking parameter, means the same thing regardless of whose copy of the
+ * post it decorates, and is deliberately left OUT of the match so it keeps riding through untouched
+ * onto the substituted url. The two look alike — both are "extra stuff after the status id" — but
+ * only one of them identifies something specific to the post being replaced.
  */
-const X_STATUS_URL = /https?:\/\/(?:www\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]+\/status\/\d+/gi;
+const X_STATUS_URL =
+  /https?:\/\/(?:www\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]+\/status\/\d+(?:\/(?:photo|video)\/\d+)?/gi;
 
 /**
  * Canonicalize a matched candidate's scheme and host to the exact `https://x.com/` `parsePostUrl`
