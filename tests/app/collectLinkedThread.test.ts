@@ -4,6 +4,7 @@ import {
   INTAKE_BAD_URL,
   INTAKE_NOT_FOUND,
   INTAKE_REPLY,
+  intakeBelowFloorMessage,
 } from "../../src/app/CollectLinkedThread";
 import type { SourceGateway } from "../../src/ports/SourceGateway";
 import type { CollectionRepository } from "../../src/ports/CollectionRepository";
@@ -37,10 +38,14 @@ function fakeGateway(over: Partial<SourceGateway> = {}): SourceGateway {
 
 function fakeRepo(initial: CollectedThread[] = []) {
   const rows = [...initial];
-  const repo: CollectionRepository & { rows: CollectedThread[] } = {
+  // Counted, not inferred from `rows`: "refused before anything was written" is the claim, and an
+  // upsert of an empty array would leave `rows` unchanged while still having reached the store.
+  const calls = { upsert: 0 };
+  const repo: CollectionRepository & { rows: CollectedThread[]; calls: typeof calls } = {
     rows,
+    calls,
     loadAll: async () => rows,
-    upsert: async (threads) => { for (const t of threads) rows.push(t); },
+    upsert: async (threads) => { calls.upsert += 1; for (const t of threads) rows.push(t); },
     listActiveTweetIds: async () => [],
     markDeleted: async () => {},
   };
@@ -174,6 +179,142 @@ describe("CollectLinkedThread", () => {
     );
 
     expect((await uc.run(URL_100)).outcome).toBe("already-translated");
+  });
+
+  /**
+   * The one case the per-account floor rule cannot let through. `PrepareTranslations` applies the
+   * translate floor to the swept account's posts — a pre-floor one of those is indistinguishable
+   * from swept backlog — so collecting it here would put a row in the waiting list that no tick will
+   * ever pick up, with no error anywhere. Refused at the door instead, naming the date, which is the
+   * same call `isCommenterReply` gets a few lines above and for the same reason.
+   */
+  describe("the translate floor", () => {
+    const FLOOR = "2026-07-27T14:35:25.000Z"; // the live value, deploy/herald-watch.service
+    const OLD = "2026-07-01T00:00:00.000Z";
+    const reportsFloor = async () => ({ floor: FLOOR, at: "2026-08-12T08:17:00.000Z" });
+
+    it("refuses a swept-account post older than the floor, writing nothing", async () => {
+      const repo = fakeRepo();
+      const uc = new CollectLinkedThread(
+        fakeGateway({ fetchThread: async () => [tweet({ createdAt: OLD })] }),
+        repo,
+        fakeTranslations(),
+        () => "2026-08-12T09:00:00.000Z",
+        reportsFloor,
+      );
+
+      await expect(uc.run(URL_100)).rejects.toThrow(intakeBelowFloorMessage(FLOOR));
+      expect(repo.calls.upsert).toBe(0);
+    });
+
+    it("names the floor date, so the operator can see which dial moves it", async () => {
+      const uc = new CollectLinkedThread(
+        fakeGateway({ fetchThread: async () => [tweet({ createdAt: OLD })] }),
+        fakeRepo(),
+        fakeTranslations(),
+        () => "2026-08-12T09:00:00.000Z",
+        reportsFloor,
+      );
+
+      await expect(uc.run(URL_100)).rejects.toThrow(FLOOR);
+      await expect(uc.run(URL_100)).rejects.toThrow("HERALD_TRANSLATE_SINCE");
+    });
+
+    it("collects a below-floor post from any other account", async () => {
+      // The whole point of the rule: nothing but this tab can put another account's thread in
+      // `x_threads`, so there is no backlog behind it and the floor has nothing to hold back.
+      const repo = fakeRepo();
+      const uc = new CollectLinkedThread(
+        fakeGateway({ fetchThread: async () => [tweet({ createdAt: OLD, authorUserName: "someone_else" })] }),
+        repo,
+        fakeTranslations(),
+        () => "2026-08-12T09:00:00.000Z",
+        reportsFloor,
+      );
+
+      expect((await uc.run(URL_100)).outcome).toBe("collected");
+      expect(repo.calls.upsert).toBe(1);
+    });
+
+    it("collects a swept-account post at the floor", async () => {
+      // `applySelector` selects with `>=`, so the instant itself is inside the window — refusing it
+      // here would refuse a post the next tick would have translated.
+      const uc = new CollectLinkedThread(
+        fakeGateway({ fetchThread: async () => [tweet({ createdAt: FLOOR })] }),
+        fakeRepo(),
+        fakeTranslations(),
+        () => "2026-08-12T09:00:00.000Z",
+        reportsFloor,
+      );
+
+      expect((await uc.run(URL_100)).outcome).toBe("collected");
+    });
+
+    it("reads the ROOT tweet's date, not the linked one's", async () => {
+      // A link to the newest tweet of an old thread is still that old thread — `flattenXThreads`
+      // takes `createdAt` from the root, so this must ask the same tweet or the two disagree.
+      const uc = new CollectLinkedThread(
+        fakeGateway({ fetchThread: async () => [
+          tweet({ id: "100", createdAt: OLD }),
+          tweet({ id: "101", conversationId: "100", createdAt: "2026-08-12T00:00:00.000Z" }),
+        ] }),
+        fakeRepo(),
+        fakeTranslations(),
+        () => "2026-08-12T09:00:00.000Z",
+        reportsFloor,
+      );
+
+      await expect(uc.run("https://x.com/Mantle_Official/status/101")).rejects.toThrow(
+        intakeBelowFloorMessage(FLOOR),
+      );
+    });
+
+    it("reads the root tweet's author, not the handle in the url", async () => {
+      // `https://x.com/i/status/<id>` is a real form — it is the one `itemUrl()` builds for every
+      // row of 1차 검수 — and its "handle" is the literal `i`. Judging by the url would let a
+      // pre-floor swept-account post in under that spelling, straight into the silent drop.
+      const repo = fakeRepo();
+      const uc = new CollectLinkedThread(
+        fakeGateway({ fetchThread: async () => [tweet({ createdAt: OLD })] }),
+        repo,
+        fakeTranslations(),
+        () => "2026-08-12T09:00:00.000Z",
+        reportsFloor,
+      );
+
+      await expect(uc.run("https://x.com/i/status/100")).rejects.toThrow(intakeBelowFloorMessage(FLOOR));
+      expect(repo.calls.upsert).toBe(0);
+    });
+
+    it("collects normally when no floor is known", async () => {
+      // Nothing has been reported (a deployment whose scheduler has never ticked), so there is no
+      // floor to be below. Inventing a default here would refuse posts on a guess.
+      const repo = fakeRepo();
+      const uc = new CollectLinkedThread(
+        fakeGateway({ fetchThread: async () => [tweet({ createdAt: OLD })] }),
+        repo,
+        fakeTranslations(),
+        () => "2026-08-12T09:00:00.000Z",
+        async () => undefined,
+      );
+
+      expect((await uc.run(URL_100)).outcome).toBe("collected");
+      expect(repo.calls.upsert).toBe(1);
+    });
+
+    it("collects normally when the scheduler reported running with no floor", async () => {
+      // The alarming state, and not this use case's to report: a tick with no floor selects the
+      // whole backlog, so nothing here is below anything.
+      const uc = new CollectLinkedThread(
+        fakeGateway({ fetchThread: async () => [tweet({ createdAt: OLD })] }),
+        fakeRepo(),
+        fakeTranslations(),
+        () => "2026-08-12T09:00:00.000Z",
+        async () => ({ at: "2026-08-12T08:17:00.000Z" }),
+      );
+
+      expect((await uc.run(URL_100)).outcome).toBe("collected");
+    });
   });
 
   it("fetches the article body for an article tweet that arrived without one", async () => {

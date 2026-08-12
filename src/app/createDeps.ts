@@ -288,6 +288,11 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * `loadConfig()` throws when `TWITTERAPI_IO_KEY` is absent, and an install that never collects —
    * a review-only hosted deployment — must still boot. A throw on this line would take the whole
    * dashboard down over a credential only one tab needs.
+   *
+   * `readFloorReport` is handed over because the use case refuses a pre-floor post by the swept
+   * account rather than collecting one the next tick will never select (see its own doc comment).
+   * That reader, not systemd, in both deployments: the Vercel function has no systemd to ask, and
+   * the report is the scheduler's own record of the floor it ran with.
    */
   let collectLinkedThread: CollectLinkedThread | undefined;
   try {
@@ -295,6 +300,8 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       new TwitterApiSourceGateway(new TwitterClient(loadConfig().apiKey)),
       stores.collectionRepository,
       translationStore,
+      undefined,
+      readFloorReport,
     );
   } catch {
     collectLinkedThread = undefined;
@@ -522,9 +529,22 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   /**
    * What has been collected but has no translation row yet — the 링크 수집 tab's waiting list.
    *
-   * The same negative join `translate:prepare` selects with, through the same function, so the tab
-   * cannot show a queue the next tick disagrees with. Trimmed to what the tab renders: an article's
-   * source text runs to thousands of characters and the list only needs to be recognisable.
+   * The same negative join `translate:prepare` selects with, through the same function. Trimmed to
+   * what the tab renders: an article's source text runs to thousands of characters and the list only
+   * needs to be recognisable.
+   *
+   * **What makes this list honest about a link someone just submitted** is not the join — it is the
+   * two halves of the translate-floor rule, because `applySelector` filters again after `loadPending`
+   * and this does not. A post from any account but the swept one bypasses the floor by rule
+   * (`src/domain/sweptAccount.ts`), and a pre-floor post from the swept account never gets collected
+   * at all — `CollectLinkedThread` refuses it at the door. Between them there is no way to submit a
+   * link, be told `collected`, and then watch the item sit here untranslated forever, which is what
+   * this comment used to claim the join alone prevented. It did not.
+   *
+   * The list is still everything pending, on purpose (the spec's "대기 목록"), so it also carries the
+   * swept account's own below-floor backlog — items collected by the timeline sweep before the floor
+   * moved, which no tick will select. Those predate this tab and are what the 수집 hover card's
+   * "하한 아래" count is about; nothing submitted here can join them.
    *
    * Needs no credential, unlike `collectLinkedThread` below: it only reads `stores.collectionRepository`
    * and `translationStore`, both already built above. The scheduled `pnpm collect` sweep populates
