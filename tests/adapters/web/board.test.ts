@@ -14,6 +14,9 @@ const r = (type: string, channel: string, text: string, status: "rendered" | "ap
  */
 const approvedSource: SourceApproval = { status: "approved", approvedAt: "T1" };
 
+/** A KR X post already up and reconciled — what clears the 공지 CTA gate (`xUrlBlock`). */
+const POSTED_URL = "https://x.com/0xMantleKR/status/2087418810458382585";
+
 describe("buildBoard", () => {
   it("groups by (type, channel) and lists the rooms that receive each group", () => {
     const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [], approvedSource);
@@ -161,7 +164,11 @@ describe("buildBoard — the source translation gate", () => {
   const rows = (board: ReturnType<typeof buildBoard>) => board.groups[0]!.rows;
 
   it("leaves `block` off every row when the source is approved and older than the copy", () => {
-    const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [], approvedSource);
+    // `postedUrl` here and in the fork test below is about the OTHER gate: this is an announcement,
+    // so `xUrlBlock` would block it for want of an X post and mask what this test is asserting.
+    // Set per-test rather than on `approvedSource`, which must keep meaning "approved, X post not up
+    // yet" for the CTA gate's own tests.
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [], { ...approvedSource, postedUrl: POSTED_URL });
     expect(rows(board).map((row) => row.block)).toEqual([undefined, undefined, undefined, undefined]);
   });
 
@@ -194,9 +201,53 @@ describe("buildBoard — the source translation gate", () => {
     const regenerated = { ...r("announcement", "telegram", "새 공통"), approvedAt: "T9" };
     const board = buildBoard("x:1", [regenerated], [
       { itemId: "x:1", type: "announcement", outletId: "tg-dev", text: "옛 데브방 글", status: "approved", createdAt: "T", approvedAt: "T2" },
-    ], [], { status: "approved", approvedAt: "T8" });
+    ], [], { status: "approved", approvedAt: "T8", postedUrl: POSTED_URL });
     const byRoom = Object.fromEntries(rows(board).map((row) => [row.outletId, row.block]));
     expect(byRoom["tg-dev"]).toBe("source-changed");
     expect(byRoom["tg-community"]).toBeUndefined();
+  });
+});
+
+describe("buildBoard — the 공지 CTA gate", () => {
+  const X_URL = "https://x.com/0xMantleKR/status/2087418810458382585";
+  /** The `x-post` delivery row a bot-sent KR post leaves behind, once reconciled to its x.com url. */
+  const xPostRow = (url: string | undefined) =>
+    [{ itemId: "x:1", type: "x", outletId: "x-post", status: "sent" as const, at: "T", by: "auto" as const, url }];
+
+  it("blocks every 공지 room while the item has no X post", () => {
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공지")], [], [], approvedSource);
+    const rows = board.groups[0].rows;
+    expect(rows.every((row) => row.block === "x-url-missing")).toBe(true);
+  });
+
+  it("clears once the x-post delivery row carries an x.com url", () => {
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공지")], [], xPostRow(X_URL), approvedSource);
+    const rows = board.groups.find((g) => g.type === "announcement")!.rows;
+    expect(rows.every((row) => row.block === undefined)).toBe(true);
+  });
+
+  it("still blocks while that row holds only a typefully share url", () => {
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공지")], [], xPostRow("https://typefully.com/t/abc"), approvedSource);
+    const rows = board.groups.find((g) => g.type === "announcement")!.rows;
+    expect(rows.every((row) => row.block === "x-url-missing")).toBe(true);
+  });
+
+  it("clears from the translation's posted url too", () => {
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공지")], [], [], { ...approvedSource, postedUrl: X_URL });
+    expect(board.groups[0].rows.every((row) => row.block === undefined)).toBe(true);
+  });
+
+  it("leaves a type that carries no CTA alone", () => {
+    const board = buildBoard("x:1", [r("explainer", "telegram", "해설")], [], [], approvedSource);
+    expect(board.groups[0].rows.every((row) => row.block === undefined)).toBe(true);
+  });
+
+  /**
+   * Approval is named first when both apply: an unreviewed room has a reviewer to go find, and
+   * "X를 먼저 게시하세요" would send them to a screen that cannot release it.
+   */
+  it("names the approval gate ahead of the missing X post", () => {
+    const board = buildBoard("x:1", [r("announcement", "telegram", "공지", "rendered")], [], [], approvedSource);
+    expect(board.groups[0].rows.every((row) => row.block === "unapproved")).toBe(true);
   });
 });

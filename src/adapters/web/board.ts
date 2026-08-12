@@ -4,7 +4,8 @@ import { ALL_CHANNELS, type Channel, type ChannelRendering } from "../../domain/
 import { outletsForChannel, type Outlet } from "../../domain/outlet/models";
 import { overrideKey, textFor, type OutletOverride } from "../../domain/outlet/override";
 import { deliveryKey, type DeliveryEntry, type DeliveryStatus } from "../../domain/delivery/models";
-import { sendBlock, type SendBlock, type SourceApproval } from "../../domain/send/sendBlock";
+import { sendBlock, xUrlBlock, type SendBlock, type SourceApproval } from "../../domain/send/sendBlock";
+import { resolveXPostUrl } from "../../domain/formatting/xLinkCta";
 import { awaitingPublish } from "../../domain/send/awaitingPublish";
 
 /** One room under a group card: what it will send, and whether it already went out. */
@@ -18,8 +19,9 @@ export interface BoardRow {
   status: "rendered" | "approved";
   text: string;
   /**
-   * Why this room cannot send yet, or absent when it can. From `sendBlock` — the same call
-   * `SendChannels` makes — so a row that paints as sendable is exactly a row that sends.
+   * Why this room cannot send yet, or absent when it can. `sendBlock` for the approval gates and
+   * `xUrlBlock` for the 공지 CTA's missing X post — the two `SendChannels` also applies — so a row
+   * that paints as sendable is exactly a row that sends.
    */
   block?: SendBlock;
   /**
@@ -91,6 +93,9 @@ export function buildBoard(
   const mine = renderings.filter((r) => r.itemId === itemId);
   const overrideByKey = new Map(overrides.map((o) => [overrideKey(o), o] as const));
   const deliveryByKey = new Map(deliveries.map((e) => [deliveryKey(e), e] as const));
+  // Resolved once for the whole board: it is a property of the item, not of any row, and it is what
+  // the 공지 rows' CTA gate reads. Same resolver `SendChannels` and the `/emissions` preview use.
+  const xUrl = resolveXPostUrl(translation, deliveries.filter((d) => d.itemId === itemId));
 
   // Identity is (type, channel) — the formatting store's own key, so a duplicate can only be
   // corrupt data. Keep the first and move on rather than rendering the same card twice.
@@ -125,7 +130,10 @@ export function buildBoard(
     const rows: PendingRow[] = rowed.map((o) => {
       const resolved = textFor(r, overrideByKey.get(keyOf(o)));
       const entry = deliveryByKey.get(deliveryKey({ itemId, type: r.type, outletId: o.id }));
-      const block = sendBlock(resolved, translation);
+      // Two gates, deliberately composed rather than merged — see `xUrlBlock`. Approval first: a
+      // room whose copy is not reviewed yet has a reviewer to go find, and naming the missing X post
+      // instead would send them somewhere that cannot release it.
+      const block = sendBlock(resolved, translation) ?? xUrlBlock(r.type, r.channel, xUrl);
       return {
         outletId: o.id,
         label: o.label,

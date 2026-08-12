@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sendBlock, type ReviewedCopy, type SourceApproval } from "../../../src/domain/send/sendBlock";
+import { sendBlock, xUrlBlock, SEND_BLOCK_REASON, type ReviewedCopy, type SourceApproval } from "../../../src/domain/send/sendBlock";
 
 const copy = (over: Partial<ReviewedCopy> = {}): ReviewedCopy => ({
   status: "approved", approvedAt: "2026-03-02T00:00:00.000Z", ...over,
@@ -68,5 +68,39 @@ describe("sendBlock", () => {
    */
   it("skips the recency check when the source carries no approval timestamp", () => {
     expect(sendBlock(copy(), source({ approvedAt: undefined }))).toBeNull();
+  });
+});
+
+describe("xUrlBlock", () => {
+  const URL = "https://x.com/0xMantleKR/status/2087418810458382585";
+
+  /**
+   * The board's half of the 공지 CTA gate. `SendChannels` refuses the same rendering at send time
+   * (`SendChannels.ts`, `X 게시물 URL이 없습니다`); this is what stops the board painting [발송] on a
+   * row that refusal is waiting for — the invariant `sendBlock`'s own doc comment exists to protect.
+   */
+  it("blocks a 공지 whose item has no X post yet", () => {
+    expect(xUrlBlock("announcement", "telegram", undefined)).toBe("x-url-missing");
+    expect(xUrlBlock("announcement", "kakao", undefined)).toBe("x-url-missing");
+  });
+
+  it("clears once the X post url is known", () => {
+    expect(xUrlBlock("announcement", "telegram", URL)).toBeNull();
+  });
+
+  it("does not block a type that carries no CTA", () => {
+    for (const type of ["explainer", "casual", "kol", "pr", "x"]) {
+      expect(xUrlBlock(type, "telegram", undefined)).toBeNull();
+    }
+  });
+
+  it("does not block a channel that carries no CTA", () => {
+    expect(xUrlBlock("announcement", "x", undefined)).toBeNull();
+    expect(xUrlBlock("announcement", "pr_mail", undefined)).toBeNull();
+  });
+
+  /** The reason a reviewer reads must be the one the CLI prints, character for character. */
+  it("has a reason, and it is the one SendChannels refuses with", () => {
+    expect(SEND_BLOCK_REASON["x-url-missing"]).toBe("X 게시물 URL이 없습니다 — X를 먼저 게시하세요");
   });
 });
