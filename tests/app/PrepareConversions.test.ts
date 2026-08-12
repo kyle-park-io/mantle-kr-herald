@@ -68,6 +68,21 @@ describe("PrepareConversions", () => {
     expect(pending.filter((p) => p.type === "pr").map((p) => p.itemId)).toEqual(["x:1", "x:2"]);
   });
 
+  it("does not spend --limit on an approved item that has nothing left to convert", async () => {
+    // 2026-08-12: two items approved a few seconds apart, `--limit 1` (the scheduler's batch). The
+    // tick converted the first, and every tick for the next three hours prepared 0 — the limit was
+    // counted before the already-converted items were dropped, so the finished item held the only
+    // slot until 되돌리기 or a retire moved it off `approved`. The second item never converted, and
+    // so never reached 2차 검수 at all.
+    const done = ALL_TYPES.map((type) => `x:1:${type}`);
+    const uc = new PrepareConversions(
+      translationStore([tr("x:1", "approved", "이미 변환됨"), tr("x:2", "approved", "아직 변환 안 됨")]),
+      glossaryStore, config, conversionConfig, fewShotByType(), convStore(done),
+    );
+    const { pending } = await uc.run({ limit: 1 });
+    expect(pending).toEqual(ALL_TYPES.map((type) => ({ itemId: "x:2", type, sourceKorean: "아직 변환 안 됨" })));
+  });
+
   it("filters by since against approvedAt (older items excluded)", async () => {
     const older = tr("x:1", "approved", "old"); // approvedAt 2026-01-02
     const newer = { ...tr("x:2", "approved", "new"), approvedAt: "2026-06-01T00:00:00.000Z" };

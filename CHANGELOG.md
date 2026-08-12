@@ -390,6 +390,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A finished item no longer holds the conversion scheduler's only slot, starving every item behind
+  it.** `convert:prepare --limit N` counted its N against the approved translations it had read, not
+  against the ones with anything left to convert, so an item still `approved` after all six of its
+  types were converted kept slot 1 forever — and the scheduler's batch is 1. Production, 2026-08-12:
+  two items approved eight seconds apart, the 06:38 tick converted the first, and the seven ticks
+  from 07:08 to 09:38 all reported `prepared 0 variant(s) — nothing approved is waiting to be
+  converted` while the second sat behind it with six unconverted types. It was never converted at
+  all: `x:reconcile` retired both to `게시됨` at 09:42, which is the only reason the queue ever moved,
+  and the item reached neither 2차 검수 nor any channel. The fix drops items with no candidate types
+  **before** the slice, scoped to the run's own `--types` — under `--types x` an item already
+  converted for `x` is done for that run, and holding a slot for its other five would starve the
+  queue the same way. Nothing about the *order* changed: the queue is still `ordinal`, first
+  approved first, minus the items that were never work.
 - **`glossary:mine` no longer proposes every capitalized word that happens to open a line — a
   proper-noun candidate must appear mid-sentence at least once.** The first real production fire
   produced **170 candidates of which 110 were ordinary English words** — `Together`, `Tomorrow`,
