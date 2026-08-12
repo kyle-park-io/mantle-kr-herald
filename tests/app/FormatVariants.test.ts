@@ -48,8 +48,10 @@ function rendering(over: Partial<ChannelRendering> = {}): ChannelRendering {
 
 describe("FormatVariants", () => {
   it("formats approved variants to their default channels and persists refined:false renderings", async () => {
-    // announcement is the multi-channel type: one variant fans out to telegram + kakao
-    const s = stores([variant({ type: "announcement" })]);
+    // The two 공지 types, which is how one piece of news reaches telegram and kakao since the split
+    // — one variant each, not one variant fanned out to both (`DEFAULT_CHANNELS_BY_TYPE`). The run
+    // is still selected per variant and rendered per channel, which is what this pins.
+    const s = stores([variant({ type: "announcement" }), variant({ type: "kakao_notice" })]);
     const uc = new FormatVariants(s.conversionStore, s.formattingStore, s.translationStore, () => "2026-03-03T00:00:00.000Z");
     const { renderings } = await uc.run({});
     expect(renderings.map((r) => r.channel)).toEqual(["telegram", "kakao"]);
@@ -147,16 +149,23 @@ describe("FormatVariants — only-missing", () => {
   });
 
   it("still formats the pairs that have no rendering yet, in the same run", async () => {
-    // One `announcement` variant fans out to telegram + kakao. With telegram already rendered, the
-    // run must skip that one and still produce kakao — "skip the item" rather than "skip the pair"
-    // would leave the 카카오 card permanently missing.
+    // One variant covering two channels, with the first already rendered: the run must skip that
+    // pair and still produce the second — "skip the item" rather than "skip the pair" would leave
+    // the second card permanently missing.
+    //
+    // The two channels come from `--channels` rather than from a type's default fan-out, because
+    // since the 공지 split no type has a default fan-out wider than one channel
+    // (`DEFAULT_CHANNELS_BY_TYPE`). The override is the remaining way one variant covers several,
+    // and it is the only shape that still isolates the *channel* axis of `renderingKey` — two
+    // variants of different types would pass this even if the skip were keyed per variant, since
+    // the second variant would be rendered either way. The type axis is pinned by the next test.
     const s = stores(
       [variant({ type: "announcement" })],
       [rendering({ type: "announcement", channel: "telegram" })],
     );
     const uc = new FormatVariants(s.conversionStore, s.formattingStore, s.translationStore, () => "2026-03-03T00:00:00.000Z");
 
-    const { renderings } = await uc.run({}, { onlyMissing: true });
+    const { renderings } = await uc.run({ channels: ["telegram", "kakao"] }, { onlyMissing: true });
 
     expect(renderings.map((r) => r.channel)).toEqual(["kakao"]);
     expect(s.saved.map((r) => r.channel)).toEqual(["kakao"]);
@@ -266,11 +275,17 @@ describe("FormatVariants — a posted translation is finished", () => {
   });
 
   it("reports an item once, not once per channel it would have written", async () => {
-    // `announcement` fans out to telegram + kakao. The number the CLI prints is items, not writes.
+    // The number the CLI prints is items, not writes — one item declined across two channels is one
+    // line, not two.
+    //
+    // The two channels come from `--channels`, not from a type's default fan-out: since the 공지
+    // split no type fans out past a single channel (`DEFAULT_CHANNELS_BY_TYPE`), so a run left to
+    // the defaults would decline exactly one write and pass whether the report were per item or per
+    // write. The override is what makes this discriminate at all.
     const s = stores([variant({ type: "announcement" })], [], [translation({ status: "posted" })]);
     const uc = new FormatVariants(s.conversionStore, s.formattingStore, s.translationStore, () => "t");
 
-    const { skippedPosted } = await uc.run({});
+    const { skippedPosted } = await uc.run({ channels: ["telegram", "kakao"] });
 
     expect(skippedPosted).toEqual(["x:1"]);
   });

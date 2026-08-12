@@ -75,6 +75,9 @@ describe("RecordImpressions", () => {
   it("ignores non-X rows entirely (never fetches or writes them)", async () => {
     const h = sheetHarness([
       ["x:1", "announcement", "telegram", "tg1", "u", "posted", "2026-07-20T00:00:00.000Z", "", ""],
+      // Left as `(announcement, kakao)` on purpose: the history sheet is a record of what went out,
+      // and rows in that shape are what it holds from before the 공지 split. This path has to go on
+      // ignoring them — it filters on the channel column, so the type beside it is incidental.
       ["x:2", "announcement", "kakao", "kk1", "u", "posted", "2026-07-20T00:00:00.000Z", "", ""],
     ]);
     const s = source([]);

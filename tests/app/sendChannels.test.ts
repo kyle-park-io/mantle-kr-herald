@@ -130,7 +130,7 @@ describe("SendChannels", () => {
     const store = fakeStore([
       rendering({ itemId: "x:1", channel: "telegram", status: "approved" }),
       rendering({ itemId: "x:2", channel: "telegram", status: "rendered" }), // not approved → skip
-      rendering({ itemId: "x:3", channel: "kakao", status: "approved" }),    // not a sendable channel → skip
+      rendering({ itemId: "x:3", type: "kakao_notice", channel: "kakao", status: "approved" }), // not a sendable channel → skip
     ]);
     const { ledger, added } = fakeLedger();
     const res = await new SendChannels(store, { telegram: okSender("telegram"), x: undefined }, ledger, fakeTranslations(), undefined, undefined, undefined, undefined, outletsForChannel, TG_CHAT_IDS).run({ targets: ["telegram"] });

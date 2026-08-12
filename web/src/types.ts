@@ -137,7 +137,7 @@ export interface PublishResult {
 // (separate tsconfig + Vite root), so this is a hand-kept copy — `tests/web/typeMirror.test.ts`
 // fails if it drifts. Derive the unions from the arrays so every UI list stays exhaustive:
 // a hardcoded `<option>` list is invisible to the compiler and silently loses a new type.
-export const ALL_TYPES = ["x", "announcement", "explainer", "casual", "kol", "pr"] as const;
+export const ALL_TYPES = ["x", "announcement", "kakao_notice", "explainer", "casual", "kol", "pr"] as const;
 export const ALL_CHANNELS = ["x", "telegram", "kakao", "pr_mail"] as const;
 export type ConversionType = (typeof ALL_TYPES)[number];
 export type Channel = (typeof ALL_CHANNELS)[number];
@@ -146,6 +146,7 @@ export type Channel = (typeof ALL_CHANNELS)[number];
 export const TYPE_LABEL: Record<ConversionType, string> = {
   x: "X",
   announcement: "공지",
+  kakao_notice: "카톡 공지",
   explainer: "해설",
   casual: "소통",
   kol: "KOL",

@@ -81,11 +81,21 @@ describe("xUrlBlock", () => {
    */
   it("blocks a 공지 whose item has no X post yet", () => {
     expect(xUrlBlock("announcement", "telegram", undefined)).toBe("x-url-missing");
+    expect(xUrlBlock("kakao_notice", "kakao", undefined)).toBe("x-url-missing");
+  });
+
+  /**
+   * The gate reads a **stored** rendering, so it still meets `(announcement, kakao)` cards written
+   * before `kakao_notice` split off — those are deliberately not migrated. Answering `null` for them
+   * would paint [발송] on a card whose CTA has nowhere to point; see `needsXLinkCta`'s own test.
+   */
+  it("blocks a kakao 공지 card written before the split, too", () => {
     expect(xUrlBlock("announcement", "kakao", undefined)).toBe("x-url-missing");
   });
 
   it("clears once the X post url is known", () => {
     expect(xUrlBlock("announcement", "telegram", URL)).toBeNull();
+    expect(xUrlBlock("kakao_notice", "kakao", URL)).toBeNull();
   });
 
   it("does not block a type that carries no CTA", () => {
@@ -97,6 +107,7 @@ describe("xUrlBlock", () => {
   it("does not block a channel that carries no CTA", () => {
     expect(xUrlBlock("announcement", "x", undefined)).toBeNull();
     expect(xUrlBlock("announcement", "pr_mail", undefined)).toBeNull();
+    expect(xUrlBlock("kakao_notice", "x", undefined)).toBeNull();
   });
 
   /** The reason a reviewer reads must be the one the CLI prints, character for character. */

@@ -57,7 +57,7 @@ export class PrepareConversions {
     // the second item, six types unconverted, sat behind it. It only stopped being starved when
     // reconcile retired BOTH to `posted` at 09:42, by which point it had never reached 2차 검수.
     // Scoped to `types`, not ALL_TYPES: under `--types x` an item converted for `x` is done for
-    // *this* run, and holding a slot for its other five types would starve the queue the same way.
+    // *this* run, and holding a slot for its other six types would starve the queue the same way.
     selected = selected.filter((t) => types.some((type) => !convertedKeys.has(`${t.itemId}:${type}`)));
     selected = selected.slice(0, selector.limit ?? DEFAULT_LIMIT);
 
