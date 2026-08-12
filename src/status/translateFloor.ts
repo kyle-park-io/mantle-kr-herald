@@ -8,6 +8,11 @@ import { parseTranslateSince } from "../cli/translateSince";
 // numbers are defined, and the note below would eventually describe something the pipeline stopped
 // doing. Type-only — nothing in this module runs adapter code.
 import type { XThreadIntake } from "../adapters/content/XContentSource";
+// The selection rule itself, not a copy of it — `collectedScope` below counts what the scheduler can
+// select, so it has to ask the same function `PrepareTranslations.applySelector` selects with. Domain
+// code with no I/O and no Node built-ins, exactly like this module; and it adds nothing to the hosted
+// bundle either, since `createDeps` already imports it for the 링크 수집 waiting list.
+import { meetsTranslateFloor, type TranslateFloorSubject } from "../domain/translation/translateFloor";
 
 /** The unit the floor's only real home is. Named once, because both the `systemctl` call
  *  (`src/cli/systemdShow.ts`) and every line printed below have to mean the same unit. */
@@ -179,7 +184,8 @@ export interface TranslateFloorReport {
  *  against the *reported* floor rather than the one systemd named here. Both counts exist at once so
  *  a reader that has systemd AND a report can compare them instead of picking one blind. */
 export interface ReportedScope extends TranslateFloorReport {
-  /** Items at or after `floor` — all of them when the reporting tick ran with no floor. */
+  /** Items the reported floor leaves selectable, by `meetsTranslateFloor` — all of them when the
+   *  reporting tick ran with no floor. */
   inScope: number;
 }
 
@@ -192,8 +198,9 @@ export interface ReportedScope extends TranslateFloorReport {
 export interface CollectedScope {
   floor: TranslateFloorStatus;
   total: number;
-  /** Items at or after the floor **systemd named here**. Undefined when there is no floor to measure
-   *  against — an unknown scope must read as unknown, not as zero and not as everything. */
+  /** Items the floor **systemd named here** leaves selectable, by `meetsTranslateFloor`. Undefined
+   *  when there is no floor to measure against — an unknown scope must read as unknown, not as zero
+   *  and not as everything. */
   inScope?: number;
   /**
    * The scheduler's own last report, and the same count taken against it. Optional: a caller with no
@@ -214,18 +221,33 @@ export interface CollectedScope {
 }
 
 /**
- * `items` is every collected item, and the comparison is `createdAt >= floor` as *strings* — the
- * identical expression `PrepareTranslations.applySelector` filters with. Anything cleverer here
- * (parsing to Date, tolerating a missing timestamp) would report a scope the scheduler does not
- * have: an item with `createdAt: ""` (a thread `flattenXThreads` found no tweets for) sorts below
- * every floor, so it is never selected, so it is not in scope.
+ * `items` is every collected item, and what counts as in scope is decided by `meetsTranslateFloor` —
+ * literally the function `PrepareTranslations.applySelector` selects with, not a second expression
+ * that resembles it. This is the third call site of that one function; the tick and the 링크 수집
+ * waiting list are the other two.
+ *
+ * It has to be the function and not `createdAt >= floor`, because the floor gates the *swept*
+ * account and nobody else: a pre-floor post somebody hand-picked in 링크 수집 is selected, and the
+ * bare comparison counted it as permanently out of the scheduler's reach while the next tick
+ * translated it. A count that disagrees with the selector is worse than no count — the reader is
+ * told the scheduler cannot reach work it is about to do, and nothing anywhere errors.
+ *
+ * Every reason the rule is written the way it is — string comparison rather than `Date`, `""` below
+ * every floor, an unreadable author keeping the floor — lives on `meetsTranslateFloor` now, so this
+ * function states no rule of its own that could go stale against it.
+ *
+ * `items` is typed as `TranslateFloorSubject[]` rather than `ContentItem[]` for the same reason the
+ * rule is: those are the two fields the answer depends on. Both production callers — `pnpm status`
+ * (`src/cli/status.ts`) and the dashboard's status payload (`createDeps.loadStatus`) — hand over real
+ * `ContentItem`s, which satisfy it structurally; requiring the whole shape would only have made this
+ * suite's fixtures invent an id, a source and a text that no answer here depends on.
  *
  * `intake` is carried through untouched rather than derived from `items`: by the time an item exists
  * the dropped threads are gone, so nothing here can recover them — they have to be counted where the
  * rows still are (`xThreadIntake`), and travel beside the total they must reconcile with.
  */
 export function collectedScope(
-  items: { createdAt: string }[],
+  items: TranslateFloorSubject[],
   floor: TranslateFloorStatus,
   intake?: XThreadIntake,
   report?: TranslateFloorReport,
@@ -234,21 +256,30 @@ export function collectedScope(
   return {
     floor,
     total: items.length,
-    inScope: since === undefined ? undefined : items.filter((i) => i.createdAt >= since).length,
-    // The report's floor is measured with the identical string comparison, over the identical
-    // array — not a looser one, and not a second pass over a different query. The reported floor
-    // came out of `parseTranslateSince` on the scheduler's side (`watch.ts` parses before anything
-    // else runs), so it is already the same normalised shape `applySelector` compares with.
+    inScope: since === undefined ? undefined : countInScope(items, since),
+    // Both counts go through the same call, over the identical array — not a looser rule for the
+    // report, and not a second pass over a different query. The reported floor came out of
+    // `parseTranslateSince` on the scheduler's side (`watch.ts` parses before anything else runs), so
+    // it is already the normalised shape `meetsTranslateFloor` compares against.
+    //
+    // A report carrying no floor needs no special case: the tick really did run with none, and
+    // `meetsTranslateFloor(item, undefined)` answers `true` for every item, which is that same fact.
+    // Writing `items.length` here instead would be a second statement of it, free to drift.
     reported: report && {
       ...report,
-      inScope: report.floor === undefined ? items.length : countAtOrAfter(items, report.floor),
+      inScope: countInScope(items, report.floor),
     },
     intake,
   };
 }
 
-function countAtOrAfter(items: { createdAt: string }[], floor: string): number {
-  return items.filter((i) => i.createdAt >= floor).length;
+/** The count both fields above are, taken with the selector's own rule. Named once so a future
+ *  change to how in-scope is decided cannot reach one of them and miss the other: the two are read by
+ *  different screens — the systemd count by `pnpm status`, the reported one by the hosted dashboard —
+ *  so a half-applied change would show up on one and not the other, which is how long this one took
+ *  to be noticed at all. */
+function countInScope(items: TranslateFloorSubject[], floor: string | undefined): number {
+  return items.filter((i) => meetsTranslateFloor(i, floor)).length;
 }
 
 /**
@@ -297,7 +328,13 @@ export interface CollectedReach {
   /** Items the scheduler can select. Set for `measured`, for `no-floor` where it is all of them, and
    *  for `reported` where it is measured against the reported floor. */
   inScope?: number;
-  /** Items below the floor, which are never selected. `measured` and `reported`. */
+  /** Items the scheduler will never select — `total - inScope`. `measured` and `reported`.
+   *
+   *  Both readers label it "below floor", and for all but one kind of item that is literally what it
+   *  is. The exception is a pre-floor post hand-picked in 링크 수집: the floor does not apply to it
+   *  (`meetsTranslateFloor`), so it is counted on the `inScope` side despite its date. The field is
+   *  the complement of what the scheduler can reach, which is the number a reader needs; the label
+   *  names the reason that holds for nearly every one of them. */
   belowFloor?: number;
   /** The floor read **here**, from systemd, normalised ISO. Only `measured`, and only when a
    *  `configured` floor produced it — a hand-built scope can state an `inScope` without naming what

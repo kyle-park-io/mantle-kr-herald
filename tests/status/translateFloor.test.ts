@@ -16,6 +16,7 @@ import {
   type CollectedScope,
   type TranslateFloorStatus,
 } from "../../src/status/translateFloor";
+import { SWEPT_ACCOUNT } from "../../src/domain/sweptAccount";
 
 /** Verbatim shape of `systemctl --user show herald-watch.service --property=Environment --property=LoadState`
  *  on the machine the scheduler is armed on, with PATH shortened. Environment comes back *first*:
@@ -164,9 +165,10 @@ describe("collectedScope", () => {
     { createdAt: "2026-08-08T09:00:00.000Z" },
   ];
 
-  it("counts the items at or after the floor, the same comparison applySelector makes", () => {
-    // `PrepareTranslations.applySelector` filters `i.createdAt >= since` as strings. Anything else
-    // here would report a scope the scheduler does not actually have.
+  it("counts the items the floor leaves selectable, by the rule applySelector selects with", () => {
+    // Through `meetsTranslateFloor`, the function `PrepareTranslations.applySelector` calls — not a
+    // second expression here that resembles it. These items carry no author, so the date decides all
+    // four of them; the author half of the rule has its own suite below.
     const scope = collectedScope(items, translateFloorStatus({ unitShow: ARMED, shellValue: undefined }));
     expect(scope.inScope).toBe(2);
     expect(scope.total).toBe(4);
@@ -202,10 +204,10 @@ describe("collectedScope", () => {
     }
   });
 
-  it("measures the scheduler's reported floor with the same comparison, over the same items", () => {
-    // The hosted dashboard's numbers come from here. A looser comparison (parsing to Date, tolerating
-    // a blank createdAt) would report a scope the scheduler does not have — the same failure the
-    // systemd-side count is written to avoid, one source of truth over.
+  it("measures the scheduler's reported floor with the same rule, over the same items", () => {
+    // The hosted dashboard's numbers come from here. A looser rule (parsing to Date, tolerating a
+    // blank createdAt, or skipping the author question) would report a scope the scheduler does not
+    // have — the same failure the systemd-side count is written to avoid, one source of truth over.
     const scope = collectedScope(items, translateFloorStatus({ unitShow: NOT_INSTALLED }), undefined, {
       floor: "2026-07-27T14:35:25.000Z",
       at: "2026-08-08T04:17:09.000Z",
@@ -239,6 +241,97 @@ describe("collectedScope", () => {
 
   it("has no report when nothing has ever reported one", () => {
     expect(collectedScope(items, translateFloorStatus({ unitShow: ARMED })).reported).toBeUndefined();
+  });
+});
+
+/**
+ * The half of the rule the date comparison alone never had.
+ *
+ * `applySelector` does not drop everything below the floor — the floor gates the *swept* account and
+ * nobody else (`meetsTranslateFloor`), because a post somebody hand-picked in 링크 수집 is not the
+ * backlog the floor exists to hold back. A scope counted with a bare `createdAt >= floor` therefore
+ * reported a hand-picked pre-floor link as permanently out of the scheduler's reach while the very
+ * next tick translated it — on `pnpm status`'s Collected line and on the dashboard's 수집 hover card,
+ * both of which are formatted from these two numbers.
+ *
+ * The handle is imported rather than spelled here for the reason `sweptAccount.ts` gives: two
+ * literals drift, and a drifted one would make this suite pass against a rule nobody runs.
+ */
+describe("collectedScope — who the floor applies to", () => {
+  /** Well below ARMED's 2026-07-27 floor, so nothing below turns on a boundary. */
+  const PRE_FLOOR = "2026-06-01T00:00:00.000Z";
+  const armed = () => translateFloorStatus({ unitShow: ARMED, shellValue: undefined });
+  /** The floor the scheduler last reported, chosen equal to ARMED's so the two counts are comparable. */
+  const REPORT = { floor: "2026-07-27T14:35:25.000Z", at: "2026-08-08T04:17:09.000Z" };
+
+  it("counts a pre-floor post from another account as in scope, because a tick will take it", () => {
+    // The finding: hand-picked, below the floor, and selected anyway. Counting it as below-floor
+    // tells a reader the scheduler can never reach an item it is about to translate.
+    const scope = collectedScope([{ createdAt: PRE_FLOOR, author: "VitalikButerin" }], armed());
+    expect(scope.inScope).toBe(1);
+  });
+
+  it("counts the swept account's own pre-floor post as out of scope, which it genuinely is", () => {
+    const scope = collectedScope([{ createdAt: PRE_FLOOR, author: SWEPT_ACCOUNT }], armed());
+    expect(scope.inScope).toBe(0);
+  });
+
+  it("matches the swept account case-insensitively, as the selecting rule does", () => {
+    // An X handle is not case-sensitive, so `@mantle_official` is the same account. Counting it as
+    // hand-picked would put the whole swept backlog on the in-scope side of the line.
+    const scope = collectedScope([{ createdAt: PRE_FLOOR, author: SWEPT_ACCOUNT.toLowerCase() }], armed());
+    expect(scope.inScope).toBe(0);
+  });
+
+  it("counts a pre-floor item with no readable author as out of scope", () => {
+    // A Lark item has no handle, and neither does an X thread stored with no tweets. `undefined` and
+    // `""` both mean "unknown", and unknown keeps the floor — the same conservative direction the
+    // selecting rule takes, so the count follows it rather than guessing the friendlier answer.
+    const scope = collectedScope(
+      [{ createdAt: PRE_FLOOR }, { createdAt: PRE_FLOOR, author: "" }],
+      armed(),
+    );
+    expect(scope.inScope).toBe(0);
+  });
+
+  it("leaves a post-floor item in scope whoever wrote it", () => {
+    const scope = collectedScope(
+      [
+        { createdAt: "2026-08-08T09:00:00.000Z", author: SWEPT_ACCOUNT },
+        { createdAt: "2026-08-08T09:00:00.000Z", author: "VitalikButerin" },
+        { createdAt: "2026-08-08T09:00:00.000Z" },
+      ],
+      armed(),
+    );
+    expect(scope.inScope).toBe(3);
+  });
+
+  it("applies the identical rule to the reported count, not a bare date comparison", () => {
+    // The hosted dashboard reads this number and not the systemd one, so a rule applied to only the
+    // first of the two counts would leave the screen most people look at reporting the old answer.
+    const scope = collectedScope(
+      [
+        { createdAt: PRE_FLOOR, author: "VitalikButerin" },
+        { createdAt: PRE_FLOOR, author: SWEPT_ACCOUNT },
+        { createdAt: PRE_FLOOR },
+      ],
+      translateFloorStatus({ unitShow: NOT_INSTALLED }),
+      undefined,
+      REPORT,
+    );
+    expect(scope.reported?.inScope).toBe(1);
+  });
+
+  it("still counts the whole total in scope when the reporting tick ran with no floor", () => {
+    // No floor means the tick selects everything, so the author question never arises — including
+    // for the swept account's oldest posts, which is exactly what makes that state alarming.
+    const scope = collectedScope(
+      [{ createdAt: PRE_FLOOR, author: SWEPT_ACCOUNT }, { createdAt: "" }],
+      translateFloorStatus({ unitShow: NOT_INSTALLED }),
+      undefined,
+      { at: REPORT.at },
+    );
+    expect(scope.reported?.inScope).toBe(2);
   });
 });
 

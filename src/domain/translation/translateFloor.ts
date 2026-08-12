@@ -4,7 +4,26 @@
 // and it is domain code: no I/O and no Node built-ins, so the read-only Vercel function on the
 // 링크 수집 path imports it exactly as the CLI does.
 import { isSweptAccount } from "../sweptAccount";
-import type { ContentItem } from "./contentItem";
+
+/**
+ * The two fields the rule reads, and the only two — deliberately narrower than `ContentItem`.
+ *
+ * `ContentItem` satisfies this structurally, so the two callers that hold whole items
+ * (`PrepareTranslations.applySelector`, `createDeps.loadIntakePending`) pass theirs unchanged. The
+ * third — `collectedScope` in `src/status/translateFloor.ts`, which counts how much of the collected
+ * total the scheduler can reach — is why the parameter is not `ContentItem` itself: it takes an
+ * *array*, and requiring an `id`, a `source` and a `text` it never reads would make every fixture in
+ * its suite fabricate three fields to ask one question.
+ *
+ * Declaring what is read also states the rule's own reach: nothing else about an item can change the
+ * answer, so no caller has to wonder which of its fields matter.
+ */
+export interface TranslateFloorSubject {
+  /** ISO, and `""` for a thread `flattenXThreads` found no tweets for — see `meetsTranslateFloor`. */
+  createdAt: string;
+  /** The X handle that wrote it. Absent for Lark and for a thread stored with no tweets. */
+  author?: string;
+}
 
 /**
  * Whether the translate floor — `HERALD_TRANSLATE_SINCE` — leaves this item alone.
@@ -22,7 +41,7 @@ import type { ContentItem } from "./contentItem";
  * historical backlog on the next tick. Shut, the worst case is the behaviour that shipped before
  * this rule existed.
  */
-function bypassesFloor(item: ContentItem): boolean {
+function bypassesFloor(item: TranslateFloorSubject): boolean {
   return item.author !== undefined && item.author !== "" && !isSweptAccount(item.author);
 }
 
@@ -30,14 +49,18 @@ function bypassesFloor(item: ContentItem): boolean {
  * Whether the translate floor lets `translate:prepare` select this item at all, given the floor the
  * tick runs with.
  *
- * **One function because two call sites have to agree.** `PrepareTranslations.applySelector` is the
- * tick that selects; `createDeps.loadIntakePending` is the 링크 수집 waiting list that claims to show
- * what the tick will select. A copy of the rule in each would drift, and a drift here is invisible —
- * the list would simply go on showing an item that never gets translated, with no error anywhere,
- * which is the failure the whole feature exists to remove. Sharing the function is what makes "the
- * rule is the same in both" a fact about the code rather than a claim in a comment. (It says nothing
- * about the two being handed the same *floor* — `createDeps.loadIntakePending` covers that, and the
- * one window where they are not.)
+ * **One function because three call sites have to agree.** `PrepareTranslations.applySelector` is
+ * the tick that selects; `createDeps.loadIntakePending` is the 링크 수집 waiting list that claims to
+ * show what the tick will select; `collectedScope` (`src/status/translateFloor.ts`) is the count of
+ * how much of the collected total the tick can reach, which `pnpm status`'s Collected line and the
+ * dashboard's 수집 hover card are both formatted from. A copy of the rule in each would drift, and a
+ * drift here is invisible — the list would simply go on showing an item that never gets translated,
+ * and the count would report an item as unreachable while the next tick translated it, with no error
+ * anywhere. That is the failure the whole feature exists to remove, and the third caller was added
+ * because it had exactly that defect. Sharing the function is what makes "the rule is the same in
+ * all three" a fact about the code rather than a claim in a comment. (It says nothing about them
+ * being handed the same *floor* — `createDeps.loadIntakePending` covers that, and the one window
+ * where they are not.)
  *
  * It answers the whole question rather than half of it, for the same reason: a caller left to
  * combine a bypass predicate with its own date comparison is a caller free to combine it
@@ -57,11 +80,12 @@ function bypassesFloor(item: ContentItem): boolean {
  * none does select the whole backlog, so `true` is the honest answer in that case too.
  *
  * `>=`, so the floor instant itself is inside the window, and the comparison is on the ISO strings
- * rather than parsed to `Date` — `collectedScope` in `src/status/translateFloor.ts` says why: an item
- * with `createdAt: ""` (a thread `flattenXThreads` found no tweets for) sorts below every floor, the
+ * rather than parsed to `Date`. Anything cleverer — parsing to `Date`, tolerating a missing timestamp
+ * — would let through an item the tick does not take: `createdAt: ""` (a thread `flattenXThreads`
+ * found no tweets for) sorts below every floor as a string, so it is never selected, which is the
  * same conservative direction an unreadable author gets above.
  */
-export function meetsTranslateFloor(item: ContentItem, floor: string | undefined): boolean {
+export function meetsTranslateFloor(item: TranslateFloorSubject, floor: string | undefined): boolean {
   if (floor === undefined) return true;
   return item.createdAt >= floor || bypassesFloor(item);
 }
