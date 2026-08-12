@@ -102,6 +102,29 @@ describe("CollectLinkedThread", () => {
     await expect(uc.run(URL_100)).rejects.toThrow(INTAKE_NOT_FOUND);
   });
 
+  it("collects the whole thread from a link to a tweet in the middle of it", async () => {
+    // Copying the address of the second tweet is the ordinary way to link "that thread" — x.com's
+    // own share menu offers it on every tweet. `parsePostUrl` reads the id in the url, which is that
+    // tweet's, never the conversation's, so matching on it as if it were the root told the operator
+    // the post was "deleted or private" while it was neither.
+    const repo = fakeRepo();
+    const root = tweet({ id: "100" });
+    const second = tweet({ id: "101", conversationId: "100", createdAt: "2026-08-12T00:01:00.000Z" });
+    const uc = new CollectLinkedThread(
+      fakeGateway({ fetchThread: async () => [root, second] }),
+      repo,
+      fakeTranslations(),
+      () => "2026-08-12T09:00:00.000Z",
+    );
+
+    const result = await uc.run("https://x.com/Mantle_Official/status/101");
+
+    // Filed under the thread's real root, which is exactly what a timeline sweep of it would store —
+    // an item id derived from the linked tweet would be a second row for one thread.
+    expect(result).toEqual({ itemId: "x:100", tweets: 2, outcome: "collected" });
+    expect(repo.rows.map((r) => r.rootId)).toEqual(["100"]);
+  });
+
   it("refuses a thread that opens with a commenter reply", async () => {
     // flattenXThreads drops these silently; refusing here is the whole point.
     const repo = fakeRepo();

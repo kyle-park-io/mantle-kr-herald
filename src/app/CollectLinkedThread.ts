@@ -48,13 +48,22 @@ export class CollectLinkedThread {
   async run(url: string): Promise<IntakeResult> {
     const parsed = parsePostUrl(url.trim());
     if (!parsed) throw new Error(INTAKE_BAD_URL);
+    // `parsePostUrl` names this `rootId` because its own caller (`x:reconcile`) only ever reads urls
+    // this codebase wrote, which always point at a root. A person pastes whatever tweet they were
+    // looking at — x.com offers "copy link" on every one — so here it is just the linked tweet's id.
+    const linkedTweetId = parsed.rootId;
 
-    const tweets = await this.gateway.fetchThread(parsed.rootId);
+    const tweets = await this.gateway.fetchThread(linkedTweetId);
     if (tweets.length === 0) throw new Error(INTAKE_NOT_FOUND);
 
     await this.fillArticleBodies(tweets);
 
-    const thread = assembleThreads(tweets).find((t) => t.rootId === parsed.rootId);
+    // Matched by *containment*, not by root id: a link to the second tweet of a thread carries that
+    // tweet's id, and `assembleThreads` keys threads by conversationId, so comparing the two told the
+    // operator the thread was "deleted or private" when it was neither — and everything below then
+    // works from `thread.rootId`, so the row and the item id are the ones a timeline sweep of the
+    // same thread would produce rather than a second row for one conversation.
+    const thread = assembleThreads(tweets).find((t) => t.tweets.some((x) => x.id === linkedTweetId));
     // The gateway answered, but about a different conversation. Storing it would file the wrong post
     // under the id the operator asked for, which no later stage could detect.
     if (!thread) throw new Error(INTAKE_NOT_FOUND);
@@ -64,14 +73,14 @@ export class CollectLinkedThread {
     // two hours later with no error anywhere for anyone to find.
     if (isCommenterReply(thread.tweets[0])) throw new Error(INTAKE_REPLY);
 
-    const itemId = `x:${parsed.rootId}`;
+    const itemId = `x:${thread.rootId}`;
     const [existing, translatedIds] = await Promise.all([
       this.repo.loadAll(),
       this.translationStore.listTranslatedIds(),
     ]);
     const outcome: IntakeOutcome = translatedIds.has(itemId)
       ? "already-translated"
-      : existing.some((t) => t.rootId === parsed.rootId)
+      : existing.some((t) => t.rootId === thread.rootId)
         ? "already-pending"
         : "collected";
 
