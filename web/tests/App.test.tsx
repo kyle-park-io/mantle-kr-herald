@@ -168,7 +168,7 @@ describe("App's 링크 수집 tab", () => {
     expect(intakeMountCounter.current).toBe(1);
   });
 
-  it("switches to 링크 수집 and back without losing 1차", async () => {
+  it("opens 링크 수집 from the nav, and writes #intake to the hash", async () => {
     stubFetch();
     await act(async () => {
       window.location.hash = "";
