@@ -685,9 +685,17 @@ export interface IntakeReply {
 /**
  * What each outcome means on screen. `already-*` are not errors — the thread was re-collected either
  * way — so they read as "where your item already is", never as a rejection.
+ *
+ * "번역 틱이 돌면", not "다음 번역 틱에서": one tick takes at most `DEFAULT_WATCH_BATCH` items and
+ * the queue drains in order, so a queue longer than the batch takes several ticks and the item just
+ * submitted may not be in the first of them. Nothing is stranded — the floor is the only filter that
+ * drops an item for good, and the waiting list already applies it — so the promise still holds; it
+ * is the *which tick* that these sentences were not entitled to name. The wait is still bounded and
+ * still visible: `IntakeView` prints the schedule (`번역 틱은 두 시간마다 매시 17분에 돕니다`) and
+ * the item stays in the waiting list below until a tick takes it.
  */
 export const INTAKE_OUTCOME_MESSAGE: Record<IntakeOutcome, string> = {
-  collected: "수집됐습니다 — 다음 번역 틱에서 초안이 만들어집니다",
-  "already-pending": "이미 들어와 있습니다 — 다음 번역 틱에서 처리됩니다",
+  collected: "수집됐습니다 — 번역 틱이 돌면 초안이 만들어집니다",
+  "already-pending": "이미 들어와 있습니다 — 번역 틱이 돌면 처리됩니다",
   "already-translated": "이미 번역돼 1차 검수에 있습니다",
 };

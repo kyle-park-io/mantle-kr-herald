@@ -77,7 +77,7 @@ describe("IntakeView", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "https://x.com/someone/status/7" } });
     fireEvent.click(screen.getByRole("button", { name: "넣기" }));
 
-    expect(await screen.findByText("수집됐습니다 — 다음 번역 틱에서 초안이 만들어집니다")).toBeTruthy();
+    expect(await screen.findByText("수집됐습니다 — 번역 틱이 돌면 초안이 만들어집니다")).toBeTruthy();
   });
 
   it("shows the server's refusal instead of a generic failure", async () => {
