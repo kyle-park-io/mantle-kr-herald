@@ -256,11 +256,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     clicking. Unlike `HERALD_TRUST_PROXY`, `TWITTERAPI_IO_KEY`'s absence is not a boot condition: the
     function still starts, every other tab still works, and only this one closes.
   - **A waiting list, not a black hole.** `GET /api/intake/pending` — reachable without the
-    credential, since it only reads the database — lists everything collected but not yet translated,
-    because a linked-in item does not reach 1차 검수 until `herald-watch`'s next tick
-    (`translate:prepare`, every two hours at `*:17`) builds its translation row. Without this list a
-    submitted link reads as "I pasted it and it vanished"; the `POST` reply carries the same
-    refreshed list so the tab self-corrects in one round trip.
+    credential, since it only reads the database — lists everything collected but not yet translated
+    **that the next tick will actually select**, because a linked-in item does not reach 1차 검수
+    until `herald-watch`'s next tick (`translate:prepare`, every two hours at `*:17`) builds its
+    translation row. Without this list a submitted link reads as "I pasted it and it vanished"; the
+    `POST` reply carries the same refreshed list so the tab self-corrects in one round trip.
+  - **The list and the tick decide by one function, not by two copies of one rule.** The negative
+    join is not on its own the tick's answer — `applySelector` filters again by the translate floor —
+    so a list computing only the join showed the swept account's pre-floor backlog as though it were
+    queued, forever, with no error anywhere. That is the same silent failure the whole feature
+    exists to close, aimed at the screen instead of at the pipeline. The rule now lives in
+    `meetsTranslateFloor` (`src/domain/translation/translateFloor.ts`) and both call it, so they
+    cannot come to different conclusions about a row; it answers the whole question ("will a tick
+    take this item, given this floor?") rather than handing back a predicate each caller combines
+    with its own date comparison. **No floor known filters nothing** — no report, or a tick that
+    reported running with none — matching the door gate's refusal to invent one.
   - **The translate floor (`HERALD_TRANSLATE_SINCE`) now gates the swept account and nobody else.**
     That floor filters on an item's own post date, after `loadPending` returns
     (`PrepareTranslations.applySelector`), so without this rule a link to anything published before
