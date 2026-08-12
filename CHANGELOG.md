@@ -317,6 +317,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and never selected by any tick: the same silent failure, re-entered through the one input the
     rule singles out as needing care. The door now refuses exactly what the function says no tick
     would take.
+- **Two 10px countdown dials in the header funnel, on the two stages a scheduler fills — 번역 and
+  렌더 — each filling up as its tick approaches.** `번역 23` never said whether that number was about
+  to move or had just finished moving, and the answer decides whether a reviewer opening the board at
+  :15 waits two minutes or starts on something else. **No server field, no request, no new state**:
+  an `OnCalendar=` is a fixed calendar, so `web/src/tickSchedule.ts` derives the next fire from the
+  clock the browser already has — which is also the only way the hosted board could answer at all,
+  since a Vercel function has no systemd to ask (the same wall `CollectedBreakdownCard` reports as
+  `하한을 읽을 수 없습니다`). The dial **fills** rather than drains — empty is "just ran", full is
+  "about to" — so it grows alongside the numbers it annotates. It is a `<circle>` stroked as wide as
+  its own diameter, so a `stroke-dasharray` renders as a pie slice and there is no arc arithmetic to
+  get wrong. **Anchored at KST midnight**, not UTC and not the viewer's: 9 hours is 540 minutes,
+  which is not a multiple of the 번역 틱's 120, so a UTC anchor puts that countdown a full hour out
+  while still sweeping convincingly — the whole test file runs under four ambient zones for the
+  reason `kstStamp.test.ts` gives. **The tooltip states when the *tick* runs and never that a given
+  item is next** (`번역 틱 · 다음 실행 14:17 KST · 14분 후`), which is the constraint
+  `INTAKE_OUTCOME_MESSAGE` already carries and explains: a batch limit means a queued item may wait
+  several ticks. **Only two stages get one** — 수집 and 발행 move when a person acts, and 변환 is a
+  waypoint inside the very tick that produces 렌더. The copied schedule is the real cost, and nobody
+  editing a `.timer` would think to open a `.tsx`, so `tests/deploy/dashboardTickTiming.test.ts`
+  parses both unit files and fails if either constant drifts — refusing, rather than guessing, any
+  `OnCalendar=` that has no single period-and-offset form. Desktop only (`hidden md:flex`), one
+  shared 60-second `setInterval` for both dials (the first in this frontend), which also refreshes on
+  `visibilitychange`: background tabs get their timers throttled, and a reviewer coming back after an
+  hour would otherwise read an hour-old countdown.
 
 ### Changed
 

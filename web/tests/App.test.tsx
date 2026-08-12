@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 /**
  * A stand-in for `RenderingsView` with its own internal state (a mount counter, via an
@@ -351,10 +351,17 @@ describe("App's header funnel", () => {
    * strip a reviewer actually reads did not change. Scoping to direct children is what the original
    * "the separator is a sibling, not a child" comment in `App.tsx` was reaching for; anything deeper
    * would make this test fail the moment the card gained a `<span>`, which is not what it is about.
+   *
+   * Spans with no text are dropped for the same reason: 번역 and 렌더 now lead with a countdown pie,
+   * which is a `<span title>` (the tooltip) wrapping an SVG that carries no text at all — deliberately,
+   * because an SVG `<title>` child would land in exactly the text this helper reads. It is a direct
+   * child, so without the filter it would join as `""` and prepend a space to every expectation below.
+   * The filter costs nothing this test is about: a pie that ever grew visible text would still appear.
    */
   const stage = (key: string) =>
     [...screen.getByTestId(`funnel-${key}`).querySelectorAll(":scope > span")]
-      .map((s) => s.textContent)
+      .map((s) => s.textContent ?? "")
+      .filter((text) => text !== "")
       .join(" ");
 
   it("names items and rows separately, and draws no arrow between stages", async () => {
@@ -370,6 +377,53 @@ describe("App's header funnel", () => {
     expect(stage("published")).toBe("발행 9 16건");
     // No arrow: this pipeline branches, and a funnel is the wrong picture of it.
     expect(funnel.textContent).not.toContain("→");
+  });
+
+  /**
+   * The two countdown pies. Each stage of this strip is a queue, and two of them are fed by a
+   * systemd timer rather than by a person: `herald-watch` (`*-*-* 0/2:17:00`) lands its output in
+   * 번역, and `herald-convert` — which runs convert:save and format in one tick — comes to rest in
+   * 렌더. A reviewer looking at `번역 23` cannot tell whether that number is about to move or has
+   * just finished moving, and the answer is knowable in the browser: the schedule is a fixed
+   * calendar, so `tickSchedule.ts` derives it with no server field and no request.
+   *
+   * The other three stages get nothing. 수집 advances when somebody pastes a link (링크 수집) or when
+   * a collection is run by hand, 변환 is a waypoint inside the same tick that produces 렌더, and 발행
+   * is a person clicking a button — a countdown on any of them would be a promise nothing keeps.
+   */
+  it("counts down the two ticks that feed the funnel, and marks no other stage", async () => {
+    renderHeader(PRODUCTION_BREAKDOWN);
+    await screen.findByTestId("funnel");
+
+    for (const [key, name] of [["translated", "번역 틱"], ["rendered", "변환 틱"]] as const) {
+      const pie = within(screen.getByTestId(`funnel-${key}`)).getByRole("img");
+      // The accessible name says which scheduler, not merely "a countdown" — there are two of them
+      // on this strip and they run at different cadences.
+      expect(pie.getAttribute("aria-label")?.startsWith(name), `${key}: ${pie.getAttribute("aria-label")}`).toBe(true);
+
+      // The tooltip lives on a wrapping span, not on the pie: the funnel container carries its own
+      // `title` (the items-vs-rows explanation) and the nearest titled ancestor is what the pointer
+      // gets, so the pie needs one of its own or it inherits a sentence about row counts.
+      const wrapper = pie.closest("span[title]");
+      expect(wrapper, `${key}: the pie inherits the funnel's own tooltip`).toBeTruthy();
+      expect(wrapper!.getAttribute("title")).toContain(name);
+      expect(wrapper!.getAttribute("title")).toContain("KST");
+    }
+
+    for (const key of ["collected", "converted", "published"]) {
+      expect(within(screen.getByTestId(`funnel-${key}`)).queryByRole("img"), key).toBeNull();
+    }
+  });
+
+  it("adds no text to the stages it marks", async () => {
+    // The constraint `App.tsx` states over the funnel and `stage()` above relies on: a stage's text is
+    // exactly its own label and its own numbers. The pie is an icon plus a tooltip plus an
+    // `aria-label`, and none of those are text — which is why it may not use an SVG `<title>` child,
+    // the otherwise-obvious way to caption a graphic.
+    renderHeader(PRODUCTION_BREAKDOWN);
+    await screen.findByTestId("funnel");
+    expect(screen.getByTestId("funnel-translated").textContent).toBe("번역23");
+    expect(screen.getByTestId("funnel-rendered").textContent).toBe("렌더313건");
   });
 });
 
