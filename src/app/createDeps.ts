@@ -230,7 +230,12 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   const floorReports = new PgTranslateFloorReport(db);
 
   /**
-   * The read above, degraded to `undefined` rather than allowed to take `/api/status` down with it.
+   * The read above, degraded to `undefined` rather than allowed to take `/api/status` (or
+   * `/api/intake/pending`) down with it.
+   *
+   * Two readers: the status card below, and `loadIntakePending`'s translate-floor filter. Both
+   * degrade the same honest way — the card shows `unknown`, and the waiting list filters nothing,
+   * which is exactly what it did before it learned about the floor.
    *
    * This is not general nervousness about a query — it closes one specific, real window. The hosted
    * deployment is the only reader here that does NOT apply the schema at startup (`serve.ts` calls
@@ -537,20 +542,29 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * **The join alone does not make this list honest** — `applySelector` filters again after
    * `loadPending`, by the translate floor, so the join's answer was never the tick's answer. The
    * floor is therefore applied here too, through `meetsTranslateFloor`: literally the function the
-   * tick selects with, so the two cannot come to different conclusions about the same row. Without
-   * it the swept account's pre-floor backlog rendered here looking queued, forever — the same silent
+   * tick selects with, so the rule cannot be applied one way here and another way there. Without it
+   * the swept account's pre-floor backlog rendered here looking queued, forever — the same silent
    * failure this tab exists to remove, aimed at the screen instead of at the pipeline.
    *
    * Together with the door gate (`CollectLinkedThread` refuses a pre-floor post by the swept account
-   * rather than collecting one), that makes the list what it claims to be: every item on it is one
-   * the next tick will take. The list is still everything pending rather than only what arrived by
-   * link (the spec's "대기 목록"), because the two kinds get identical treatment from here on.
+   * rather than collecting one), that makes the list what it claims to be: every item on it is one a
+   * tick will take. **A tick, not necessarily the next one** — a queue longer than the tick's batch
+   * drains over several, which changes when an item's turn comes and not whether it comes; the floor
+   * is the only filter that drops one for good (see `meetsTranslateFloor`). The list is still
+   * everything pending rather than only what arrived by link (the spec's "대기 목록"), because the
+   * two kinds get identical treatment from here on.
    *
    * The floor comes from `readFloorReport` — the scheduler's own record, the same source the door
    * gate reads and the only one a Vercel function with no systemd can get. **No floor known filters
    * nothing**, whether nothing has ever been reported or the tick reported running with none: the
    * first is ignorance and must not be dressed up as a cutoff, and in the second the tick really does
    * select the whole backlog, so the whole backlog really is waiting.
+   *
+   * What the shared function cannot rule out is the *value* being stale: the report is what the last
+   * tick ran with, so for up to one tick after someone edits `HERALD_TRANSLATE_SINCE` and reloads,
+   * this list is judged against the previous floor. It self-corrects at the next `recordFloor`, the
+   * door gate has the identical window, and there is no fresher source a hosted function can read —
+   * see `PgTranslateFloorReport` for why the value is not copied into a Vercel env var instead.
    *
    * Needs no credential, unlike `collectLinkedThread` below: it only reads `stores.collectionRepository`,
    * `translationStore` and that one report row, all already built above. The scheduled `pnpm collect`

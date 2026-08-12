@@ -101,7 +101,7 @@ describe("createDeps", () => {
     });
 
     /**
-     * The waiting list's whole promise is "what is here is what the next tick will take" — the spec's
+     * The waiting list's whole promise is "what is here is what a tick will take" — the spec's
      * "대기 목록이 있어야 하는 이유". The negative join alone does not keep it: `applySelector` filters
      * again, by the translate floor, and the floor gates the swept account only
      * (`src/domain/translation/translateFloor.ts`). So the list has to ask the same question the tick
