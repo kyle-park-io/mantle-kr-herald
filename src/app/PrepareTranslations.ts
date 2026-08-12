@@ -1,7 +1,7 @@
 import { DEFAULT_ROLE } from "../domain/translation/role";
 import { assembleItemBlock, assembleSharedContext } from "../domain/translation/promptAssembler";
 import { selectRelevantTm } from "../domain/tm/selection";
-import { isSweptAccount } from "../domain/sweptAccount";
+import { meetsTranslateFloor } from "../domain/translation/translateFloor";
 import type { ContentItem } from "../domain/translation/contentItem";
 import type { ContentSource } from "../ports/ContentSource";
 import type { GlossaryStore } from "../ports/GlossaryStore";
@@ -18,26 +18,6 @@ export interface Selector {
 const DEFAULT_LIMIT = 20;
 const MAX_FEW_SHOTS = 8;
 const MAX_TM_FEW_SHOTS = 6;
-
-/**
- * Whether `selector.since` — the translate floor, `HERALD_TRANSLATE_SINCE` — leaves this item alone.
- *
- * The floor exists to stop the *swept timeline's* whole history pouring into translation oldest
- * first. A post someone pasted into 링크 수집 is not that risk: nothing but that tab can put another
- * account's thread in `x_threads` (`src/domain/sweptAccount.ts` states why), so the handle is the
- * marker, and an item authored anywhere but the swept account is a hand-picked one that proceeds
- * whatever its date. The swept account's own posts still meet the floor, because a pre-floor one of
- * those is indistinguishable from swept backlog — `CollectLinkedThread` refuses that at the door
- * instead, so it cannot be collected and then silently dropped here.
- *
- * **An unreadable author keeps the floor.** A Lark item has no handle, and neither does an X thread
- * stored with no tweets; reading "unknown" as "not the swept account" would open the entire
- * historical backlog on the next tick. Shut, the worst case is the behaviour that shipped before
- * this rule existed.
- */
-function bypassesFloor(item: ContentItem): boolean {
-  return item.author !== undefined && item.author !== "" && !isSweptAccount(item.author);
-}
 
 export class PrepareTranslations {
   constructor(
@@ -82,9 +62,13 @@ export class PrepareTranslations {
       const wanted = new Set(selector.ids);
       result = result.filter((i) => wanted.has(i.id));
     }
+    // `selector.since` is the translate floor, and the rule for who it applies to lives in
+    // `meetsTranslateFloor` rather than here — `createDeps.loadIntakePending` asks the same function
+    // the same question, which is what lets the 링크 수집 waiting list promise that what it shows is
+    // what this line will take. See that function's own doc comment.
     if (selector.since) {
       const since = selector.since;
-      result = result.filter((i) => i.createdAt >= since || bypassesFloor(i));
+      result = result.filter((i) => meetsTranslateFloor(i, since));
     }
     const limit = selector.limit ?? DEFAULT_LIMIT;
     return result.slice(0, limit);

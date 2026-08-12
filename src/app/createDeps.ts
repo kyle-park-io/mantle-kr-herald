@@ -60,6 +60,7 @@ import { xThreadIntake, flattenXThreads } from "../adapters/content/XContentSour
 import { realSystemdShow } from "../cli/systemdShow";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { contentHash, isStale } from "../domain/publish/syncLedger";
+import { meetsTranslateFloor } from "../domain/translation/translateFloor";
 import type { Translation } from "../domain/translation/models";
 import { publishRowLinks, type PublishLinkConfig } from "../adapters/web/publishLinks";
 import { attachKind } from "../adapters/web/attachKind";
@@ -533,35 +534,43 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * what the tab renders: an article's source text runs to thousands of characters and the list only
    * needs to be recognisable.
    *
-   * **What makes this list honest about a link someone just submitted** is not the join — it is the
-   * two halves of the translate-floor rule, because `applySelector` filters again after `loadPending`
-   * and this does not. A post from any account but the swept one bypasses the floor by rule
-   * (`src/domain/sweptAccount.ts`), and a pre-floor post from the swept account never gets collected
-   * at all — `CollectLinkedThread` refuses it at the door. Between them there is no way to submit a
-   * link, be told `collected`, and then watch the item sit here untranslated forever, which is what
-   * this comment used to claim the join alone prevented. It did not.
+   * **The join alone does not make this list honest** — `applySelector` filters again after
+   * `loadPending`, by the translate floor, so the join's answer was never the tick's answer. The
+   * floor is therefore applied here too, through `meetsTranslateFloor`: literally the function the
+   * tick selects with, so the two cannot come to different conclusions about the same row. Without
+   * it the swept account's pre-floor backlog rendered here looking queued, forever — the same silent
+   * failure this tab exists to remove, aimed at the screen instead of at the pipeline.
    *
-   * The list is still everything pending, on purpose (the spec's "대기 목록"), so it also carries the
-   * swept account's own below-floor backlog — items collected by the timeline sweep before the floor
-   * moved, which no tick will select. Those predate this tab and are what the 수집 hover card's
-   * "하한 아래" count is about; nothing submitted here can join them.
+   * Together with the door gate (`CollectLinkedThread` refuses a pre-floor post by the swept account
+   * rather than collecting one), that makes the list what it claims to be: every item on it is one
+   * the next tick will take. The list is still everything pending rather than only what arrived by
+   * link (the spec's "대기 목록"), because the two kinds get identical treatment from here on.
    *
-   * Needs no credential, unlike `collectLinkedThread` below: it only reads `stores.collectionRepository`
-   * and `translationStore`, both already built above. The scheduled `pnpm collect` sweep populates
-   * `x_threads` independently of whether this deployment can take a link, so a stub here would report
-   * a real, possibly large backlog as an empty list — wrong, not merely disabled.
+   * The floor comes from `readFloorReport` — the scheduler's own record, the same source the door
+   * gate reads and the only one a Vercel function with no systemd can get. **No floor known filters
+   * nothing**, whether nothing has ever been reported or the tick reported running with none: the
+   * first is ignorance and must not be dressed up as a cutoff, and in the second the tick really does
+   * select the whole backlog, so the whole backlog really is waiting.
+   *
+   * Needs no credential, unlike `collectLinkedThread` below: it only reads `stores.collectionRepository`,
+   * `translationStore` and that one report row, all already built above. The scheduled `pnpm collect`
+   * sweep populates `x_threads` independently of whether this deployment can take a link, so a stub
+   * here would report a real, possibly large backlog as an empty list — wrong, not merely disabled.
    */
   const loadIntakePending = async (): Promise<IntakePendingItem[]> => {
-    const [threads, translatedIds] = await Promise.all([
+    const [threads, translatedIds, floorReport] = await Promise.all([
       stores.collectionRepository.loadAll(),
       translationStore.listTranslatedIds(),
+      readFloorReport(),
     ]);
-    return flattenXThreads(threads, translatedIds).map((item) => ({
-      itemId: item.id,
-      text: item.text.slice(0, 300),
-      createdAt: item.createdAt,
-      kind: item.kind,
-    }));
+    return flattenXThreads(threads, translatedIds)
+      .filter((item) => meetsTranslateFloor(item, floorReport?.floor))
+      .map((item) => ({
+        itemId: item.id,
+        text: item.text.slice(0, 300),
+        createdAt: item.createdAt,
+        kind: item.kind,
+      }));
   };
 
   const publishOne = async (itemId: string, target: string): Promise<PublishResult> => {
