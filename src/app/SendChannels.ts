@@ -15,6 +15,7 @@ import type { TranslationStore } from "../ports/TranslationStore";
 import { sendBlock, SEND_BLOCK_REASON } from "../domain/send/sendBlock";
 import { emit } from "../domain/formatting/emitters";
 import { appendXLinkCta, needsXLinkCta, resolveXPostUrl, xLinkCta } from "../domain/formatting/xLinkCta";
+import { krLinkNotice, linkedSweptItemIds, needsKrLinkRewrite, rewriteGlobalLinks } from "../domain/formatting/krLinks";
 import { matchesItemId } from "../domain/itemId";
 import { X_MAX_WEIGHTED } from "../domain/formatting/weightedLength";
 import type { PublishRecord } from "../domain/sheet/models";
@@ -203,6 +204,33 @@ export class SendChannels {
       }
     }
 
+    /**
+     * The same text with every linked Mantle Global post pointed at its Korean version, and how many
+     * links had none. See `src/domain/formatting/krLinks.ts` for why this belongs at send time
+     * rather than in the stored translation.
+     *
+     * Resolved out of the two collections `run()` has already loaded — no extra store read — through
+     * `resolveXPostUrl`, the same resolver the 공지 CTA below uses. The difference between the two is
+     * only *which* item is asked about: the CTA asks for the Korean post of the item being sent, this
+     * asks for the Korean post of each item its copy *links to*. `/emissions` asks the identical
+     * question of `deps.loadXPostUrl`; one question, one answer, two ways of reaching the data.
+     *
+     * Called per resolved text inside the `byText` loop, not once per rendering: a forked room
+     * carries different copy, and different copy carries different links.
+     */
+    const withKrLinks = (type: string, text: string): { text: string; unresolved: number } => {
+      if (!needsKrLinkRewrite(type)) return { text, unresolved: 0 };
+      const krUrlByItemId = new Map<string, string>();
+      for (const linkedItemId of linkedSweptItemIds(text)) {
+        const krUrl = resolveXPostUrl(
+          sourceByItem.get(linkedItemId),
+          ledgered.filter((d) => d.itemId === linkedItemId),
+        );
+        if (krUrl !== undefined) krUrlByItemId.set(linkedItemId, krUrl);
+      }
+      return rewriteGlobalLinks(text, krUrlByItemId);
+    };
+
     for (const r of candidates) {
       const sender = this.senders[r.channel]!;
 
@@ -254,10 +282,39 @@ export class SendChannels {
       }
 
       for (const [text, rooms] of byText) {
+        // Korean links first, then the CTA, then `emit` — the same three steps in the same order as
+        // the [복사] preview (`apiHandlers.ts`'s `withKrLinks` / `withXLinkCta`). The two paths have
+        // to produce identical bytes: a reviewer approves what the preview shows, and for a
+        // `delivery: "manual"` room the preview IS the send, since a human copies it by hand.
+        // `tests/app/sendChannels.test.ts`'s "미리보기와 발송본이 같은 글자" pins them together.
+        //
+        // Before `emit` is the load-bearing part: `emit`'s segments ARE the deliverable — the exact
+        // strings handed to `sender.send` — so a rewrite done afterwards would have to be re-applied
+        // to every segment one at a time, or not happen at all. (Length is a secondary note, not the
+        // reason: an `x` rendering is the only kind rewritten here and `weightedLength` charges every
+        // url a flat t.co 23 whatever its real length, so substituting one url for another cannot
+        // move the over-limit verdict below.)
+        //
+        // Before the CTA is deliberate, though it cannot change a byte today: the two predicates are
+        // disjoint (`needsKrLinkRewrite` is `x` only, `needsXLinkCta` is 공지 only) and the CTA
+        // carries our own account's url in any case. Fixed in this order so a type that one day
+        // wants both does not get the answer by accident — the rewrite is a statement about copy this
+        // codebase did not author (a near-verbatim translation carrying the source tweet's own
+        // links), while the CTA is composed here from `resolveXPostUrl`; text we just wrote should
+        // not then be re-read as if it might need redirecting.
+        const { text: krText, unresolved } = withKrLinks(r.type, text);
+        const notice = krLinkNotice(unresolved);
+        if (notice) {
+          // Console only, never `warnings`. That field means "sent, but not entirely as asked" (a
+          // pin that did not take); a link going out as the approved copy wrote it is not that. The
+          // place to decide about an unrewritten link is the 미리보기, before approval — where the
+          // reviewer reads this same sentence — not a send log they never see.
+          console.warn(`[send] ${r.itemId}:${r.type} for ${rooms.map((o) => o.id).join(", ")}: ${notice}`);
+        }
         // The CTA rides through `emit` rather than being appended after it, so the over-limit check
         // below weighs it. Appended after, a 공지 sitting just under 4096 would go out at 4096+N and
         // Telegram would 400 it forever.
-        const sendText = cta ? appendXLinkCta(text, cta) : text;
+        const sendText = cta ? appendXLinkCta(krText, cta) : krText;
         const emitResult = emit(sendText, DELIVERY_DESTINATION[r.channel], this.xMaxWeighted);
         if (emitResult.segments.some((s) => s.overLimit)) {
           // Sending would just 400 forever (the emitter refuses to split further) — fail fast
@@ -272,9 +329,11 @@ export class SendChannels {
           continue;
         }
 
-        // `text`, not `sendText`: media markers only ever appear in the body a human wrote, and the
-        // CTA is a plain line with no marker in it. Parsing the appended copy would find the same
-        // media and say the same thing, just later.
+        // `text`, not `sendText`: media markers only ever appear in the body a human wrote, and
+        // neither step above can add or remove one — the CTA is a plain line with no marker in it,
+        // and the link rewrite only ever swaps one `…/status/<id>` post url for another, never a
+        // `![](…)` photo marker or an `[영상]` mp4 url. Parsing the rewritten copy would find the
+        // same media and say the same thing, just later.
         const { photos, videos } = extractMedia(text);
         // Only a marker that carries a url can be uploaded. A bare `[영상]` is a thread collected
         // before `XContentSource` captured `video_info`, and nothing re-derives stored text on read,

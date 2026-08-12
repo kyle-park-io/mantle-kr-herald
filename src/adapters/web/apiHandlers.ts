@@ -334,10 +334,17 @@ async function withXLinkCta(
  *
  * **Runs before `withXLinkCta`, and both run before `emitAll`.**
  *
- * Before `emitAll` is the load-bearing half: over-limit is measured on what actually goes out, and
- * on a character-counted destination (telegram/kakao) a Korean url is not the same length as the
- * global one it replaces. An x destination happens not to care — `weightedLength` charges every url
- * a flat t.co 23 — but the preview must not depend on which destination it is answering for.
+ * Before `emitAll` is the load-bearing half, for a plainer reason than length: `emitAll`'s output IS
+ * the deliverable — the exact strings a human copies out of [복사], and (through `emit`, its
+ * single-destination twin) the ones `SendChannels` hands the sender. A rewrite done afterwards would
+ * have to be re-applied to every segment of every destination one at a time, or not happen at all.
+ *
+ * Length is a secondary note, not the argument. Over-limit is indeed measured on what goes out, but
+ * substituting one url for another cannot move that verdict here: this rewrite is `x`-type only
+ * (`needsKrLinkRewrite`), `x` fans out to the `x` channel alone (`DEFAULT_CHANNELS_BY_TYPE`), and
+ * `weightedLength` charges every url a flat t.co 23 whatever its real length
+ * (`weightedLength.ts:19,111`). It would start to bite the day a character-counted destination
+ * (telegram/kakao) is rewritten too — which is a reason to keep this order, not the reason it holds.
  *
  * Before the CTA is the deliberate half. Today it cannot change a byte: the two predicates are
  * disjoint (`needsKrLinkRewrite` is `x` only, `needsXLinkCta` is 공지 only), so no rendering ever
