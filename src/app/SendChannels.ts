@@ -12,7 +12,7 @@ import type { ResolvedText } from "../domain/outlet/override";
 import { overrideKey, textFor } from "../domain/outlet/override";
 import type { OutletOverrideStore } from "../ports/OutletOverrideStore";
 import type { TranslationStore } from "../ports/TranslationStore";
-import { sendBlock } from "../domain/send/sendBlock";
+import { sendBlock, SEND_BLOCK_REASON } from "../domain/send/sendBlock";
 import { emit } from "../domain/formatting/emitters";
 import { appendXLinkCta, needsXLinkCta, resolveXPostUrl, xLinkCta } from "../domain/formatting/xLinkCta";
 import { matchesItemId } from "../domain/itemId";
@@ -233,7 +233,7 @@ export class SendChannels {
           // without the link, is a live post nobody can recall and nobody would notice was wrong.
           // Failing keeps it retryable — a failed send is never ledgered, so the next run picks it
           // up as soon as the post is up and `x:reconcile` has run.
-          const reason = "X 게시물 URL이 없습니다 — X를 먼저 게시하세요";
+          const reason = SEND_BLOCK_REASON["x-url-missing"];
           console.warn(`[send] ${r.itemId}:${r.type} skipped for ${pending.map((o) => o.id).join(", ")}: ${reason}`);
           failures.push({ key: `${r.itemId}:${r.type}`, error: reason });
           failed += 1;

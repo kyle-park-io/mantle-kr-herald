@@ -62,9 +62,16 @@ function isXPostUrl(url: string | undefined): url is string {
 /**
  * The KR X post URL for one item, or undefined if it has not gone up yet.
  *
- * Two sources, because there are two ways the post gets made. A hand-posted one is reconciled onto
- * the translation (`RetireTranslation.ts:136`, via `pnpm x:reconcile` or `pnpm x:link`); a bot-sent
- * one lands on the `x-post` delivery row (`ReconcilePublished.ts:71-73`).
+ * Two sources, but they are not equals — the delivery row is the one the send path actually reads.
+ * A bot-sent post lands there (`ReconcilePublished.ts:71-73`), which does not retire the item, so the
+ * 공지 is still a candidate when the url arrives.
+ *
+ * The translation's `postedUrl` is the narrower case. `RetireTranslation.ts:136` writes it and
+ * `status: "posted"` in one statement, and a `posted` source fails `sendBlock` — so a 공지 whose item
+ * was hand-posted and reconciled goes straight from "refused, no url" to "not a candidate", with no
+ * window where this branch could have released it. It fires after 되돌리기, which restores the url
+ * while returning the status to `translated`, and for the `/emissions` preview and the board, which
+ * read it regardless of candidacy. Kept for those; do not read it as a second working send route.
  *
  * The `https://x.com/` check is not decoration. `SendChannels` writes the Typefully *share* url onto
  * that delivery row at send time (`SendChannels.ts:301`) and it only becomes an x.com url minutes

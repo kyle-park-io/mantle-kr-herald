@@ -437,9 +437,9 @@ export const outletLabel = (id: string): string => OUTLET_LABEL[id] ?? id;
 /** One room under a group card: what it will send, and whether it already went out. */
 /**
  * Why a room may not send. Mirrors `src/domain/send/sendBlock.ts` — the server computes it with the
- * same predicate `SendChannels` enforces, so a row that shows no block is a row that will send.
+ * same predicates `SendChannels` enforces, so a row that shows no block is a row that will send.
  */
-export type SendBlock = "source-missing" | "source-unapproved" | "unapproved" | "source-changed";
+export type SendBlock = "source-missing" | "source-unapproved" | "unapproved" | "source-changed" | "x-url-missing";
 
 /** What the reviewer is told, keyed by block. Mirrors `SEND_BLOCK_REASON`. */
 export const SEND_BLOCK_REASON: Record<SendBlock, string> = {
@@ -447,6 +447,7 @@ export const SEND_BLOCK_REASON: Record<SendBlock, string> = {
   "source-unapproved": "원문이 1차 승인 상태가 아닙니다",
   unapproved: "아직 승인되지 않았습니다",
   "source-changed": "원문이 이 문구를 승인한 뒤에 다시 승인됐습니다 — 다시 검수하거나 변환을 새로 하세요",
+  "x-url-missing": "X 게시물 URL이 없습니다 — X를 먼저 게시하세요",
 };
 
 /**
