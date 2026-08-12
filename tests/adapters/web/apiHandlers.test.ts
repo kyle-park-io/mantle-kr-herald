@@ -6,6 +6,7 @@ import type { Translation } from "../../../src/domain/translation/models";
 import type { ChannelRendering } from "../../../src/domain/formatting/models";
 import type { ContentVariant } from "../../../src/domain/conversion/models";
 import { SESSION_TTL_MS } from "../../../src/domain/auth/session";
+import { krLinkNotice } from "../../../src/domain/formatting/krLinks";
 
 /**
  * None of these tests are about the session gate (that is `gate.test.ts`'s job) — they exercise the
@@ -517,11 +518,13 @@ describe("handleApi", () => {
 });
 
 /**
- * `explainer`, not `announcement`, in every fixture below that asserts an exact emitted string.
- * These tests are about destination spelling and about the route NOT touching the stored text; a
- * 공지 now has the X-link CTA appended before it is emitted (`xLinkCta.ts`), which would make each
- * assertion here a statement about the CTA as well. Do not move them back to `announcement` — the
- * CTA has its own describe block further down, which is where a change to it should fail.
+ * `explainer` — neither `announcement` nor `x` — in every fixture below that asserts an exact
+ * emitted string. These tests are about destination spelling and about the route NOT touching the
+ * stored text, and two of the route's steps now edit that text before it is emitted: a 공지 has the
+ * X-link CTA appended (`xLinkCta.ts`), and an `x` rendering has its Mantle Global links rewritten
+ * (`krLinks.ts`). Either type would make each assertion here a statement about that step as well.
+ * `explainer` takes neither. Do not move them onto either type — both steps have their own describe
+ * block further down, which is where a change to them should fail.
  */
 describe("GET /api/renderings/:id/:type/:channel/emissions", () => {
   it("returns only the destinations of that rendering's channel", async () => {
@@ -558,8 +561,9 @@ describe("GET /api/renderings/:id/:type/:channel/emissions/:outletId", () => {
    * A board whose forked room carries different copy from the group it hangs under.
    *
    * `explainer` for the same reason the block above uses it: every assertion here is an exact
-   * emitted string, and a 공지 would carry the X-link CTA into all of them. What this block is
-   * about is *which* text a room gets, not what gets appended to it.
+   * emitted string, and a 공지 would carry the X-link CTA into all of them while an `x` rendering
+   * would carry the Korean-link rewrite. What this block is about is *which* text a room gets, not
+   * what the route then does to it.
    */
   const boardWithFork = (): BoardView => ({
     itemId: "x:1",
@@ -712,6 +716,152 @@ describe("공지 X-link CTA in emissions", () => {
     };
     await handleApi(deps, "GET", "/api/renderings/x%3A7/kakao_notice/kakao/emissions", undefined);
     expect(seen).toEqual(["x:7"]);
+  });
+});
+
+/**
+ * A Mantle Global post that links another Mantle Global post, seen from the Korean side: `x` copy is
+ * translated near-verbatim, so the source's inline link rides along and — unrewritten — sends a
+ * Korean reader back to the English original (`src/domain/formatting/krLinks.ts`).
+ *
+ * These tests are about the ROUTE: that it resolves each linked post through the deps it already
+ * has, hands `emitAll` the substituted text, and surfaces what it could not resolve. The wording of
+ * the notice and the rules for which links count are `krLinks.test.ts`'s, which is why the expected
+ * notice below is `krLinkNotice(n)` rather than a re-spelled sentence — a copy here would pass while
+ * disagreeing with the only place that string is authored.
+ */
+const GLOBAL_URL = (id: string) => `https://x.com/Mantle_Official/status/${id}`;
+const KR_URL_2 = "https://x.com/0xMantleKR/status/2087418810458382599";
+
+/** What `/emissions` answers with, at the depth these tests read it. */
+type EmissionsJson = Record<string, { segments: { text: string }[]; warnings: string[] }>;
+
+describe("글로벌 링크 → 한국 링크 in emissions", () => {
+  /** An `x` rendering whose copy carries the source tweet's own link. */
+  const xRnd = (text: string, itemId = "x:1") => rnd({ itemId, type: "x", channel: "x", text });
+
+  it("shows the linked post's Korean url instead of the global one", async () => {
+    const deps = makeDeps([], [xRnd(`본문\n${GLOBAL_URL("111")}`)]);
+    deps.loadXPostUrl = async (id) => (id === "x:111" ? X_URL : undefined);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/x/x/emissions", undefined);
+    expect(res.status).toBe(200);
+    const json = res.json as EmissionsJson;
+    expect(json.x_paste.segments[0].text).toBe(`본문\n${X_URL}`);
+    // Not a `toContain` on the Korean url: the global one must be gone from every destination, not
+    // merely joined by its replacement.
+    expect(JSON.stringify(res.json)).not.toContain("Mantle_Official");
+    // Nothing was left unresolved, so the reviewer is told nothing — the preview already shows the
+    // Korean link, which is the whole of what there would be to say.
+    expect(json.x_paste.warnings).toEqual([]);
+    expect(json.x_typefully.warnings).toEqual([]);
+  });
+
+  it("keeps the global url, and says so, when the linked post has no Korean version yet", async () => {
+    // `loadXPostUrl` answers undefined for everything by default — the linked post is older than the
+    // translation floor, or simply has not gone out yet.
+    const deps = makeDeps([], [xRnd(`본문\n${GLOBAL_URL("111")}`)]);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/x/x/emissions", undefined);
+    const json = res.json as EmissionsJson;
+    expect(json.x_paste.segments[0].text).toBe(`본문\n${GLOBAL_URL("111")}`);
+    expect(json.x_paste.warnings).toEqual([krLinkNotice(1)]);
+    // Both of the x channel's destinations carry it. `OutletCard` labels each warning with its
+    // destination, so the reviewer reads the same sentence twice — exactly as an over-limit warning
+    // already behaves on this channel.
+    expect(json.x_typefully.warnings).toEqual([krLinkNotice(1)]);
+  });
+
+  it("substitutes only the links that resolve, and counts the ones that did not", async () => {
+    const deps = makeDeps([], [xRnd(`${GLOBAL_URL("111")}\n${GLOBAL_URL("222")}\n${GLOBAL_URL("333")}`)]);
+    deps.loadXPostUrl = async (id) => (id === "x:222" ? X_URL : undefined);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/x/x/emissions", undefined);
+    const json = res.json as EmissionsJson;
+    expect(json.x_paste.segments[0].text).toBe(`${GLOBAL_URL("111")}\n${X_URL}\n${GLOBAL_URL("333")}`);
+    expect(json.x_paste.warnings).toEqual([krLinkNotice(2)]);
+  });
+
+  it("leaves a 공지's global link alone, and does not even look it up", async () => {
+    const seen: string[] = [];
+    const deps = makeDeps([], [rnd({ type: "announcement", channel: "telegram", text: `본문\n${GLOBAL_URL("111")}` })]);
+    deps.loadXPostUrl = async (id) => {
+      seen.push(id);
+      return X_URL;
+    };
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
+    const json = res.json as EmissionsJson;
+    expect(json.telegram_paste.segments[0].text).toContain(GLOBAL_URL("111"));
+    expect(json.telegram_paste.warnings).toEqual([]);
+    // The one lookup is the CTA's, for this rendering's own item. A 공지 is rewritten copy, not a
+    // near-verbatim translation, so the link it carries is one we chose to put there.
+    expect(seen).toEqual(["x:1"]);
+  });
+
+  it("resolves the LINKED post's item, not the rendering's own", async () => {
+    const seen: string[] = [];
+    const deps = makeDeps([], [xRnd(`본문 ${GLOBAL_URL("111")}`, "x:7")]);
+    deps.loadXPostUrl = async (id) => {
+      seen.push(id);
+      return undefined;
+    };
+    await handleApi(deps, "GET", "/api/renderings/x%3A7/x/x/emissions", undefined);
+    expect(seen).toEqual(["x:111"]);
+  });
+
+  /**
+   * The notice joins a destination's warnings rather than replacing them — an over-limit `x` post
+   * whose link is also unresolved has two things wrong with it, and the reviewer needs both.
+   */
+  it("prepends the notice to warnings the emitter itself produced", async () => {
+    const deps = makeDeps([], [xRnd(`${"가".repeat(200)}\n${GLOBAL_URL("111")}`)]);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/x/x/emissions", undefined);
+    const json = res.json as EmissionsJson;
+    for (const destination of ["x_paste", "x_typefully"]) {
+      expect(json[destination].warnings).toHaveLength(2);
+      expect(json[destination].warnings[0]).toBe(krLinkNotice(1));
+      expect(json[destination].warnings[1]).toContain("초과");
+    }
+  });
+
+  /**
+   * The per-room route carries it too — wired separately from the group route above, and the reason
+   * this is its own test: a rewrite landing only on the group route would leave every assertion
+   * above green while the [복사] a human actually uses on a forked row still handed over the English
+   * link.
+   */
+  it("rewrites a forked room's own copy on the per-room route", async () => {
+    const deps = makeDeps([]);
+    deps.loadXPostUrl = async (id) => (id === "x:111" ? X_URL : undefined);
+    deps.loadBoard = async () => ({
+      itemId: "x:1",
+      unconverted: [],
+      groups: [
+        {
+          type: "x" as const,
+          channel: "x" as const,
+          text: `그룹 ${GLOBAL_URL("999")}`,
+          status: "approved" as const,
+          addableOutletIds: [],
+          rows: [
+            { outletId: "x-post", label: "X", delivery: "manual" as const, forked: true, status: "approved" as const, text: `방 전용 ${GLOBAL_URL("111")} ${GLOBAL_URL("222")}`, siblingIndex: 1, siblingCount: 1 },
+          ],
+        },
+      ],
+    });
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/x/x/emissions/x-post", undefined);
+    expect(res.status).toBe(200);
+    const json = res.json as EmissionsJson;
+    // The room's own text, rewritten — and the group's untouched link nowhere in it.
+    expect(json.x_paste.segments[0].text).toBe(`방 전용 ${X_URL} ${GLOBAL_URL("222")}`);
+    expect(json.x_paste.warnings).toEqual([krLinkNotice(1)]);
+  });
+
+  /** Two links, two Korean posts: each is resolved on its own, not by the first answer for all. */
+  it("resolves each link independently", async () => {
+    const deps = makeDeps([], [xRnd(`${GLOBAL_URL("111")}\n${GLOBAL_URL("222")}`)]);
+    deps.loadXPostUrl = async (id) => (id === "x:111" ? X_URL : id === "x:222" ? KR_URL_2 : undefined);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/x/x/emissions", undefined);
+    const json = res.json as EmissionsJson;
+    expect(json.x_paste.segments[0].text).toBe(`${X_URL}\n${KR_URL_2}`);
+    expect(json.x_paste.warnings).toEqual([]);
   });
 });
 

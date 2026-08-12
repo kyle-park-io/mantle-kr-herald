@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { SendChannels } from "../../src/app/SendChannels";
-import type { SendChannelsResult } from "../../src/app/SendChannels";
+import type { Archiver, SendChannelsResult } from "../../src/app/SendChannels";
+// The other half of the preview/send pair, for the one test that has to run both (see
+// "미리보기와 발송본이 같은 글자" at the bottom of this file).
+import { handleApi } from "../../src/adapters/web/apiHandlers";
+import { fakeDeps } from "../support/fakeApiDeps";
+import { krLinkNotice } from "../../src/domain/formatting/krLinks";
 import type { FormattingStore } from "../../src/ports/FormattingStore";
 import type { ChannelSender } from "../../src/ports/ChannelSender";
 import type { DeliveryLedger } from "../../src/ports/DeliveryLedger";
@@ -1184,5 +1189,212 @@ describe("SendChannels — the 공지 X-link CTA", () => {
     // it disagree with the live message the day someone goes looking for what was actually said.
     expect(res).toEqual(result({ sent: 2 }));
     expect(archived).toEqual([withCta("공지 본문"), withCta("공지 본문")]);
+  });
+});
+
+/**
+ * A Mantle Global post that links another Mantle Global post, seen from the send side: `x` copy is
+ * translated near-verbatim, so the source's inline link rides along and — unrewritten — carries a
+ * Korean reader back to the English original (`src/domain/formatting/krLinks.ts`).
+ *
+ * Which links count, and the wording of the operator notice, are `krLinks.test.ts`'s. These tests
+ * are about the SEND: that it resolves each linked post from the data `run()` already loaded, hands
+ * `emit` the substituted text, archives what the room received, and never blocks over a link.
+ */
+const GLOBAL_URL = (id: string) => `https://x.com/Mantle_Official/status/${id}`;
+/** The LINKED post's Korean version — deliberately not `X_URL`, which is x:1's own post. */
+const KR_LINKED_URL = "https://x.com/0xMantleKR/status/2087418810458382599";
+
+describe("SendChannels — 글로벌 링크 → 한국 링크", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /**
+   * Both axes spelled out: `rendering()` defaults to `announcement`/`telegram`, and this rewrite is
+   * `x`-type only — a fixture that inherited either default would silently test the no-op path.
+   */
+  const xRnd = (text: string) => rendering({ type: "x", channel: "x", text });
+
+  /** The x channel's one room (`x-post`), wired the way the x tests above wire it. */
+  const sendX = (
+    store: FormattingStore,
+    translations: TranslationStore,
+    sender: ChannelSender,
+    ledger = fakeLedger().ledger,
+    archive?: Archiver,
+    overrides?: OutletOverrideStore,
+  ) =>
+    new SendChannels(
+      store, { telegram: undefined, x: sender }, ledger, translations,
+      undefined, archive, () => "T", undefined, outletsForChannel, {}, overrides,
+    ).run({ targets: ["x"] });
+
+  it("sends the linked post's Korean url instead of the global one", async () => {
+    const { sender, got } = capturingSender("x");
+    const res = await sendX(
+      fakeStore([xRnd(`본문\n${GLOBAL_URL("111")}`)]),
+      fakeTranslations([source("x:1"), source("x:111", { postedUrl: KR_LINKED_URL })]),
+      sender,
+    );
+
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(got[0].segments.join("\n")).toBe(`본문\n${KR_LINKED_URL}`);
+    // Not merely `toContain` the Korean url: the global one has to be GONE from what the room
+    // received, not joined by its replacement.
+    expect(got[0].segments.join("\n")).not.toContain("Mantle_Official");
+  });
+
+  /**
+   * The advisory half, and the reason this is not modelled on the 공지 CTA's refusal: a linked post
+   * older than the translation floor will never have a Korean version, so blocking on one would be
+   * a permanent block. The link goes out as written and the run reports `sent`.
+   */
+  it("keeps the global url and still sends when the linked post has no Korean version", async () => {
+    const { sender, got } = capturingSender("x");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await sendX(fakeStore([xRnd(`본문\n${GLOBAL_URL("111")}`)]), fakeTranslations([source("x:1")]), sender);
+
+    // `warnings` stays empty on purpose. That field means "sent, but not entirely as asked" — a pin
+    // that did not take — and a global link going out is not that: the send did exactly what the
+    // approved copy said. The reviewer's place to act on it is the 미리보기, which says the same
+    // sentence there; here it is a console line for whoever is watching the run.
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(got[0].segments.join("\n")).toContain(GLOBAL_URL("111"));
+    expect(warn.mock.calls.map((c) => String(c[0])).some((m) => m.includes(krLinkNotice(1)!))).toBe(true);
+  });
+
+  it("resolves the linked post from its x-post delivery row when its translation has none", async () => {
+    const { sender, got } = capturingSender("x");
+    // A bot-sent Korean post is reconciled onto its delivery row, never onto the translation — the
+    // ordinary path for anything this pipeline posted itself. `resolveXPostUrl` reads both, and the
+    // send resolves through it rather than through a second reader of its own.
+    const { ledger } = fakeLedger([sentEntry({ itemId: "x:111", type: "x", outletId: "x-post", url: KR_LINKED_URL })]);
+    const res = await sendX(
+      fakeStore([xRnd(GLOBAL_URL("111"))]),
+      fakeTranslations([source("x:1"), source("x:111")]),
+      sender,
+      ledger,
+    );
+
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(got[0].segments.join("\n")).toBe(KR_LINKED_URL);
+  });
+
+  /**
+   * The spec's "치환이 길이 계산에 포함됨" row, stated for what it can actually assert. It cannot be
+   * shown as a *difference*: `weightedLength` charges every url a flat t.co 23 whatever its real
+   * length (`weightedLength.ts:19,111`) and this rewrite is `x`-only, so swapping one url for
+   * another can never move the count. What is pinnable is the ordering that exists for it — the
+   * substituted text is what `emit` measures and splits, and the rewrite has no way to route around
+   * the over-limit refusal.
+   */
+  it("still refuses an over-limit x rendering whose link resolves, without reaching the sender", async () => {
+    const { sender, got } = capturingSender("x");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await sendX(
+      fakeStore([xRnd(`${"가".repeat(150)}\n${GLOBAL_URL("111")}`)]),
+      fakeTranslations([source("x:1"), source("x:111", { postedUrl: KR_LINKED_URL })]),
+      sender,
+    );
+
+    expect(res).toEqual(
+      result({ failed: 1, failures: [{ key: "x:1:x", error: "a segment exceeds the x limit — edit the rendering" }] }),
+    );
+    expect(got).toEqual([]);
+  });
+
+  it("leaves a 공지's global link alone even when the linked post has a Korean version", async () => {
+    const { sender, got } = capturingSender("telegram");
+    const res = await new SendChannels(
+      fakeStore([rendering({ text: `본문\n${GLOBAL_URL("111")}` })]), { telegram: sender, x: undefined },
+      fakeLedger().ledger,
+      fakeTranslations([source("x:1", { postedUrl: X_URL }), source("x:111", { postedUrl: KR_LINKED_URL })]),
+      undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS,
+    ).run({ targets: ["telegram"] });
+
+    // A 공지 is rewritten copy, not a near-verbatim translation, so a link in it is one we chose to
+    // put there. The Korean post of x:111 exists in this fixture on purpose: a missing type gate
+    // would show up here as a swap rather than as nothing at all.
+    expect(res).toEqual(result({ sent: 2 }));
+    expect(got[0].segments.join("\n")).toContain(GLOBAL_URL("111"));
+    expect(got[0].segments.join("\n")).not.toContain(KR_LINKED_URL);
+  });
+
+  it("archives the rewritten text — the link the room actually received", async () => {
+    const archived: string[] = [];
+    const res = await sendX(
+      fakeStore([xRnd(`본문 ${GLOBAL_URL("111")}`)]),
+      fakeTranslations([source("x:1"), source("x:111", { postedUrl: KR_LINKED_URL })]),
+      okSender("x"),
+      undefined,
+      async (e) => { archived.push(e.text); },
+    );
+
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(archived).toEqual([`본문 ${KR_LINKED_URL}`]);
+  });
+
+  /**
+   * Why the extraction lives inside the per-text loop rather than once per rendering: a forked room
+   * carries different copy, and different copy carries different links. Resolving the group's links
+   * and substituting them into the fork's text would leave the room's own link untouched — which is
+   * exactly what this fixture would show, since the group links x:999 and the fork links x:111.
+   */
+  it("rewrites the fork's own links, not the group's", async () => {
+    const { sender, got } = capturingSender("x");
+    const res = await sendX(
+      fakeStore([xRnd(`그룹 ${GLOBAL_URL("999")}`)]),
+      fakeTranslations([source("x:1"), source("x:111", { postedUrl: KR_LINKED_URL })]),
+      sender,
+      undefined,
+      undefined,
+      fakeOverrides([fork({ type: "x", outletId: "x-post", text: `방 전용 ${GLOBAL_URL("111")}` })]),
+    );
+
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(got[0].segments.join("\n")).toBe(`방 전용 ${KR_LINKED_URL}`);
+  });
+});
+
+/**
+ * 미리보기와 발송본이 같은 글자 — the spec's own test table
+ * (`docs/superpowers/specs/2026-08-13-kr-link-rewrite-design.md`).
+ *
+ * The [복사] preview and the bot send are two call sites of the same pure functions, and nothing but
+ * this test pins them to the same step order: both must rewrite the Korean links, then append the
+ * 공지 CTA, then emit. A reviewer approves the bytes the preview shows — and for a `delivery:
+ * "manual"` room the preview IS the send, since a human copies it into the room by hand.
+ *
+ * It lives here rather than in `apiHandlers.test.ts` because it can only fail if it runs both
+ * paths; each file's own suite already covers its half.
+ */
+describe("미리보기와 발송본이 같은 글자", () => {
+  it("emits the same bytes for the same x copy through the preview and the send", async () => {
+    // Two links, one resolvable and one not — the mixed case, so a path that dropped either half of
+    // `rewriteGlobalLinks`'s behaviour (substitute what resolves, leave what does not) diverges.
+    const text = `본문\n${GLOBAL_URL("111")}\n${GLOBAL_URL("222")}`;
+    const rnd = rendering({ type: "x", channel: "x", text });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // The send resolves each linked post from the run's own translations and delivery rows…
+    const { sender, got } = capturingSender("x");
+    await new SendChannels(
+      fakeStore([rnd]), { telegram: undefined, x: sender }, fakeLedger().ledger,
+      fakeTranslations([source("x:1"), source("x:111", { postedUrl: KR_LINKED_URL })]),
+    ).run({ targets: ["x"] });
+
+    // …the preview asks `loadXPostUrl` the same question about the same items.
+    const deps = fakeDeps();
+    deps.session = { issuedAt: "2026-08-13T00:00:00Z" };
+    deps.formattingStore = { ...deps.formattingStore, loadAll: async () => [rnd] };
+    deps.loadXPostUrl = async (id) => (id === "x:111" ? KR_LINKED_URL : undefined);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/x/x/emissions", undefined);
+    const json = res.json as Record<string, { segments: { text: string }[] }>;
+
+    // Byte for byte, on the destination the send actually delivers to (`DELIVERY_DESTINATION.x`).
+    expect(got[0].segments).toEqual(json.x_typefully.segments.map((s) => s.text));
+    // …and both really did the rewrite, so this cannot pass by two paths doing nothing alike.
+    expect(got[0].segments.join("\n")).toBe(`본문\n${KR_LINKED_URL}\n${GLOBAL_URL("222")}`);
+
+    vi.restoreAllMocks();
   });
 });
