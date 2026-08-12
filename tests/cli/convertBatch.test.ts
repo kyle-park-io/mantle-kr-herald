@@ -11,9 +11,9 @@ import { parseConvertBatch, DEFAULT_CONVERT_BATCH } from "../../src/cli/convertB
 
 describe("parseConvertBatch", () => {
   it("defaults to one item per tick when the variable is unset", () => {
-    // Items, not variants: one item fans out to up to six types (ALL_TYPES), and all of them are
+    // Items, not variants: one item fans out to up to seven types (ALL_TYPES), and all of them are
     // written by the same single `claude -p` call under a 10-minute cap. This default is therefore a
-    // sixfold multiplier away from that cap, which is why it is 1 where HERALD_WATCH_BATCH is 3.
+    // sevenfold multiplier away from that cap, which is why it is 1 where HERALD_WATCH_BATCH is 3.
     expect(DEFAULT_CONVERT_BATCH).toBe(1);
     expect(parseConvertBatch(undefined)).toBe(1);
   });

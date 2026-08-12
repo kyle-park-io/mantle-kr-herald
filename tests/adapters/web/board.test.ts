@@ -106,7 +106,7 @@ describe("buildBoard", () => {
 
   it("lists the types with no rendering yet", () => {
     const board = buildBoard("x:1", [r("announcement", "telegram", "공통")], [], [], approvedSource);
-    expect(board.unconverted).toEqual(["x", "explainer", "casual", "kol", "pr"]);
+    expect(board.unconverted).toEqual(["x", "kakao_notice", "explainer", "casual", "kol", "pr"]);
   });
 
   it("keeps a group no room suggests, offering the whole channel as addable", () => {

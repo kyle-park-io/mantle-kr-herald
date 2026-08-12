@@ -20,14 +20,15 @@ const entry = (term: string, target: string): GlossaryEntry =>
 
 describe("PrepareRefinements", () => {
   it("builds a worksheet + pending from approved variants' canonical drafts (default channels)", async () => {
-    // announcement → default channels [telegram, kakao]: proves the multi-channel fan-out
+    // The two 공지 types → [telegram] and [kakao]: proves one pending row per (variant, channel),
+    // and that the default channels come from the type rather than from the selector.
     const { worksheet, pending } = await new PrepareRefinements(
-      conversionStore([variant({ type: "announcement" })]),
+      conversionStore([variant({ type: "announcement" }), variant({ type: "kakao_notice" })]),
       glossaryStore(),
     ).run({});
     expect(pending).toEqual([
       { itemId: "x:1", type: "announcement", channel: "telegram" },
-      { itemId: "x:1", type: "announcement", channel: "kakao" },
+      { itemId: "x:1", type: "kakao_notice", channel: "kakao" },
     ]);
     expect(worksheet).toContain("## x:1 · 공지 · telegram");
     expect(worksheet).toContain("**메인넷** 출시"); // canonical keeps ** — the draft is not destination-formatted
@@ -46,8 +47,11 @@ describe("PrepareRefinements", () => {
 
 describe("PrepareRefinements — worksheet header", () => {
   it("states the constraints of the channels present in the batch, and no others", async () => {
+    // Two variants to put both telegram and kakao in the batch: an `announcement` alone no longer
+    // reaches kakao, and the kakao constraint is the half of this test with teeth — 500자 is why
+    // `kakao_notice` exists.
     const { worksheet } = await new PrepareRefinements(
-      conversionStore([variant({ type: "announcement" })]),
+      conversionStore([variant({ type: "announcement" }), variant({ type: "kakao_notice" })]),
       glossaryStore(),
     ).run({});
     expect(worksheet).toContain("## 채널 제약");

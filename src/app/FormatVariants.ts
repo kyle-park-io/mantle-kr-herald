@@ -164,10 +164,12 @@ export class FormatVariants {
       // point that the writer can then refine per channel, which is what per-channel approval is for.
       const canonical = toCanonical(v.convertedText);
       for (const channel of channels) {
-        // The skip is per (item, type, channel), not per variant: one `announcement` fans out to
-        // telegram and kakao, and a run that skipped the whole variant because telegram was already
-        // rendered would leave the kakao card missing for good. The key comes from the port that
-        // produced the set — see `renderingKey`'s own comment for what a hand-rolled copy costs.
+        // The skip is per (item, type, channel), not per variant: a variant covering more than one
+        // channel — `--channels` today, and any type whose default fan-out widens again tomorrow —
+        // would otherwise lose every channel but the first, because one already-rendered pair made
+        // the run skip the whole variant, and the missing card would never come back. The key comes
+        // from the port that produced the set — see `renderingKey`'s own comment for what a
+        // hand-rolled copy costs.
         if (alreadyRendered?.has(renderingKey({ itemId: v.itemId, type: v.type, channel }))) continue;
         if (isPosted) {
           skippedPosted.add(v.itemId);
@@ -176,9 +178,11 @@ export class FormatVariants {
         /**
          * …with one exception: bold markers are dropped for a channel that cannot render them.
          *
-         * The decision belongs here, on the channel axis, and NOT back at the variant: `announcement`
-         * feeds telegram *and* kakao, so stripping it one step earlier would take the bold off
-         * Telegram too, where it is the whole point of the 공지 title convention.
+         * The decision belongs here, on the channel axis, and NOT back at the variant. It looks like
+         * a per-type question now that `announcement` feeds telegram alone and `kakao_notice` kakao
+         * alone, but the type is the wrong axis to decide it on: `--channels` renders any variant to
+         * any channel, and stripping one step earlier would take the bold off Telegram, where it is
+         * the whole point of the 공지 title convention.
          *
          * Dropping them rather than carrying them inert matters because this text is what the
          * reviewer reads and edits on the board. On kakao a `**제목**` can never do anything: it is

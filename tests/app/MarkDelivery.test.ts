@@ -15,7 +15,12 @@ function fakeLedger(seed: DeliveryEntry[] = []) {
     rows: () => rows,
   };
 }
-const args = { itemId: "x:1", type: "announcement", outletId: "kakao-kol" };
+/**
+ * A manual room and the type that actually reaches it. 오픈카톡 방 rows a `kakao_notice` card since
+ * the 공지 split — an `announcement` is Telegram-only now, so `(announcement, kakao-kol)` is a tick
+ * the board can no longer offer for new work.
+ */
+const args = { itemId: "x:1", type: "kakao_notice", outletId: "kakao-kol" };
 
 describe("MarkDelivery", () => {
   it("records a manual delivery", async () => {

@@ -36,9 +36,29 @@ const X_POST_OUTLET = "x-post";
  */
 export const X_URL_PENDING = "X 게시 후 채워짐";
 
-/** 공지 only, and only on the two channels that carry it. */
+/**
+ * The two 공지 types. Same news, two destinations: `announcement` is written for Telegram and
+ * `kakao_notice` for KakaoTalk (`DEFAULT_CHANNELS_BY_TYPE`). Both point readers at the X post, so
+ * both carry the CTA — and both are therefore gated on that post existing (`xUrlBlock`).
+ */
+const CTA_TYPES: ReadonlySet<string> = new Set(["announcement", "kakao_notice"]);
+
+/**
+ * 공지 only, and only on a channel that has an icon for it.
+ *
+ * Both halves are load-bearing even though the fan-out now sends each 공지 type to exactly one
+ * channel. This predicate is not asked about the fan-out — it is asked about a **stored**
+ * `(type, channel)` rendering, by the send path (`SendChannels`), the [복사] preview
+ * (`/emissions`), the send refusal (`xUrlBlock`) and the board. So it still meets pairs the fan-out
+ * would never produce today, `(announcement, kakao)` above all: those rows were written before the
+ * split and are deliberately not migrated, and answering `false` for them would silently strip both
+ * the CTA and the "post to X first" gate off copy a human is about to paste into a live room.
+ *
+ * The channel half keeps `x` and `pr_mail` out (an `announcement` formatted for either has no icon
+ * and no reason to link back); the type half keeps `explainer`/`casual`/`kol` off Telegram's CTA.
+ */
 export function needsXLinkCta(type: string, channel: Channel): boolean {
-  return type === "announcement" && CTA_ICON[channel] !== undefined;
+  return CTA_TYPES.has(type) && CTA_ICON[channel] !== undefined;
 }
 
 /**

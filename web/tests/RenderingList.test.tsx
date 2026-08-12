@@ -39,7 +39,9 @@ describe("RenderingList search", () => {
       <RenderingList
         items={[
           r({ itemId: "x:1", type: "announcement", channel: "telegram", text: "텔레그램 공지 문구" }),
-          r({ itemId: "x:1", type: "announcement", channel: "kakao", text: "카카오에만 있는 에어드랍 안내" }),
+          // 같은 아이템의 두 번째 카드. 공지 분리 뒤 오픈카톡 카드는 `kakao_notice`다 — 한 변환이
+          // 두 채널로 퍼지는 것이 아니라 유형이 둘이다.
+          r({ itemId: "x:1", type: "kakao_notice", channel: "kakao", text: "카카오에만 있는 에어드랍 안내" }),
           r({ itemId: "x:2", text: "관계없는 다른 아이템" }),
         ]}
         selectedId={null}
@@ -69,7 +71,7 @@ describe("RenderingList search", () => {
       <RenderingList
         items={[
           r({ itemId: "x:1", channel: "telegram", text: "맨틀 텔레그램" }),
-          r({ itemId: "x:2", channel: "kakao", text: "맨틀 카카오" }),
+          r({ itemId: "x:2", type: "kakao_notice", channel: "kakao", text: "맨틀 카카오" }),
         ]}
         selectedId={null}
         onSelect={() => {}}

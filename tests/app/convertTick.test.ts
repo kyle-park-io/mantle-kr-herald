@@ -79,7 +79,7 @@ function statusStdout(converted: number, translated = 41): string {
 
 const PREPARED_3 = preparedVariantsLine(3, "output/variants/worksheets/batch-X.md");
 /** The second line the real CLI prints under the first — see the "--approve" test for why it matters. */
-const SAVE_HINT = "Fill each 변환 section, then run: pnpm convert:save --id <id> --type <x|announcement|explainer|casual|kol|pr> --file <ko.txt>";
+const SAVE_HINT = "Fill each 변환 section, then run: pnpm convert:save --id <id> --type <x|announcement|kakao_notice|explainer|casual|kol|pr> --file <ko.txt>";
 
 /**
  * A stage runner over a small model of the real pipeline, plus the agent that drives it. The
@@ -355,8 +355,8 @@ describe("ConvertTick", () => {
   it("defaults to one item per tick when no batch size is configured", async () => {
     // A hand-run `pnpm convert:tick` with nothing in the environment must keep the behaviour the
     // scheduler is armed with, not acquire a different one — and it must never inherit
-    // `PrepareConversions`' own DEFAULT_LIMIT of 20, which at up to six types per item is a
-    // 120-variant worksheet inside a single 10-minute `claude -p` call.
+    // `PrepareConversions`' own DEFAULT_LIMIT of 20, which at up to seven types per item is a
+    // 140-variant worksheet inside a single 10-minute `claude -p` call.
     const { run, agent, ran } = pipeline();
 
     await new ConvertTick(run, agent, {}).run();
@@ -590,15 +590,20 @@ describe("ConvertTick — the format stage", () => {
     expect(renderings.find((r) => r.itemId === "x:2")!.status).toBe("rendered");
   });
 
-  it("renders every channel of a multi-channel type the tick just converted", async () => {
-    // `announcement` fans out to telegram + kakao, so "the board is populated" is not one row per
-    // variant. A tick that rendered only the first channel would leave the 카카오 card missing and
-    // look like it worked.
+  it("renders every card of everything the tick just converted, not only the first", async () => {
+    // One piece of news becomes two 공지 variants since the split — `announcement` for telegram and
+    // `kakao_notice` for kakao — so "the board is populated" is not one card per tick. A format
+    // stage that stopped after the first variant would leave the 카카오 card missing and look like
+    // it worked. (Before the split this was one `announcement` fanning out to both channels; the
+    // pair of cards the tick has to produce is the same, the axis it walks to get there is not.)
     const renderings: ChannelRendering[] = [];
     const { run, agent } = memoryPipeline({
       variants: [],
       renderings,
-      saves: [contentVariant({ itemId: "x:9", type: "announcement", convertedText: "📢 **공지** 본문" })],
+      saves: [
+        contentVariant({ itemId: "x:9", type: "announcement", convertedText: "📢 **공지** 본문" }),
+        contentVariant({ itemId: "x:9", type: "kakao_notice", convertedText: "📢 공지 본문" }),
+      ],
     });
 
     const report = await new ConvertTick(run, agent).run();

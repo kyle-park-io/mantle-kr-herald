@@ -630,9 +630,13 @@ const X_URL = "https://x.com/0xMantleKR/status/2087418810458382585";
 
 describe("공지 X-link CTA in emissions", () => {
   it("uses 👉 for a kakao 공지", async () => {
-    const deps = makeDeps([], [rnd({ channel: "kakao", type: "announcement", text: "본문" })]);
+    // `kakao_notice`, not `announcement`: since the 공지 split the kakao card is its own type, so an
+    // `announcement`-typed kakao preview would be testing the icon on a pair nothing produces any
+    // more. (`needsXLinkCta` still answers for that pair — it is asked about stored rows, and its
+    // own test is what pins that.)
+    const deps = makeDeps([], [rnd({ channel: "kakao", type: "kakao_notice", text: "본문" })]);
     deps.loadXPostUrl = async () => X_URL;
-    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/kakao/emissions", undefined);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/kakao_notice/kakao/emissions", undefined);
     expect(JSON.stringify(res.json)).toContain(`👉 자세한 내용은 X에서 확인하세요 (${X_URL})`);
   });
 
@@ -644,9 +648,9 @@ describe("공지 X-link CTA in emissions", () => {
   });
 
   it("shows a placeholder when the X post is not up yet", async () => {
-    const deps = makeDeps([], [rnd({ channel: "kakao", type: "announcement", text: "본문" })]);
+    const deps = makeDeps([], [rnd({ channel: "kakao", type: "kakao_notice", text: "본문" })]);
     deps.loadXPostUrl = async () => undefined;
-    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/kakao/emissions", undefined);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/kakao_notice/kakao/emissions", undefined);
     expect(JSON.stringify(res.json)).toContain("X 게시 후 채워짐");
   });
 
@@ -701,12 +705,12 @@ describe("공지 X-link CTA in emissions", () => {
   /** The url is looked up for the item under review, not for whatever the last request asked about. */
   it("asks for the X post url of the decoded itemId", async () => {
     const seen: string[] = [];
-    const deps = makeDeps([], [rnd({ itemId: "x:7", channel: "kakao", type: "announcement", text: "본문" })]);
+    const deps = makeDeps([], [rnd({ itemId: "x:7", channel: "kakao", type: "kakao_notice", text: "본문" })]);
     deps.loadXPostUrl = async (id: string) => {
       seen.push(id);
       return X_URL;
     };
-    await handleApi(deps, "GET", "/api/renderings/x%3A7/announcement/kakao/emissions", undefined);
+    await handleApi(deps, "GET", "/api/renderings/x%3A7/kakao_notice/kakao/emissions", undefined);
     expect(seen).toEqual(["x:7"]);
   });
 });

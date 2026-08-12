@@ -42,8 +42,8 @@ export const ALL_OUTLETS: Outlet[] = [
   // promotion ask, which is a different decision and belongs further down the list.
   { id: "tg-blockchain", label: "텔레그램 블록체인 커뮤니티방", channel: "telegram", delivery: "manual", suggestedTypes: ["announcement"] },
   { id: "tg-kol", label: "텔레그램 KOL방", channel: "telegram", delivery: "manual", suggestedTypes: ["kol", "announcement"] },
-  { id: "kakao-blockchain", label: "오픈카톡 블록체인 커뮤니티방", channel: "kakao", delivery: "manual", suggestedTypes: ["announcement"] },
-  { id: "kakao-kol", label: "오픈카톡 KOL방", channel: "kakao", delivery: "manual", suggestedTypes: ["announcement"] },
+  { id: "kakao-blockchain", label: "오픈카톡 블록체인 커뮤니티방", channel: "kakao", delivery: "manual", suggestedTypes: ["kakao_notice"] },
+  { id: "kakao-kol", label: "오픈카톡 KOL방", channel: "kakao", delivery: "manual", suggestedTypes: ["kakao_notice"] },
   // `manual` until a mail sender exists: `pr_mail` is not a SendableChannel, so `send:channels`
   // can never reach it, and as `auto` it was also refused by MarkDelivery — permanently
   // undeliverable and permanently unmarkable. Manual is the truth today: a human sends the mail
