@@ -218,6 +218,10 @@ export class SendChannels {
       // 공지 points readers back at our own X post, and that URL does not exist when the rendering
       // is written (see `xLinkCta.ts`). Resolved per rendering, before the per-text loop below, so
       // one missing URL fails the item once rather than once per room or once per fork.
+      //
+      // BELOW the `pending.length === 0` guard, deliberately: a 공지 every room has already received
+      // still has no URL if it was hand-posted and never reconciled, and refusing it here would
+      // report a `failed` on every run forever with nothing left to send that could clear it.
       let cta: string | undefined;
       if (needsXLinkCta(r.type, r.channel)) {
         const xUrl = resolveXPostUrl(

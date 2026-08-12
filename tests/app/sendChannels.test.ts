@@ -789,9 +789,18 @@ describe("SendChannels — the source translation gate", () => {
     expect(posts).toHaveLength(2);
   });
 
+  /**
+   * Every withhold below asserts the WHOLE result, not just `sent: 0`.
+   *
+   * Because this describe's renderings are 공지, "nothing was sent" is no longer a statement about
+   * this gate on its own: the X-link CTA refuses a 공지 with no `postedUrl` and also leaves `sent`
+   * at 0. A withhold by this gate is a *clean* zero — the room never became a candidate, so nothing
+   * is `failed` and `failures` is empty — where the CTA refusal is `failed: 1` carrying its own
+   * reason. Only the full result tells the two apart, and these tests exist to prove this one.
+   */
   it("withholds every room when the source's approval was withdrawn", async () => {
-    const { posts, run } = send(fakeTranslations([source("x:1", { status: "translated", approvedAt: undefined })]));
-    expect((await run).sent).toBe(0);
+    const { posts, run } = send(fakeTranslations([source("x:1", { status: "translated", approvedAt: undefined, postedUrl: X_URL })]));
+    expect(await run).toEqual(result({}));
     expect(posts).toEqual([]);
   });
 
@@ -801,15 +810,15 @@ describe("SendChannels — the source translation gate", () => {
    * the rooms here would send it.
    */
   it("withholds copy that was approved BEFORE the source was re-approved", async () => {
-    const reapproved = source("x:1", { approvedAt: "2026-07-28T00:00:00Z" }); // after COPY_APPROVED_AT
+    const reapproved = source("x:1", { approvedAt: "2026-07-28T00:00:00Z", postedUrl: X_URL }); // after COPY_APPROVED_AT
     const { posts, run } = send(fakeTranslations([reapproved]));
-    expect((await run).sent).toBe(0);
+    expect(await run).toEqual(result({}));
     expect(posts).toEqual([]);
   });
 
   it("sends again once the copy is re-approved after the source", async () => {
-    // `postedUrl` spelled out here and below: these two tests replace the suite's default rows, and
-    // a telegram 공지 with no X post url never reaches the gate this test is about.
+    // `postedUrl` is spelled out on every row in this describe: these tests replace the suite's
+    // default rows, and a telegram 공지 with no X post url never reaches the gate they are about.
     const reapproved = source("x:1", { approvedAt: "2026-07-28T00:00:00Z", postedUrl: X_URL });
     const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", approvedAt: "2026-07-28T00:00:01Z" })]);
     const { posts, run } = send(fakeTranslations([reapproved]), store);
@@ -820,7 +829,11 @@ describe("SendChannels — the source translation gate", () => {
   /** A rendering whose translation is gone cannot be checked, so it must not be sent on trust. */
   it("withholds a room whose source translation is missing entirely", async () => {
     const { posts, run } = send(fakeTranslations([]));
-    expect((await run).sent).toBe(0);
+    // The one row that cannot carry a `postedUrl` — there is no row. So the full result carries the
+    // whole weight here: a missing translation must be withheld by THIS gate, silently and before
+    // the item is ever a candidate. `failed: 1` with `X 게시물 URL이 없습니다` would mean the gate had
+    // let it through and the CTA caught it instead — the same zero, reached the wrong way.
+    expect(await run).toEqual(result({}));
     expect(posts).toEqual([]);
   });
 
@@ -1098,6 +1111,26 @@ describe("SendChannels — the 공지 X-link CTA", () => {
     // rerun and nothing else.
     expect(added).toEqual([]);
     expect(warn.mock.calls.map((c) => String(c[0])).some((m) => m.includes("tg-community, tg-dev"))).toBe(true);
+  });
+
+  /**
+   * Where the refusal sits in `run()`, pinned. The CTA block is resolved *below*
+   * `if (pending.length === 0) continue;`, and that ordering is not cosmetic: a 공지 every room has
+   * already received still has no `postedUrl` if it was hand-posted and never reconciled, and
+   * hoisting the block above that guard would report it as `failed` on every run from now until
+   * someone reconciles a post that no longer needs reconciling. `failed` that grows with the
+   * backlog and can never be worked off reads as breakage — the same reason `unconfigured` and
+   * `quotaBlocked` are kept out of it.
+   */
+  it("does not refuse a 공지 that every room has already received", async () => {
+    const { sender, got } = capturingSender("telegram");
+    const { ledger, added } = fakeLedger(bothTelegramRooms());
+    const res = await send(sender, fakeTranslations([source("x:1")]), ledger);
+
+    // An ordinary skip, exactly as before this change: nothing left to send, so nothing to refuse.
+    expect(res).toEqual(result({ skipped: 2 }));
+    expect(got).toEqual([]);
+    expect(added).toEqual([]);
   });
 
   it("takes the url from the x-post delivery row when the translation has none", async () => {
