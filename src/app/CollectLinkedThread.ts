@@ -14,6 +14,22 @@ export const INTAKE_NOT_FOUND = "그 글을 가져올 수 없습니다 — 삭�
 export const INTAKE_REPLY = "이 글은 다른 대화에 단 답글이라 파이프라인에 올릴 수 없습니다";
 
 /**
+ * The other half of the reply refusal, and its own sentence because it is its own situation.
+ *
+ * `INTAKE_REPLY` above is the thread that *opens* with a commenter reply: `flattenXThreads` throws
+ * the whole thread away, so there is no item at all. This one is a link aimed at a commenter reply
+ * *inside* a thread that is otherwise perfectly collectable — the thread becomes an item, and
+ * `flattenXThreads` removes exactly that tweet from its text. Accepting it would answer
+ * "수집됐습니다" about a thread assembled without the tweet the operator was looking at.
+ *
+ * Stretched, `INTAKE_REPLY` would say "다른 대화에 단 답글" about a reply that is in *this*
+ * conversation, so this says what actually happens to the linked post and which address to use
+ * instead — the same address the thread's own tweets carry.
+ */
+export const INTAKE_LINKED_REPLY =
+  "이 주소가 가리키는 글은 스레드에 달린 답글이라 번역 대상에서 빠집니다 — 스레드 본문 글의 주소를 넣어 주세요";
+
+/**
  * The one refusal that carries a value, so it is a function where its three neighbours are
  * constants. The floor is what the operator has to know, and `HERALD_TRANSLATE_SINCE` is named
  * beside it because that is the dial — a refusal that does not say what would change the answer
@@ -103,6 +119,16 @@ export class CollectLinkedThread {
     // first tweet is a commenter reply *silently* — collected successfully, then absent from 1차 검수
     // two hours later with no error anywhere for anyone to find.
     if (isCommenterReply(thread.tweets[0])) throw new Error(INTAKE_REPLY);
+
+    // The same silent drop, one tweet down. Containment matching above means a link to a stranger's
+    // comment resolves to the thread that comment hangs off, and `flattenXThreads` filters nested
+    // commenter replies out of the item text — so the linked tweet is precisely the one the item
+    // would not contain, while the screen said the link was collected. Checked after the root, so a
+    // link to a root that is itself a commenter reply still gets `INTAKE_REPLY`'s wording.
+    // `find` cannot miss here — `thread` was chosen for containing this id — and is written as a
+    // guard rather than an assertion so the type says so too.
+    const linked = thread.tweets.find((t) => t.id === linkedTweetId);
+    if (linked && isCommenterReply(linked)) throw new Error(INTAKE_LINKED_REPLY);
 
     const itemId = `x:${thread.rootId}`;
     const [existing, translatedIds] = await Promise.all([

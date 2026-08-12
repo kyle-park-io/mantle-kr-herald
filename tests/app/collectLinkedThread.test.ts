@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CollectLinkedThread,
   INTAKE_BAD_URL,
+  INTAKE_LINKED_REPLY,
   INTAKE_NOT_FOUND,
   INTAKE_REPLY,
   intakeBelowFloorMessage,
@@ -142,6 +143,32 @@ describe("CollectLinkedThread", () => {
     );
     await expect(uc.run(URL_100)).rejects.toThrow(INTAKE_REPLY);
     expect(repo.rows).toEqual([]);
+  });
+
+  it("refuses a link pointing at a commenter reply inside an otherwise collectable thread", async () => {
+    // Matching by containment means a link to *any* tweet of a conversation resolves to its thread —
+    // including a stranger's comment on it. `flattenXThreads` then removes that very tweet from the
+    // item text (nested commenter replies are filtered out), so collecting here would answer
+    // "수집됐습니다" for thread Y about a link to tweet X, with X the one tweet the item does not
+    // contain and nothing on screen saying so. Refused for the same reason the root case is.
+    const repo = fakeRepo();
+    const root = tweet({ id: "100" });
+    const comment = tweet({
+      id: "101",
+      conversationId: "100",
+      authorUserName: "someone_else",
+      isReply: true,
+      text: "@Mantle_Official 좋네요",
+      createdAt: "2026-08-12T00:01:00.000Z",
+    });
+    const uc = new CollectLinkedThread(
+      fakeGateway({ fetchThread: async () => [root, comment] }),
+      repo,
+      fakeTranslations(),
+    );
+
+    await expect(uc.run("https://x.com/someone_else/status/101")).rejects.toThrow(INTAKE_LINKED_REPLY);
+    expect(repo.calls.upsert).toBe(0);
   });
 
   it("lets the gateway's own failure through", async () => {

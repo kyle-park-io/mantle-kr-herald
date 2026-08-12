@@ -239,7 +239,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   up front (`이 글은 다른 대화에 단 답글이라...`) rather than silently dropped two hours later by the
   same rule `flattenXThreads` applies downstream — the predicate (`isCommenterReply`) is imported,
   not re-implemented, because a copy drifts from the original and drift here means the screen and no
-  code agree on what got skipped.
+  code agree on what got skipped. **A link aimed at a commenter's reply *inside* a thread is refused
+  by that same predicate** (`이 주소가 가리키는 글은 스레드에 달린 답글이라...`), and with its own
+  wording: matching by containment means such a link resolves to the parent thread, which is
+  collectable — but `flattenXThreads` strips nested commenter replies from the item text, so
+  accepting it would answer "수집됐습니다" about a thread assembled without the one tweet the operator
+  was pointing at. The remedy is in the sentence: paste a tweet of the thread itself.
   - **Deliberately touches neither the collect watermark (`output/x/state.json`) nor the run ledger
     (`output/x/runs.json`).** The watermark means "how far down the timeline `pnpm collect` has
     read"; a link intake reads no timeline, so advancing it would make the next scheduled sweep skip
