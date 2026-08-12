@@ -9,7 +9,11 @@ import {
 
 export interface StatusInput {
   collected: number;
-  translations: { status: string }[];
+  /**
+   * `itemId` is here for the two fan-out stages below, not for this stage's own count: it is what
+   * lets 변환 and 렌더 tell a retired item's rows from a live one's. See `postedItems`.
+   */
+  translations: { itemId: string; status: string }[];
   /**
    * Rows, not items — and past the translation stage the two stop agreeing. A variant is keyed
    * `(itemId, type)` and a rendering `(itemId, type, channel)`, so one approved translation becomes
@@ -43,8 +47,8 @@ const approved = (items: { status: string }[]) => items.filter((i) => i.status =
  * So this stage names all three buckets, actionable first. Variants and renderings keep the bare
  * `approved N` because they have no terminal third status to hide behind it.
  *
- * A rendering under a `posted` translation is deliberately NOT discounted anywhere: the X post
- * having gone out by hand says nothing about its 공지 still being owed to Telegram and Kakao.
+ * This is the one stage where `posted` is *the answer* rather than noise, which is why it is also the
+ * only one that still counts those rows — see `postedItems` for why the two below no longer do.
  */
 const translatedNote = (items: { status: string }[]) =>
   `pending ${items.filter((i) => i.status === "translated").length} · approved ${approved(items)}` +
@@ -53,8 +57,41 @@ const translatedNote = (items: { status: string }[]) =>
 /** Distinct items behind a set of rows — the only count comparable with the stage before it. */
 export const itemCount = (rows: { itemId: string }[]): number => new Set(rows.map((r) => r.itemId)).size;
 
-const fannedOutNote = (rows: { itemId: string; status: string }[]) =>
-  `${itemCount(rows)} items · approved ${approved(rows)}`;
+/**
+ * Items whose 1차 has been retired to `posted` — excluded from both fan-out stages below.
+ *
+ * This reverses an earlier decision, and the reversal is the point. That decision read: "a rendering
+ * under a `posted` translation is deliberately NOT discounted anywhere — the X post having gone out
+ * by hand says nothing about its 공지 still being owed to Telegram and Kakao." True when written;
+ * false since `FormatVariants` made `posted` terminal for the formatting stage. That 공지 can no
+ * longer be owed to anyone: `sendBlock` answers `source-unapproved` for every room on a `posted`
+ * item, so it cannot be sent, and `pnpm format` refuses to rebuild its cards, so it cannot be
+ * remade. Both stages count work that no operator can do — and since `GET /api/renderings` stopped
+ * listing those cards, 렌더 was also the header contradicting the 2차 검수 tab underneath it.
+ *
+ * **Both fan-out stages, not just 렌더.** They branch off the same translation and are frozen by the
+ * same rule (`PrepareConversions` converts only `approved`), so discounting one and not the other
+ * would print `변환 1 · 렌더 0` for an item whose seven cards did go out — a stage claiming work was
+ * converted and then never rendered, which is the exact misreading `StatusInput`'s `itemId` comment
+ * above already exists to prevent.
+ *
+ * `status === "posted"` and nothing else, matching `FormatVariants` and the renderings route: an
+ * item with no translation row is an anomaly rather than an ending, and `translated` is where
+ * 되돌리기 lands — its rows are waiting on a person, which is precisely what these stages count.
+ */
+const postedItems = (translations: { itemId: string; status: string }[]): ReadonlySet<string> =>
+  new Set(translations.filter((t) => t.status === "posted").map((t) => t.itemId));
+
+const living = <T extends { itemId: string }>(rows: T[], posted: ReadonlySet<string>): T[] =>
+  rows.filter((r) => !posted.has(r.itemId));
+
+/**
+ * `hidden` is the row count `living` removed. Named rather than dropped: a stage that silently
+ * shrinks is indistinguishable from a stage that lost data, and this one shrinks by 25 items on a
+ * mature deployment.
+ */
+const fannedOutNote = (rows: { itemId: string; status: string }[], hidden: number) =>
+  `${itemCount(rows)} items · approved ${approved(rows)}` + (hidden > 0 ? ` · ${hidden} on posted items hidden` : "");
 
 /**
  * `scope` is not optional, and that is the fix. Every collected item the scheduler will never look
@@ -69,11 +106,22 @@ const fannedOutNote = (rows: { itemId: string; status: string }[]) =>
  * stdout, and every line that is not a stage line is one more thing they have to be safe against.
  */
 export function pipelineStages(input: StatusInput, scope: CollectedScope): StageCount[] {
+  const posted = postedItems(input.translations);
+  const variants = living(input.variants, posted);
+  const renderings = living(input.renderings, posted);
   return [
     { label: "Collected (X + Lark)", total: input.collected, note: collectedScopeNote(scope) },
     { label: "Translated", total: input.translations.length, note: translatedNote(input.translations) },
-    { label: "Converted (variants)", total: input.variants.length, note: fannedOutNote(input.variants) },
-    { label: "Rendered (channels)", total: input.renderings.length, note: fannedOutNote(input.renderings) },
+    {
+      label: "Converted (variants)",
+      total: variants.length,
+      note: fannedOutNote(variants, input.variants.length - variants.length),
+    },
+    {
+      label: "Rendered (channels)",
+      total: renderings.length,
+      note: fannedOutNote(renderings, input.renderings.length - renderings.length),
+    },
     { label: "Published (drive)", total: input.published.length, note: `${itemCount(input.published)} items` },
   ];
 }
@@ -124,11 +172,14 @@ export function funnelCounts(input: StatusInput, scope: CollectedScope): FunnelC
   // are primary keys — so their two counts are equal by construction, not by coincidence.
   const perItem = (n: number): StageTally => ({ items: n, rows: n });
   const fanOut = (rows: { itemId: string }[]): StageTally => ({ items: itemCount(rows), rows: rows.length });
+  // The same discount `pipelineStages` applies, from the same helper — the header and the CLI
+  // disagreeing about `posted` is the drift this function was merged into one call to end.
+  const posted = postedItems(input.translations);
   return {
     collected: { ...perItem(input.collected), breakdown: collectedBreakdown(scope) },
     translated: perItem(input.translations.length),
-    converted: fanOut(input.variants),
-    rendered: fanOut(input.renderings),
+    converted: fanOut(living(input.variants, posted)),
+    rendered: fanOut(living(input.renderings, posted)),
     published: fanOut(input.published),
   };
 }

@@ -19,7 +19,11 @@ describe("pipelineStages", () => {
     const stages = pipelineStages(
       {
         collected: 42,
-        translations: [{ status: "translated" }, { status: "approved" }, { status: "approved" }],
+        translations: [
+          { itemId: "x:1", status: "translated" },
+          { itemId: "x:2", status: "approved" },
+          { itemId: "x:3", status: "approved" },
+        ],
         variants: [
           { itemId: "x:1", status: "converted" },
           { itemId: "x:2", status: "approved" },
@@ -85,9 +89,9 @@ describe("pipelineStages", () => {
       {
         collected: 0,
         translations: [
-          { status: "translated" },
-          { status: "translated" },
-          ...Array.from({ length: 21 }, () => ({ status: "posted" })),
+          { itemId: "x:1", status: "translated" },
+          { itemId: "x:2", status: "translated" },
+          ...Array.from({ length: 21 }, (_, i) => ({ itemId: `x:p${i}`, status: "posted" })),
         ],
         variants: [],
         renderings: [],
@@ -129,6 +133,42 @@ describe("pipelineStages", () => {
     expect(note("Published (drive)")).toBe("2 items");
   });
 
+  it("discounts both fan-out stages for an item whose 1차 was retired to 게시됨", () => {
+    // Neither stage counts work anybody can still do on `x:9`: `sendBlock` blocks every room on it
+    // and `pnpm format` refuses to rebuild its cards. 발행 is *not* discounted — it is a record of an
+    // upload that happened, not a queue, and it hangs off 번역 rather than off these two.
+    const stages = pipelineStages(
+      {
+        collected: 0,
+        translations: [
+          { itemId: "x:1", status: "approved" },
+          { itemId: "x:9", status: "posted" },
+        ],
+        variants: [
+          { itemId: "x:1", status: "approved" },
+          { itemId: "x:9", status: "approved" },
+        ],
+        renderings: [
+          { itemId: "x:1", status: "rendered" },
+          { itemId: "x:9", status: "approved" },
+          { itemId: "x:9", status: "approved" },
+        ],
+        published: [{ itemId: "x:9" }],
+      },
+      unscoped(0),
+    );
+    const stage = (label: string) => stages.find((s) => s.label === label);
+    expect(stage("Converted (variants)")?.total).toBe(1);
+    expect(stage("Rendered (channels)")?.total).toBe(1);
+    // Shrinking silently is indistinguishable from losing data, so the discount says its own size.
+    expect(stage("Converted (variants)")?.note).toBe("1 items · approved 1 · 1 on posted items hidden");
+    expect(stage("Rendered (channels)")?.note).toBe("1 items · approved 0 · 2 on posted items hidden");
+    expect(stage("Published (drive)")?.total).toBe(1);
+    // The stage where `posted` is the answer rather than noise still counts it in full.
+    expect(stage("Translated")?.total).toBe(2);
+    expect(stage("Translated")?.note).toBe("pending 0 · approved 1 · posted 1");
+  });
+
   it("is all-zero on an empty pipeline", () => {
     const stages = pipelineStages(
       { collected: 0, translations: [], variants: [], renderings: [], published: [] },
@@ -141,7 +181,12 @@ describe("pipelineStages", () => {
 describe("funnelCounts", () => {
   const input = {
     collected: 134,
-    translations: [{ status: "translated" }, { status: "posted" }],
+    // The `posted` one is `x:9` on purpose: it owns no variant or rendering, so this fixture's
+    // fan-out numbers are about fan-out alone. The discount gets its own test below.
+    translations: [
+      { itemId: "x:1", status: "translated" },
+      { itemId: "x:9", status: "posted" },
+    ],
     variants: [
       { itemId: "x:1", status: "approved" },
       { itemId: "x:1", status: "converted" },
@@ -177,6 +222,27 @@ describe("funnelCounts", () => {
       rendered: { items: 1, rows: 2 },
       published: { items: 2, rows: 3 },
     });
+  });
+
+  it("discounts the same 게시됨 rows the CLI does, so the header cannot outlive the 2차 검수 tab", () => {
+    // The state production was actually in: one item, seven cards, its 1차 long since 게시됨. The
+    // renderings route had stopped listing those cards, so `렌더 1` was the header contradicting an
+    // empty tab underneath it.
+    const counts = funnelCounts(
+      {
+        collected: 27,
+        translations: [{ itemId: "x:9", status: "posted" }],
+        variants: Array.from({ length: 6 }, (_, i) => ({ itemId: "x:9", status: `t${i}` })),
+        renderings: Array.from({ length: 7 }, () => ({ itemId: "x:9", status: "approved" })),
+        published: [{ itemId: "x:9" }],
+      },
+      PRODUCTION,
+    );
+    expect(counts.converted).toEqual({ items: 0, rows: 0 });
+    expect(counts.rendered).toEqual({ items: 0, rows: 0 });
+    // 번역 and 발행 are untouched: one is where `posted` is the answer, the other is a record.
+    expect(counts.translated).toEqual({ items: 1, rows: 1 });
+    expect(counts.published).toEqual({ items: 1, rows: 1 });
   });
 
   /**
@@ -225,7 +291,7 @@ describe("formatStatus", () => {
       pipelineStages(
         {
           collected: 7,
-          translations: [{ status: "approved" }],
+          translations: [{ itemId: "x:1", status: "approved" }],
           variants: [],
           renderings: [],
           published: [{ itemId: "x:1" }],
@@ -280,7 +346,7 @@ describe("formatStatus", () => {
     const TRANSLATED_LINE = /^\s*Translated\s+(\d+)/;
     const input = {
       collected: 128,
-      translations: Array.from({ length: 41 }, () => ({ status: "posted" })),
+      translations: Array.from({ length: 41 }, (_, i) => ({ itemId: `x:${i}`, status: "posted" })),
       variants: [],
       renderings: [],
       published: [],
