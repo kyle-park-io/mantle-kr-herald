@@ -275,11 +275,17 @@ describe("FormatVariants — a posted translation is finished", () => {
   });
 
   it("reports an item once, not once per channel it would have written", async () => {
-    // `announcement` fans out to telegram + kakao. The number the CLI prints is items, not writes.
+    // The number the CLI prints is items, not writes — one item declined across two channels is one
+    // line, not two.
+    //
+    // The two channels come from `--channels`, not from a type's default fan-out: since the 공지
+    // split no type fans out past a single channel (`DEFAULT_CHANNELS_BY_TYPE`), so a run left to
+    // the defaults would decline exactly one write and pass whether the report were per item or per
+    // write. The override is what makes this discriminate at all.
     const s = stores([variant({ type: "announcement" })], [], [translation({ status: "posted" })]);
     const uc = new FormatVariants(s.conversionStore, s.formattingStore, s.translationStore, () => "t");
 
-    const { skippedPosted } = await uc.run({});
+    const { skippedPosted } = await uc.run({ channels: ["telegram", "kakao"] });
 
     expect(skippedPosted).toEqual(["x:1"]);
   });

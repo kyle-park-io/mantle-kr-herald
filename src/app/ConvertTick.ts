@@ -146,7 +146,7 @@ function parseWarnings(stdout: string): string[] {
 export type ConvertTickOptions = {
   /**
    * Items handed to `convert:prepare --limit`. Items, not variants: one approved translation fans
-   * out to as many variants as it has not-yet-converted types (up to six, `ALL_TYPES`), and it is
+   * out to as many variants as it has not-yet-converted types (up to seven, `ALL_TYPES`), and it is
    * the variants that decide how long the single `claude -p` call takes. Omitted means
    * `DEFAULT_CONVERT_BATCH`, the value a hand-run `pnpm convert:tick` with nothing in the
    * environment gets and the one the scheduler is armed with. Validated and normalised to a positive

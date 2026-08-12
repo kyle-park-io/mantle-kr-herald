@@ -22,9 +22,11 @@ interface ItemRow {
   /**
    * One entry per card on the board — `(type, channel)`, in board order, with its own approval.
    *
-   * Types alone were misleading: `공지` covers both the telegram card and the kakao one, so
-   * approving 오픈카톡 changed nothing visible here and the row looked stuck. A reviewer reads this
-   * list to answer "what is left", and what is left is per card.
+   * Types alone were misleading: back when `공지` covered both the telegram card and the kakao one,
+   * approving 오픈카톡 changed nothing visible here and the row looked stuck. The 공지 split gave
+   * KakaoTalk its own type, but the shape is unchanged — `--channels` still renders one type to
+   * several channels, and the pre-split `(공지, 카카오)` cards are still on the board. A reviewer
+   * reads this list to answer "what is left", and what is left is per card.
    */
   groups: { type: Rendering["type"]; channel: Rendering["channel"]; approved: boolean }[];
   approved: number;

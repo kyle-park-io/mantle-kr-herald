@@ -5,10 +5,10 @@ import { parsePositiveIntEnv } from "../shared/env/positiveInt";
  *
  * One, not three (the watch scheduler's figure), because the two batches count different things.
  * `translate:prepare --limit 3` produces three items in one worksheet; `convert:prepare --limit 1`
- * fans that one item out to every type it has not been converted for — up to six (`ALL_TYPES`) — and
- * all of them are written by the *same single* `claude -p` call, under `ClaudeCodeAgent`'s 10-minute
- * cap. Six pieces of copy in one call is already the busy end of that budget; eighteen is not a
- * batch size, it is a timeout.
+ * fans that one item out to every type it has not been converted for — up to seven (`ALL_TYPES`) —
+ * and all of them are written by the *same single* `claude -p` call, under `ClaudeCodeAgent`'s
+ * 10-minute cap. Seven pieces of copy in one call is already the busy end of that budget;
+ * twenty-one is not a batch size, it is a timeout.
  *
  * Throughput is not what constrains this anyway. At the timer's 30-minute cadence one item per tick
  * is 48 items a day, against a watch scheduler whose own ceiling is 3 items every two hours — 36 a

@@ -213,6 +213,10 @@ const TYPE_MAPPING_NOTE = [
   "",
   "`convert:save --type` takes the type's machine name, never the Korean label. The mapping is:",
   ALL_TYPES.map((type) => `  ${typeLabel(type)} → ${type}`).join("\n"),
+  "",
+  "Match a section's label as a whole, and if several labels match take the longest one — `카톡 공지`",
+  "contains `공지`, and saving the KakaoTalk copy as `announcement` would overwrite the Telegram 공지",
+  "while the save count still adds up, so nothing would report it.",
 ].join("\n");
 
 const CONVERSION_ITEM_ID_NOTE = [
