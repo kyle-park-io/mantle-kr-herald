@@ -102,8 +102,6 @@ export class CollectLinkedThread {
     // two hours later with no error anywhere for anyone to find.
     if (isCommenterReply(thread.tweets[0])) throw new Error(INTAKE_REPLY);
 
-    await this.refuseIfBelowFloor(thread.tweets[0]);
-
     const itemId = `x:${thread.rootId}`;
     const [existing, translatedIds] = await Promise.all([
       this.repo.loadAll(),
@@ -114,6 +112,14 @@ export class CollectLinkedThread {
       : existing.some((t) => t.rootId === thread.rootId)
         ? "already-pending"
         : "collected";
+
+    // Reads only, above — nothing has been written yet, which is what lets the floor refuse here.
+    // It is skipped for an already-translated item on purpose: the refusal is a statement about what
+    // the next tick will do, and "이 글은 …오래돼 자동 번역되지 않습니다" about a post already sitting
+    // in 1차 검수 is simply false. `already-pending` is not skipped — a below-floor item waiting in
+    // that queue is precisely one no tick will take, and saying so is more use than repeating
+    // "다음 번역 틱에서 처리됩니다".
+    if (outcome !== "already-translated") await this.refuseIfBelowFloor(thread.tweets[0]);
 
     // Upserted even when it was already here: the thread may have grown a tail since, and `upsert`
     // preserves `firstSeenAt` while `mergeTweet` protects a stored article body from a re-fetch that
