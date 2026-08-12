@@ -71,10 +71,13 @@ describe("createSenders — telegram on a per-room .env", () => {
     };
     const store: FormattingStore = { loadAll: async () => [rendering], upsert: async () => {}, listRenderedKeys: async () => new Set() };
     // The 1차 source, approved before the rendering — `sendBlock` compares the two stamps.
+    // `postedUrl` because this is a 공지: `SendChannels` composes the X-link CTA from it and refuses
+    // the send outright when the post is not up yet (`xLinkCta.ts`).
     const translations: TranslationStore = {
       loadAll: async () => [{
         itemId: "x:1", source: "x", sourceText: "src", koreanText: "ko",
         status: "approved", translatedAt: "2026-07-28T00:00:00Z", approvedAt: "2026-07-28T12:00:00Z",
+        postedUrl: "https://x.com/0xMantleKR/status/2087418810458382585",
       }],
       upsert: async () => {},
       listTranslatedIds: async () => new Set(["x:1"]),

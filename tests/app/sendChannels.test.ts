@@ -32,8 +32,24 @@ const source = (itemId: string, o: Partial<Translation> = {}): Translation => ({
   itemId, source: "x", sourceText: "src", koreanText: "ko",
   status: "approved", translatedAt: "2026-07-25T00:00:00Z", approvedAt: SOURCE_APPROVED_AT, ...o,
 });
-/** Approved sources for every itemId this suite renders. */
-function fakeTranslations(rows: Translation[] = ["x:1", "x:2", "x:3", "x:4"].map((id) => source(id))): TranslationStore {
+
+/**
+ * The KR X post a 공지 points readers at. Not on `source()` itself: a translation with no
+ * `postedUrl` is the real pre-publication state, and the CTA tests below need to construct it.
+ */
+const X_URL = "https://x.com/0xMantleKR/status/2087418810458382585";
+const CTA = `➡ 자세한 내용은 X에서 확인하세요 (${X_URL})`;
+/** What a telegram 공지 actually carries into the room — every one of them now ends this way. */
+const withCta = (text: string) => `${text}\n\n${CTA}`;
+
+/**
+ * Approved sources for every itemId this suite renders, each with its X post already up.
+ *
+ * `postedUrl` is part of the *ordinary* state at send time, not a detail: a telegram 공지 without
+ * one is refused outright (see the CTA describe below), so a default without it would put every
+ * test in this suite on the refusal path instead of the one it is about.
+ */
+function fakeTranslations(rows: Translation[] = ["x:1", "x:2", "x:3", "x:4"].map((id) => source(id, { postedUrl: X_URL }))): TranslationStore {
   return {
     loadAll: async () => rows,
     upsert: async () => {},
@@ -65,6 +81,15 @@ function fakeLedger(seed: DeliveryEntry[] = []) {
   return { ledger, added };
 }
 const okSender = (name: "telegram" | "x"): ChannelSender => ({ name, send: async () => ({ postId: "p", url: "u" }) });
+/** Records what each room's send was actually asked to carry. */
+function capturingSender(name: "telegram" | "x") {
+  const got: { photos?: string[]; video?: string; segments: string[] }[] = [];
+  const sender: ChannelSender = {
+    name,
+    send: async (req) => { got.push({ photos: req.photos, video: req.video, segments: req.segments }); return { postId: "1" }; },
+  };
+  return { sender, got };
+}
 function fakeOverrides(rows: OutletOverride[] = []): OutletOverrideStore {
   return {
     loadAll: async () => rows,
@@ -229,7 +254,9 @@ describe("SendChannels", () => {
     // One archive entry per send, each naming its own room. The archivers `upload()` rather than
     // `update()`, so two entries that differ only in message id would otherwise land in the Drive
     // `sent/` folder under one name — see sentFileName.
-    const entry = { itemId: "x:1", type: "announcement", channel: "telegram", text: "공지1", postId: "p9", url: "u9", sentAt: expect.any(String) };
+    // `withCta`, because the archive records what the room received: this is a 공지, and a 공지 goes
+    // out with its X link. The CTA describe at the bottom of this file owns that behaviour.
+    const entry = { itemId: "x:1", type: "announcement", channel: "telegram", text: withCta("공지1"), postId: "p9", url: "u9", sentAt: expect.any(String) };
     expect(archived).toEqual([
       { ...entry, outletId: "tg-community" },
       { ...entry, outletId: "tg-dev" },
@@ -681,9 +708,10 @@ describe("SendChannels — per-room overrides", () => {
     ).run({ targets: ["telegram"] });
 
     expect(res.sent).toBe(2);
-    expect(byRoom(posts)).toEqual({ "tg-community": groupText, "tg-dev": "데브방 전용 공지" });
+    // `withCta` on both: a fork is still a 공지, so the forked room gets its own copy AND the link.
+    expect(byRoom(posts)).toEqual({ "tg-community": withCta(groupText), "tg-dev": withCta("데브방 전용 공지") });
     // The archive records what the room received, not what the group said.
-    expect(archived.sort()).toEqual([groupText, "데브방 전용 공지"].sort());
+    expect(archived.sort()).toEqual([withCta(groupText), withCta("데브방 전용 공지")].sort());
   });
 
   it("withholds a room whose fork is still rendered, even under an approved group", async () => {
@@ -697,7 +725,7 @@ describe("SendChannels — per-room overrides", () => {
 
     // The group's approval does not cover a fork made after it — that text was never reviewed.
     expect(res.sent).toBe(1);
-    expect(byRoom(posts)).toEqual({ "tg-community": groupText });
+    expect(byRoom(posts)).toEqual({ "tg-community": withCta(groupText) });
     expect([...(await ledger.loadKeys())]).toEqual(["x:1:announcement:tg-community"]);
   });
 
@@ -713,7 +741,7 @@ describe("SendChannels — per-room overrides", () => {
 
     // A forked room carries its own review, so an unreviewed group cannot hold it back.
     expect(res.sent).toBe(1);
-    expect(byRoom(posts)).toEqual({ "tg-dev": "데브방 전용 공지" });
+    expect(byRoom(posts)).toEqual({ "tg-dev": withCta("데브방 전용 공지") });
   });
 
   it("leaves an unforked room byte-identical to the no-override run", async () => {
@@ -729,7 +757,7 @@ describe("SendChannels — per-room overrides", () => {
     ).run({ targets: ["telegram"] });
 
     expect(withStore.posts).toEqual(withoutStore.posts);
-    expect(byRoom(withStore.posts)).toEqual({ "tg-community": groupText, "tg-dev": groupText });
+    expect(byRoom(withStore.posts)).toEqual({ "tg-community": withCta(groupText), "tg-dev": withCta(groupText) });
   });
 });
 
@@ -780,7 +808,9 @@ describe("SendChannels — the source translation gate", () => {
   });
 
   it("sends again once the copy is re-approved after the source", async () => {
-    const reapproved = source("x:1", { approvedAt: "2026-07-28T00:00:00Z" });
+    // `postedUrl` spelled out here and below: these two tests replace the suite's default rows, and
+    // a telegram 공지 with no X post url never reaches the gate this test is about.
+    const reapproved = source("x:1", { approvedAt: "2026-07-28T00:00:00Z", postedUrl: X_URL });
     const store = fakeStore([rendering({ itemId: "x:1", channel: "telegram", approvedAt: "2026-07-28T00:00:01Z" })]);
     const { posts, run } = send(fakeTranslations([reapproved]), store);
     expect((await run).sent).toBe(2);
@@ -801,7 +831,7 @@ describe("SendChannels — the source translation gate", () => {
    * the fork's own.
    */
   it("sends the regenerated group but holds back a fork left over from the older source", async () => {
-    const reapproved = source("x:1", { approvedAt: "2026-07-28T00:00:00Z" });
+    const reapproved = source("x:1", { approvedAt: "2026-07-28T00:00:00Z", postedUrl: X_URL });
     const regenerated = fakeStore([rendering({ itemId: "x:1", channel: "telegram", approvedAt: "2026-07-28T00:00:01Z" })]);
     const { posts, sender } = capture();
     const { ledger } = fakeLedger();
@@ -890,16 +920,6 @@ const PHOTO = "https://pbs.twimg.com/media/a.jpg";
 
 describe("SendChannels — video attachment", () => {
   afterEach(() => vi.restoreAllMocks());
-
-  /** Records what each room's send was actually asked to carry. */
-  function capturingSender(name: "telegram" | "x") {
-    const got: { photos?: string[]; video?: string; segments: string[] }[] = [];
-    const sender: ChannelSender = {
-      name,
-      send: async (req) => { got.push({ photos: req.photos, video: req.video, segments: req.segments }); return { postId: "1" }; },
-    };
-    return { sender, got };
-  }
 
   it("attaches the mp4 from `[영상] <url>` to the X send", async () => {
     const store = fakeStore([rendering({ itemId: "x:1", channel: "x", status: "approved", text: `영상 트윗\n\n[영상] ${MP4}` })]);
@@ -1009,5 +1029,127 @@ describe("SendChannels — video attachment", () => {
     const res = await new SendChannels(store, { telegram: undefined, x: sender }, ledger, fakeTranslations()).run({ targets: ["x"] });
     expect(res).toEqual(result({ sent: 1 }));
     expect(seen).toEqual([undefined]);
+  });
+});
+
+/**
+ * A 공지 exists to route the room back to @0xMantleKR's own post, and that URL does not exist when
+ * the rendering is written — so the CTA is composed here, at send time, from whichever of the two
+ * sources has the post (see `xLinkCta.ts`). Only Telegram reaches this path: `isSendable` admits
+ * telegram and x, x takes no CTA, and every KakaoTalk room is pasted by a human from the board.
+ */
+describe("SendChannels — the 공지 X-link CTA", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** The suite's ordinary telegram wiring, with only the translations and ledger left to a test. */
+  const send = (sender: ChannelSender, translations: TranslationStore, ledger = fakeLedger().ledger, store = fakeStore([rendering({})])) =>
+    new SendChannels(
+      store, { telegram: sender, x: undefined }, ledger, translations,
+      undefined, undefined, () => "T", undefined, outletsForChannel, TG_CHAT_IDS,
+    ).run({ targets: ["telegram"] });
+
+  it("appends the CTA to a telegram 공지, using the translation's posted url", async () => {
+    const { sender, got } = capturingSender("telegram");
+    const res = await send(sender, fakeTranslations([source("x:1", { postedUrl: X_URL })]));
+
+    expect(res).toEqual(result({ sent: 2 }));
+    // Both rooms, and the CTA is the last thing in the message — a link the reader scrolls past is
+    // a link nobody follows. `<b>hi</b>` is the fixture's `**hi**` as emitTelegramBot spells it,
+    // which is also what proves the CTA went through the emitter rather than around it.
+    expect(got.map((g) => g.segments.join("\n"))).toEqual([withCta("<b>hi</b> everyone"), withCta("<b>hi</b> everyone")]);
+  });
+
+  it("does not append a CTA to a telegram 해설", async () => {
+    const { sender, got } = capturingSender("telegram");
+    const res = await send(sender, fakeTranslations([source("x:1", { postedUrl: X_URL })]), undefined, fakeStore([rendering({ type: "explainer" })]));
+
+    expect(res).toEqual(result({ sent: 2 }));
+    expect(got.every((g) => !g.segments.join("\n").includes("자세한 내용은 X에서"))).toBe(true);
+  });
+
+  it("does not append a CTA on the x channel — the post cannot link to itself", async () => {
+    const { sender, got } = capturingSender("x");
+    const res = await new SendChannels(
+      fakeStore([rendering({ type: "x", channel: "x" })]), { telegram: undefined, x: sender },
+      fakeLedger().ledger, fakeTranslations([source("x:1", { postedUrl: X_URL })]),
+    ).run({ targets: ["x"] });
+
+    expect(res).toEqual(result({ sent: 1 }));
+    expect(got[0].segments.join("\n")).not.toContain("자세한 내용은 X에서");
+  });
+
+  /**
+   * THE point of the change. A 공지 delivered without its link is a live post nobody can recall and
+   * nobody would notice was wrong, so this refuses rather than sending a CTA-less body.
+   */
+  it("refuses to send a 공지 with no X post url, and does not reach the sender", async () => {
+    const { sender, got } = capturingSender("telegram");
+    const { ledger, added } = fakeLedger();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await send(sender, fakeTranslations([source("x:1")]), ledger);
+
+    // Once for the item, not once per room: the missing URL is a property of the item.
+    expect(res).toEqual(result({
+      failed: 1,
+      failures: [{ key: "x:1:announcement", error: "X 게시물 URL이 없습니다 — X를 먼저 게시하세요" }],
+    }));
+    expect(got).toEqual([]);
+    // Not ledgered, so the next run delivers it as soon as the post is up — the refusal costs a
+    // rerun and nothing else.
+    expect(added).toEqual([]);
+    expect(warn.mock.calls.map((c) => String(c[0])).some((m) => m.includes("tg-community, tg-dev"))).toBe(true);
+  });
+
+  it("takes the url from the x-post delivery row when the translation has none", async () => {
+    const { sender, got } = capturingSender("telegram");
+    const { ledger } = fakeLedger([sentEntry({ itemId: "x:1", type: "x", outletId: "x-post", url: X_URL })]);
+    const res = await send(sender, fakeTranslations([source("x:1")]), ledger);
+
+    // A bot-sent X post is reconciled onto its delivery row, never onto the translation, so this is
+    // the ordinary path for anything the pipeline posted itself.
+    expect(res).toEqual(result({ sent: 2 }));
+    expect(got[0].segments.join("\n")).toContain(X_URL);
+  });
+
+  it("does not accept a typefully share url as the X post url", async () => {
+    const { sender, got } = capturingSender("telegram");
+    // What `SendChannels` itself writes onto the row at send time: the draft editor's share link,
+    // which only becomes an x.com url minutes later when Typefully publishes it.
+    const { ledger } = fakeLedger([sentEntry({ itemId: "x:1", type: "x", outletId: "x-post", url: "https://typefully.com/t/abc" })]);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await send(sender, fakeTranslations([source("x:1")]), ledger);
+
+    expect(res.failed).toBe(1);
+    expect(got).toEqual([]); // linking the room to our own draft editor is worse than not sending
+  });
+
+  it("counts the CTA toward the telegram length limit", async () => {
+    const { sender, got } = capturingSender("telegram");
+    // The CTA is what pushes this over 4096 — the body alone fits with nothing to spare.
+    const body = "가".repeat(4096 - CTA.length);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await send(sender, fakeTranslations([source("x:1", { postedUrl: X_URL })]), undefined, fakeStore([rendering({ text: body })]));
+
+    // Appended after `emit` instead of through it, this would have gone out at 4096+N and Telegram
+    // would have 400'd it on every run forever.
+    expect(res).toEqual(result({
+      failed: 1,
+      failures: [{ key: "x:1:announcement", error: "a segment exceeds the telegram limit — edit the rendering" }],
+    }));
+    expect(got).toEqual([]);
+  });
+
+  it("archives the text the room actually received, CTA included", async () => {
+    const archived: string[] = [];
+    const res = await new SendChannels(
+      fakeStore([rendering({ text: "공지 본문" })]), { telegram: okSender("telegram"), x: undefined },
+      fakeLedger().ledger, fakeTranslations([source("x:1", { postedUrl: X_URL })]),
+      undefined, async (e) => { archived.push(e.text); }, () => "T", undefined, outletsForChannel, TG_CHAT_IDS,
+    ).run({ targets: ["telegram"] });
+
+    // The archive is the record of what went into the room. Archiving the pre-CTA body would make
+    // it disagree with the live message the day someone goes looking for what was actually said.
+    expect(res).toEqual(result({ sent: 2 }));
+    expect(archived).toEqual([withCta("공지 본문"), withCta("공지 본문")]);
   });
 });
