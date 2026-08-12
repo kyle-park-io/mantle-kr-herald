@@ -302,6 +302,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the scheduler's own report in Postgres (`translate_floor_reports`, written by `WatchTick`), which
     is the only answer a Vercel function with no systemd can get; no report means no floor and the
     link is collected normally.
+  - **That door is a fourth caller of `meetsTranslateFloor`, not a fourth statement of the rule.** It
+    asked `isSweptAccount` directly at first, which answers `false` for the `""` that
+    `normalizeTweet` stores whenever live data omits a tweet's author — while the rule *keeps* the
+    floor for an author it cannot read, deliberately. A pre-floor link whose root came back
+    authorless was therefore collected, answered `collected`, then filtered out of the waiting list
+    and never selected by any tick: the same silent failure, re-entered through the one input the
+    rule singles out as needing care. The door now refuses exactly what the function says no tick
+    would take.
 
 ### Changed
 

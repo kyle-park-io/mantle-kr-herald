@@ -295,10 +295,11 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * a review-only hosted deployment — must still boot. A throw on this line would take the whole
    * dashboard down over a credential only one tab needs.
    *
-   * `readFloorReport` is handed over because the use case refuses a pre-floor post by the swept
-   * account rather than collecting one the next tick will never select (see its own doc comment).
-   * That reader, not systemd, in both deployments: the Vercel function has no systemd to ask, and
-   * the report is the scheduler's own record of the floor it ran with.
+   * `readFloorReport` is handed over because the use case refuses a link the floor rule says no tick
+   * would select, rather than collecting one that would then wait forever (see its own doc comment;
+   * it asks `meetsTranslateFloor`, the same function `loadIntakePending` above does). That reader,
+   * not systemd, in both deployments: the Vercel function has no systemd to ask, and the report is
+   * the scheduler's own record of the floor it ran with.
    */
   let collectLinkedThread: CollectLinkedThread | undefined;
   try {
@@ -546,8 +547,8 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * the swept account's pre-floor backlog rendered here looking queued, forever — the same silent
    * failure this tab exists to remove, aimed at the screen instead of at the pipeline.
    *
-   * Together with the door gate (`CollectLinkedThread` refuses a pre-floor post by the swept account
-   * rather than collecting one), that makes the list what it claims to be: every item on it is one a
+   * Together with the door gate (`CollectLinkedThread` calls this same function and refuses whatever
+   * it answers no to), that makes the list what it claims to be: every item on it is one a
    * tick will take. **A tick, not necessarily the next one** — a queue longer than the tick's batch
    * drains over several, which changes when an item's turn comes and not whether it comes; the floor
    * is the only filter that drops one for good (see `meetsTranslateFloor`). The list is still

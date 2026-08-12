@@ -6,7 +6,7 @@ import { systemClock, type Clock } from "../ports/Clock";
 import type { TranslateFloorReport } from "../status/translateFloor";
 import { parsePostUrl } from "../domain/publish/xReconcile";
 import { assembleThreads } from "../domain/threadAssembler";
-import { isSweptAccount } from "../domain/sweptAccount";
+import { meetsTranslateFloor } from "../domain/translation/translateFloor";
 import { isCommenterReply } from "../adapters/content/XContentSource";
 
 export const INTAKE_BAD_URL = "x.com/<계정>/status/<번호> 형태의 주소가 필요합니다";
@@ -61,8 +61,8 @@ export interface IntakeResult {
  *
  * No author filter, on purpose: the point of this entry point is a post the pipeline's own account
  * did not write. `flattenXThreads` has no author condition either, so the item flows on unchanged.
- * The author is *read* once — see the floor gate in `run` — but only to decide who the translate
- * floor applies to, never to decide whose posts are welcome.
+ * The author is *read* once — handed to `meetsTranslateFloor` by `refuseIfBelowFloor` — but only as
+ * an input to who the translate floor applies to, never to decide whose posts are welcome.
  */
 export class CollectLinkedThread {
   constructor(
@@ -140,11 +140,25 @@ export class CollectLinkedThread {
   /**
    * The second silent-failure door, beside `isCommenterReply`'s.
    *
-   * `PrepareTranslations.applySelector` applies the translate floor to the swept account and to
-   * nobody else (`src/domain/sweptAccount.ts`), so a hand-picked post from another account reaches
-   * translation whatever its date. What that rule cannot do is admit a *pre-floor post by the swept
-   * account*: nothing distinguishes it from the swept backlog the floor exists to hold back. Left to
-   * be collected, it would sit in the 링크 수집 waiting list looking queued, forever.
+   * **The rule is not written here.** `meetsTranslateFloor`
+   * (`src/domain/translation/translateFloor.ts`) answers "does the floor let a tick select this
+   * item?", and `PrepareTranslations.applySelector`, `createDeps.loadIntakePending` and
+   * `collectedScope` all ask that same function. This door asks it too, so what it refuses is by
+   * construction what no tick would take. A door that re-stated the rule would be a fourth copy, and
+   * the fourth copy this replaced did disagree with the other three: it asked `isSweptAccount`,
+   * which answers `false` for the `""` that `normalizeTweet` stores when live data omits the author,
+   * while the rule *keeps* the floor for an author it cannot read. A pre-floor link whose root
+   * arrived authorless was therefore collected, answered `collected`, then filtered out of the
+   * waiting list and never selected — the failure this whole area exists to remove, through the one
+   * input it was told to be careful about.
+   *
+   * What that function's answer means for the three cases this door sees: a post from another
+   * account proceeds whatever its date, because nothing files another account's thread in
+   * `x_threads` on its own (`src/domain/sweptAccount.ts`). A pre-floor post by the swept account
+   * does not, because nothing distinguishes it from the swept backlog the floor exists to hold back.
+   * A pre-floor post whose author cannot be read goes the same way as the swept account's, which is
+   * the conservative direction and the one the tick takes. Either refusal, left to be collected,
+   * would sit in the 링크 수집 waiting list looking queued, forever.
    *
    * So it is refused before `repo.upsert`, with the date in the message — the refusal names the one
    * setting that would change the answer instead of leaving the operator to guess.
@@ -155,14 +169,18 @@ export class CollectLinkedThread {
    * named `i`, and let exactly the case this closes back through.
    *
    * No floor reported, or a report saying the tick ran with none: nothing is below anything, so
-   * collect. A default floor invented here would refuse real posts on a guess.
+   * collect. A default floor invented here would refuse real posts on a guess. That is also what
+   * `meetsTranslateFloor` answers for an `undefined` floor; the early return is here only so the
+   * refusal below has a `string` to quote, since the message carries the date. It costs one indexed
+   * single-row read per submission that the old gate skipped for another account's link —
+   * `createDeps.readFloorReport` is the same reader the status card calls per request, and it
+   * degrades to `undefined` rather than throwing.
    */
   private async refuseIfBelowFloor(root: SourceTweet): Promise<void> {
-    if (!isSweptAccount(root.authorUserName)) return;
     const floor = (await this.readFloor())?.floor;
     if (floor === undefined) return;
-    // `>=` is what `applySelector` selects with, so the floor instant itself is inside the window.
-    if (root.createdAt < floor) throw new Error(intakeBelowFloorMessage(floor));
+    if (meetsTranslateFloor({ createdAt: root.createdAt, author: root.authorUserName }, floor)) return;
+    throw new Error(intakeBelowFloorMessage(floor));
   }
 
   /** An article's body is a second call — the thread response marks the tweet as an article but

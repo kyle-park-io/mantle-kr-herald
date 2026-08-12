@@ -6,6 +6,8 @@ import {
   INTAKE_REPLY,
   intakeBelowFloorMessage,
 } from "../../src/app/CollectLinkedThread";
+import { meetsTranslateFloor } from "../../src/domain/translation/translateFloor";
+import { SWEPT_ACCOUNT } from "../../src/domain/sweptAccount";
 import type { SourceGateway } from "../../src/ports/SourceGateway";
 import type { CollectionRepository } from "../../src/ports/CollectionRepository";
 import type { TranslationStore } from "../../src/ports/TranslationStore";
@@ -234,6 +236,71 @@ describe("CollectLinkedThread", () => {
 
       expect((await uc.run(URL_100)).outcome).toBe("collected");
       expect(repo.calls.upsert).toBe(1);
+    });
+
+    it("refuses a below-floor post whose author could not be read, writing nothing", async () => {
+      // `authorUserName: ""` is a real state, not a fixture convenience: `normalizeTweet` stores it
+      // whenever live data omits the author (`schemas.ts` tolerates that on purpose, for gap-filled
+      // roots from deleted or suspended accounts). `isSweptAccount("")` is `false`, but
+      // `meetsTranslateFloor` does not bypass the floor for an author it cannot read — it *keeps*
+      // it, because reading "unknown" as "not the swept account" would open the whole backlog. So a
+      // door that asked `isSweptAccount` collected an item no tick would ever select: the exact
+      // silent failure the floor rule was written to remove.
+      const repo = fakeRepo();
+      const uc = new CollectLinkedThread(
+        fakeGateway({ fetchThread: async () => [tweet({ createdAt: OLD, authorUserName: "" })] }),
+        repo,
+        fakeTranslations(),
+        () => "2026-08-12T09:00:00.000Z",
+        reportsFloor,
+      );
+
+      await expect(uc.run(URL_100)).rejects.toThrow(intakeBelowFloorMessage(FLOOR));
+      expect(repo.calls.upsert).toBe(0);
+    });
+
+    it("collects an at-or-after-floor post whose author could not be read", async () => {
+      // The other half of the same rule: an unreadable author keeps the floor, it does not fail the
+      // floor. A door that refused every authorless tweet would refuse posts the tick takes.
+      const repo = fakeRepo();
+      const uc = new CollectLinkedThread(
+        fakeGateway({ fetchThread: async () => [tweet({ createdAt: FLOOR, authorUserName: "" })] }),
+        repo,
+        fakeTranslations(),
+        () => "2026-08-12T09:00:00.000Z",
+        reportsFloor,
+      );
+
+      expect((await uc.run(URL_100)).outcome).toBe("collected");
+      expect(repo.calls.upsert).toBe(1);
+    });
+
+    it("refuses exactly what `meetsTranslateFloor` answers no to, over every author shape", async () => {
+      // The property the whole effort is for: the door is not a fourth statement of the rule, it is
+      // a call to the one function `applySelector`, `loadIntakePending` and `collectedScope` call.
+      // Stated as an equality against that function rather than as a list of expected verdicts, so a
+      // future edit that re-spells the rule here fails instead of quietly disagreeing on one input —
+      // which is how the `isSweptAccount` gate this replaced came to disagree on `""`.
+      for (const author of [SWEPT_ACCOUNT, "mantle_official", "someone_else", ""]) {
+        for (const createdAt of [OLD, FLOOR, "2026-08-12T00:00:00.000Z"]) {
+          const repo = fakeRepo();
+          const uc = new CollectLinkedThread(
+            fakeGateway({ fetchThread: async () => [tweet({ createdAt, authorUserName: author })] }),
+            repo,
+            fakeTranslations(),
+            () => "2026-08-12T09:00:00.000Z",
+            reportsFloor,
+          );
+          const where = `author=${JSON.stringify(author)} createdAt=${createdAt}`;
+
+          if (meetsTranslateFloor({ createdAt, author }, FLOOR)) {
+            expect([where, (await uc.run(URL_100)).outcome]).toEqual([where, "collected"]);
+          } else {
+            await expect(uc.run(URL_100)).rejects.toThrow(intakeBelowFloorMessage(FLOOR));
+            expect([where, repo.calls.upsert]).toEqual([where, 0]);
+          }
+        }
+      }
     });
 
     it("collects a swept-account post at the floor", async () => {
