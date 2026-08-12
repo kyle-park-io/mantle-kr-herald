@@ -295,9 +295,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     2026-07-27 was collected, answered `collected`, listed as waiting — and then dropped by every
     tick forever, with no error anywhere. Exactly the failure the `isCommenterReply` refusal above
     exists to prevent. The floor is there to stop the *sweep's* backlog draining oldest-first, and a
-    hand-picked link is never that backlog; since `pnpm collect` only ever sweeps `Mantle_Official`
-    (`SWEPT_ACCOUNT`) and `collect:reference` writes a separate store, a row in `x_threads` from any
-    other account can only have arrived through this tab. So the author is the marker — no new
+    hand-picked link is never that backlog; since the *scheduled* `pnpm collect` only ever sweeps
+    `Mantle_Official` (`SWEPT_ACCOUNT`) and `collect:reference` writes a separate store, a row in
+    `x_threads` from any other account is one a person put there — this tab, or the hand-run
+    `pnpm collect <handle>` that `sweptAccount.ts` now names. So the author is the marker — no new
     column, no migration, and `ContentItem` simply carries the root tweet's `authorUserName` now. An
     item whose author cannot be read keeps the floor, which is the conservative direction.
   - **The one case that leaves — a pre-floor post by `Mantle_Official` — is refused at the door**

@@ -18,10 +18,11 @@ export interface ContentItem {
    * Not shown to anyone: it is read by `meetsTranslateFloor` (`./translateFloor.ts`) to decide
    * whether the translate floor applies to this item — it applies to the account the scheduled sweep
    * reads (`src/domain/sweptAccount.ts`) and not to a post a person hand-picked from another
-   * account. All three places that apply the floor ask through that one function: the tick that
+   * account. All four places that apply the floor ask through that one function: the tick that
    * selects (`PrepareTranslations.applySelector`), the 링크 수집 waiting list
-   * (`createDeps.loadIntakePending`), and the Collected count `pnpm status` and the dashboard's
-   * 수집 card are drawn from (`collectedScope`, `src/status/translateFloor.ts`).
+   * (`createDeps.loadIntakePending`), the Collected count `pnpm status` and the dashboard's
+   * 수집 card are drawn from (`collectedScope`, `src/status/translateFloor.ts`), and the 링크 수집
+   * door (`CollectLinkedThread`), which asks about a root tweet before any item exists for it.
    *
    * Undefined therefore means "assume the floor applies", which is the conservative direction: see
    * `meetsTranslateFloor` for why the unreadable case must stay shut.

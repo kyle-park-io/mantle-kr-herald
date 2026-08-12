@@ -13,7 +13,9 @@ import { isSweptAccount } from "../sweptAccount";
  * third — `collectedScope` in `src/status/translateFloor.ts`, which counts how much of the collected
  * total the scheduler can reach — is why the parameter is not `ContentItem` itself: it takes an
  * *array*, and requiring an `id`, a `source` and a `text` it never reads would make every fixture in
- * its suite fabricate three fields to ask one question.
+ * its suite fabricate three fields to ask one question. The fourth, `CollectLinkedThread`'s door
+ * gate, holds no item at all — only the root `SourceTweet` an item has yet to be built from — and
+ * hands over the two fields `flattenXThreads` would take from that same tweet.
  *
  * Declaring what is read also states the rule's own reach: nothing else about an item can change the
  * answer, so no caller has to wonder which of its fields matter.
@@ -29,10 +31,10 @@ export interface TranslateFloorSubject {
  * Whether the translate floor — `HERALD_TRANSLATE_SINCE` — leaves this item alone.
  *
  * The floor exists to stop the *swept timeline's* whole history pouring into translation oldest
- * first. A post someone pasted into 링크 수집 is not that risk: nothing but that tab can put another
- * account's thread in `x_threads` (`src/domain/sweptAccount.ts` states why), so the handle is the
- * marker, and an item authored anywhere but the swept account is a hand-picked one that proceeds
- * whatever its date. The swept account's own posts still meet the floor, because a pre-floor one of
+ * first. A post someone pasted into 링크 수집 is not that risk: nothing puts another account's thread
+ * in `x_threads` on its own (`src/domain/sweptAccount.ts` states why, and names the hand-run that
+ * is the one other way one gets there), so the handle is the marker, and an item authored anywhere
+ * but the swept account is one a person chose, which proceeds whatever its date. The swept account's own posts still meet the floor, because a pre-floor one of
  * those is indistinguishable from swept backlog — `CollectLinkedThread` refuses that at the door
  * instead, so it cannot be collected and then silently dropped here.
  *
@@ -49,18 +51,20 @@ function bypassesFloor(item: TranslateFloorSubject): boolean {
  * Whether the translate floor lets `translate:prepare` select this item at all, given the floor the
  * tick runs with.
  *
- * **One function because three call sites have to agree.** `PrepareTranslations.applySelector` is
+ * **One function because four call sites have to agree.** `PrepareTranslations.applySelector` is
  * the tick that selects; `createDeps.loadIntakePending` is the 링크 수집 waiting list that claims to
  * show what the tick will select; `collectedScope` (`src/status/translateFloor.ts`) is the count of
  * how much of the collected total the tick can reach, which `pnpm status`'s Collected line and the
- * dashboard's 수집 hover card are both formatted from. A copy of the rule in each would drift, and a
- * drift here is invisible — the list would simply go on showing an item that never gets translated,
- * and the count would report an item as permanently unreachable when a tick is going to take it,
- * with no error anywhere. That is the failure the whole feature exists to remove, and the third
- * caller was added because it had exactly that defect. Sharing the function is what makes "the rule is the same in
- * all three" a fact about the code rather than a claim in a comment. (It says nothing about them
- * being handed the same *floor* — `createDeps.loadIntakePending` covers that, and the one window
- * where they are not.)
+ * dashboard's 수집 hover card are both formatted from; `CollectLinkedThread.refuseIfBelowFloor` is
+ * the door that turns away a link no tick would take rather than storing one. A copy of the rule in
+ * each would drift, and a drift here is invisible — the list would simply go on showing an item that
+ * never gets translated, the count would report an item as permanently unreachable when a tick is
+ * going to take it, and the door would accept a link that then sits nowhere, all with no error
+ * anywhere. That is the failure the whole feature exists to remove, and the third and fourth callers
+ * were each added because they had exactly that defect. Sharing the function is what makes "the rule
+ * is the same in all four" a fact about the code rather than a claim in a comment. (It says nothing
+ * about them being handed the same *floor* — `createDeps.loadIntakePending` covers that, and the one
+ * window where they are not.)
  *
  * It answers the whole question rather than half of it, for the same reason: a caller left to
  * combine a bypass predicate with its own date comparison is a caller free to combine it

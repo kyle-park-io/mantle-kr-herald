@@ -30,7 +30,7 @@ export const INTAKE_LINKED_REPLY =
   "이 주소가 가리키는 글은 스레드에 달린 답글이라 번역 대상에서 빠집니다 — 스레드 본문 글의 주소를 넣어 주세요";
 
 /**
- * The one refusal that carries a value, so it is a function where its three neighbours are
+ * The one refusal that carries a value, so it is a function where its neighbours above are
  * constants. The floor is what the operator has to know, and `HERALD_TRANSLATE_SINCE` is named
  * beside it because that is the dial — a refusal that does not say what would change the answer
  * leaves the reader guessing. The instant goes in as the scheduler reported it (normalised by
