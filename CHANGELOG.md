@@ -233,7 +233,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses, and upserts one row into `x_threads`. From there the item is indistinguishable from one the
   scheduled sweep collected. **No account restriction**: a link to any X account works, which is the
   entire point — the timeline-only path had no way to bring in a post from outside
-  `Mantle_Official`. A thread whose first tweet is a reply to someone else's conversation is refused
+  `Mantle_Official`. A link to *any* tweet of a thread works too, not only its first: x.com offers
+  "copy link" on every one, and the thread is matched by the tweet it contains rather than by an id
+  that only ever matched a root. A thread whose first tweet is a reply to someone else's conversation is refused
   up front (`이 글은 다른 대화에 단 답글이라...`) rather than silently dropped two hours later by the
   same rule `flattenXThreads` applies downstream — the predicate (`isCommenterReply`) is imported,
   not re-implemented, because a copy drifts from the original and drift here means the screen and no
@@ -259,6 +261,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`translate:prepare`, every two hours at `*:17`) builds its translation row. Without this list a
     submitted link reads as "I pasted it and it vanished"; the `POST` reply carries the same
     refreshed list so the tab self-corrects in one round trip.
+  - **The translate floor (`HERALD_TRANSLATE_SINCE`) now gates the swept account and nobody else.**
+    That floor filters on an item's own post date, after `loadPending` returns
+    (`PrepareTranslations.applySelector`), so without this rule a link to anything published before
+    2026-07-27 was collected, answered `collected`, listed as waiting — and then dropped by every
+    tick forever, with no error anywhere. Exactly the failure the `isCommenterReply` refusal above
+    exists to prevent. The floor is there to stop the *sweep's* backlog draining oldest-first, and a
+    hand-picked link is never that backlog; since `pnpm collect` only ever sweeps `Mantle_Official`
+    (`SWEPT_ACCOUNT`) and `collect:reference` writes a separate store, a row in `x_threads` from any
+    other account can only have arrived through this tab. So the author is the marker — no new
+    column, no migration, and `ContentItem` simply carries the root tweet's `authorUserName` now. An
+    item whose author cannot be read keeps the floor, which is the conservative direction.
+  - **The one case that leaves — a pre-floor post by `Mantle_Official` — is refused at the door**
+    (`이 글은 번역 기준 시각(…)보다 오래돼…`), with the date in the message and
+    `HERALD_TRANSLATE_SINCE` named as the dial, because nothing distinguishes such a post from swept
+    backlog and collecting it would queue something no tick will ever select. The floor comes from
+    the scheduler's own report in Postgres (`translate_floor_reports`, written by `WatchTick`), which
+    is the only answer a Vercel function with no systemd can get; no report means no floor and the
+    link is collected normally.
 
 ### Changed
 
