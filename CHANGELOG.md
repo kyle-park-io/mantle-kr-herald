@@ -279,7 +279,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `applySelector` filters with". Once the floor started gating the swept account and nobody else
     that claim was false, and so was the number: `pnpm status`'s `in scope N · below floor M` line
     and the dashboard's 수집 hover card (`번역 대상 N건 · 하한 아래 M건`) both put a link somebody
-    pasted before the floor on the unreachable side, when the very next tick translates it. Both of
+    pasted before the floor on the permanently-unreachable side, when a tick will take it. Both of
     its counts — the systemd-measured one and the one taken against the scheduler's reported floor,
     which is the one the hosted dashboard actually shows — now go through `meetsTranslateFloor`. The
     error was bounded by how many below-floor links had been pasted, so it was small on the day it

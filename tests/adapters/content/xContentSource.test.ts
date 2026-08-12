@@ -36,8 +36,8 @@ describe("XContentSource isReply", () => {
 
   /**
    * The author is what decides whether the translate floor applies to this item
-   * (`meetsTranslateFloor`, asked by both the tick and the 링크 수집 waiting list, and
-   * `src/domain/sweptAccount.ts` for why the handle is the marker). Dropping it here is not a
+   * (`meetsTranslateFloor`, asked by the tick, the 링크 수집 waiting list and the Collected count,
+   * and `src/domain/sweptAccount.ts` for why the handle is the marker). Dropping it here is not a
    * cosmetic loss: an item with no author is treated as the swept
    * account's, so a hand-picked post from another account would be filtered out below the floor —
    * silently, which is the whole failure mode 링크 수집's door gate exists to end.

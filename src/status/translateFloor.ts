@@ -228,9 +228,9 @@ export interface CollectedScope {
  *
  * It has to be the function and not `createdAt >= floor`, because the floor gates the *swept*
  * account and nobody else: a pre-floor post somebody hand-picked in 링크 수집 is selected, and the
- * bare comparison counted it as permanently out of the scheduler's reach while the next tick
- * translated it. A count that disagrees with the selector is worse than no count — the reader is
- * told the scheduler cannot reach work it is about to do, and nothing anywhere errors.
+ * bare comparison counted it as **permanently** out of the scheduler's reach when a tick will in
+ * fact take it. A count that disagrees with the selector is worse than no count — the reader is told
+ * the scheduler cannot reach work it is going to do, and nothing anywhere errors.
  *
  * Every reason the rule is written the way it is — string comparison rather than `Date`, `""` below
  * every floor, an unreadable author keeping the floor — lives on `meetsTranslateFloor` now, so this
@@ -273,11 +273,10 @@ export function collectedScope(
   };
 }
 
-/** The count both fields above are, taken with the selector's own rule. Named once so a future
- *  change to how in-scope is decided cannot reach one of them and miss the other: the two are read by
- *  different screens — the systemd count by `pnpm status`, the reported one by the hosted dashboard —
- *  so a half-applied change would show up on one and not the other, which is how long this one took
- *  to be noticed at all. */
+/** The count both fields above are, taken with the selector's own rule. Named once so a future change
+ *  to how in-scope is decided cannot reach one of them and miss the other — and the two are read by
+ *  different screens (the systemd count by `pnpm status`, the reported one by the hosted dashboard),
+ *  so a half-applied change would not present as a contradiction anybody could see on one screen. */
 function countInScope(items: TranslateFloorSubject[], floor: string | undefined): number {
   return items.filter((i) => meetsTranslateFloor(i, floor)).length;
 }

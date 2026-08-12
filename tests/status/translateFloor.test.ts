@@ -266,7 +266,7 @@ describe("collectedScope — who the floor applies to", () => {
 
   it("counts a pre-floor post from another account as in scope, because a tick will take it", () => {
     // The finding: hand-picked, below the floor, and selected anyway. Counting it as below-floor
-    // tells a reader the scheduler can never reach an item it is about to translate.
+    // tells a reader the scheduler can never reach an item a tick is going to take.
     const scope = collectedScope([{ createdAt: PRE_FLOOR, author: "VitalikButerin" }], armed());
     expect(scope.inScope).toBe(1);
   });

@@ -55,9 +55,9 @@ function bypassesFloor(item: TranslateFloorSubject): boolean {
  * how much of the collected total the tick can reach, which `pnpm status`'s Collected line and the
  * dashboard's 수집 hover card are both formatted from. A copy of the rule in each would drift, and a
  * drift here is invisible — the list would simply go on showing an item that never gets translated,
- * and the count would report an item as unreachable while the next tick translated it, with no error
- * anywhere. That is the failure the whole feature exists to remove, and the third caller was added
- * because it had exactly that defect. Sharing the function is what makes "the rule is the same in
+ * and the count would report an item as permanently unreachable when a tick is going to take it,
+ * with no error anywhere. That is the failure the whole feature exists to remove, and the third
+ * caller was added because it had exactly that defect. Sharing the function is what makes "the rule is the same in
  * all three" a fact about the code rather than a claim in a comment. (It says nothing about them
  * being handed the same *floor* — `createDeps.loadIntakePending` covers that, and the one window
  * where they are not.)
