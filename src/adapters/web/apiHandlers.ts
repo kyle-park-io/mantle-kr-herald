@@ -11,8 +11,9 @@ import type { SaveRendering } from "../../app/SaveRendering";
 import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
 import type { FunnelCounts } from "../../status/pipeline";
-import { emitAll } from "../../domain/formatting/emitters";
+import { emitAll, type Destination, type EmitResult } from "../../domain/formatting/emitters";
 import { needsXLinkCta, xLinkCta, appendXLinkCta, X_URL_PENDING } from "../../domain/formatting/xLinkCta";
+import { needsKrLinkRewrite, linkedSweptItemIds, rewriteGlobalLinks, krLinkNotice } from "../../domain/formatting/krLinks";
 import type { ApiTranslation } from "./attachKind";
 import type { SheetLink, ClientIpConfig } from "../../config";
 import type { BoardView } from "./board";
@@ -155,8 +156,15 @@ export interface ApiDeps {
   loadTranslations: () => Promise<ApiTranslation[]>;
   /**
    * The KR X post url for an item, or undefined before it goes up. Read only by the `/emissions`
-   * routes, which is where a human copies 공지 text for a `delivery: "manual"` room — every
-   * KakaoTalk room and two Telegram rooms. See `src/domain/formatting/xLinkCta.ts`.
+   * routes, for two questions that are the same question asked about different items:
+   *
+   * - the item under review, for the 공지 CTA a human copies into a `delivery: "manual"` room —
+   *   every KakaoTalk room and two Telegram rooms (`src/domain/formatting/xLinkCta.ts`);
+   * - each item an `x` rendering *links to*, so a Korean reader following an inline link stays on
+   *   the Korean account (`src/domain/formatting/krLinks.ts`).
+   *
+   * One reader for both: "has this item's Korean X post gone up?" has a single right answer, and a
+   * second resolver would eventually give it a different one.
    */
   loadXPostUrl: (itemId: string) => Promise<string | undefined>;
   xMaxWeighted: number;
@@ -306,6 +314,79 @@ async function withXLinkCta(
   if (!needsXLinkCta(type, channel)) return text;
   const xUrl = (await deps.loadXPostUrl(itemId)) ?? X_URL_PENDING;
   return appendXLinkCta(text, xLinkCta(channel, xUrl));
+}
+
+/**
+ * The same text with every linked Mantle Global post pointed at its Korean version, plus what to
+ * tell the reviewer about the ones that have none. See `src/domain/formatting/krLinks.ts` for why
+ * this belongs at send/preview time rather than in the stored translation.
+ *
+ * Resolution runs through `deps.loadXPostUrl` — the same reader `withXLinkCta` above uses, asked
+ * about a *different* item. That is the whole difference between the two steps: the CTA asks for the
+ * Korean post of the item under review, this asks for the Korean post of each item it *links to*.
+ * One dep answers both because the question is identical ("has this item's Korean X post gone up?");
+ * a second resolver would be a second answer to it.
+ *
+ * The lookups are concurrent rather than sequential because they are independent DB reads and a
+ * preview is a keystroke away from a reviewer waiting on it. `linkedSweptItemIds` is deduped, so a
+ * post linked twice costs one read; production measurements put the count at one or two links per
+ * text (`docs/superpowers/specs/2026-08-13-kr-link-rewrite-design.md`).
+ *
+ * **Runs before `withXLinkCta`, and both run before `emitAll`.**
+ *
+ * Before `emitAll` is the load-bearing half: over-limit is measured on what actually goes out, and
+ * on a character-counted destination (telegram/kakao) a Korean url is not the same length as the
+ * global one it replaces. An x destination happens not to care — `weightedLength` charges every url
+ * a flat t.co 23 — but the preview must not depend on which destination it is answering for.
+ *
+ * Before the CTA is the deliberate half. Today it cannot change a byte: the two predicates are
+ * disjoint (`needsKrLinkRewrite` is `x` only, `needsXLinkCta` is 공지 only), so no rendering ever
+ * takes both steps, and the CTA carries our own account's url anyway. It is fixed in this order so
+ * that a type which one day wants both does not get the answer by accident: the rewrite is a
+ * statement about copy this codebase did not author — a near-verbatim translation carrying the
+ * source tweet's own links — while the CTA is composed here, from `resolveXPostUrl`'s output. Text
+ * we just wrote should not then be re-read as if it might need redirecting.
+ */
+async function withKrLinks(deps: ApiDeps, type: string, text: string): Promise<{ text: string; notice: string | null }> {
+  if (!needsKrLinkRewrite(type)) return { text, notice: null };
+
+  const krUrlByItemId = new Map<string, string>();
+  await Promise.all(
+    linkedSweptItemIds(text).map(async (linkedItemId) => {
+      const krUrl = await deps.loadXPostUrl(linkedItemId);
+      if (krUrl !== undefined) krUrlByItemId.set(linkedItemId, krUrl);
+    }),
+  );
+
+  const { text: rewritten, unresolved } = rewriteGlobalLinks(text, krUrlByItemId);
+  return { text: rewritten, notice: krLinkNotice(unresolved) };
+}
+
+/**
+ * Carries `notice` onto every destination of an already-emitted preview, in front of whatever that
+ * destination's emitter had to say.
+ *
+ * Through `warnings` rather than a field of its own, because that is the channel the dashboard
+ * already reads: `OutletCard.tsx` renders each destination's `warnings` under the card (the KakaoTalk
+ * fold warning is the same path), so a notice put anywhere else would need new rendering code to be
+ * seen at all. In front, because it is the older news — the emitter's warnings are about the text
+ * this notice is explaining.
+ *
+ * Repeated per destination, so the x channel says it twice (`x_paste` and `x_typefully`). Not
+ * special-cased: `OutletCard` labels each warning with its destination, and an over-limit warning
+ * already doubles up the same way on that channel, so suppressing one copy here would make this one
+ * notice behave unlike every other.
+ */
+function withKrLinkNotice(
+  emissions: Partial<Record<Destination, EmitResult>>,
+  notice: string | null,
+): Partial<Record<Destination, EmitResult>> {
+  if (notice === null) return emissions;
+  const out: Partial<Record<Destination, EmitResult>> = {};
+  for (const [destination, result] of Object.entries(emissions) as [Destination, EmitResult][]) {
+    out[destination] = { ...result, warnings: [notice, ...result.warnings] };
+  }
+  return out;
 }
 
 /**
@@ -619,8 +700,12 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
           (r) => r.itemId === itemId && r.type === type && r.channel === channel,
         );
         if (!existing) return { status: 404, json: { error: "not found" } };
-        const previewText = await withXLinkCta(deps, existing.itemId, existing.type, channel, existing.text);
-        return { status: 200, json: emitAll(previewText, channel, deps.xMaxWeighted) };
+        const krLinked = await withKrLinks(deps, existing.type, existing.text);
+        const previewText = await withXLinkCta(deps, existing.itemId, existing.type, channel, krLinked.text);
+        return {
+          status: 200,
+          json: withKrLinkNotice(emitAll(previewText, channel, deps.xMaxWeighted), krLinked.notice),
+        };
       }
 
       // `…/emissions/:outletId` — the spelling *that room* receives. A forked room's copy is its
@@ -633,8 +718,15 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
           .find((g) => g.type === type && g.channel === channel)
           ?.rows.find((r) => r.outletId === segments[6]);
         if (!row) return { status: 404, json: { error: "not found" } };
-        const previewText = await withXLinkCta(deps, itemId, type, channel, row.text);
-        return { status: 200, json: emitAll(previewText, channel, deps.xMaxWeighted) };
+        // Both steps again, on the room's own copy — a forked row's text is not the group's, so a
+        // rewrite done only above would leave the [복사] a human actually uses on that row pointing
+        // at the English original.
+        const krLinked = await withKrLinks(deps, type, row.text);
+        const previewText = await withXLinkCta(deps, itemId, type, channel, krLinked.text);
+        return {
+          status: 200,
+          json: withKrLinkNotice(emitAll(previewText, channel, deps.xMaxWeighted), krLinked.notice),
+        };
       }
     }
   }
