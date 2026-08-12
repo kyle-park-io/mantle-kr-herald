@@ -226,6 +226,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Also fixed a claim it does not cover: the runbook said `herald-translate-check`'s two `ExecStart=`
   lines append to **one** log file. `herald-run-logged.sh` stamps `RUN_STAMP` per process, so a fire
   leaves **two** — which is also why the 60-run cap is about 30 fires for that unit.
+- **A third dashboard tab, `링크 수집` (`#intake`), lets a hand-picked x.com post skip the wait for
+  `Mantle_Official`'s own timeline.** Pasting a post URL and pressing `[넣기]` calls the new
+  `POST /api/intake/x`, which resolves the URL to a tweet id (`parsePostUrl`), fetches the whole
+  thread — and, for an article, its body — through the same `SourceGateway` `pnpm collect` already
+  uses, and upserts one row into `x_threads`. From there the item is indistinguishable from one the
+  scheduled sweep collected. **No account restriction**: a link to any X account works, which is the
+  entire point — the timeline-only path had no way to bring in a post from outside
+  `Mantle_Official`. A link to *any* tweet of a thread works too, not only its first: x.com offers
+  "copy link" on every one, and the thread is matched by the tweet it contains rather than by an id
+  that only ever matched a root. A thread whose first tweet is a reply to someone else's conversation is refused
+  up front (`이 글은 다른 대화에 단 답글이라...`) rather than silently dropped two hours later by the
+  same rule `flattenXThreads` applies downstream — the predicate (`isCommenterReply`) is imported,
+  not re-implemented, because a copy drifts from the original and drift here means the screen and no
+  code agree on what got skipped. **A link aimed at a commenter's reply *inside* a thread is refused
+  by that same predicate** (`이 주소는 스레드 안의 답글이라...`), and with its own
+  wording: matching by containment means such a link resolves to the parent thread, which is
+  collectable — but `flattenXThreads` strips nested commenter replies from the item text, so
+  accepting it would answer "수집됐습니다" about a thread assembled without the one tweet the operator
+  was pointing at. The remedy is in the sentence: paste a tweet of the thread itself.
+  - **Deliberately touches neither the collect watermark (`output/x/state.json`) nor the run ledger
+    (`output/x/runs.json`).** The watermark means "how far down the timeline `pnpm collect` has
+    read"; a link intake reads no timeline, so advancing it would make the next scheduled sweep skip
+    everything posted in between — the same call `CollectAuthoredContent` already makes for its own
+    `--since`/`--limit` ad-hoc runs. Touching neither file is also what keeps this path off the
+    filesystem entirely, which is what lets it run inside a Vercel function's read-only FS — the
+    condition that makes "the dashboard fetches it directly" possible at all.
+  - **Gated on `TWITTERAPI_IO_KEY` the same way `sendToOutlet`/`prepareConversionRun` are gated on
+    their own credentials.** `createDeps` builds the gateway inside a try/catch and simply omits the
+    `collectLinkedThread` dependency when the key is absent, rather than letting the whole deployment
+    fail to boot. The route refuses with a 400 and a Korean reason before it would ever reach the
+    missing dependency; the same boolean rides along as `StatusView.intakeEnabled` so the tab's
+    `[넣기]` locks with the identical reason printed up front — never something discovered by
+    clicking. Unlike `HERALD_TRUST_PROXY`, `TWITTERAPI_IO_KEY`'s absence is not a boot condition: the
+    function still starts, every other tab still works, and only this one closes.
+  - **A waiting list, not a black hole.** `GET /api/intake/pending` — reachable without the
+    credential, since it only reads the database — lists everything collected but not yet translated
+    **that a tick will actually select**, because a linked-in item does not reach 1차 검수
+    until `herald-watch`'s next tick (`translate:prepare`, every two hours at `*:17`) builds its
+    translation row. Without this list a submitted link reads as "I pasted it and it vanished"; the
+    `POST` reply carries the same refreshed list so the tab self-corrects in one round trip.
+  - **The list, the tick and the Collected count decide by one function, not by three copies of one
+    rule.** The negative join is not on its own the tick's answer — `applySelector` filters again by
+    the translate floor — so a list computing only the join showed the swept account's pre-floor
+    backlog as though it were queued, forever, with no error anywhere. That is the same silent
+    failure the whole feature exists to close, aimed at the screen instead of at the pipeline. The
+    rule now lives in `meetsTranslateFloor` (`src/domain/translation/translateFloor.ts`) and every
+    caller asks it, so they cannot come to different conclusions about a row; it answers the
+    whole question ("does the floor let a tick take this item?") rather than handing back a predicate
+    each caller combines with its own date comparison. One predicate is enough because the floor is
+    `applySelector`'s only permanent filter — the batch `--limit` decides which tick's turn a queued
+    item is, never whether its turn comes. **No floor known filters nothing** — no report, or a tick
+    that reported running with none — matching the door gate's refusal to invent one.
+  - **Fixed: two shipped screens counted a hand-picked pre-floor link as out of the scheduler's
+    reach.** `collectedScope` (`src/status/translateFloor.ts`) — another caller of that rule — ran a bare
+    `createdAt >= floor` while its own comment claimed to be "the identical expression
+    `applySelector` filters with". Once the floor stopped gating every item
+    that claim was false, and so was the number: `pnpm status`'s `in scope N · below floor M` line
+    and the dashboard's 수집 hover card (`번역 대상 N건 · 하한 아래 M건`) both put a link somebody
+    pasted before the floor on the permanently-unreachable side, when a tick will take it. Both of
+    its counts — the systemd-measured one and the one taken against the scheduler's reported floor,
+    which is the one the hosted dashboard actually shows — now go through `meetsTranslateFloor`. The
+    error was bounded by how many below-floor links had been pasted, so it was small on the day it
+    shipped and grew with use of the tab.
+  - **The translate floor (`HERALD_TRANSLATE_SINCE`) now gates the swept account, and an item whose
+    author cannot be read.**
+    That floor filters on an item's own post date, after `loadPending` returns
+    (`PrepareTranslations.applySelector`), so without this rule a link to anything published before
+    2026-07-27 was collected, answered `collected`, listed as waiting — and then dropped by every
+    tick forever, with no error anywhere. Exactly the failure the `isCommenterReply` refusal above
+    exists to prevent. The floor is there to stop the *sweep's* backlog draining oldest-first, and a
+    hand-picked link is never that backlog; since the *scheduled* `pnpm collect` only ever sweeps
+    `Mantle_Official` (`SWEPT_ACCOUNT`) and `collect:reference` writes a separate store, a row in
+    `x_threads` from any other account is one a person put there — this tab, or the hand-run
+    `pnpm collect <handle>` that `sweptAccount.ts` now names. So the author is the marker — no new
+    column, no migration, and `ContentItem` simply carries the root tweet's `authorUserName` now. An
+    item whose author cannot be read keeps the floor, which is the conservative direction.
+  - **The one case that leaves — a pre-floor post by `Mantle_Official` — is refused at the door**
+    (`이 글은 번역 기준 시각(…)보다 오래됐습니다…`), with the date in the message and
+    `HERALD_TRANSLATE_SINCE` named as the dial, because nothing distinguishes such a post from swept
+    backlog and collecting it would queue something no tick will ever select. The floor comes from
+    the scheduler's own report in Postgres (`translate_floor_reports`, written by `WatchTick`), which
+    is the only answer a Vercel function with no systemd can get; no report means no floor and the
+    link is collected normally.
+  - **That door is a fourth caller of `meetsTranslateFloor`, not a fourth statement of the rule.** It
+    asked `isSweptAccount` directly at first, which answers `false` for the `""` that
+    `normalizeTweet` stores whenever live data omits a tweet's author — while the rule *keeps* the
+    floor for an author it cannot read, deliberately. A pre-floor link whose root came back
+    authorless was therefore collected, answered `collected`, then filtered out of the waiting list
+    and never selected by any tick: the same silent failure, re-entered through the one input the
+    rule singles out as needing care. The door now refuses exactly what the function says no tick
+    would take.
 
 ### Changed
 

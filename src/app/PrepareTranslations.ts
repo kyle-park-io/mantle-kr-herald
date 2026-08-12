@@ -1,6 +1,7 @@
 import { DEFAULT_ROLE } from "../domain/translation/role";
 import { assembleItemBlock, assembleSharedContext } from "../domain/translation/promptAssembler";
 import { selectRelevantTm } from "../domain/tm/selection";
+import { meetsTranslateFloor } from "../domain/translation/translateFloor";
 import type { ContentItem } from "../domain/translation/contentItem";
 import type { ContentSource } from "../ports/ContentSource";
 import type { GlossaryStore } from "../ports/GlossaryStore";
@@ -61,9 +62,16 @@ export class PrepareTranslations {
       const wanted = new Set(selector.ids);
       result = result.filter((i) => wanted.has(i.id));
     }
+    // `selector.since` is the translate floor, and the rule for who it applies to lives in
+    // `meetsTranslateFloor` rather than here — `createDeps.loadIntakePending`, `collectedScope`
+    // (`src/status/translateFloor.ts`) and `CollectLinkedThread`'s door gate ask the same function
+    // the same question, which is what lets the 링크 수집 waiting list promise that what it shows is
+    // what this line will take, what makes the Collected count a count of what this line can reach,
+    // and what makes a link the door accepted one this line can select. See that function's own doc
+    // comment.
     if (selector.since) {
       const since = selector.since;
-      result = result.filter((i) => i.createdAt >= since);
+      result = result.filter((i) => meetsTranslateFloor(i, since));
     }
     const limit = selector.limit ?? DEFAULT_LIMIT;
     return result.slice(0, limit);

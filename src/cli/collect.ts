@@ -11,8 +11,13 @@ import { CollectAuthoredContent, type CollectOptions } from "../app/CollectAutho
 import { parseSince } from "../shared/time/parseSince";
 import { parseCollectMaxPages } from "./collectMaxPages";
 import { paths } from "../paths";
+import { SWEPT_ACCOUNT } from "../domain/sweptAccount";
 
-const target = process.argv[2]?.startsWith("--") ? "Mantle_Official" : process.argv[2] ?? "Mantle_Official";
+// `SWEPT_ACCOUNT` rather than the literal: the translate floor now asks "is this the account the
+// sweep reads?" (`meetsTranslateFloor`, whose own comment names every caller that asks it), and that
+// question has to be about the same account this default names.
+// Which account is swept is unchanged — only where the name lives.
+const target = process.argv[2]?.startsWith("--") ? SWEPT_ACCOUNT : process.argv[2] ?? SWEPT_ACCOUNT;
 
 const opts: CollectOptions = {};
 const since = argValue("--since");

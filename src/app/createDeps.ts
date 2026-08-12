@@ -1,13 +1,16 @@
 // src/app/createDeps.ts
 import { mkdir, writeFile } from "node:fs/promises";
 import type { Db } from "../adapters/db/Db";
-import type { ApiDeps, StatusView, PublishStateRow, IntegrationStatus } from "../adapters/web/apiHandlers";
+import type { ApiDeps, StatusView, PublishStateRow, IntegrationStatus, IntakePendingItem } from "../adapters/web/apiHandlers";
 import { createStores } from "../cli/stores";
 import { PgAttemptLimiter, ipRowId } from "../adapters/store/PgAttemptLimiter";
 import { PgTranslateFloorReport } from "../adapters/store/PgTranslateFloorReport";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
+import { CollectLinkedThread } from "./CollectLinkedThread";
+import { TwitterApiSourceGateway } from "../adapters/twitterapi/TwitterApiSourceGateway";
+import { TwitterClient } from "../adapters/twitterapi/TwitterClient";
 import { SaveTranslation } from "./SaveTranslation";
 import { PublishTranslations, type PublishResult } from "./PublishTranslations";
 import { SaveRendering } from "./SaveRendering";
@@ -53,10 +56,11 @@ import {
   type TranslateFloorReport,
   type TranslateFloorStatus,
 } from "../status/translateFloor";
-import { xThreadIntake } from "../adapters/content/XContentSource";
+import { xThreadIntake, flattenXThreads } from "../adapters/content/XContentSource";
 import { realSystemdShow } from "../cli/systemdShow";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
 import { contentHash, isStale } from "../domain/publish/syncLedger";
+import { meetsTranslateFloor } from "../domain/translation/translateFloor";
 import type { Translation } from "../domain/translation/models";
 import { publishRowLinks, type PublishLinkConfig } from "../adapters/web/publishLinks";
 import { attachKind } from "../adapters/web/attachKind";
@@ -226,7 +230,13 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   const floorReports = new PgTranslateFloorReport(db);
 
   /**
-   * The read above, degraded to `undefined` rather than allowed to take `/api/status` down with it.
+   * The read above, degraded to `undefined` rather than allowed to take `/api/status` (or
+   * `/api/intake/pending`) down with it.
+   *
+   * Three readers: the status card below, `loadIntakePending`'s translate-floor filter, and the
+   * door gate this file hands it to (`CollectLinkedThread`). All three degrade the same honest way —
+   * the card shows `unknown`, the waiting list filters nothing, and the door refuses nothing, which
+   * is exactly what each did before it learned about the floor.
    *
    * This is not general nervousness about a query — it closes one specific, real window. The hosted
    * deployment is the only reader here that does NOT apply the schema at startup (`serve.ts` calls
@@ -274,6 +284,37 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   const overrideStore = stores.overrideStore;
   const deliveryLedger = stores.deliveryLedger;
   const xArticleLedger = stores.xArticleLedger;
+
+  /**
+   * Whether `POST /api/intake/x` can take a link here — same "computed once, used for both" shape as
+   * `sendsEnabled` and `conversionEnabled` above, for the same reason: it decides both whether the
+   * dep exists (which is what makes the route refuse) and `StatusView.intakeEnabled` (which is what
+   * makes the tab say why before anyone clicks).
+   *
+   * Constructed in its own try/catch, the way `reconcilePublished` and `headroomReader` guard theirs:
+   * `loadConfig()` throws when `TWITTERAPI_IO_KEY` is absent, and an install that never collects —
+   * a review-only hosted deployment — must still boot. A throw on this line would take the whole
+   * dashboard down over a credential only one tab needs.
+   *
+   * `readFloorReport` is handed over because the use case refuses a link the floor rule says no tick
+   * would select, rather than storing one nothing will ever pick up (see its own doc comment; it
+   * asks `meetsTranslateFloor`, the same function `loadIntakePending` above does). That reader,
+   * not systemd, in both deployments: the Vercel function has no systemd to ask, and the report is
+   * the scheduler's own record of the floor it ran with.
+   */
+  let collectLinkedThread: CollectLinkedThread | undefined;
+  try {
+    collectLinkedThread = new CollectLinkedThread(
+      new TwitterApiSourceGateway(new TwitterClient(loadConfig().apiKey)),
+      stores.collectionRepository,
+      translationStore,
+      undefined,
+      readFloorReport,
+    );
+  } catch {
+    collectLinkedThread = undefined;
+  }
+  const intakeEnabled = collectLinkedThread !== undefined;
 
   const storageMode = loadStorageMode();
 
@@ -488,8 +529,65 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
       dbEnv,
       sendsEnabled,
       conversionEnabled,
+      intakeEnabled,
       liveness: liveness === undefined ? undefined : summarizeLiveness(liveness, sendsEnabled),
     };
+  };
+
+  /**
+   * What has been collected but has no translation row yet — the 링크 수집 tab's waiting list.
+   *
+   * The same negative join `translate:prepare` selects with, through the same function. Trimmed to
+   * what the tab renders: an article's source text runs to thousands of characters and the list only
+   * needs to be recognisable.
+   *
+   * **The join alone does not make this list honest** — `applySelector` filters again after
+   * `loadPending`, by the translate floor, so the join's answer was never the tick's answer. The
+   * floor is therefore applied here too, through `meetsTranslateFloor`: literally the function the
+   * tick selects with, so the rule cannot be applied one way here and another way there. Without it
+   * the swept account's pre-floor backlog rendered here looking queued, forever — the same silent
+   * failure this tab exists to remove, aimed at the screen instead of at the pipeline.
+   *
+   * Together with the door gate (`CollectLinkedThread` calls this same function and refuses a link
+   * it answers no to — bar an already-translated one, which is past the question), that makes the
+   * list what it claims to be: every item on it is one a tick will take. **A tick, not necessarily
+   * the next one** — a queue longer than the tick's batch
+   * drains over several, which changes when an item's turn comes and not whether it comes; the floor
+   * is the only filter that drops one for good (see `meetsTranslateFloor`). The list is still
+   * everything pending rather than only what arrived by link (the spec's "대기 목록"), because the
+   * two kinds get identical treatment from here on.
+   *
+   * The floor comes from `readFloorReport` — the scheduler's own record, the same source the door
+   * gate reads and the only one a Vercel function with no systemd can get. **No floor known filters
+   * nothing**, whether nothing has ever been reported or the tick reported running with none: the
+   * first is ignorance and must not be dressed up as a cutoff, and in the second the tick really does
+   * select the whole backlog, so the whole backlog really is waiting.
+   *
+   * What the shared function cannot rule out is the *value* being stale: the report is what the last
+   * tick ran with, so for up to one tick after someone edits `HERALD_TRANSLATE_SINCE` and reloads,
+   * this list is judged against the previous floor. It self-corrects at the next `recordFloor`, the
+   * door gate has the identical window, and there is no fresher source a hosted function can read —
+   * see `PgTranslateFloorReport` for why the value is not copied into a Vercel env var instead.
+   *
+   * Needs no credential, unlike `collectLinkedThread` below: it only reads `stores.collectionRepository`,
+   * `translationStore` and that one report row, all already built above. The scheduled `pnpm collect`
+   * sweep populates `x_threads` independently of whether this deployment can take a link, so a stub
+   * here would report a real, possibly large backlog as an empty list — wrong, not merely disabled.
+   */
+  const loadIntakePending = async (): Promise<IntakePendingItem[]> => {
+    const [threads, translatedIds, floorReport] = await Promise.all([
+      stores.collectionRepository.loadAll(),
+      translationStore.listTranslatedIds(),
+      readFloorReport(),
+    ]);
+    return flattenXThreads(threads, translatedIds)
+      .filter((item) => meetsTranslateFloor(item, floorReport?.floor))
+      .map((item) => ({
+        itemId: item.id,
+        text: item.text.slice(0, 300),
+        createdAt: item.createdAt,
+        kind: item.kind,
+      }));
   };
 
   const publishOne = async (itemId: string, target: string): Promise<PublishResult> => {
@@ -809,6 +907,13 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     saveOutletOverride: new SaveOutletOverride(overrideStore, undefined, stores.lineageStore),
     markDelivery: new MarkDelivery(deliveryLedger),
     prepareConversionRun,
+    // `collectLinkedThread`'s optionality on `ApiDeps` is the same "absent means not built here" shape
+    // `sendToOutlet`/`prepareConversionRun` already use — `undefined` when `TWITTERAPI_IO_KEY` is
+    // absent, per the try/catch above, which is also what `intakeEnabled` reports. `loadIntakePending`
+    // has no such optionality — a deployment with no X credential still reads the queue — and needs no
+    // credential itself, so it is wired for real above rather than stubbed.
+    collectLinkedThread,
+    loadIntakePending,
     formatVariants,
     // Absent (not a function that would just refuse every call) when sends are closed — see
     // `ApiDeps.sendToOutlet`'s own doc comment (`apiHandlers.ts`) for why this mirrors

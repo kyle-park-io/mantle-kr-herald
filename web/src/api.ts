@@ -1,6 +1,7 @@
 import type {
   Translation, PublishResult, Rendering, ConversionType, Channel, AppStatus, PublishStateRow, Emissions,
   BoardView, BoardReply, SendReply, ConvertPrepareReply, FormatReply, HeadroomView,
+  IntakePendingItem, IntakeReply,
 } from "./types";
 
 /**
@@ -215,5 +216,16 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(channels ? { types, channels } : { types }),
+    }),
+
+  /** 링크 수집's waiting list — reads the database only, so it works even where intake is closed. */
+  intakePending: () => json<IntakePendingItem[]>("/api/intake/pending"),
+  /** Takes one x.com link. The reply carries the refreshed pending list, the same round-trip shape
+   *  a send reply carries its rebuilt board in. */
+  intakeSubmit: (url: string) =>
+    json<IntakeReply>("/api/intake/x", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
     }),
 };

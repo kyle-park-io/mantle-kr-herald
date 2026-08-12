@@ -4,6 +4,7 @@ import { createTestDb } from "../support/testDb";
 import { createDeps } from "../../src/app/createDeps";
 import { handleApi, type ApiDeps } from "../../src/adapters/web/apiHandlers";
 import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
+import { PgCollectionRepository } from "../../src/adapters/store/PgCollectionRepository";
 import { PgTranslateFloorReport } from "../../src/adapters/store/PgTranslateFloorReport";
 import { PgCredentialLiveness } from "../../src/adapters/store/PgCredentialLiveness";
 import type { Db } from "../../src/adapters/db/Db";
@@ -50,6 +51,157 @@ describe("createDeps", () => {
     const deps = createDeps({ db, routes: "local" });
     const result = await handleApi(authenticated(deps), "GET", "/api/translations", undefined);
     expect(result.status).toBe(200);
+  });
+
+  /**
+   * `loadIntakePending` reads `x_threads` through `PgCollectionRepository` — the same table
+   * `pnpm collect`'s scheduled sweep writes, independently of whether this deployment can take a
+   * link. A review round on this task flagged that an earlier version of `createDeps.ts` stubbed
+   * this function to `async () => []`, which is a false statement about a real backlog rather than a
+   * disabled capability (`intakeEnabled: false` is the honest way to say "closed"; an empty list
+   * from a real seeded thread is not). These drive the actual `PgCollectionRepository`/
+   * `PgTranslationStore` pair over PGlite, so a regression back to a stub — or to the negative join
+   * silently dropping — fails here.
+   */
+  describe("loadIntakePending", () => {
+    const tweet = {
+      id: "100",
+      conversationId: "100",
+      text: "Mantle ships something",
+      createdAt: "2026-08-12T00:00:00.000Z",
+      url: "https://x.com/someone/status/100",
+      authorUserName: "someone",
+      isReply: false,
+      isQuote: false,
+    };
+
+    it("reports a real collected thread with no translation row yet", async () => {
+      db = await createTestDb();
+      await new PgCollectionRepository(db).upsert([
+        { rootId: "100", tweets: [tweet], status: "active", firstSeenAt: "2026-08-01T00:00:00.000Z" },
+      ]);
+      const deps = createDeps({ db, routes: "local" });
+
+      const pending = await deps.loadIntakePending();
+
+      expect(pending).toEqual([
+        { itemId: "x:100", text: "Mantle ships something", createdAt: "2026-08-12T00:00:00.000Z", kind: "post" },
+      ]);
+    });
+
+    it("excludes an item once it has a translation row — the negative join, not a raw dump", async () => {
+      db = await createTestDb();
+      await new PgCollectionRepository(db).upsert([
+        { rootId: "100", tweets: [tweet], status: "active", firstSeenAt: "2026-08-01T00:00:00.000Z" },
+      ]);
+      const deps = createDeps({ db, routes: "local" });
+      await deps.translationStore.upsert({ itemId: "x:100", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" });
+
+      expect(await deps.loadIntakePending()).toEqual([]);
+    });
+
+    /**
+     * The waiting list's whole promise is "what is here is what a tick will take" — the spec's
+     * "대기 목록이 있어야 하는 이유". The negative join alone does not keep it: `applySelector` filters
+     * again, by the translate floor, and the floor does not gate every item
+     * (`src/domain/translation/translateFloor.ts`). So the list has to ask the same question the tick
+     * asks, through the same function, or it shows the sweep's pre-floor backlog as though it were
+     * queued — the silent-failure class this whole feature exists to close, pointed at the screen
+     * instead of at the pipeline.
+     *
+     * Driven through the real `PgTranslateFloorReport`, because that row is where a Vercel function
+     * with no systemd learns the floor at all.
+     */
+    describe("the translate floor, applied where the tick applies it", () => {
+      const FLOOR = "2026-07-27T14:35:25.000Z"; // the live value, deploy/herald-watch.service
+      const BEFORE = "2026-07-01T00:00:00.000Z";
+
+      /** One-tweet threads varying only the two facts the floor rule reads: the root's date and its
+       *  author. Seeded together in every case below, so each assertion is about which of the three
+       *  survives rather than about a setup difference. */
+      function seed(): Parameters<PgCollectionRepository["upsert"]>[0] {
+        return [
+          { rootId: "1", createdAt: BEFORE, authorUserName: "Mantle_Official" },
+          { rootId: "2", createdAt: BEFORE, authorUserName: "someone_else" },
+          { rootId: "3", createdAt: FLOOR, authorUserName: "Mantle_Official" },
+        ].map(({ rootId, createdAt, authorUserName }) => ({
+          rootId,
+          tweets: [{ ...tweet, id: rootId, conversationId: rootId, createdAt, authorUserName }],
+          status: "active" as const,
+          firstSeenAt: "2026-08-01T00:00:00.000Z",
+        }));
+      }
+
+      const listed = async (d: Db) => (await createDeps({ db: d, routes: "local" }).loadIntakePending()).map((p) => p.itemId);
+
+      it("drops the swept account's pre-floor backlog, and keeps the hand-picked post beside it", async () => {
+        db = await createTestDb();
+        await new PgCollectionRepository(db).upsert(seed());
+        await new PgTranslateFloorReport(db).write({ floor: FLOOR, at: "2026-08-12T04:17:09.000Z" });
+
+        // `x:1` is what the tick will never select — nothing distinguishes it from swept backlog, so
+        // showing it as waiting promises a translation that is not coming. `x:2` is below the floor
+        // too and stays: nothing but 링크 수집 puts another account's post in `x_threads`, so it was
+        // hand-picked and the floor was never about it. `x:3` sits exactly on the floor, which `>=`
+        // includes.
+        expect(await listed(db)).toEqual(["x:2", "x:3"]);
+      });
+
+      it("filters nothing when the scheduler has never reported a floor", async () => {
+        db = await createTestDb();
+        await new PgCollectionRepository(db).upsert(seed());
+
+        // No report at all: a database predating the scheduler's first tick, or a local install with
+        // no scheduler. Inventing a floor here would hide real rows behind a guess — the same refusal
+        // `CollectLinkedThread`'s door gate makes.
+        expect(await listed(db)).toEqual(["x:1", "x:2", "x:3"]);
+      });
+
+      it("filters nothing when the scheduler reported running with no floor", async () => {
+        db = await createTestDb();
+        await new PgCollectionRepository(db).upsert(seed());
+        await new PgTranslateFloorReport(db).write({ at: "2026-08-12T04:17:09.000Z" });
+
+        // The alarming state, and the list must reflect it rather than smooth it over: a tick with no
+        // floor really does select the whole backlog, so the whole backlog really is waiting.
+        expect(await listed(db)).toEqual(["x:1", "x:2", "x:3"]);
+      });
+    });
+  });
+
+  /**
+   * The credential guard Task 3 wires: `intakeEnabled` and `collectLinkedThread` are computed once
+   * (`createDeps.ts`, the block above `storageMode`) and must agree, in both directions. The
+   * dangerous half is the absent-key case — `loadConfig()` throws, and `createDeps`'s own comment
+   * insists that throw must not escape, because a review-only hosted deployment with no
+   * `TWITTERAPI_IO_KEY` still has to boot. This pins that it does not throw, and that both halves
+   * land on the same answer either way, rather than trusting the try/catch by inspection.
+   */
+  describe("intakeEnabled", () => {
+    let savedKey: string | undefined;
+    beforeEach(() => {
+      savedKey = process.env.TWITTERAPI_IO_KEY;
+    });
+    afterEach(() => {
+      if (savedKey === undefined) delete process.env.TWITTERAPI_IO_KEY;
+      else process.env.TWITTERAPI_IO_KEY = savedKey;
+    });
+
+    it("boots without throwing and reports the capability closed when the key is absent", async () => {
+      delete process.env.TWITTERAPI_IO_KEY;
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      expect(deps.collectLinkedThread).toBeUndefined();
+      expect((await deps.loadStatus()).intakeEnabled).toBe(false);
+    });
+
+    it("builds the dep and reports the capability open when the key is present", async () => {
+      process.env.TWITTERAPI_IO_KEY = "test-only-key";
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      expect(deps.collectLinkedThread).toBeDefined();
+      expect((await deps.loadStatus()).intakeEnabled).toBe(true);
+    });
   });
 
   /**

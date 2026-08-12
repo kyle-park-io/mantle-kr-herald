@@ -1,0 +1,368 @@
+# 링크 수집 — 타임라인이 물어다 주는 것 말고, 우리가 고른 글
+
+지금 파이프라인에 글이 들어오는 길은 하나입니다. `herald-watch`가 두 시간마다 `pnpm collect`를
+돌려 `Mantle_Official` 타임라인을 훑고, 새 스레드를 `x_threads`에 넣습니다. 소스 계정은
+`src/cli/collect.ts:15`에 문자열 리터럴로 박혀 있습니다 — 환경변수도, 설정 파일도 없습니다.
+
+그래서 "이 글도 우리가 번역해서 내보내면 좋겠는데"라고 판단한 글이 그 계정 바깥에 있으면, 지금은
+파이프라인에 넣을 방법이 없습니다. 터미널을 열어도 없습니다 — `pnpm collect <handle>`은 그 계정
+타임라인을 통째로 훑지, 글 하나를 집어 오지 않습니다.
+
+이 문서는 대시보드에 세 번째 탭을 붙여, x.com 링크 하나를 붙여넣으면 그 글이 **타임라인이 물어다
+준 글과 구별 없이** 같은 레일에 오르게 합니다.
+
+## 범위
+
+- 링크 하나 → `x_threads` 행 하나. 여기서 끝납니다.
+- 그 뒤는 지금과 완전히 같습니다. `herald-watch`(2시간마다 `*:17`)가 `translate:prepare`로 번역
+  초안을 만들고, 1차 검수에 뜨고, 승인하면 `herald-convert`(30분마다 `*:07,37`)가 채널 문구를
+  만들고, 2차 검수에 뜹니다. 사람 검수 게이트 두 개는 그대로입니다.
+- 로컬(`pnpm serve`)과 호스팅(Vercel) 양쪽에서 동작합니다.
+
+## 부품은 이미 다 있다
+
+새로 만드는 건 그 부품들을 잇는 유스케이스 하나뿐입니다.
+
+| 필요한 것 | 이미 있는 것 |
+|---|---|
+| URL → 트윗 id | `parsePostUrl` (`src/domain/publish/xReconcile.ts:183`) |
+| id → 스레드 전체 | `SourceGateway.fetchThread` (`src/adapters/twitterapi/TwitterApiSourceGateway.ts:88`) |
+| 아티클 본문 | `SourceGateway.fetchArticle` (`:118`) |
+| 트윗 배열 → 스레드 | `assembleThreads` (`src/domain/threadAssembler.ts:7`) |
+| 저장 (재수집 안전) | `CollectionRepository.upsert` — `on conflict (root_id) do update` (`src/adapters/store/PgCollectionRepository.ts:107`) |
+
+`fetchThread`는 이미 `pnpm x:link`가 실전에서 쓰고 있습니다(`src/cli/x-link.ts:84`). 검증되지 않은
+경로는 없습니다.
+
+## 워터마크를 건드리지 않는다
+
+`pnpm collect`는 "어디까지 읽었나"를 `output/x/state.json`에 들고 돕니다
+(`src/cli/collect.ts:42`, `LocalJsonStore(paths.xDir)`). 링크 수집이 이걸 앞으로 밀면 정기 수집이
+그 사이의 글을 영영 건너뜁니다.
+
+밀 이유가 없습니다. 워터마크는 "타임라인을 어디까지 훑었나"를 뜻하는데, 링크 수집은 타임라인을
+훑지 않습니다. `CollectAuthoredContent`도 `--since`/`--limit`가 붙은 adhoc 실행이면 워터마크
+전진을 통째로 건너뜁니다(`src/app/CollectAuthoredContent.ts:74-79`) — 같은 판단입니다.
+
+런 원장(`output/x/runs.json`)도 마찬가지로 안 씁니다. 이 둘을 안 건드리는 덕에 **링크 수집 경로는
+파일시스템을 전혀 만지지 않고**, 그래서 읽기 전용 FS인 Vercel 함수 안에서 그대로 돕니다. 이게
+"대시보드가 직접 가져온다"를 성립시키는 조건입니다.
+
+## 유스케이스 — `src/app/CollectLinkedThread.ts` (신규)
+
+의존은 `SourceGateway`, `CollectionRepository`, `TranslationStore` 셋입니다 —
+`PrepareTranslations`(`src/app/PrepareTranslations.ts:33`)가 쓰는 것과 같은 조합이고, 같은
+이유입니다. 셋째는 `listTranslatedIds()`(`src/ports/TranslationStore.ts:6`) 하나만 쓰며, "이미
+번역됨"과 "이미 대기 중"을 가르는 데만 필요합니다. 단위 테스트는 가짜 셋으로 끝납니다.
+
+```
+run(url):
+  parsed = parsePostUrl(url)                    → 없으면 거절: bad-url
+  tweets = gateway.fetchThread(parsed.rootId)   → 비면 거절: not-found
+  아티클인데 blocks 없으면 gateway.fetchArticle(id)로 채움
+  thread = assembleThreads(tweets) 중 rootId가 parsed.rootId인 것
+                                                → 없으면 거절: not-found
+  첫 트윗이 isCommenterReply면 거절: reply
+  링크가 가리킨 트윗이 isCommenterReply면 거절: linked-reply
+  itemId = `x:${parsed.rootId}`
+  이미 있었나 = repo.loadAll()에 rootId가 있나        (upsert 전에 읽음)
+  이미 번역됐나 = translationStore.listTranslatedIds()에 itemId가 있나
+  repo.upsert([thread])                          ← 어느 경우에도 실행: 본문·미디어 갱신
+  → { itemId, tweets: n, outcome }
+```
+
+`outcome`이 `already-*`여도 `upsert`는 그대로 돕니다. 재수집은 안전하고
+(`PgCollectionRepository.ts:107`의 `on conflict do update`), 아티클 본문은 `mergeTweet`
+(`:41-45`)이 지켜 주므로, 다시 던진 링크가 그 사이 늘어난 스레드 꼬리를 데려옵니다.
+
+작성자 필터는 넣지 않습니다. `flattenXThreads`(`src/adapters/content/XContentSource.ts:116-131`)에
+작성자 조건이 없어서, 어느 계정 글이든 그대로 파이프라인을 탑니다 — 이 기능이 원하는 동작 그대로입니다.
+작성자를 **읽기는** 합니다. 무엇을 거를지가 아니라 번역 기준 시각을 누구에게 적용할지를 정하는 데
+쓰며, 그 이유는 아래 "번역 기준 시각과의 관계"에 있습니다.
+
+### `isCommenterReply`를 입구에서 거절하는 이유
+
+`flattenXThreads:128`은 첫 트윗이 `@`로 시작하는 답글인 스레드를 **말없이 버립니다.** 그대로 두면
+사용자는 "수집됨"을 보고, 두 시간을 기다리고, 1차 검수를 열고, 거기 없는 걸 발견합니다. 수집은
+정말 성공했으므로 어디에도 오류가 남지 않습니다.
+
+그래서 저장 직전에 같은 술어로 검사해 입구에서 거절합니다. 술어는 이미
+`isCommenterReply`(`XContentSource.ts:37`)로 export돼 있으므로 규칙을 복사하지 않고 그것을
+가져다 씁니다 — 복사본은 원본과 갈라지고, 갈라지면 화면이 아무 코드도 동의하지 않는 판정을
+내놓습니다.
+
+**같은 검사를 링크가 가리킨 트윗에도 겁니다.** 스레드를 "포함"으로 찾게 된 뒤로(위 pseudo-code),
+남이 스레드에 단 답글의 주소도 그 스레드로 해석됩니다. 그런데 `flattenXThreads:131`은 중첩된
+답글을 항목 본문에서 **빼므로**, 그대로 받으면 사용자가 가리킨 바로 그 트윗이 빠진 스레드를 넣고
+"수집됐습니다"라 답하게 됩니다 — 화면에는 아무 표시도 없이. 첫 트윗 검사와 같은 부류이고 같은
+술어입니다.
+
+문구는 나눕니다. 첫 트윗이 답글인 경우는 스레드가 통째로 버려지는 것이고, 이쪽은 스레드는
+멀쩡한데 **가리킨 트윗만** 빠지는 것이라 사용자가 할 일이 다릅니다(스레드 본문 글의 주소로 다시
+넣으면 됩니다). 게다가 기존 문구의 "다른 대화에 단 답글"은 이 경우 사실이 아닙니다 — 그 답글은
+바로 이 대화에 달려 있습니다.
+
+## 번역 기준 시각(`HERALD_TRANSLATE_SINCE`)과의 관계
+
+**이 절은 최초 설계에 없었습니다.** 전체 리뷰가 찾아낸 결함을 고치면서 추가했습니다.
+
+결함은 정확히 위 `isCommenterReply` 절이 없애려던 그 부류였습니다. 사실 셋:
+
+1. `deploy/herald-watch.service:94` — `HERALD_TRANSLATE_SINCE=2026-07-27T14:35:25.000Z`
+2. `PrepareTranslations.applySelector`(`src/app/PrepareTranslations.ts:64-66`) — `loadPending`이
+   돌려준 뒤 `result.filter((i) => i.createdAt >= since)`
+3. `flattenXThreads`(`XContentSource.ts:146`) — `createdAt`은 **글이 올라온 날짜**이지 수집한
+   날짜가 아님
+
+그래서 기준 시각보다 오래된 글의 링크를 넣으면 라우트는 `collected`라 답하고, 화면은 초안이
+만들어진다고 적고, 대기 목록에 뜨고, 틱은 걸러내고, 아무 데도 오류가 남지 않았습니다.
+
+### 규칙 — 기준 시각은 정기 수집 계정에만 건다
+
+기준 시각이 있는 이유는 **정기 수집이 끌어온 과거 타임라인 전체**가 번역으로 쏟아지는 걸 막기
+위해서입니다. 손으로 고른 링크 한 개는 그 위험이 아닙니다. 그래서:
+
+- 정기 수집이 훑는 계정(`Mantle_Official`, `src/cli/collect.ts:15`)의 글 → 기준 시각 적용
+- 그 외 계정의 글 → 기준 시각 무관하게 진행
+
+### 왜 새 컬럼이 필요 없나
+
+"링크로 들어온 항목"에 표식을 다는 대신 **계정을 표식으로 씁니다.** 계정으로 갈라도 같은 답이
+나오기 때문입니다:
+
+- `x_threads`에 자동으로 쌓이는 계정은 `Mantle_Official` 하나뿐입니다. `WatchTick`은 `collect`를
+  인자 없이 돌리고(`WatchTick.ts:181`), `collect.ts:15`의 기본값이 그 계정입니다.
+- 한국 계정 `@0xMantleKR`은 여기 안 들어옵니다. `collect-reference.ts:37`이 `paths.referenceDir`
+  라는 **별도 스토어**에 씁니다 — 번역 대상이 아니라 대조용 코퍼스입니다.
+- 따라서 `x_threads`에 있는 **다른 계정 글은 링크 수집으로 들어온 것일 수밖에 없습니다.**
+
+읽을 값도 이미 있습니다 — `SourceTweet.authorUserName`(`src/domain/models.ts:64`)은 모든 트윗에
+붙어 있는 필수 필드입니다. 마이그레이션도, 새 컬럼도, `ContentItem`을 만드는 쪽 말고는 손댈 곳도
+없습니다.
+
+계정을 못 읽는 항목은 기준 시각을 **그대로 받습니다.** 안전한 쪽이 그쪽입니다 — 판정을 못 하는
+경우에 문을 열어 주면 과거 백로그가 새는 반면, 닫아 두면 최악이 오늘과 같습니다.
+
+### 그래도 남는 한 경우는 문 앞에서 거절한다
+
+`Mantle_Official`의 기준 시각 이전 글은 위 규칙에서도 여전히 번역되지 않습니다. 표식이 없으니
+그 글이 링크로 들어왔는지 정기 수집으로 들어왔는지 구별할 방법이 없고, 구별 없이 문을 열면 과거
+타임라인 전체가 같이 열립니다.
+
+그 경우는 **수집하지 않고 입구에서 거절합니다.** 기준 날짜를 문구에 적어, 정말 그 글이 필요하면
+무엇을 바꿔야 하는지(`HERALD_TRANSLATE_SINCE`) 화면에서 알 수 있게 합니다. `isCommenterReply`와
+같은 판단이고 같은 이유입니다 — 조용히 실패하는 길을 남기지 않습니다.
+
+거절하는 조건은 "`Mantle_Official`인가"가 아니라 **아래 함수가 아니라고 답하는가**입니다. 바로 위
+문단대로 계정을 못 읽는 항목도 기준 시각을 그대로 받으므로, 계정만 보고 판단하면 작성자 없이 온
+기준 시각 이전 글을 받아 놓고 어느 틱도 집어가지 않는 상태로 남깁니다 — 이 절이 없애려던 바로 그
+실패입니다. 실제로 그렇게 갈라져 있었고, 아래 "규칙이 서야 하는 곳"에 입구가 빠져 있던 것이
+원인이었습니다.
+
+기준 시각은 `readFloorReport()`(`createDeps.ts:248`)로 읽습니다. 스케줄러가 자기가 실제로 쓴 값을
+Postgres에 적어 두므로, systemd를 못 보는 Vercel 함수에서도 같은 답이 나옵니다.
+
+### 규칙이 서야 하는 곳은 넷이다 — 그래서 함수 하나다
+
+규칙을 거는 곳은 넷입니다.
+
+1. **틱의 선별** — `PrepareTranslations.applySelector`. 실제로 집어가는 쪽입니다.
+2. **대기 목록** — `createDeps.loadIntakePending`. 그 틱이 무엇을 집어갈지 화면에 적습니다.
+3. **집계** — `collectedScope`(`src/status/translateFloor.ts`). 수집 총계 중 스케줄러가 닿을 수
+   있는 것이 몇 건인지 셉니다. `pnpm status`의 Collected 줄과 대시보드 수집 카드가 **둘 다** 이
+   숫자로 그려집니다.
+4. **입구** — `CollectLinkedThread.refuseIfBelowFloor`(위 "그래도 남는 한 경우"). 어느 틱도 안
+   집어갈 것을 아예 안 받습니다.
+
+한 곳에만 걸면 화면과 틱이 서로 다른 집합을 말하게 되는데, 그 어긋남은 눈에 띄지 않습니다 —
+목록에 남은 항목은 영영 번역되지 않고, 집계는 틱이 집어갈 항목을 "영영 닿을 수 없음"으로 세지만,
+어디에도 오류가 남지 않습니다. 이 문서가 처음부터 없애려던 그 부류입니다.
+
+**세 번째는 나중에 붙었고, 어떻게 놓쳤는지가 요점입니다.** `collectedScope`는 `createdAt >= floor`를
+직접 비교하면서 주석에는 "`applySelector`가 거는 것과 **동일한 식**"이라고 적어 두고 있었습니다.
+위 규칙이 생긴 순간 그 문장은 거짓이 됐고, 거짓이 된 것은 주석만이 아니라 **숫자**였습니다 —
+손으로 고른 기준 시각 이전 링크를 두 화면이 "하한 아래"로, 즉 스케줄러가 영영 못 집어가는 것으로
+셌습니다. 규칙을 아는 곳이 둘이고 모르는 곳이 하나였던 게 아니라, **규칙이 한 군데 더 적혀
+있었다는 것**이 문제였습니다. 그리고 그 주석이 "이미 확인했다"고 말하고 있었기 때문에 리뷰를
+오래 통과했습니다.
+
+**네 번째는 같은 일이 한 번 더 일어난 것입니다.** 입구는 `isSweptAccount(root.authorUserName)`을
+직접 물으면서 주석에는 "`applySelector`는 정기 수집 계정에만, 그 외에는 아무에게도 기준 시각을
+걸지 않는다"고 적어 두고 있었습니다. 그 문장이 빠뜨린 것이 하나 있었습니다 — 작성자를 못 읽는
+항목입니다. `isSweptAccount("")`는 `false`지만 규칙은 그 경우 기준 시각을 **그대로 겁니다**(위
+"왜 새 컬럼이 필요 없나"). 그리고 `""`는 가정이 아니라 실제 값입니다:
+`schemas.ts:198`이 `t.author?.userName ?? ""`이고, 같은 파일 `:77`의 주석이 라이브 데이터가
+작성자를 빠뜨리는 경우가 있다고 적어 두고 있습니다. 그래서 작성자 없이 온 기준 시각 이전 링크는
+`collected`로 답해지고, 대기 목록에서 걸러지고, 어느 틱도 집어가지 않았습니다 — 이 문서가 없애려던
+그 실패가, 규칙이 가장 조심하라고 지목한 바로 그 입력을 통해 되살아난 것입니다.
+
+그래서 규칙은 **함수 하나**입니다 — `meetsTranslateFloor(item, floor)`
+(`src/domain/translation/translateFloor.ts`). 네 곳이 그것을 부르므로 서로 다른 판정을 내릴 수가
+없습니다. 규칙을 복사해 여러 벌 두는 것과는 다릅니다: 복사본은 `isCommenterReply`를 복사하지 않고
+가져다 쓰는 것과 같은 이유로 갈라집니다.
+
+함수는 "이 항목을 틱이 집어가는가"라는 **질문 전체**를 답합니다. 술어 반쪽만 돌려주고 날짜 비교는
+부르는 쪽에 맡기지 않습니다 — 반쪽이면 네 곳이 다르게 조합할 수 있고, 함수 하나면 그럴 수가
+없습니다. 도메인 코드라 파일시스템도 Node 내장 모듈도 건드리지 않으므로 읽기 전용 Vercel 함수도
+그대로 import합니다. 세 번째 호출자인 `src/status/translateFloor.ts`도 그 함수 안에 있으므로 이
+import는 호스팅 번들을 그대로 둡니다. 네 번째 호출자인 `CollectLinkedThread`도 이미 그 함수 안에서
+도는 코드이고, 이 import가 끌어오는 것은 같은 도메인 모듈 하나뿐이므로 "링크 수집 경로는
+파일시스템을 안 만진다"는 조건은 그대로입니다. 이름이 겹치는 `src/status/translateFloor.ts`는
+기준 시각을 **알아내는** 쪽이고, 이 모듈은 알아낸 값으로 **무엇을 하는지**입니다.
+
+입구만 한 가지가 다릅니다: 거절 문구가 기준 날짜를 인용하므로 기준 시각이 `undefined`인 경우를
+함수를 부르기 **전에** 먼저 돌려보냅니다. 판정이 갈리는 것이 아니라 — `meetsTranslateFloor`도
+`undefined`에는 `true`를 답합니다 — 적을 날짜가 없을 뿐입니다.
+
+인자는 `ContentItem`이 아니라 `TranslateFloorSubject`(`{ createdAt, author? }`)입니다 — 규칙이
+읽는 두 필드뿐입니다. 앞의 두 곳은 `ContentItem`을 그대로 넘기고(구조적으로 만족합니다),
+`collectedScope`는 읽지도 않는 `id`/`source`/`text`를 부르는 쪽마다 지어내지 않아도 됩니다.
+타입이 곧 규칙의 사정거리이기도 합니다: 항목의 다른 무엇도 답을 바꾸지 못합니다.
+
+기준 시각을 **모를 때는 아무것도 거르지 않습니다** — 보고가 아예 없든, 틱이 기준 시각 없이
+돌았다고 보고했든 같습니다. 앞은 모른다는 뜻이지 하한이 없다는 뜻이 아니고, 뒤는 정말로 틱이
+백로그 전체를 집어간다는 뜻이라 목록도 전체를 보여 주는 것이 맞습니다. 입구 거절이 기준 시각을
+지어내지 않는 것과 같은 규칙입니다.
+
+## 라우트 — `/api/intake/*`
+
+라우트는 둘입니다: 넣는 `POST /api/intake/x`와, 대기 목록을 읽는 `GET /api/intake/pending`
+(아래 "대기 목록" 참고). 둘 다 `handleApi`(`src/adapters/web/apiHandlers.ts:261`) 안에 넣습니다. 라우트 테이블이 하나뿐이고
+Vercel 엔트리(`src/vercel/entry.ts:29-31`)가 이걸 import로 재사용하므로, 한 번 추가하면 양쪽에
+동시에 삽니다. `vercel.json:11-16`의 `/api/(.*)` 리라이트도 그대로 걸립니다.
+
+세션 게이트는 `:278`의 선검사(`if (!isLogin && !deps.session) return 401`)가 자동으로 덮습니다.
+
+요청 `{ url: string }`. 응답 `{ itemId, outcome, tweets }`, `outcome`은 셋 중 하나:
+
+| `outcome` | 뜻 |
+|---|---|
+| `collected` | 새로 들어왔습니다 |
+| `already-pending` | 이미 수집됐고 아직 번역 안 됐습니다 |
+| `already-translated` | 이미 번역돼 1차 검수에 있습니다 |
+
+거절은 400 + 메시지입니다(`refuse()` 관례, `apiHandlers.ts:612`).
+
+### capability 게이트
+
+`TWITTERAPI_IO_KEY`가 없는 배포에서는 `loadConfig()`(`src/config.ts:11`)가 던집니다. 이게
+`createDeps` 전체를 무너뜨리면 안 됩니다.
+
+`reconcilePublished`(`createDeps.ts:627-643`)와 `headroomReader`가 쓰는 모양을 그대로 따릅니다 —
+게이트웨이 생성을 자체 try/catch로 감싸고, 실패하면 `collectLinkedThread` dep을 **아예 넣지
+않습니다.** 라우트는 `if (!deps.collectLinkedThread)`로 먼저 걸러 400을 답합니다
+(`sendToOutlet`의 `:640`과 같은 모양).
+
+같은 불리언을 `StatusView.intakeEnabled`로 실어 보냅니다(`apiHandlers.ts:66`의 `sendsEnabled`
+옆, `web/src/types.ts:307` 옆). `sendsEnabled`/`conversionEnabled`가 그렇게 하는 이유와 같습니다:
+**버튼과 라우트가 어긋날 수 없게** 하나의 값에서 둘 다 끌어옵니다.
+
+## 화면 — `#intake` 탭 "링크 수집"
+
+`web/src/components/IntakeView.tsx` (신규). `RenderingsView`의 prop 모양(`onDirtyChange`,
+`authEpoch`)을 따릅니다.
+
+- URL 입력창 + `[넣기]`
+- 결과 한 줄 — 위 `outcome` 또는 거절 문구
+- **대기 목록** — 수집됐지만 아직 번역 초안이 없는 항목들 중 틱이 집어갈 것
+
+### 대기 목록이 있어야 하는 이유
+
+링크를 넣은 항목은 번역 행이 생기기 전까지 `GET /api/translations`에 **잡히지 않습니다.**
+1차 검수 목록은 `translations` 테이블에서 나오고, 그 행은 `translate:save`가 씁니다. 즉 제출
+직후 1차 검수를 열면 아무것도 없고, 최대 두 시간 뒤에야 나타납니다.
+
+대기 목록이 없으면 이 기능은 "넣었는데 사라짐"으로 읽힙니다. 목록은 이미 계산되고 있는 것을
+보여 줍니다 — `PgXContentSource.loadPending`(`src/adapters/store/PgContentSource.ts:32`)이
+`translations`에 없는 `x_threads` 행을 정확히 그렇게 고르고, 거기에 틱이 거는 것과 **같은**
+기준 시각 규칙을 겁니다(위 "규칙이 서야 하는 곳은 넷이다"). 다음 틱 시각(`*:17`)도 같이
+적어, 기다리는 시간이 고장이 아니라 일정이라는 걸 화면에서 알 수 있게 합니다.
+
+그래서 이 목록은 "틱이 집어갈 것"과 같습니다. 부등호 방향이든 계정 판정이든 두 곳이 다르게 정할
+여지가 없다는 뜻이며, 그것이 성립하는 이유는 규칙이 두 곳에 각각 적혀 있어서가 아니라
+`meetsTranslateFloor` **함수 하나**를 둘 다 부르기 때문입니다.
+
+"다음 틱"이 아니라 "틱"인 것은 정확히 한 가지 이유 때문입니다 — 한 틱이 가져가는 수는
+`--limit`(기본 `DEFAULT_WATCH_BATCH`)로 묶여 있고, 항목은 저장된 순서대로 나오며 새 항목은 뒤에
+붙습니다. 즉 줄이 배치보다 길면 **몇 틱에 나눠** 빠질 뿐, 목록에 남은 것이 언젠가 처리된다는
+사실은 달라지지 않습니다. 항목을 **영영** 빼는 필터는 기준 시각 하나뿐이고, 그래서 이 규칙 하나만
+걸면 목록이 정직해집니다.
+
+`GET /api/intake/pending`이 이걸 답합니다. 항목당 `{ itemId, text, createdAt, kind }`만 — 즉
+`ContentItem`에서 화면에 필요한 것만 추려 보냅니다. `POST /api/intake/x`의 응답에도 갱신된 같은
+목록을 실어, 제출 직후 화면이 한 왕복으로 스스로 맞습니다(`sendToOutlet`이 `board`를 함께
+돌려주는 관례, `apiHandlers.ts:666`). 이 라우트는 X 게이트웨이를 안 쓰므로
+`TWITTERAPI_IO_KEY` 없는 배포에서도 동작합니다 — 키가 없어 넣지는 못해도 밀린 것은 보입니다.
+
+목록은 링크로 들어온 것만이 아니라 대기 중인 전부를 보여 줍니다. 출처로 나누려면 새 컬럼이
+필요한데, 나눠서 얻는 게 없습니다 — 두 종류는 정확히 같은 대우를 받아야 하고, 그게 이 기능의
+요구사항입니다.
+
+### 출처 표시는 하지 않는다
+
+링크로 들어온 글이 다른 계정 것이어도 1차 검수에서 따로 표시하지 않습니다. `itemUrl()`
+(`web/src/types.ts:2`)이 `https://x.com/i/status/<id>`를 만들고 이 형태는 핸들 없이 열리므로,
+검수자는 이미 원문을 눌러 확인할 수 있습니다.
+
+## 거절 문구
+
+조용히 실패하는 길을 남기지 않는 것이 이 표의 목적입니다.
+
+| 상황 | 문구 |
+|---|---|
+| x.com 링크 형식 아님 | `x.com/<계정>/status/<번호> 형태의 주소가 필요합니다` |
+| 스레드 없음(삭제·비공개) | `그 글을 가져올 수 없습니다 — 삭제됐거나 비공개일 수 있습니다` |
+| 첫 트윗이 남의 대화에 단 답글 | `이 글은 다른 대화에 단 답글이라 파이프라인에 올릴 수 없습니다` |
+| 링크가 스레드에 달린 답글을 가리킴 | `이 주소는 스레드 안의 답글이라 번역 대상에서 빠집니다 — 스레드 본문 글 주소를 넣어 주세요` |
+| 정기 수집 계정의 기준 시각 이전 글(작성자를 못 읽은 글도 같음) | `이 글은 번역 기준 시각(<날짜>)보다 오래됐습니다 — HERALD_TRANSLATE_SINCE를 내리지 않는 한 처리되지 않습니다` |
+| 이미 수집됨, 번역 대기 | `이미 들어와 있습니다 — 번역 틱이 돌면 처리됩니다` |
+| 이미 번역됨 | `이미 번역돼 1차 검수에 있습니다` |
+| X API 실패 | 게이트웨이 오류 메시지 그대로 |
+| `TWITTERAPI_IO_KEY` 없는 배포 | `이 배포에는 TWITTERAPI_IO_KEY가 없어 링크 수집을 할 수 없습니다` |
+
+마지막 줄은 버튼 옆 Tip으로도 나갑니다 — 눌러 보고 알아내는 게 아니라 누르기 전에 보입니다.
+
+## 곁다리 — 탭 정의를 한 곳으로
+
+`App.tsx`의 탭 정의가 다섯 곳에 흩어져 있습니다: `Mode` 유니온(`:12`), `modeFromHash`(`:22`),
+`switchMode`의 해시 삼항(`:88`), nav의 인라인 `as const` 배열(`:345`), 2갈래 삼항 렌더(`:468`).
+세 번째 탭은 다섯 곳을 다 고쳐야 하고, `modeFromHash`는 `#renderings`가 아닌 **모든** 해시를
+`translations`로 접기 때문에 한 곳만 빠뜨려도 새 탭이 조용히 1차 검수로 튕깁니다.
+
+`{ id, hash, label }` 테이블 하나로 합치고 나머지 넷을 거기서 끌어 씁니다. 이 작업에 필요한
+만큼이고, `App.tsx`의 다른 것은 건드리지 않습니다.
+
+## 테스트
+
+- `tests/app/collectLinkedThread.test.ts` (신규) — 거절 네 갈래(`bad-url`, 빈 스레드, 루트 불일치,
+  답글) + 게이트웨이가 던질 때 + `outcome` 세 갈래 + 재수집이 아티클 본문을 지우지 않는지
+- `tests/adapters/web/gate.test.ts` — `POST /api/intake/x`는 `writeRoutes`에,
+  `GET /api/intake/pending`은 `readRoutes`에. 세션 검사 없는 라우트는 여기서 터집니다 — 추가는
+  선택이 아닙니다.
+- `tests/adapters/web/apiHandlers.test.ts` — dep 있을 때/없을 때, 거절이 400인지
+- `tests/support/fakeApiDeps.ts` — `collectLinkedThread` 필드
+- `web/tests/IntakeView.test.tsx` (신규) — `stubFetch` 관례, 사용자에게 보이는 한국어로 단언
+- `web/tests/App.test.tsx` — `IntakeView`를 `vi.mock`(마운트 카운터 포함), `stubFetch`에 갈래 추가,
+  `#intake` 해시 전환
+- `tests/web/typeMirror.test.ts` — `StatusView.intakeEnabled` 쌍
+
+## 배포
+
+Vercel 환경변수에 **`TWITTERAPI_IO_KEY`** 를 넣어야 합니다. 안 넣으면 탭은 뜨고 버튼은 비활성이며
+이유가 보이는 상태로 배포됩니다 — 배포가 깨지지는 않습니다.
+
+`.env.example`의 §2 수집 절에 이 변수가 이제 호스팅 배포에도 필요하다는 것을 적습니다.
+
+## 안 하는 것
+
+- **Lark 링크 수집.** 이 탭은 x.com 전용입니다.
+- **여러 링크 한 번에.** 한 번에 하나. 배치가 필요해지면 그때 만듭니다.
+- **링크로 들어온 항목에 표식.** 위 "출처 표시는 하지 않는다" 참고. 번역 기준 시각을 가르는 데도
+  표식은 안 씁니다 — 계정이 그 일을 공짜로 합니다("왜 새 컬럼이 필요 없나").
+- **수집 요청 이력 테이블.** 대기 목록이 이미 "지금 어디까지 왔나"를 답합니다.
+- **`pnpm collect`의 하드코딩된 `Mantle_Official` 손보기.** 정기 수집의 **대상**은 이 작업과
+  무관합니다. 다만 그 값은 이제 번역 기준 시각 규칙도 읽으므로, 하드코딩된 리터럴 하나를 두 곳이
+  나눠 갖지 않도록 상수 하나로 뽑아 `collect.ts`가 그걸 쓰게 합니다. 대상 계정을 바꾸는 것이
+  아니라 같은 값을 두 번 적지 않게 하는 것뿐입니다.
+- **번역을 즉시 돌리기.** `translate:prepare`는 로컬 에이전트가 필요해 호스팅에서 못 돕니다
+  (`docs/ko/capabilities.md` §3). 링크로 들어온 글도 타임라인 글과 같이 틱을 기다립니다.

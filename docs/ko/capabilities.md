@@ -20,7 +20,7 @@ CLI 없이 Vercel에 배포된 대시보드에서도 할 수 있습니다** ([ca
 ## 2. 파이프라인
 
 ```
-[수집]        pnpm collect, pnpm collect-lark
+[수집]        pnpm collect, pnpm collect-lark (또는 대시보드 링크 수집 탭)
    │
    ▼
 [번역]        pnpm translate:prepare → (로컬 에이전트가 워크시트 작성) → pnpm translate:save
@@ -67,7 +67,13 @@ CLI 없이 Vercel에 배포된 대시보드에서도 할 수 있습니다** ([ca
 
 **소스**
 - X (트위터) — 지정한 계정의 게시물을 스레드 단위로 재구성해 수집. **X 아티클은 본문까지 받아
-  마크다운으로 변환합니다** (게시물 본문이 링크 한 줄만 들어오던 문제를 해결) (`pnpm collect`)
+  마크다운으로 변환합니다** (게시물 본문이 링크 한 줄만 들어오던 문제를 해결) (`pnpm collect`).
+  타임라인 수집과 별도로, 대시보드 `링크 수집` 탭에서 x.com 글 주소 하나를 넣으면 그 스레드만
+  골라 같은 파이프라인에 올릴 수 있습니다 — 계정 제한이 없어서, `Mantle_Official` 밖의 어느 계정
+  글이든 그대로 대상이 됩니다(번역 기준 시각 `HERALD_TRANSLATE_SINCE`도 그 계정에만 걸리므로
+  날짜와 무관합니다). `Mantle_Official`의 기준 시각 이전 글만은 넣을 때 거절됩니다 — 자동 번역이
+  집어가지 않을 글을 수집만 해 두지 않기 위해서입니다. 자세한 사용법은
+  [`review.md`](review.md) §6을 보세요.
 - Lark 그룹 채팅 — 설정된 채팅방들의 텍스트/포스트 메시지를 채팅방별로 수집 (`pnpm collect-lark`)
 
 **채널** (§6 채널 포맷 대상, 검수·승인의 단위): `x` · `telegram` · `kakao` · `pr_mail`
@@ -103,6 +109,7 @@ Sheet — `targets`/`history` 탭), `local` 모드에서는 로컬 폴더
 | 접근 | `127.0.0.1`(로컬호스트) | `HERALD_DEPLOYMENT_ORIGIN`에 적은 배포 주소 |
 | 검수·승인 | ○ | ○ |
 | 발송 | ○ | `HERALD_SENDS_ENABLED=true`일 때만 |
+| 링크 수집 | ○ | `TWITTERAPI_IO_KEY`가 있을 때만 ○ (대기 목록은 키 없이도 보임) |
 | 에이전트 준비 단계 | ○ | ✕ (아래 §4) |
 
 호스팅 배포에 필요한 것: `DATABASE_URL`, 대시보드 계정(`HERALD_AUTH_USERNAME` /

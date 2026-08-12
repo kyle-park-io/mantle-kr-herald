@@ -313,6 +313,11 @@ export interface AppStatus {
    */
   conversionEnabled?: boolean;
   /**
+   * `StatusView.intakeEnabled`. Drives whether 링크 수집 offers [넣기] at all. Same optionality as
+   * its neighbours: a status payload predating this field reads as absent, not as false.
+   */
+  intakeEnabled?: boolean;
+  /**
    * How the deployment's credentials answered the last time anything probed them — mirrors the
    * server's `StatusView.liveness` (`apiHandlers.ts`), graded there. Optional for the same reason as
    * `dbEnv` above, and absent also means "nothing has ever looked", which the badge renders as
@@ -650,3 +655,47 @@ export interface HeadroomView {
 
 /** Mirrors `LOW_PUBLISHING_QUOTA` in src/doctor/checks.ts — the CLI and the board agree on "low". */
 export const LOW_PUBLISHING_QUOTA = 3;
+
+/** One row of 링크 수집's waiting list. Mirrors `IntakePendingItem` in `src/adapters/web/apiHandlers.ts`. */
+export interface IntakePendingItem {
+  itemId: string;
+  text: string;
+  createdAt: string;
+  kind?: "post" | "article";
+}
+
+export type IntakeOutcome = "collected" | "already-pending" | "already-translated";
+
+/**
+ * Mirrors `INTAKE_DISABLED_MESSAGE` in `src/adapters/web/apiHandlers.ts` — what `POST
+ * /api/intake/x` answers on a deployment with no `TWITTERAPI_IO_KEY`. `IntakeView` prints it under
+ * the disabled `[넣기]` before anyone clicks, and the route answers it to anyone who posts anyway,
+ * so the two must be one sentence rather than two wordings of one state.
+ * `tests/web/typeMirror.test.ts` keeps them byte-identical.
+ */
+export const INTAKE_DISABLED_MESSAGE = "이 배포에는 TWITTERAPI_IO_KEY가 없어 링크 수집을 할 수 없습니다";
+
+export interface IntakeReply {
+  itemId: string;
+  tweets: number;
+  outcome: IntakeOutcome;
+  pending: IntakePendingItem[];
+}
+
+/**
+ * What each outcome means on screen. `already-*` are not errors — the thread was re-collected either
+ * way — so they read as "where your item already is", never as a rejection.
+ *
+ * "번역 틱이 돌면", not "다음 번역 틱에서": one tick takes at most `DEFAULT_WATCH_BATCH` items and
+ * the queue drains in order, so a queue longer than the batch takes several ticks and the item just
+ * submitted may not be in the first of them. Nothing is stranded — the floor is the only filter that
+ * drops an item for good, and the waiting list already applies it — so the promise still holds; it
+ * is the *which tick* that these sentences were not entitled to name. The wait is still bounded and
+ * still visible: `IntakeView` prints the schedule (`번역 틱은 두 시간마다 매시 17분에 돕니다`) and
+ * the item stays in the waiting list below until a tick takes it.
+ */
+export const INTAKE_OUTCOME_MESSAGE: Record<IntakeOutcome, string> = {
+  collected: "수집됐습니다 — 번역 틱이 돌면 초안이 만들어집니다",
+  "already-pending": "이미 들어와 있습니다 — 번역 틱이 돌면 처리됩니다",
+  "already-translated": "이미 번역돼 1차 검수에 있습니다",
+};

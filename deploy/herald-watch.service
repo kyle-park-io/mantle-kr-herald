@@ -89,6 +89,12 @@ Environment=HERALD_OUTPUT_DIR=%h/.herald/output
 # collect floor and the translate floor remain one decision rather than two that can drift apart —
 # tests/deploy/watchCutoff.test.ts holds them equal.
 #
+# It gates THIS ACCOUNT's posts only. `applySelector` exempts an item whose author is known and is
+# not the account `pnpm collect` sweeps (src/domain/sweptAccount.ts), because nothing but the
+# dashboard's 링크 수집 tab can put another account's thread in `x_threads` and one hand-picked link
+# is not the backlog this floor exists to hold back. A pre-floor post from THIS account is refused
+# when someone tries to link it, rather than collected and then never translated.
+#
 # Raising it further skips content permanently; lowering it re-opens backlog. Either is a content
 # decision, not a deployment one.
 Environment=HERALD_TRANSLATE_SINCE=2026-07-27T14:35:25.000Z

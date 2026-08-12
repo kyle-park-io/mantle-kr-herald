@@ -148,10 +148,13 @@ npx vercel env ls production                            # 이름만 — 값은 �
 | 발송 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID_COMMUNITY`, `TELEGRAM_CHAT_ID_DEV`, `TYPEFULLY_API_KEY`, `TYPEFULLY_SOCIAL_SET_ID` | §6에서 발송을 열 때 실패합니다 |
 | **`X_PREMIUM`** | 계정에 X Premium이 있으면 `true` | ⚠ **호스팅만 280자 제한을 겁니다.** 로컬에서 잘 나가던 롱폼이 첫 발송에서 거부됩니다 — 발행 쿼터가 월 15건이라 디버깅 비용이 실제 쿼터로 나갑니다 |
 | 시트 | `GSHEET_ID`, `GSHEET_QA_ID` | 대시보드 헤더의 시트 링크가 사라집니다 |
+| X 링크 수집 | `TWITTERAPI_IO_KEY` | **`링크 수집` 탭의 `[넣기]`가 잠기고, 이유가 버튼 아래에 그대로 보입니다.** 대기 목록(`GET /api/intake/pending`)은 이 키 없이도 그대로 동작합니다 — 데이터베이스만 읽기 때문입니다. **`HERALD_TRUST_PROXY`와 달리 이 변수는 기동 조건이 아닙니다** — 없어도 함수는 정상적으로 뜨고 나머지 탭도 전부 그대로 동작하며, 잠기는 것은 이 탭 하나뿐입니다 |
 
 **옮기면 안 되는 것:** `GOOGLE_SA_KEY_FILE`은 로컬 파일 경로라 함수에 그 파일이 없습니다.
-수집 전용(`TWITTERAPI_IO_KEY`, `LARK_CHAT_IDS`, `REFERENCE_X_HANDLE`)은 배포본이 수집을 하지
-않으므로 필요 없습니다 — 헤더 배지 호버 카드에 `키 없음`으로 보이는 게 전부입니다.
+나머지 수집 전용(`LARK_CHAT_IDS`, `REFERENCE_X_HANDLE`)은 배포본이 그 값을 쓰는 명령
+(`pnpm collect-lark`, `pnpm tm:measure` 등)을 돌리지 않으므로 필요 없습니다 — 헤더 배지 호버
+카드에 `키 없음`으로 보이는 게 전부입니다. **`TWITTERAPI_IO_KEY`는 더 이상 여기 속하지
+않습니다** — 위 표를 보세요, 링크 수집 탭이 배포본에서 직접 이 키로 twitterapi.io를 부릅니다.
 
 값이 이미 `.env`에 있다면 셸 히스토리에 남기지 않고 파일에서 바로 읽어 넣을 수 있습니다:
 
