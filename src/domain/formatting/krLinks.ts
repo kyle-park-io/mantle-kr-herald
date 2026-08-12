@@ -22,11 +22,41 @@ import { parsePostUrl } from "../publish/xReconcile";
 import { isSweptAccount } from "../sweptAccount";
 
 /**
- * Candidate x.com status URLs in a body of text. Deliberately loose: every match is handed to
- * `parsePostUrl`, which owns what a post URL actually is. Matching here and validating there means
- * this file never carries a second definition of the same shape.
+ * Candidate post status URLs in a body of text. Deliberately loose on scheme and host — wider than
+ * `parsePostUrl` accepts — because the two are answering different questions. `parsePostUrl` proves a
+ * url is byte-for-byte one `postUrl()` (this codebase) wrote, so it only ever accepts `https://x.com`
+ * (`xReconcile.test.ts`'s "fails on a lookalike host" case asserts exactly that, on purpose). This
+ * regex instead has to recognize a link as it arrives in *collected* source tweet text, which is not
+ * under this codebase's control and is documented to vary on both axes it stays loose on:
+ *
+ * - **scheme** — `docs/superpowers/specs/2026-07-28-tco-url-expansion-design.md` records that
+ *   `expandUrls` deliberately leaves `expanded_url`'s scheme exactly as the API returned it,
+ *   including a live-verified `http://x.com/i/article/<id>` (pinned by
+ *   `tests/adapters/twitterapi/expandUrls.test.ts`); rewriting another party's scheme was
+ *   explicitly ruled out of scope there.
+ * - **host** — the same non-normalization policy leaves `twitter.com` links as collected;
+ *   `tests/adapters/schemas.test.ts` (the quoted-tweet dedup cases) already carries a literal
+ *   `https://twitter.com/.../status/999` in tweet text as a legitimate value.
+ *
+ * A candidate that matches here is not yet trusted — see `normalizeToPostUrl`, which is the other
+ * half of this split. Matching loosely here and letting `parsePostUrl` own the strict shape (after
+ * normalization) means this file never carries a second, competing definition of what a post URL is;
+ * it only ever widens the *front door* into that one definition.
  */
-const X_STATUS_URL = /https:\/\/x\.com\/[A-Za-z0-9_]+\/status\/\d+/g;
+const X_STATUS_URL = /https?:\/\/(?:www\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]+\/status\/\d+/gi;
+
+/**
+ * Canonicalize a matched candidate's scheme and host to the exact `https://x.com/` `parsePostUrl`
+ * requires, leaving the handle/status/id segment untouched — deciding whether *that* part is
+ * well-formed is `parsePostUrl`'s job, not this module's. Scheme and host are the only two axes
+ * `X_STATUS_URL` was widened on (see its comment), so they are the only two this rewrites; forking
+ * or loosening `parsePostUrl` itself is deliberately not the fix, since other callers
+ * (`xReconcile.ts`'s settle path) depend on its stricter round-trip guarantee.
+ */
+function normalizeToPostUrl(candidate: string): { handle: string; rootId: string } | undefined {
+  const canonical = candidate.replace(/^https?:\/\/(?:www\.)?(?:x|twitter)\.com\//i, "https://x.com/");
+  return parsePostUrl(canonical);
+}
 
 /** Only `x` copy is a near-verbatim translation, so only it carries the source's inline links. */
 export function needsKrLinkRewrite(type: string): boolean {
@@ -49,7 +79,7 @@ export function linkedSweptItemIds(text: string): string[] {
   const ids: string[] = [];
 
   for (const match of text.matchAll(X_STATUS_URL)) {
-    const parsed = parsePostUrl(match[0]);
+    const parsed = normalizeToPostUrl(match[0]);
     if (parsed === undefined || !isSweptAccount(parsed.handle)) continue;
 
     const itemId = `x:${parsed.rootId}`;
@@ -79,7 +109,7 @@ export function rewriteGlobalLinks(
   const unresolved = new Set<string>();
 
   const rewritten = text.replace(X_STATUS_URL, (match) => {
-    const parsed = parsePostUrl(match);
+    const parsed = normalizeToPostUrl(match);
     if (parsed === undefined || !isSweptAccount(parsed.handle)) return match;
 
     const itemId = `x:${parsed.rootId}`;

@@ -37,6 +37,26 @@ describe("linkedSweptItemIds", () => {
   it("finds nothing in text with no links", () => {
     expect(linkedSweptItemIds("링크 없는 본문")).toEqual([]);
   });
+
+  it("recognizes an http:// link (expandUrls leaves the scheme as the API returned it)", () => {
+    expect(linkedSweptItemIds("http://x.com/Mantle_Official/status/111")).toEqual(["x:111"]);
+  });
+
+  it("recognizes a twitter.com link (expandUrls leaves the host as collected)", () => {
+    expect(linkedSweptItemIds("https://twitter.com/Mantle_Official/status/111")).toEqual(["x:111"]);
+  });
+
+  it("recognizes a www.x.com link", () => {
+    expect(linkedSweptItemIds("https://www.x.com/Mantle_Official/status/111")).toEqual(["x:111"]);
+  });
+
+  it("resolves a mixed-case handle (isSweptAccount is case-insensitive)", () => {
+    expect(linkedSweptItemIds("https://x.com/MANTLE_OFFICIAL/status/111")).toEqual(["x:111"]);
+  });
+
+  it("bounds the match correctly when a url abuts Korean text with no space", () => {
+    expect(linkedSweptItemIds(`먼저보세요${G("111")}번역본문`)).toEqual(["x:111"]);
+  });
 });
 
 describe("rewriteGlobalLinks", () => {
@@ -71,6 +91,33 @@ describe("rewriteGlobalLinks", () => {
   it("leaves surrounding punctuation intact", () => {
     const r = rewriteGlobalLinks(`(${G("111")})`, new Map([["x:111", KR]]));
     expect(r.text).toBe(`(${KR})`);
+  });
+
+  it("rewrites an http:// link", () => {
+    const r = rewriteGlobalLinks("http://x.com/Mantle_Official/status/111", new Map([["x:111", KR]]));
+    expect(r.text).toBe(KR);
+    expect(r.unresolved).toBe(0);
+  });
+
+  it("rewrites a twitter.com link", () => {
+    const r = rewriteGlobalLinks("https://twitter.com/Mantle_Official/status/111", new Map([["x:111", KR]]));
+    expect(r.text).toBe(KR);
+    expect(r.unresolved).toBe(0);
+  });
+
+  it("preserves a trailing slash around the substitution", () => {
+    const r = rewriteGlobalLinks(`${G("111")}/`, new Map([["x:111", KR]]));
+    expect(r.text).toBe(`${KR}/`);
+  });
+
+  it("preserves a trailing query string around the substitution", () => {
+    const r = rewriteGlobalLinks(`${G("111")}?s=20`, new Map([["x:111", KR]]));
+    expect(r.text).toBe(`${KR}?s=20`);
+  });
+
+  it("bounds the match correctly when a url abuts Korean text with no space", () => {
+    const r = rewriteGlobalLinks(`먼저보세요${G("111")}번역본문`, new Map([["x:111", KR]]));
+    expect(r.text).toBe(`먼저보세요${KR}번역본문`);
   });
 });
 
