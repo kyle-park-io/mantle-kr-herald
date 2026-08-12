@@ -289,6 +289,7 @@ describe("startServer", () => {
       loadIntakePending: async () => [],
       loadPublishState: async () => [],
       loadTranslations: async () => [{ itemId: "x:1", source: "x", sourceText: "s", koreanText: "k", status: "translated", translatedAt: "t" }],
+      loadXPostUrl: async () => undefined,
       xMaxWeighted: 280,
       loadQuota: async () => ({ error: "not configured" }),
       probeLiveness: async () => [],
@@ -340,6 +341,7 @@ describe("startServer", () => {
       loadTranslations: async () => {
         throw new Error("boom");
       },
+      loadXPostUrl: async () => undefined,
       xMaxWeighted: 280,
       loadQuota: async () => ({ error: "not configured" }),
       probeLiveness: async () => [],

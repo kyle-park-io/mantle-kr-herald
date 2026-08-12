@@ -59,6 +59,7 @@ import {
 import { xThreadIntake, flattenXThreads } from "../adapters/content/XContentSource";
 import { realSystemdShow } from "../cli/systemdShow";
 import { renderApproved, renderReview } from "../domain/publish/renderers";
+import { resolveXPostUrl } from "../domain/formatting/xLinkCta";
 import { contentHash, isStale } from "../domain/publish/syncLedger";
 import { meetsTranslateFloor } from "../domain/translation/translateFloor";
 import type { Translation } from "../domain/translation/models";
@@ -900,6 +901,19 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     loadStatus,
     loadPublishState,
     loadTranslations,
+    /**
+     * The same two sources `SendChannels` reads, through the same `resolveXPostUrl` — a hand-posted
+     * item carries the url on its translation, a bot-sent one on its `x-post` delivery row. Sharing
+     * the resolver (rather than reading one source here) is what keeps the [복사] preview and the
+     * bot's send from disagreeing about whether the post is up yet.
+     */
+    loadXPostUrl: async (itemId: string) => {
+      const [translations, deliveries] = await Promise.all([translationStore.loadAll(), deliveryLedger.loadAll()]);
+      return resolveXPostUrl(
+        translations.find((t) => t.itemId === itemId),
+        deliveries.filter((d) => d.itemId === itemId),
+      );
+    },
     xMaxWeighted: loadXMaxWeighted(),
     loadBoard,
     // The dashboard is the only writer of overrides, so this is the only place a fork's text can be

@@ -12,6 +12,7 @@ import type { ApproveRendering } from "../../app/ApproveRendering";
 import type { StorageMode } from "../../storage/mode";
 import type { FunnelCounts } from "../../status/pipeline";
 import { emitAll } from "../../domain/formatting/emitters";
+import { needsXLinkCta, xLinkCta, appendXLinkCta, X_URL_PENDING } from "../../domain/formatting/xLinkCta";
 import type { ApiTranslation } from "./attachKind";
 import type { SheetLink, ClientIpConfig } from "../../config";
 import type { BoardView } from "./board";
@@ -152,6 +153,12 @@ export interface ApiDeps {
   loadStatus: () => Promise<StatusView>;
   loadPublishState: () => Promise<PublishStateRow[]>;
   loadTranslations: () => Promise<ApiTranslation[]>;
+  /**
+   * The KR X post url for an item, or undefined before it goes up. Read only by the `/emissions`
+   * routes, which is where a human copies 공지 text for a `delivery: "manual"` room — every
+   * KakaoTalk room and two Telegram rooms. See `src/domain/formatting/xLinkCta.ts`.
+   */
+  loadXPostUrl: (itemId: string) => Promise<string | undefined>;
   xMaxWeighted: number;
   loadBoard: (itemId: string) => Promise<BoardView>;
   saveOutletOverride: SaveOutletOverride;
@@ -278,6 +285,27 @@ type BoardReply = { board: BoardView } & Record<string, unknown>;
 
 async function findById(store: TranslationStore, id: string): Promise<Translation | undefined> {
   return (await store.loadAll()).find((t) => t.itemId === id);
+}
+
+/**
+ * What the room will actually receive — the stored rendering plus the 공지 CTA the send path adds.
+ *
+ * The preview has to agree with `SendChannels` byte for byte: a reviewer approves what this returns,
+ * and for a `delivery: "manual"` room this IS the send path — a human copies it. Both call the same
+ * `xLinkCta`. Unlike the send path, a missing url is not fatal here: at preview time the X post
+ * usually has not gone up yet, which is normal rather than an error, so the slot shows
+ * `X_URL_PENDING` and the [복사] user learns the order they have to work in.
+ */
+async function withXLinkCta(
+  deps: ApiDeps,
+  itemId: string,
+  type: string,
+  channel: Channel,
+  text: string,
+): Promise<string> {
+  if (!needsXLinkCta(type, channel)) return text;
+  const xUrl = (await deps.loadXPostUrl(itemId)) ?? X_URL_PENDING;
+  return appendXLinkCta(text, xLinkCta(channel, xUrl));
 }
 
 /**
@@ -591,7 +619,8 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
           (r) => r.itemId === itemId && r.type === type && r.channel === channel,
         );
         if (!existing) return { status: 404, json: { error: "not found" } };
-        return { status: 200, json: emitAll(existing.text, channel, deps.xMaxWeighted) };
+        const previewText = await withXLinkCta(deps, existing.itemId, existing.type, channel, existing.text);
+        return { status: 200, json: emitAll(previewText, channel, deps.xMaxWeighted) };
       }
 
       // `…/emissions/:outletId` — the spelling *that room* receives. A forked room's copy is its
@@ -604,7 +633,8 @@ export async function handleApi(deps: ApiDeps, method: string, path: string, bod
           .find((g) => g.type === type && g.channel === channel)
           ?.rows.find((r) => r.outletId === segments[6]);
         if (!row) return { status: 404, json: { error: "not found" } };
-        return { status: 200, json: emitAll(row.text, channel, deps.xMaxWeighted) };
+        const previewText = await withXLinkCta(deps, itemId, type, channel, row.text);
+        return { status: 200, json: emitAll(previewText, channel, deps.xMaxWeighted) };
       }
     }
   }

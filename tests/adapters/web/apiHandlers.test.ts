@@ -143,6 +143,9 @@ function makeDeps(
       { itemId: "x:2", status: "approved", target: "local", remoteId: "approved/2026-x2.md", fileName: "2026-x2.md" },
     ],
     loadTranslations: async () => state.list,
+    // Nothing posted to X — the default a 미리보기 test wants unless it is specifically about the CTA,
+    // since that is the state a rendering is in for most of its life (see `xLinkCta.ts`).
+    loadXPostUrl: async () => undefined,
     xMaxWeighted: 280,
     loadBoard: async (itemId: string) => {
       spy.boards.push(itemId);
@@ -513,17 +516,24 @@ describe("handleApi", () => {
   });
 });
 
+/**
+ * `explainer`, not `announcement`, in every fixture below that asserts an exact emitted string.
+ * These tests are about destination spelling and about the route NOT touching the stored text; a
+ * 공지 now has the X-link CTA appended before it is emitted (`xLinkCta.ts`), which would make each
+ * assertion here a statement about the CTA as well. Do not move them back to `announcement` — the
+ * CTA has its own describe block further down, which is where a change to it should fail.
+ */
 describe("GET /api/renderings/:id/:type/:channel/emissions", () => {
   it("returns only the destinations of that rendering's channel", async () => {
-    const deps = makeDeps([], [rnd({ channel: "telegram", type: "announcement", text: "**중요**" })]);
-    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
+    const deps = makeDeps([], [rnd({ channel: "telegram", type: "explainer", text: "**중요**" })]);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/explainer/telegram/emissions", undefined);
     expect(res.status).toBe(200);
     expect(Object.keys(res.json as object)).toEqual(["telegram_paste", "telegram_bot"]);
   });
 
   it("emits each destination's own spelling", async () => {
-    const deps = makeDeps([], [rnd({ channel: "telegram", type: "announcement", text: "**중요**" })]);
-    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
+    const deps = makeDeps([], [rnd({ channel: "telegram", type: "explainer", text: "**중요**" })]);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/explainer/telegram/emissions", undefined);
     const json = res.json as Record<string, { segments: { text: string }[] }>;
     expect(json.telegram_paste.segments[0].text).toBe("중요");
     expect(json.telegram_bot.segments[0].text).toBe("<b>중요</b>");
@@ -536,21 +546,27 @@ describe("GET /api/renderings/:id/:type/:channel/emissions", () => {
   });
 
   it("emits the stored text as-is, without canonicalising on read", async () => {
-    const deps = makeDeps([], [rnd({ channel: "telegram", type: "announcement", text: "  **중요**  " })]);
-    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
+    const deps = makeDeps([], [rnd({ channel: "telegram", type: "explainer", text: "  **중요**  " })]);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/explainer/telegram/emissions", undefined);
     const json = res.json as Record<string, { segments: { text: string }[] }>;
     expect(json.telegram_paste.segments[0].text).toBe("  중요  ");
   });
 });
 
 describe("GET /api/renderings/:id/:type/:channel/emissions/:outletId", () => {
-  /** A board whose forked room carries different copy from the group it hangs under. */
+  /**
+   * A board whose forked room carries different copy from the group it hangs under.
+   *
+   * `explainer` for the same reason the block above uses it: every assertion here is an exact
+   * emitted string, and a 공지 would carry the X-link CTA into all of them. What this block is
+   * about is *which* text a room gets, not what gets appended to it.
+   */
   const boardWithFork = (): BoardView => ({
     itemId: "x:1",
     unconverted: [],
     groups: [
       {
-        type: "announcement",
+        type: "explainer",
         channel: "telegram",
         text: "**그룹**",
         status: "approved",
@@ -570,7 +586,7 @@ describe("GET /api/renderings/:id/:type/:channel/emissions/:outletId", () => {
   it("emits the forked room's own text, not the group's", async () => {
     const deps = makeDeps([]);
     deps.loadBoard = async () => boardWithFork();
-    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions/tg-kol", undefined);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/explainer/telegram/emissions/tg-kol", undefined);
     expect(res.status).toBe(200);
     const json = res.json as Record<string, { segments: { text: string }[] }>;
     expect(json.telegram_paste.segments[0].text).toBe("KOL방 전용");
@@ -580,7 +596,7 @@ describe("GET /api/renderings/:id/:type/:channel/emissions/:outletId", () => {
   it("emits the group text for an unforked room", async () => {
     const deps = makeDeps([]);
     deps.loadBoard = async () => boardWithFork();
-    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions/tg-community", undefined);
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/explainer/telegram/emissions/tg-community", undefined);
     const json = res.json as Record<string, { segments: { text: string }[] }>;
     expect(json.telegram_paste.segments[0].text).toBe("그룹");
   });
@@ -588,7 +604,7 @@ describe("GET /api/renderings/:id/:type/:channel/emissions/:outletId", () => {
   it("404s for a room the board does not row, and for an unknown group", async () => {
     const deps = makeDeps([]);
     deps.loadBoard = async () => boardWithFork();
-    expect((await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions/tg-dev", undefined)).status).toBe(404);
+    expect((await handleApi(deps, "GET", "/api/renderings/x%3A1/explainer/telegram/emissions/tg-dev", undefined)).status).toBe(404);
     expect((await handleApi(deps, "GET", "/api/renderings/x%3A1/casual/telegram/emissions/tg-kol", undefined)).status).toBe(404);
   });
 
@@ -599,8 +615,99 @@ describe("GET /api/renderings/:id/:type/:channel/emissions/:outletId", () => {
       seen.push(id);
       return boardWithFork();
     };
-    await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions/tg-kol", undefined);
+    await handleApi(deps, "GET", "/api/renderings/x%3A1/explainer/telegram/emissions/tg-kol", undefined);
     expect(seen).toEqual(["x:1"]);
+  });
+});
+
+/**
+ * The [복사] preview is not a convenience for a 공지 — for every KakaoTalk room and two of the
+ * Telegram rooms (`delivery: "manual"`, `src/domain/outlet/models.ts`) it IS the send path: a human
+ * copies what this returns and pastes it into the live room. A CTA missing here, or spelled
+ * differently from `SendChannels`, means the copy a room receives depends on who sent it.
+ */
+const X_URL = "https://x.com/0xMantleKR/status/2087418810458382585";
+
+describe("공지 X-link CTA in emissions", () => {
+  it("uses 👉 for a kakao 공지", async () => {
+    const deps = makeDeps([], [rnd({ channel: "kakao", type: "announcement", text: "본문" })]);
+    deps.loadXPostUrl = async () => X_URL;
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/kakao/emissions", undefined);
+    expect(JSON.stringify(res.json)).toContain(`👉 자세한 내용은 X에서 확인하세요 (${X_URL})`);
+  });
+
+  it("uses ➡ for a telegram 공지", async () => {
+    const deps = makeDeps([], [rnd({ channel: "telegram", type: "announcement", text: "본문" })]);
+    deps.loadXPostUrl = async () => X_URL;
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
+    expect(JSON.stringify(res.json)).toContain(`➡ 자세한 내용은 X에서 확인하세요 (${X_URL})`);
+  });
+
+  it("shows a placeholder when the X post is not up yet", async () => {
+    const deps = makeDeps([], [rnd({ channel: "kakao", type: "announcement", text: "본문" })]);
+    deps.loadXPostUrl = async () => undefined;
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/kakao/emissions", undefined);
+    expect(JSON.stringify(res.json)).toContain("X 게시 후 채워짐");
+  });
+
+  it("does not add a CTA to a 해설", async () => {
+    const deps = makeDeps([], [rnd({ channel: "telegram", type: "explainer", text: "본문" })]);
+    deps.loadXPostUrl = async () => X_URL;
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/explainer/telegram/emissions", undefined);
+    expect(JSON.stringify(res.json)).not.toContain("자세한 내용은 X에서 확인하세요");
+  });
+
+  /**
+   * Byte-for-byte agreement with `SendChannels`: one blank line between body and CTA, the CTA last,
+   * and the body untouched. Asserted on the emitted text rather than by `toContain`, so a stray
+   * newline or a CTA landing in front of the body would fail here rather than pass a substring check.
+   */
+  it("appends the CTA after the body, separated by one blank line", async () => {
+    const deps = makeDeps([], [rnd({ channel: "telegram", type: "announcement", text: "본문" })]);
+    deps.loadXPostUrl = async () => X_URL;
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions", undefined);
+    const json = res.json as Record<string, { segments: { text: string }[] }>;
+    expect(json.telegram_paste.segments[0].text).toBe(`본문\n\n➡ 자세한 내용은 X에서 확인하세요 (${X_URL})`);
+  });
+
+  /**
+   * The per-room route carries it too. A forked KOL방 is `delivery: "manual"`, so this is the exact
+   * text a human copies — the route the group-level test above does not cover.
+   */
+  it("carries the CTA onto a forked room's own copy", async () => {
+    const deps = makeDeps([]);
+    deps.loadXPostUrl = async () => X_URL;
+    deps.loadBoard = async () => ({
+      itemId: "x:1",
+      unconverted: [],
+      groups: [
+        {
+          type: "announcement" as const,
+          channel: "telegram" as const,
+          text: "그룹",
+          status: "approved" as const,
+          addableOutletIds: [],
+          rows: [
+            { outletId: "tg-kol", label: "KOL방", delivery: "manual" as const, forked: true, status: "approved" as const, text: "KOL방 전용", siblingIndex: 1, siblingCount: 1 },
+          ],
+        },
+      ],
+    });
+    const res = await handleApi(deps, "GET", "/api/renderings/x%3A1/announcement/telegram/emissions/tg-kol", undefined);
+    const json = res.json as Record<string, { segments: { text: string }[] }>;
+    expect(json.telegram_paste.segments[0].text).toBe(`KOL방 전용\n\n➡ 자세한 내용은 X에서 확인하세요 (${X_URL})`);
+  });
+
+  /** The url is looked up for the item under review, not for whatever the last request asked about. */
+  it("asks for the X post url of the decoded itemId", async () => {
+    const seen: string[] = [];
+    const deps = makeDeps([], [rnd({ itemId: "x:7", channel: "kakao", type: "announcement", text: "본문" })]);
+    deps.loadXPostUrl = async (id: string) => {
+      seen.push(id);
+      return X_URL;
+    };
+    await handleApi(deps, "GET", "/api/renderings/x%3A7/announcement/kakao/emissions", undefined);
+    expect(seen).toEqual(["x:7"]);
   });
 });
 
