@@ -136,7 +136,7 @@ pnpm translate:save --id <itemId> --file <korean.txt> --approve
   "아니오"라고 한 것들(비어 있는 게 정상 시작 상태)
 - `translation/style-guide.md` — 번역 톤·문체 가이드
 - `translation/locale.json` — 로케일 설정
-- `conversion/{x,announcement,explainer,casual,kol,pr}.md` — 타입별 변환 스티어링
+- `conversion/{x,announcement,kakao_notice,explainer,casual,kol,pr}.md` — 타입별 변환 스티어링
 
 이 파일들은 로컬에만 존재하는 팀 자산입니다. 커밋되지 않으니 백업이 필요하면 직접 관리하세요.
 

@@ -73,14 +73,15 @@ pnpm config:init
 > 그 상태를 `warn`으로 잡아 주지만(§3), 팀 파일을 받기 전에 스켈레톤부터 깔아 두면 `config:init`은
 > **이미 있는 파일을 덮어쓰지 않으므로** 나중에 진짜 파일을 풀 때 뭘 덮어써야 하는지 헷갈립니다.
 
-팀 담당자에게 **실제 파일 13개를 받으세요.** 압축해서 전달받아 저장소 루트에 그대로 풉니다.
+팀 담당자에게 **실제 파일 14개를 받으세요.** 압축해서 전달받아 저장소 루트에 그대로 풉니다.
 
 ```
 translation/glossary.json             conversion/x.md
 translation/glossary-dismissed.json   conversion/announcement.md
-translation/style-guide.md            conversion/explainer.md
-translation/locale.json               conversion/casual.md
-translation/tm.json                   conversion/kol.md
+translation/style-guide.md            conversion/kakao_notice.md
+translation/locale.json               conversion/explainer.md
+translation/tm.json                   conversion/casual.md
+                                      conversion/kol.md
                                       conversion/pr.md
                                       conversion/checklist.{x,announcement}.md
 ```
@@ -102,7 +103,7 @@ translation/tm.json                   conversion/kol.md
 ```bash
 pnpm doctor            # Steering config가 ✓ 인지, present but empty 경고가 붙는지
 pnpm glossary          # "glossary: N entries" — N이 두 자리여야 정상. 0이면 스켈레톤입니다.
-wc -l translation/style-guide.md conversion/x.md conversion/announcement.md
+wc -l translation/style-guide.md conversion/x.md conversion/announcement.md conversion/kakao_notice.md
 ```
 
 용어집이 `0 entries`이거나 스타일 가이드가 열 줄 남짓이면 **스켈레톤을 받은 것**입니다. 다시
