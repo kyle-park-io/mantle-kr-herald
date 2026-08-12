@@ -62,7 +62,7 @@ function statusStdout(converted: number, translated = 41): string {
       pipelineStages(
         {
           collected: 128,
-          translations: Array.from({ length: translated }, () => ({ status: "approved" })),
+          translations: Array.from({ length: translated }, (_, i) => ({ itemId: `x:t${i}`, status: "approved" })),
           // Rows, not items: `Converted (variants)`' total is one per (itemId, type), which is also
           // exactly what one `convert:save` adds — see ConvertTick's own comment on why that makes it
           // comparable with the count `convert:prepare` reported.

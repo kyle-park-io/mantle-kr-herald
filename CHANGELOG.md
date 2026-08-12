@@ -507,6 +507,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   else, matching the write-side gate word for word: an item with no translation row is an anomaly
   rather than a finished one, and a `translated` item stays listed because `sendBlock` already
   paints its block as 원문이 1차 승인 상태가 아닙니다 — a message written to be read on this board.
+- **The 변환/렌더 stage counts no longer include a 게시됨 item's rows either — header and `pnpm
+  status` both.** With the renderings route filtered but the funnel not, the dashboard header read
+  `변환 1 · 렌더 1` over an empty 2차 검수 tab, which is the header contradicting the screen under it.
+  This **reverses a decision recorded in `src/status/pipeline.ts`** — "a rendering under a `posted`
+  translation is deliberately NOT discounted anywhere: the X post having gone out by hand says
+  nothing about its 공지 still being owed to Telegram and Kakao." That was true when written and has
+  been false since `FormatVariants` made `posted` terminal: the 공지 cannot be owed to anyone,
+  because `sendBlock` blocks every room on a `posted` item and `pnpm format` refuses to rebuild its
+  cards. Both stages were counting work no operator can do. **Both fan-out stages, not only 렌더** —
+  they branch off the same translation and are frozen by the same rule (`PrepareConversions`
+  converts only `approved`), so discounting one would print `변환 1 · 렌더 0` for an item whose seven
+  cards did go out. 번역 is untouched, because it is the one stage where `posted` is the answer
+  rather than noise (its note already reads `pending · approved · posted`), and so is 발행, which is
+  a record of an upload rather than a queue and hangs off 번역 rather than off these two. The
+  discount **names its own size** — `1 items · approved 0 · 7 on posted items hidden` — since a stage
+  that silently shrinks by 25 items is indistinguishable from one that lost data. One helper feeds
+  `pipelineStages` and `funnelCounts` alike: the CLI learning about `posted` while the header did not
+  is the drift those two were merged into one call to end, and it is what happened here again.
 
 ## [0.5.0] - 2026-08-11
 

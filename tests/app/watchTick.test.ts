@@ -41,7 +41,7 @@ function statusStdout(translated: number): string {
       pipelineStages(
         {
           collected: 128,
-          translations: Array.from({ length: translated }, () => ({ status: "translated" })),
+          translations: Array.from({ length: translated }, (_, i) => ({ itemId: `x:t${i}`, status: "translated" })),
           variants: [],
           renderings: [],
           published: [],
