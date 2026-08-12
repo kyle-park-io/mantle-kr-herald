@@ -15,9 +15,11 @@ export const INTAKE_REPLY = "이 글은 다른 대화에 단 답글이라 파이
 
 /**
  * The one refusal that carries a value, so it is a function where its three neighbours are
- * constants. The floor itself is what the operator has to know: `HERALD_TRANSLATE_SINCE` is named
- * because it is the dial, and the date is echoed exactly as the scheduler reported it so it can be
- * compared with the unit file character for character rather than re-derived from a prettier form.
+ * constants. The floor is what the operator has to know, and `HERALD_TRANSLATE_SINCE` is named
+ * beside it because that is the dial — a refusal that does not say what would change the answer
+ * leaves the reader guessing. The instant goes in as the scheduler reported it (normalised by
+ * `parseTranslateSince` on its side, the same string `pnpm status` prints) rather than reformatted
+ * here: this is the value to compare the unit file against, not a date to read aloud.
  */
 export function intakeBelowFloorMessage(floor: string): string {
   return `이 글은 번역 기준 시각(${floor})보다 오래돼 자동 번역되지 않습니다 — 정말 필요하면 HERALD_TRANSLATE_SINCE를 내려야 합니다`;
