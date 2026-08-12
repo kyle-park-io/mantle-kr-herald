@@ -47,6 +47,18 @@ export class PrepareConversions {
       const since = selector.since;
       selected = selected.filter((t) => (t.approvedAt ?? t.translatedAt) >= since);
     }
+    // Nothing left to convert → not a candidate for a slot, and this line has to come BEFORE the
+    // slice. It is a limit on work, not on rows read: an item still `approved` long after all its
+    // types were converted is finished as far as this use case is concerned, and counting it left
+    // the scheduler's `--limit 1` holding its only slot for an item with no candidate types.
+    //
+    // 2026-08-12: two items approved eight seconds apart. The 06:38 tick converted the first; every
+    // tick from 07:08 to 09:38 then prepared 0 variant(s) — "nothing approved is waiting" — while
+    // the second item, six types unconverted, sat behind it. It only stopped being starved when
+    // reconcile retired BOTH to `posted` at 09:42, by which point it had never reached 2차 검수.
+    // Scoped to `types`, not ALL_TYPES: under `--types x` an item converted for `x` is done for
+    // *this* run, and holding a slot for its other five types would starve the queue the same way.
+    selected = selected.filter((t) => types.some((type) => !convertedKeys.has(`${t.itemId}:${type}`)));
     selected = selected.slice(0, selector.limit ?? DEFAULT_LIMIT);
 
     // Fan out each selected translation to its not-yet-converted types (type-major, so
