@@ -178,7 +178,8 @@ export class CollectLinkedThread {
    * waiting list and never selected — the failure this whole area exists to remove, through the one
    * input it was told to be careful about.
    *
-   * What that function's answer means for the three cases this door sees: a post from another
+   * What that function's answer means for the links this door turns away — it accepts every other
+   * kind, including the ordinary one, a swept-account post at or after the floor: a post from another
    * account proceeds whatever its date, because nothing files another account's thread in
    * `x_threads` on its own (`src/domain/sweptAccount.ts`). A pre-floor post by the swept account
    * does not, because nothing distinguishes it from the swept backlog the floor exists to hold back.

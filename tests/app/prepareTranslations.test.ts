@@ -53,12 +53,13 @@ describe("PrepareTranslations", () => {
    * `since` is the translate floor — `HERALD_TRANSLATE_SINCE` on `herald-watch.service`, handed
    * straight to this selector by every scheduled tick. It exists to stop the *swept timeline's*
    * whole history draining into translation, and one hand-picked link is not that risk, so it gates
-   * the swept account (`SWEPT_ACCOUNT`) and nobody else — see the spec's "번역 기준 시각과의 관계".
+   * the swept account (`SWEPT_ACCOUNT`) — and, conservatively, any item whose author cannot be read
+   * at all. See the spec's "번역 기준 시각과의 관계".
    *
    * This is the half that makes 링크 수집's waiting list honest: without it a linked post older than
    * the floor was collected, listed as waiting, and then silently filtered out here forever.
    */
-  describe("the translate floor applies to the swept account only", () => {
+  describe("the translate floor applies to the swept account, and to an unreadable author", () => {
     const FLOOR = "2026-07-27T14:35:25.000Z"; // the live value, deploy/herald-watch.service
     const BEFORE = "2026-07-01T00:00:00.000Z";
 

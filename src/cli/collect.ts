@@ -14,8 +14,8 @@ import { paths } from "../paths";
 import { SWEPT_ACCOUNT } from "../domain/sweptAccount";
 
 // `SWEPT_ACCOUNT` rather than the literal: the translate floor now asks "is this the account the
-// sweep reads?" (`meetsTranslateFloor`, for the translate tick, the 링크 수집 waiting list and the
-// Collected count alike), and that question has to be about the same account this default names.
+// sweep reads?" (`meetsTranslateFloor`, whose own comment names every caller that asks it), and that
+// question has to be about the same account this default names.
 // Which account is swept is unchanged — only where the name lives.
 const target = process.argv[2]?.startsWith("--") ? SWEPT_ACCOUNT : process.argv[2] ?? SWEPT_ACCOUNT;
 

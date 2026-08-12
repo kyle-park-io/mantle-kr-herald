@@ -223,11 +223,12 @@ export interface CollectedScope {
 /**
  * `items` is every collected item, and what counts as in scope is decided by `meetsTranslateFloor` —
  * literally the function `PrepareTranslations.applySelector` selects with, not a second expression
- * that resembles it. This is the third call site of that one function; the tick and the 링크 수집
- * waiting list are the other two.
+ * that resembles it. That function's own comment names every call site, and names them in one place
+ * on purpose — a count repeated in each caller is a count that goes stale in all but the one being
+ * edited, which is how three separate comments here came to claim a total that was already wrong.
  *
- * It has to be the function and not `createdAt >= floor`, because the floor gates the *swept*
- * account and nobody else: a pre-floor post somebody hand-picked in 링크 수집 is selected, and the
+ * It has to be the function and not `createdAt >= floor`, because the floor no longer gates every
+ * item: a pre-floor post somebody hand-picked in 링크 수집 is selected, and the
  * bare comparison counted it as **permanently** out of the scheduler's reach when a tick will in
  * fact take it. A count that disagrees with the selector is worse than no count — the reader is told
  * the scheduler cannot reach work it is going to do, and nothing anywhere errors.

@@ -233,9 +233,10 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * The read above, degraded to `undefined` rather than allowed to take `/api/status` (or
    * `/api/intake/pending`) down with it.
    *
-   * Two readers: the status card below, and `loadIntakePending`'s translate-floor filter. Both
-   * degrade the same honest way — the card shows `unknown`, and the waiting list filters nothing,
-   * which is exactly what it did before it learned about the floor.
+   * Three readers: the status card below, `loadIntakePending`'s translate-floor filter, and the
+   * door gate this file hands it to (`CollectLinkedThread`). All three degrade the same honest way —
+   * the card shows `unknown`, the waiting list filters nothing, and the door refuses nothing, which
+   * is exactly what each did before it learned about the floor.
    *
    * This is not general nervousness about a query — it closes one specific, real window. The hosted
    * deployment is the only reader here that does NOT apply the schema at startup (`serve.ts` calls
@@ -549,8 +550,8 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    *
    * Together with the door gate (`CollectLinkedThread` calls this same function and refuses a link
    * it answers no to — bar an already-translated one, which is past the question), that makes the
-   * list what it claims to be: every item on it is one a
-   * tick will take. **A tick, not necessarily the next one** — a queue longer than the tick's batch
+   * list what it claims to be: every item on it is one a tick will take. **A tick, not necessarily
+   * the next one** — a queue longer than the tick's batch
    * drains over several, which changes when an item's turn comes and not whether it comes; the floor
    * is the only filter that drops one for good (see `meetsTranslateFloor`). The list is still
    * everything pending rather than only what arrived by link (the spec's "대기 목록"), because the

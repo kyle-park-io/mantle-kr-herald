@@ -247,8 +247,9 @@ describe("collectedScope", () => {
 /**
  * The half of the rule the date comparison alone never had.
  *
- * `applySelector` does not drop everything below the floor — the floor gates the *swept* account and
- * nobody else (`meetsTranslateFloor`), because a post somebody hand-picked in 링크 수집 is not the
+ * `applySelector` does not drop everything below the floor — the floor gates the *swept* account,
+ * and an item whose author cannot be read (`meetsTranslateFloor`), because a post somebody
+ * hand-picked in 링크 수집 is not the
  * backlog the floor exists to hold back. A scope counted with a bare `createdAt >= floor` therefore
  * reported a hand-picked pre-floor link as permanently out of the scheduler's reach while the very
  * next tick translated it — on `pnpm status`'s Collected line and on the dashboard's 수집 hover card,

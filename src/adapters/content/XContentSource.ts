@@ -147,10 +147,11 @@ export function flattenXThreads(
       refUrl: first?.url,
       isReply: first?.isReply,
       kind: hasArticle ? "article" : "post",
-      // Read by nothing on screen — it is what lets `meetsTranslateFloor` apply the translate floor
-      // to the swept account only, for the tick, the 링크 수집 waiting list and the Collected count
-      // alike (see `ContentItem.author`). Taken from the root tweet, the same tweet `createdAt`
-      // above comes from, so the two facts the floor rule compares describe one post.
+      // Read by nothing on screen — it is what lets `meetsTranslateFloor` exempt an item from the
+      // translate floor (see `ContentItem.author`, and that function for which items it exempts:
+      // *not* everything but the swept account, because an author it cannot read keeps the floor).
+      // Taken from the root tweet, the same tweet `createdAt` above comes from, so the two facts the
+      // floor rule compares describe one post.
       author: first?.authorUserName,
     });
   }

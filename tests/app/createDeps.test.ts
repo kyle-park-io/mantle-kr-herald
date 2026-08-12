@@ -103,7 +103,7 @@ describe("createDeps", () => {
     /**
      * The waiting list's whole promise is "what is here is what a tick will take" — the spec's
      * "대기 목록이 있어야 하는 이유". The negative join alone does not keep it: `applySelector` filters
-     * again, by the translate floor, and the floor gates the swept account only
+     * again, by the translate floor, and the floor does not gate every item
      * (`src/domain/translation/translateFloor.ts`). So the list has to ask the same question the tick
      * asks, through the same function, or it shows the sweep's pre-floor backlog as though it were
      * queued — the silent-failure class this whole feature exists to close, pointed at the screen

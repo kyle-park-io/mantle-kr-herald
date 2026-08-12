@@ -271,17 +271,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the translate floor — so a list computing only the join showed the swept account's pre-floor
     backlog as though it were queued, forever, with no error anywhere. That is the same silent
     failure the whole feature exists to close, aimed at the screen instead of at the pipeline. The
-    rule now lives in `meetsTranslateFloor` (`src/domain/translation/translateFloor.ts`) and all
-    three callers ask it, so they cannot come to different conclusions about a row; it answers the
+    rule now lives in `meetsTranslateFloor` (`src/domain/translation/translateFloor.ts`) and every
+    caller asks it, so they cannot come to different conclusions about a row; it answers the
     whole question ("does the floor let a tick take this item?") rather than handing back a predicate
     each caller combines with its own date comparison. One predicate is enough because the floor is
     `applySelector`'s only permanent filter — the batch `--limit` decides which tick's turn a queued
     item is, never whether its turn comes. **No floor known filters nothing** — no report, or a tick
     that reported running with none — matching the door gate's refusal to invent one.
   - **Fixed: two shipped screens counted a hand-picked pre-floor link as out of the scheduler's
-    reach.** `collectedScope` (`src/status/translateFloor.ts`) — the third caller above — ran a bare
+    reach.** `collectedScope` (`src/status/translateFloor.ts`) — another caller of that rule — ran a bare
     `createdAt >= floor` while its own comment claimed to be "the identical expression
-    `applySelector` filters with". Once the floor started gating the swept account and nobody else
+    `applySelector` filters with". Once the floor stopped gating every item
     that claim was false, and so was the number: `pnpm status`'s `in scope N · below floor M` line
     and the dashboard's 수집 hover card (`번역 대상 N건 · 하한 아래 M건`) both put a link somebody
     pasted before the floor on the permanently-unreachable side, when a tick will take it. Both of
@@ -289,7 +289,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     which is the one the hosted dashboard actually shows — now go through `meetsTranslateFloor`. The
     error was bounded by how many below-floor links had been pasted, so it was small on the day it
     shipped and grew with use of the tab.
-  - **The translate floor (`HERALD_TRANSLATE_SINCE`) now gates the swept account and nobody else.**
+  - **The translate floor (`HERALD_TRANSLATE_SINCE`) now gates the swept account, and an item whose
+    author cannot be read.**
     That floor filters on an item's own post date, after `loadPending` returns
     (`PrepareTranslations.applySelector`), so without this rule a link to anything published before
     2026-07-27 was collected, answered `collected`, listed as waiting — and then dropped by every

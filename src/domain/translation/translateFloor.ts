@@ -34,9 +34,10 @@ export interface TranslateFloorSubject {
  * first. A post someone pasted into 링크 수집 is not that risk: nothing puts another account's thread
  * in `x_threads` on its own (`src/domain/sweptAccount.ts` states why, and names the hand-run that
  * is the one other way one gets there), so the handle is the marker, and an item authored anywhere
- * but the swept account is one a person chose, which proceeds whatever its date. The swept account's own posts still meet the floor, because a pre-floor one of
- * those is indistinguishable from swept backlog — `CollectLinkedThread` refuses that at the door
- * instead, so it cannot be collected and then silently dropped here.
+ * but the swept account is one a person chose, which proceeds whatever its date. The swept account's
+ * own posts still meet the floor, because a pre-floor one of those is indistinguishable from swept
+ * backlog — `CollectLinkedThread` refuses that at the door instead, so it cannot be collected and
+ * then silently dropped here.
  *
  * **An unreadable author keeps the floor.** A Lark item has no handle, and neither does an X thread
  * stored with no tweets; reading "unknown" as "not the swept account" would open the entire
