@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { emitKakaoPaste, KAKAO_FOLD } from "../../../../src/domain/formatting/emitters/kakao";
+import { toCanonical } from "../../../../src/domain/formatting/canonical";
 
 describe("emitKakaoPaste", () => {
   it("emits plain text — KakaoTalk has no formatting at all", () => {
@@ -14,6 +15,12 @@ describe("emitKakaoPaste", () => {
     expect(r.warnings[0]).toContain("전체보기");
   });
 
+  it("tells the writer to shorten, not to split — KakaoTalk is never threaded", () => {
+    const r = emitKakaoPaste("가".repeat(KAKAO_FOLD + 1));
+    expect(r.warnings[0]).toContain("줄여야");
+    expect(r.warnings[0]).not.toContain("나누");
+  });
+
   it("stays quiet at exactly 500 characters", () => {
     expect(emitKakaoPaste("가".repeat(KAKAO_FOLD)).warnings).toEqual([]);
   });
@@ -25,5 +32,20 @@ describe("emitKakaoPaste", () => {
   it("flattens a post boundary to a single blank line — post boundaries are an x-only concept", () => {
     const r = emitKakaoPaste("a\n\n\nb");
     expect(r.segments[0].text).toBe("a\n\nb");
+  });
+
+  it("is always exactly one message, never several, given a post boundary", () => {
+    const r = emitKakaoPaste("a\n\n\nb");
+    expect(r.segments).toHaveLength(1);
+  });
+
+  it("is always exactly one message, never several, given a --- thread separator", () => {
+    // The emitter itself never sees a literal "---": toCanonical runs upstream of every emitter
+    // (see SaveRendering/FormatVariants) and folds "---" into the same \n\n\n post boundary before
+    // storage. Route the input through toCanonical here too, so this test exercises what actually
+    // reaches emitKakaoPaste rather than a spelling the pipeline never hands it.
+    const canonical = toCanonical("a\n\n---\n\nb");
+    const r = emitKakaoPaste(canonical);
+    expect(r.segments).toHaveLength(1);
   });
 });
