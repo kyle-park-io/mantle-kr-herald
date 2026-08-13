@@ -719,14 +719,17 @@ collect`(X만) → (새 글이 있을 때만) `pnpm translate:prepare` → 에�
 drive:publish`도 이 경로에서는 절대 호출되지 않습니다. 스케줄러가 채워 둔 항목은 1차 검수를 그대로
 기다리며, 검수자가 대시보드에서 읽고 승인하기 전까지는 아무 데도 나가지 않습니다.
 
-**타이머는 이 하나가 아닙니다.** §6은 지금 다섯 개의 유닛을 다룹니다 — `herald-watch`(수집·번역,
+**타이머는 이 하나가 아닙니다.** §6은 watch 파이프라인의 다섯 유닛을 다룹니다 — `herald-watch`(수집·번역,
 위), `herald-convert`(승인된 번역 → 채널 변환, 아래 "변환 스케줄러"), `herald-x-reconcile`(X 발행
 재확인, 아래), `herald-creds`(크레덴셜 상시 점검, 아래), `herald-translate-check`(용어집 주간
-다이제스트, 아래). **다섯 개가 한 표에 정리된 개요는 [`schedulers.md`](schedulers.md)에
-있습니다** — "무엇이 자동으로 돌고 있나"만 알고 싶으면 거기서부터 보세요. 다섯 다 승인은 하지
-않고, 다섯 다 공개 채널로는 아무것도 발송하지 않습니다. 특히 `herald-convert`는 1차 검수를
-**통과한** 항목만 건드리므로 위 문단과 모순되지 않습니다: `herald-watch`가 승인 전 단계에서 멈추고,
-`herald-convert`가 승인 후 단계를 이어받아 2차 검수 직전에서 다시 멈춥니다.
+다이제스트, 아래). 저장소 전체로는 타이머가 **여섯** 개입니다 — 여섯 번째인 `herald-backup`(스티어링
+설정과 프로덕션 운영 상태 백업)은 파이프라인이 아니라서 이 §6이 아니라
+[`setup/steering.md`](setup/steering.md) §6에서 다룹니다. **여섯 개가 한 표에 정리된 개요는
+[`schedulers.md`](schedulers.md)에 있습니다** — "무엇이 자동으로 돌고 있나"만 알고 싶으면
+거기서부터 보세요. 다섯 다 승인은 하지 않고, 다섯 다 공개 채널로는 아무것도 발송하지 않습니다.
+특히 `herald-convert`는 1차 검수를 **통과한** 항목만 건드리므로 위 문단과 모순되지 않습니다:
+`herald-watch`가 승인 전 단계에서 멈추고, `herald-convert`가 승인 후 단계를 이어받아 2차 검수
+직전에서 다시 멈춥니다.
 
 ### 스케줄러가 채워 둔 항목은 배포된 보드에서 봅니다
 
@@ -786,7 +789,7 @@ pnpm x:link --item x:2081711456320655644 --post https://x.com/0xMantleKR/status/
 
 ### 배포 체크아웃 — 스케줄러는 개발 트리에서 돌지 않습니다
 
-**다섯 스케줄 유닛과 실패 훅은 `~/.herald/app`에서 돕니다.** 이건 머지된 `main`만 들어 있는 별도
+**여섯 스케줄 유닛과 실패 훅은 `~/.herald/app`에서 돕니다.** 이건 머지된 `main`만 들어 있는 별도
 체크아웃이고, 아무도 여기서 편집하지 않습니다. 개발 체크아웃(`~/code/mantle-kr-herald`)은 브랜치를
 자유롭게 오갈 수 있습니다.
 
@@ -1402,8 +1405,8 @@ pnpm x:reconcile --since 7d
 `~/.config/systemd/user/`의 사본이고, `deploy/`가 아닙니다.** 저장소 쪽만 고치고
 `daemon-reload`를 돌려도 설치된 유닛은 바뀌지 않습니다.
 
-**이 목록이 이 저장소의 완전한 설치 목록입니다 — 파일 열한 개.** 다섯 스케줄러의 서비스·타이머
-열 개와 공용 실패 훅 하나입니다. 한때 이 자리에 네 개짜리 목록이 있었는데,
+**이 목록이 이 저장소의 완전한 설치 목록입니다 — 파일 열세 개.** 여섯 스케줄러(`herald-backup`
+포함)의 서비스·타이머 열두 개와 공용 실패 훅 하나입니다. 한때 이 자리에 네 개짜리 목록이 있었는데,
 `herald-watch.timer`와 `herald-convert.*`가 빠져 있었고 그 셋은 다른 절의 산문으로만 언급돼
 있었습니다 — 그대로 따르면 **타이머 없는 서비스**가 깔립니다. 설치는 된 것처럼 보이고 영원히 아무
 것도 안 도는, 이 §6이 통째로 막으려는 그 실패입니다. 필요 없는 파일을 다시 복사하는 비용은
@@ -1415,6 +1418,7 @@ cp deploy/herald-watch.service deploy/herald-watch.timer \
    deploy/herald-x-reconcile.service deploy/herald-x-reconcile.timer \
    deploy/herald-creds.service deploy/herald-creds.timer \
    deploy/herald-translate-check.service deploy/herald-translate-check.timer \
+   deploy/herald-backup.service deploy/herald-backup.timer \
    deploy/herald-notify-failure@.service \
    ~/.config/systemd/user/
 rm -f ~/.config/systemd/user/herald-notify-failure.service   # 템플릿과 같이 두면 안 됩니다
@@ -1433,7 +1437,7 @@ systemctl --user daemon-reload
 것이 바로 아래 `herald-x-reconcile`입니다(`ExecStart=`에 `--yes`가 붙어 있어 "확인용 실행"이라는
 게 없습니다).
 
-**순서 주의 — 유닛을 복사하기 전에 `bash deploy/herald-deploy.sh`를 먼저 돌리세요.** 다섯 스케줄
+**순서 주의 — 유닛을 복사하기 전에 `bash deploy/herald-deploy.sh`를 먼저 돌리세요.** 여섯 스케줄
 유닛의 `ExecStart=`는 모두 배포 체크아웃 안의 래퍼
 (`%h/.herald/app/deploy/herald-run-logged.sh`, 위 "로그" 항목 참고)를 거쳐 명령을 실행합니다.
 `~/.herald/app`이 아직 그 스크립트가 없는 커밋에 머물러 있는 상태에서 유닛만 복사하면, 다음 타이머

@@ -1,0 +1,28 @@
+# deploy/herald-backup.timer
+#
+# Fires herald-backup.service once a day at 05:47, before the working day and before
+# herald-creds.timer's 06:23.
+#
+# Daily, not hourly. The steering files change a few times a month; the operational state changes
+# through the day but Neon's own restore covers the hours between fires. Hourly would mean 24 Drive
+# snapshots a day, which is the noise `config:push`'s skip-if-unchanged exists to prevent in the
+# first place.
+#
+# :47 is off :00 and off :07/:37 (convert), :17 (watch), :23 (creds), :41 (x-reconcile) and :53
+# (translate-check) specifically: units sharing a minute buy nothing and invite two pnpm processes
+# starting at once. tests/deploy/credsTiming.test.ts derives the other timers' minutes from deploy/
+# and asserts they differ, so a later edit cannot collide unnoticed.
+#
+# NOT installed by any committed script — see herald-backup.service's header.
+
+[Unit]
+Description=Timer for herald-backup.service — daily steering and operational-state backup
+
+[Timer]
+OnCalendar=*-*-* 05:47:00
+# Runs once on the next boot/login if the machine was off (or the user manager wasn't running —
+# WSL2's usual failure mode) through a scheduled fire, instead of silently skipping the day.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

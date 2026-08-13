@@ -1,0 +1,61 @@
+# deploy/herald-backup.service
+#
+# systemd --user unit for one daily backup: the steering configuration to Drive, then the
+# operational state — including the few-shot corpora — out of the PRODUCTION database.
+#
+# Why this exists: both pushes were manual, and one of them was aimed wrong. `EnvironmentFile=`
+# below is what selects Neon; it is not which tree the command runs from. So `pnpm state:push` typed
+# by hand in either checkout opens local Docker and reports a cheerful row count. Measured
+# 2026-08-13: production held 30 few-shot rows that had never been in any snapshot, against 23 in
+# the local database that `db:export` had been writing to disk. See
+# docs/superpowers/specs/2026-08-13-scheduled-backup-design.md.
+#
+# NOT installed by any committed script. Copying this into ~/.config/systemd/user/ and running
+# `systemctl --user daemon-reload` is a human-supervised step (see the team runbook), same as the
+# other five units.
+
+[Unit]
+Description=Mantle KR Herald daily backup — steering configuration and production operational state
+OnFailure=herald-notify-failure@%n.service
+
+[Service]
+Type=oneshot
+# The deploy checkout — merged `main` only. tests/deploy/workingDirectory.test.ts fails if this ever
+# names a development checkout.
+#
+# Reading the steering files from HERE rather than the development tree is deliberate and was
+# measured: `deploy/herald-deploy.sh` copies them across at deploy time, and on 2026-08-13 all 13
+# were byte-identical between the two trees. The two disagree only between an edit and the next
+# deploy, and `pnpm doctor`'s `Steering deploy sync` line already reports exactly that window. A
+# `--from` flag pointing back at the development tree would buy that window at the cost of the
+# invariant every other unit depends on.
+WorkingDirectory=%h/.herald/app
+
+Environment=PATH=%h/.herald/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# This is the whole point of the unit: `prod.env` holds exactly two keys — DATABASE_URL and
+# HERALD_DB_ENV — and a shell-exported variable beats Node's --env-file, so those two override the
+# frozen .env's local-Docker values while everything else (GOOGLE_AUTH_MODE=oauth, the OAuth refresh
+# token, GDRIVE_CONFIG_FOLDER_ID, GDRIVE_STATE_FOLDER_ID) still comes from .env. Re-verified for the
+# spec on this machine:
+#
+#   $ HERALD_PROBE=from_systemd tsx --env-file-if-exists=.env p.ts   # .env has HERALD_PROBE=from_dotenv
+#   HERALD_PROBE = from_systemd
+#
+# Removing this line does not disable the backup; it silently backs up the development database.
+EnvironmentFile=%h/.herald/prod.env
+
+# Two Drive uploads and two database reads. A real run is seconds. 300s is a generous multiple that
+# still fails long before a daily cadence could overlap itself.
+TimeoutStartSec=300
+
+# config:push FIRST, deliberately: it is the cheap one, it cannot fail on database state, and if the
+# database is unreachable the steering snapshot has still been taken. Both are wrapped in
+# herald-run-logged.sh for the reason every other unit is — journald on this box holds roughly eight
+# minutes of history. Argument order is that wrapper's contract: `$1` is the unit name, everything
+# after it is the command.
+#
+# Type=oneshot runs these in order and fails the unit if either exits non-zero, which is what the
+# OnFailure= hook above depends on.
+ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n %h/.herald/bin/pnpm config:push
+ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n %h/.herald/bin/pnpm state:push
