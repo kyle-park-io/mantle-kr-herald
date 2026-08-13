@@ -219,12 +219,13 @@ describe("state:push → state:pull round trip (database-backed, Task 19)", () =
   });
 
   it("previews and backs up a target holding an itemId-less row instead of refusing to run", async () => {
-    // `assertRestorableFewShot` used to throw from inside `snapshotFromDb`, which backs
+    // An `item_id is null` assertion used to throw from inside `snapshotFromDb`, which backs
     // `StateFileStore.list()` — and `PullState.run` calls `list()` for its preview and again through
     // `backup()`. So ONE legacy row in the TARGET database killed `pnpm state:pull` outright, with
     // or without `--yes`, quoting advice about pushing while no push was happening. The documented
     // recovery order (`pnpm db:import --yes` → `pnpm state:pull --yes`) is precisely how such a row
-    // gets there: db:import inserts corpus JSON verbatim, `ex.itemId ?? null` included.
+    // gets there: db:import inserts corpus JSON verbatim, `ex.itemId ?? null` included. No path
+    // grades corpus content any more — `pnpm doctor` reports it (`src/doctor/fewShot.ts`).
     const source = await createTestDb();
     const restored = await createTestDb();
     const archiveDir = await mkdtemp(join(tmpdir(), "herald-state-archive-"));
