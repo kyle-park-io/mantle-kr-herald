@@ -390,6 +390,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The 2차 검수 sidebar lists newest first, the way 1차 does.** It had no sort at all: `/api/renderings`
+  returns `loadAll()`'s `order by ordinal` — insertion order, oldest-first — and `toItemRows` folded
+  those renderings into rows in `Map` insertion order, so the item a reviewer most likely wanted sat
+  at the bottom of a scrolling list while 1차, one tab switch away, had been newest-first all along.
+  The rule is copied from `TranslationList`'s `newestFirst` deliberately, down to the tiebreak: by
+  the `[YYMMDD]` prefix the row actually shows — the *source* post's date, not when the card was
+  rendered — then `itemId` descending so two posts sharing a date never swap places between renders.
+  A reviewer carries reading order across that tab switch, so the two sidebars answering "what is
+  left" in different orders was the bug, not just the direction. An item whose source join gave no
+  date falls back to the **newest** `createdAt` among its cards rather than the first card's: cards
+  are ranked by (type, channel) so the preview and badges stay stable, which makes the first card
+  whichever type sorts earliest and not whichever was rendered last — and `pnpm format
+  --only-missing` adds a channel to an item long after the rest of its board was built. Sorted on
+  the screen rather than in the store for the reason 1차 already gives: `order by ordinal` is a
+  contract `db:export`'s round-trip relies on, so reading order belongs to the screen doing the
+  reading.
 - **A finished item no longer holds the conversion scheduler's only slot, starving every item behind
   it.** `convert:prepare --limit N` counted its N against the approved translations it had read, not
   against the ones with anything left to convert, so an item still `approved` after all six of its
