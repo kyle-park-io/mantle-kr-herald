@@ -11,7 +11,11 @@ import { PgOutletOverrideStore } from "../adapters/store/PgOutletOverrideStore";
 import { PgDeliveryLedger } from "../adapters/store/PgDeliveryLedger";
 import { PgXArticleLedger } from "../adapters/store/PgXArticleLedger";
 import { PgPublishStore } from "../adapters/store/PgPublishStore";
+import { PgFewShotStore, fewShotStoresByType } from "../adapters/store/PgFewShotStore";
+import { ALL_TYPES } from "../domain/conversion/models";
+import { FEW_SHOT_REL, assertRestorableFewShot, fewShotScopeFor } from "../domain/state/fewShot";
 import type { Translation } from "../domain/translation/models";
+import type { FewShotExample } from "../domain/translation/models";
 import type { ContentVariant } from "../domain/conversion/models";
 import type { ChannelRendering } from "../domain/formatting/models";
 import type { OutletOverride } from "../domain/outlet/override";
@@ -104,6 +108,19 @@ const TRACKED_REL = [
 ] as const;
 
 /**
+ * The eighth tracked item, kept in its own list rather than appended to `TRACKED_REL` because that
+ * array is indexed positionally by `snapshotFromDb` and `write()` below — an eighth literal there
+ * would be fine, but eight *derived* entries would not, and splitting the two keeps the seven's
+ * indices unarguable. `tracked()` concatenates them.
+ *
+ * `few_shot_examples` passes this file's own membership test — "everything the database holds that
+ * cannot be rebuilt by re-running the pipeline." A few-shot row copies text that is already tracked
+ * (`translations`, `variants`), but *which approvals became examples* is not reproducible and no
+ * command re-derives the corpus from approved text. Re-running the pipeline yields no corpus at all.
+ */
+const FEW_SHOT_TRACKED = FEW_SHOT_REL;
+
+/**
  * Reads the seven tracked stores and serialises each to the exact bytes the matching `Json*` store
  * would have written to its file (`jsonFileText` — 2-space `JSON.stringify` plus a trailing
  * newline), keyed by the same repo-relative path `TRACKED_REL` names. This is `db:export`'s own
@@ -138,6 +155,18 @@ export async function snapshotFromDb(db: Db): Promise<SnapshotFile[]> {
   addArray(TRACKED_REL[4], await new PgDeliveryLedger(db).loadAll());
   addArray(TRACKED_REL[5], await new PgXArticleLedger(db).loadAll());
 
+  // Synchronous, like `addArray` above it — the `await`s below are on the `load()` calls only.
+  const addFewShot = (rel: string, scope: string, rows: readonly FewShotExample[]) => {
+    assertRestorableFewShot(rows, scope);
+    if (rows.length > 0) files.push({ rel, body: jsonFileText(rows) });
+  };
+
+  addFewShot("output/few-shot/translation.json", "translation", await new PgFewShotStore(db, "translation").load());
+  const fewShotByType = fewShotStoresByType(db);
+  for (const type of ALL_TYPES) {
+    addFewShot(`output/few-shot/conversion.${type}.json`, `conversion:${type}`, await fewShotByType[type].load());
+  }
+
   const publishEntries = await new PgPublishStore(db).listEntries();
   if (publishEntries.length > 0) {
     files.push({ rel: TRACKED_REL[6], body: jsonFileText({ entries: publishEntries }) });
@@ -170,7 +199,7 @@ export class DbStateFileStore implements StateFileStore {
   }
 
   tracked(): readonly string[] {
-    return TRACKED_REL;
+    return [...TRACKED_REL, ...FEW_SHOT_TRACKED];
   }
 
   async write(path: string, content: string): Promise<void> {

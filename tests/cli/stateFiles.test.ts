@@ -16,6 +16,8 @@ import { PgOutletOverrideStore } from "../../src/adapters/store/PgOutletOverride
 import { PgDeliveryLedger } from "../../src/adapters/store/PgDeliveryLedger";
 import { PgXArticleLedger } from "../../src/adapters/store/PgXArticleLedger";
 import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
+import { PgFewShotStore, fewShotStoresByType } from "../../src/adapters/store/PgFewShotStore";
+import { FEW_SHOT_REL } from "../../src/domain/state/fewShot";
 
 let db: Awaited<ReturnType<typeof createTestDb>> | undefined;
 afterEach(async () => {
@@ -28,6 +30,9 @@ describe("the operational-state manifest", () => {
   // preview prints for an operator deciding what to overwrite.
   it("tracks exactly the non-regenerable stores, repo-relative", async () => {
     db = await createTestDb();
+    // The seven pipeline stores, plus one few-shot path per corpus (`FEW_SHOT_REL` —
+    // `translation` plus one per `ALL_TYPES` member): a few-shot row is authored text no
+    // command re-derives, same membership test as the seven above it.
     expect(new DbStateFileStore(db).tracked()).toEqual([
       "output/translations/translations.json",
       "output/variants/variants.json",
@@ -36,6 +41,7 @@ describe("the operational-state manifest", () => {
       "output/publish/deliveries.json",
       "output/publish/x-article.json",
       "output/publish/state.json",
+      ...FEW_SHOT_REL,
     ]);
   });
 
@@ -133,6 +139,68 @@ describe("snapshotFromDb", () => {
     });
     // 2-space indent, trailing newline — the same shape writeJsonFileAtomic produces on disk.
     expect(byRel.get("output/translations/translations.json")!.endsWith("\n")).toBe(true);
+  });
+});
+
+describe("snapshotFromDb — few-shot corpora", () => {
+  it("omits a corpus with no rows, like every other empty store", async () => {
+    db = await createTestDb();
+    const files = await snapshotFromDb(db);
+    expect(files.map((f) => f.rel)).not.toContain("output/few-shot/translation.json");
+  });
+
+  it("writes the translation corpus at its tracked path", async () => {
+    db = await createTestDb();
+    const store = new PgFewShotStore(db, "translation");
+    await store.add({ source: "a", target: "가", itemId: "x:1" });
+    await store.add({ source: "b", target: "나", itemId: "x:2" });
+
+    const files = await snapshotFromDb(db);
+    const file = files.find((f) => f.rel === "output/few-shot/translation.json");
+    expect(file).toBeDefined();
+    expect(JSON.parse(file!.body)).toEqual([
+      { source: "a", target: "가", itemId: "x:1" },
+      { source: "b", target: "나", itemId: "x:2" },
+    ]);
+  });
+
+  it("preserves ordinal order, which is what the prompt reads", async () => {
+    // PgFewShotStore.load() is `order by ordinal`, and translate:prepare / convert:prepare lay that
+    // order straight into the prompt. A snapshot that recovers the right SET in the wrong ORDER
+    // silently changes what the model sees, with nothing failing to say so.
+    db = await createTestDb();
+    const store = new PgFewShotStore(db, "translation");
+    for (const n of ["1", "2", "3", "4"]) await store.add({ source: n, target: n, itemId: `x:${n}` });
+
+    const files = await snapshotFromDb(db);
+    const body = files.find((f) => f.rel === "output/few-shot/translation.json")!.body;
+    expect((JSON.parse(body) as { source: string }[]).map((e) => e.source)).toEqual(["1", "2", "3", "4"]);
+  });
+
+  it("writes each conversion type at its own tracked path", async () => {
+    db = await createTestDb();
+    const byType = fewShotStoresByType(db);
+    await byType.x.add({ source: "sx", target: "tx", itemId: "x:1" });
+    await byType.announcement.add({ source: "sa", target: "ta", itemId: "x:2" });
+
+    const rels = (await snapshotFromDb(db)).map((f) => f.rel);
+    expect(rels).toContain("output/few-shot/conversion.x.json");
+    expect(rels).toContain("output/few-shot/conversion.announcement.json");
+    expect(rels).not.toContain("output/few-shot/conversion.kol.json");
+  });
+
+  it("refuses the whole push when any corpus holds an itemId-less example", async () => {
+    db = await createTestDb();
+    await new PgFewShotStore(db, "translation").add({ source: "a", target: "가" });
+    await expect(snapshotFromDb(db)).rejects.toThrow(/itemId/);
+  });
+
+  it("tracked() lists the seven original paths plus every few-shot path", async () => {
+    db = await createTestDb();
+    const tracked = createStateFileStore(db).tracked();
+    expect(tracked).toContain("output/translations/translations.json");
+    expect(tracked).toContain("output/publish/state.json");
+    for (const rel of FEW_SHOT_REL) expect(tracked).toContain(rel);
   });
 });
 
