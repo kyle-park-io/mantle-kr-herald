@@ -6,6 +6,7 @@ import { createDb } from "../adapters/db/createDb";
 import { PushState } from "../app/PushState";
 import { loadGoogleAuthConfig, loadGoogleStateFolder, loadDbConfig } from "../config";
 import { createStateFileStore, describeProvisionedFolder, DRIVE_LABEL } from "./stateFiles";
+import { describeBackupTarget } from "../domain/state/target";
 
 // Sibling of steering-config under the same parent (review · approved · steering-config ·
 // operational-state), but a folder of its own: this one is a record of what THIS machine has sent,
@@ -29,7 +30,9 @@ if (!folderId) {
 }
 
 const drive = new GoogleConfigDrive(auth, fetch, DRIVE_LABEL);
-const db = createDb(loadDbConfig());
+const dbConfig = loadDbConfig();
+for (const line of describeBackupTarget(dbConfig)) console.log(line);
+const db = createDb(dbConfig);
 try {
   const res = await new PushState(createStateFileStore(db), drive).run(folderId);
   if (!res) {
