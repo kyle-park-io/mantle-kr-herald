@@ -29,6 +29,70 @@ function shownIds(container: HTMLElement): string[] {
 
 const type = (value: string) => fireEvent.change(screen.getByLabelText("검색"), { target: { value } });
 
+describe("RenderingList order", () => {
+  it("puts the newest source post first, like 1차", () => {
+    // `/api/renderings` returns `loadAll()`'s `order by ordinal` — insertion order, oldest-first —
+    // so the card a reviewer most likely wants sat at the bottom of a scrolling sidebar.
+    const { container } = render(
+      <RenderingList
+        items={[
+          r({ itemId: "x:1", postedAt: "2026-07-28T00:00:00.000Z" }),
+          r({ itemId: "x:3", postedAt: "2026-08-06T00:00:00.000Z" }),
+          r({ itemId: "x:2", postedAt: "2026-08-01T00:00:00.000Z" }),
+        ]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    expect(shownIds(container)).toEqual(["x:3", "x:2", "x:1"]);
+  });
+
+  it("falls back to the newest card's createdAt when an item has no source post date", () => {
+    // `postedAt` is joined from the source item and can be absent — a row missing that join must not
+    // sink to the bottom as though it were the oldest thing on the board.
+    const { container } = render(
+      <RenderingList
+        items={[
+          r({ itemId: "x:1", postedAt: "2026-07-28T00:00:00.000Z" }),
+          r({ itemId: "x:2", createdAt: "2026-08-07T00:00:00.000Z" }),
+        ]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    expect(shownIds(container)).toEqual(["x:2", "x:1"]);
+  });
+
+  it("orders by id when two items share a date, so the list never reshuffles between renders", () => {
+    const same = "2026-08-01T00:00:00.000Z";
+    const { container } = render(
+      <RenderingList
+        items={[r({ itemId: "x:100", postedAt: same }), r({ itemId: "x:200", postedAt: same })]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    expect(shownIds(container)).toEqual(["x:200", "x:100"]);
+  });
+
+  it("sorts by the item's newest card, not by whichever card the (type, channel) order puts first", () => {
+    // An item's cards are not created together — `pnpm format --only-missing` adds a channel later,
+    // and 카카오 sorts after 텔레그램 regardless of when either was rendered.
+    const { container } = render(
+      <RenderingList
+        items={[
+          r({ itemId: "x:1", type: "announcement", channel: "telegram", createdAt: "2026-08-02T00:00:00.000Z" }),
+          r({ itemId: "x:2", type: "announcement", channel: "telegram", createdAt: "2026-08-01T00:00:00.000Z" }),
+          r({ itemId: "x:2", type: "kakao_notice", channel: "kakao", createdAt: "2026-08-09T00:00:00.000Z" }),
+        ]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    expect(shownIds(container)).toEqual(["x:2", "x:1"]);
+  });
+});
+
 describe("RenderingList search", () => {
   /**
    * 한 아이템의 카드는 여러 장이고 미리보기는 첫 장뿐이다. 오픈카톡 카드에만 있는 문구로 검색해도

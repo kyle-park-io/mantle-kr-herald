@@ -18,6 +18,13 @@ const STATUS_FILTERS: ["all" | Rendering["status"], string][] = [
 interface ItemRow {
   itemId: string;
   postedAt?: string;
+  /**
+   * The newest `createdAt` among this item's cards — the sort fallback when the source join gave no
+   * `postedAt`. The newest and not the first card's: `ordered` is ranked by (type, channel), so the
+   * first card is whichever type sorts earliest, not whichever was rendered last, and `pnpm format
+   * --only-missing` adds a channel to an item long after the rest of its board was built.
+   */
+  createdAt: string;
   kind?: "post" | "article";
   /**
    * One entry per card on the board — `(type, channel)`, in board order, with its own approval.
@@ -54,7 +61,25 @@ const rank = <T,>(order: readonly T[], v: T) => {
   return i === -1 ? order.length : i;
 };
 
-/** Group renderings by item, ordered by (type, channel) so the preview and badges are stable. */
+/**
+ * Newest first, by the date the row actually shows — its `[YYMMDD]` prefix, which is the *source*
+ * post's date (`postedAt`), not when the card was rendered. Deliberately the same rule as 1차's
+ * `newestFirst` (`TranslationList.tsx`), down to the id tiebreak: the two sidebars sit behind one
+ * tab switch and a reviewer carries the reading order across it.
+ *
+ * Sorted on this screen rather than in the store for the reason 1차 gives: `loadAll()`'s `order by
+ * ordinal` is insertion order, a contract `db:export`'s round-trip relies on, so reading order
+ * belongs to the screen that does the reading.
+ */
+const newestFirst = (a: ItemRow, b: ItemRow): number => {
+  const at = (row: ItemRow) => row.postedAt ?? row.createdAt;
+  return at(b).localeCompare(at(a)) || b.itemId.localeCompare(a.itemId, undefined, { numeric: true });
+};
+
+/**
+ * Group renderings by item, ordered by (type, channel) so the preview and badges are stable, and the
+ * rows themselves newest-first.
+ */
 export function toItemRows(renderings: Rendering[]): ItemRow[] {
   const byItem = new Map<string, Rendering[]>();
   for (const r of renderings) {
@@ -62,21 +87,24 @@ export function toItemRows(renderings: Rendering[]): ItemRow[] {
     if (list) list.push(r);
     else byItem.set(r.itemId, [r]);
   }
-  return [...byItem.entries()].map(([itemId, rows]) => {
-    const ordered = [...rows].sort(
-      (a, b) => rank(ALL_TYPES, a.type) - rank(ALL_TYPES, b.type) || rank(ALL_CHANNELS, a.channel) - rank(ALL_CHANNELS, b.channel),
-    );
-    return {
-      itemId,
-      postedAt: ordered.find((r) => r.postedAt)?.postedAt,
-      kind: ordered.find((r) => r.kind)?.kind,
-      groups: ordered.map((r) => ({ type: r.type, channel: r.channel, approved: r.status === "approved" })),
-      approved: ordered.filter((r) => r.status === "approved").length,
-      total: ordered.length,
-      preview: (ordered[0]?.text ?? "").replace(/\s+/g, " ").trim(),
-      haystack: [itemId, ...ordered.map((r) => r.text)].join(" "),
-    };
-  });
+  return [...byItem.entries()]
+    .map(([itemId, rows]) => {
+      const ordered = [...rows].sort(
+        (a, b) => rank(ALL_TYPES, a.type) - rank(ALL_TYPES, b.type) || rank(ALL_CHANNELS, a.channel) - rank(ALL_CHANNELS, b.channel),
+      );
+      return {
+        itemId,
+        postedAt: ordered.find((r) => r.postedAt)?.postedAt,
+        createdAt: ordered.reduce((newest, r) => (r.createdAt > newest ? r.createdAt : newest), ""),
+        kind: ordered.find((r) => r.kind)?.kind,
+        groups: ordered.map((r) => ({ type: r.type, channel: r.channel, approved: r.status === "approved" })),
+        approved: ordered.filter((r) => r.status === "approved").length,
+        total: ordered.length,
+        preview: (ordered[0]?.text ?? "").replace(/\s+/g, " ").trim(),
+        haystack: [itemId, ...ordered.map((r) => r.text)].join(" "),
+      };
+    })
+    .sort(newestFirst);
 }
 
 const selectClass =
