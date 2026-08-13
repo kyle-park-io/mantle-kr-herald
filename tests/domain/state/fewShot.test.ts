@@ -49,11 +49,10 @@ describe("assertRestorableFewShot", () => {
   });
 
   it("refuses a corpus holding an itemId-less example, naming the scope and the count", () => {
-    // `PgFewShotStore.add` is `insert ... on conflict (scope, item_id) do update`, and Postgres
-    // never considers one null item_id equal to another. An itemId-less row therefore inserts a
-    // DUPLICATE on every state:pull rather than upserting — a corpus that inflates a little at each
-    // restore. Refusing at push time keeps the snapshot repeatedly restorable, which is the only
-    // property that makes it a backup.
+    // `PgFewShotStore.add` is `insert ... on conflict (scope, item_id) do update`, and Postgres never
+    // considers one null item_id equal to another. An itemId-less row is therefore unreachable by
+    // that key: it can never be replaced or deduplicated, and a re-approval of the same example lands
+    // beside it. The corpus is already drifting, and the push is where that gets said out loud.
     expect(() =>
       assertRestorableFewShot(
         [
@@ -63,5 +62,21 @@ describe("assertRestorableFewShot", () => {
         "conversion:x",
       ),
     ).toThrow(/conversion:x/);
+  });
+
+  it("tells the operator the restore path is not blocked by this", () => {
+    // The message's own history. It used to end "Refusing to push a snapshot that cannot be restored
+    // twice — give those rows an item_id and push again", and because the assertion fired from inside
+    // `snapshotFromDb` it reached operators running `pnpm state:pull` — a read-only preview, no push
+    // in sight, advice they could not act on, and the restore blocked at the moment it was most
+    // needed. The gate is push-only now; the message says so rather than leaving it to be discovered.
+    let message = "";
+    try {
+      assertRestorableFewShot([{ source: "b", target: "나" }], "translation");
+    } catch (err: unknown) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("state:pull");
+    expect(message).not.toContain("restored twice");
   });
 });

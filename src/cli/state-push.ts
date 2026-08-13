@@ -34,7 +34,10 @@ const dbConfig = loadDbConfig();
 for (const line of describeBackupTarget(dbConfig)) console.log(line);
 const db = createDb(dbConfig);
 try {
-  const res = await new PushState(createStateFileStore(db), drive).run(folderId);
+  // `assertRestorable` belongs here and only here: this is the one command that puts a snapshot in
+  // Drive, and the refusal exists to keep what lands there applicable more than once. `state:pull`
+  // must be able to READ a corpus holding an itemId-less row — see `SnapshotOptions`.
+  const res = await new PushState(createStateFileStore(db, { assertRestorable: true }), drive).run(folderId);
   if (!res) {
     console.log("백업할 운영 상태 데이터가 없습니다 — 아직 포크·발송 기록이 하나도 없는 데이터베이스입니다. 올린 것 없음.");
   } else {

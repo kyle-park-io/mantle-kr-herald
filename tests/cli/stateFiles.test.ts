@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   describeKeptFiles,
   describeProvisionedFolder,
@@ -192,7 +194,20 @@ describe("snapshotFromDb — few-shot corpora", () => {
   it("refuses the whole push when any corpus holds an itemId-less example", async () => {
     db = await createTestDb();
     await new PgFewShotStore(db, "translation").add({ source: "a", target: "가" });
-    await expect(snapshotFromDb(db)).rejects.toThrow(/itemId/);
+    await expect(snapshotFromDb(db, { assertRestorable: true })).rejects.toThrow(/itemId/);
+  });
+
+  it("reads that same corpus without throwing when nothing is being pushed", async () => {
+    // The refusal is a PUSH-time gate and only a push-time gate. It used to live inside
+    // `snapshotFromDb` unconditionally, which meant one legacy `item_id is null` row in the TARGET
+    // database made `pnpm state:pull` — the read-only preview included — die with "Refusing to push
+    // a snapshot that cannot be restored twice", while no push was happening and the restore was
+    // blocked at the moment it was most needed. `pnpm db:import --yes` (the project's own documented
+    // recovery order, which inserts corpus JSON verbatim) is exactly what puts such a row there.
+    db = await createTestDb();
+    await new PgFewShotStore(db, "translation").add({ source: "a", target: "가" });
+    const files = await snapshotFromDb(db);
+    expect(files.map((f) => f.rel)).toContain("output/few-shot/translation.json");
   });
 
   it("tracked() lists the seven original paths plus every few-shot path", async () => {
@@ -251,10 +266,125 @@ describe("DbStateFileStore.write", () => {
   });
 });
 
+describe("DbStateFileStore.write — few-shot replaces the corpus, it does not merge into it", () => {
+  it("restores the snapshot's order into a NON-EMPTY corpus", async () => {
+    // The reviewer's repro. `add` is `on conflict (scope, item_id) do update`, and that clause never
+    // reassigns `ordinal` — so replaying alone establishes order only for rows NEW to the target. A
+    // target holding {C} replayed with [A, B, C] used to come back C, A, B: right set, wrong order,
+    // and nothing said so. `load()` is `order by ordinal` and that order is laid straight into the
+    // model's prompt, so this is a silent content change, not a bookkeeping one.
+    //
+    // Not hypothetical: this project runs two divergent databases (production 30 rows, development
+    // 23), and pulling production's snapshot onto development is the case the feature exists for.
+    db = await createTestDb();
+    await new PgFewShotStore(db, "translation").add({ source: "C", target: "다", itemId: "x:3" });
+
+    await new DbStateFileStore(db).write(
+      "output/few-shot/translation.json",
+      JSON.stringify([
+        { source: "A", target: "가", itemId: "x:1" },
+        { source: "B", target: "나", itemId: "x:2" },
+        { source: "C", target: "다", itemId: "x:3" },
+      ]),
+    );
+
+    const restored = await new PgFewShotStore(db, "translation").load();
+    expect(restored.map((e) => e.source)).toEqual(["A", "B", "C"]);
+  });
+
+  it("drops a row the snapshot's corpus does not hold — the one place a restore is a replace", async () => {
+    // The deliberate exception to `write()`'s "imports, does not replace" rule. For the seven the
+    // snapshot is a bag of rows keyed by a natural key; for few-shot it is the WHOLE corpus for a
+    // scope, in order, and the preview already promises the operator `덮어씀`. A leftover local row
+    // sitting in the middle of a restored corpus is a prompt nobody wrote.
+    db = await createTestDb();
+    await new PgFewShotStore(db, "translation").add({ source: "local", target: "로컬", itemId: "x:99" });
+
+    await new DbStateFileStore(db).write(
+      "output/few-shot/translation.json",
+      JSON.stringify([{ source: "A", target: "가", itemId: "x:1" }]),
+    );
+
+    expect(await new PgFewShotStore(db, "translation").load()).toEqual([{ source: "A", target: "가", itemId: "x:1" }]);
+  });
+
+  it("leaves a scope the snapshot does not carry alone", async () => {
+    // Scope by scope, not table-wide. A snapshot omits a corpus with zero rows, and `diffRowCounts`
+    // marks such a path `유지` — deleting the whole table would silently contradict the preview the
+    // operator just approved.
+    db = await createTestDb();
+    await fewShotStoresByType(db).kol.add({ source: "keep", target: "유지", itemId: "x:7" });
+
+    await new DbStateFileStore(db).write(
+      "output/few-shot/conversion.x.json",
+      JSON.stringify([{ source: "A", target: "가", itemId: "x:1" }]),
+    );
+
+    expect(await fewShotStoresByType(db).kol.load()).toEqual([{ source: "keep", target: "유지", itemId: "x:7" }]);
+  });
+
+  it("stays idempotent — a second write of the same corpus neither grows nor reorders it", async () => {
+    db = await createTestDb();
+    const store = new DbStateFileStore(db);
+    const body = JSON.stringify([
+      { source: "A", target: "가", itemId: "x:1" },
+      { source: "B", target: "나", itemId: "x:2" },
+    ]);
+    await store.write("output/few-shot/translation.json", body);
+    await store.write("output/few-shot/translation.json", body);
+
+    expect((await new PgFewShotStore(db, "translation").load()).map((e) => e.source)).toEqual(["A", "B"]);
+  });
+
+  it("restores an itemId-less row the push side would have refused, without duplicating it", async () => {
+    // The other half of moving the refusal to push time: a snapshot taken before that gate existed,
+    // or one taken by a checkout that has such a row, still has to be restorable. Delete-then-replay
+    // is what makes even a null-item_id corpus idempotent — the `on conflict` clause never could,
+    // because Postgres does not consider one null equal to another.
+    db = await createTestDb();
+    const store = new DbStateFileStore(db);
+    const body = JSON.stringify([{ source: "A", target: "가" }, { source: "B", target: "나" }]);
+    await store.write("output/few-shot/translation.json", body);
+    await store.write("output/few-shot/translation.json", body);
+
+    expect((await new PgFewShotStore(db, "translation").load()).map((e) => e.source)).toEqual(["A", "B"]);
+  });
+});
+
 describe("createStateFileStore", () => {
   it("builds a DbStateFileStore bound to the given db", async () => {
     db = await createTestDb();
     expect(createStateFileStore(db)).toBeInstanceOf(DbStateFileStore);
+  });
+
+  it("does not assert restorability unless asked — a read is a read", async () => {
+    db = await createTestDb();
+    await new PgFewShotStore(db, "translation").add({ source: "a", target: "가" });
+    await expect(createStateFileStore(db).list()).resolves.toHaveLength(1);
+    await expect(createStateFileStore(db, { assertRestorable: true }).list()).rejects.toThrow(/itemId/);
+  });
+});
+
+/**
+ * Which of the two commands opts in, read out of the entry scripts themselves.
+ *
+ * Neither script can be imported by a test — both are top-level-`await` programs that open Google
+ * auth and a real database on load — so this is the same source-text pin `tests/cli/serve.ts`'s and
+ * `translate-check.ts`'s suites use. It is worth having because the default is permissive: nothing
+ * else in the suite would notice `state:push` quietly losing its guard, and the whole point of the
+ * guard is that it fires on a database nobody is looking at.
+ */
+describe("the restorability gate is wired to the push command and not the pull command", () => {
+  const source = (cli: string): string =>
+    readFileSync(fileURLToPath(new URL(`../../src/cli/${cli}`, import.meta.url)), "utf8");
+
+  it("state:push builds its store with assertRestorable", () => {
+    expect(source("state-push.ts")).toMatch(/createStateFileStore\(db, \{ assertRestorable: true \}\)/);
+  });
+
+  it("state:pull does not, so a legacy row cannot block a restore or its preview", () => {
+    expect(source("state-pull.ts")).toContain("createStateFileStore(db)");
+    expect(source("state-pull.ts")).not.toContain("assertRestorable");
   });
 });
 
