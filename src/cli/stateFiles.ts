@@ -108,19 +108,6 @@ const TRACKED_REL = [
 ] as const;
 
 /**
- * The eighth tracked item, kept in its own list rather than appended to `TRACKED_REL` because that
- * array is indexed positionally by `snapshotFromDb` and `write()` below — an eighth literal there
- * would be fine, but eight *derived* entries would not, and splitting the two keeps the seven's
- * indices unarguable. `tracked()` concatenates them.
- *
- * `few_shot_examples` passes this file's own membership test — "everything the database holds that
- * cannot be rebuilt by re-running the pipeline." A few-shot row copies text that is already tracked
- * (`translations`, `variants`), but *which approvals became examples* is not reproducible and no
- * command re-derives the corpus from approved text. Re-running the pipeline yields no corpus at all.
- */
-const FEW_SHOT_TRACKED = FEW_SHOT_REL;
-
-/**
  * Reads the seven tracked stores and serialises each to the exact bytes the matching `Json*` store
  * would have written to its file (`jsonFileText` — 2-space `JSON.stringify` plus a trailing
  * newline), keyed by the same repo-relative path `TRACKED_REL` names. This is `db:export`'s own
@@ -227,8 +214,20 @@ export class DbStateFileStore implements StateFileStore {
     return (await snapshotFromDb(this.db)).map((f) => ({ path: f.rel, content: f.body }));
   }
 
+  /**
+   * The seven, plus the few-shot corpora — the eighth tracked item, kept in a list of its own
+   * (`FEW_SHOT_REL`, `src/domain/state/fewShot.ts`) rather than appended to `TRACKED_REL` because
+   * that array is indexed positionally by `snapshotFromDb` and `write()` above. An eighth literal
+   * there would be fine, but eight *derived* entries would not, and splitting the two keeps the
+   * seven's indices unarguable.
+   *
+   * `few_shot_examples` passes this file's own membership test — "everything the database holds that
+   * cannot be rebuilt by re-running the pipeline." A few-shot row copies text that is already tracked
+   * (`translations`, `variants`), but *which approvals became examples* is not reproducible and no
+   * command re-derives the corpus from approved text. Re-running the pipeline yields no corpus at all.
+   */
   tracked(): readonly string[] {
-    return [...TRACKED_REL, ...FEW_SHOT_TRACKED];
+    return [...TRACKED_REL, ...FEW_SHOT_REL];
   }
 
   async write(path: string, content: string): Promise<void> {
