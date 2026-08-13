@@ -993,7 +993,7 @@ bash deploy/herald-deploy.sh
    기록이고 지금 그대로 돌리면 실패합니다.** `deploy/herald-notify-failure.service`는 더는
    존재하지 않아서, 이 `cp`는 앞의 두 파일만 복사한 뒤 그 자리에서 멈춥니다 — **알림 훅이 없는
    반쪽 설치**이고, 실패해도 아무 데도 알리지 않는 상태입니다. **지금 설치하는 사람은 아래
-   "X 발행 재확인" 절의 열한 개짜리 목록을 쓰세요.** 아래 블록은 그때 무엇이 깔렸는지를 남겨 둔
+   "X 발행 재확인" 절의 열세 개짜리 목록을 쓰세요.** 아래 블록은 그때 무엇이 깔렸는지를 남겨 둔
    것이고, 이어지는 설명(`.sh`는 왜 복사하지 않는지 등)은 지금도 그대로 유효합니다:
    ```bash
    cp deploy/herald-watch.service deploy/herald-watch.timer \
@@ -1018,8 +1018,8 @@ bash deploy/herald-deploy.sh
 
    **왜 저 목록이 낡았는지** — 이후 이 훅이 다른 스케줄 유닛과 공유되도록 템플릿화되면서
    `herald-notify-failure.service`는 `herald-notify-failure@.service`로 이름이 바뀌었고, 그 사이
-   타이머도 다섯으로 늘었습니다. 아래 열한 개짜리 목록이 다섯 스케줄러
-   (`herald-watch`·`herald-convert`·`herald-x-reconcile`·`herald-creds`·`herald-translate-check`)와
+   타이머도 다섯으로 늘었습니다. 아래 열세 개짜리 목록이 여섯 스케줄러
+   (`herald-watch`·`herald-convert`·`herald-x-reconcile`·`herald-creds`·`herald-translate-check`·`herald-backup`)와
    공용 실패 훅을 한 번에 까는 유일한 완전한 목록입니다. 이 절의 나머지 단계(1~3, 5~7)는 그대로 유효합니다.
 
 5. **타이머를 켜기 전에 손으로 한 번 돌려봅니다.** `daemon-reload`만 하고, `enable`은 아직입니다:
@@ -1603,7 +1603,7 @@ set -a && . ~/.herald/prod.env && set +a && pnpm db:migrate
 `HERALD_DEPLOYMENT_ORIGIN`을 씁니다 — `deploy:check`가 이미 실제 Vercel 도메인과 대조하는 그
 값이고, 한 곳에 하나만 둡니다.
 
-**설치는 위 "X 발행 재확인" 절의 열한 개짜리 `cp` 목록에 이미 들어 있습니다**
+**설치는 위 "X 발행 재확인" 절의 열세 개짜리 `cp` 목록에 이미 들어 있습니다**
 (`deploy/herald-creds.service`, `deploy/herald-creds.timer`). 다른 유닛과 달리 이 유닛은
 `EnvironmentFile=%h/.herald/prod.env`를 걸지 **않습니다** — 데이터베이스를 열지 않고 배포본에
 HTTP로 묻기만 하므로, 걸어 두면 없는 의존성을 있는 것처럼 적는 셈이 됩니다.
@@ -1673,7 +1673,8 @@ systemctl --user enable --now herald-creds.timer
 ### 용어집 주간 다이제스트 (herald-translate-check)
 
 **"용어집이 맞는가, 그리고 빠진 게 없는가" — 두 질문을 한 자리에서 묻는 주간 유닛입니다.**
-다섯 스케줄러 중 유일하게 `ExecStart=`가 두 줄이고, `Type=oneshot`이 그 둘을 순서대로 돌립니다:
+여섯 스케줄러 중 `ExecStart=`가 두 줄인 유닛은 이것과 `herald-backup`뿐이고, `Type=oneshot`이 그
+둘을 순서대로 돌립니다:
 
 1. **`pnpm translate:check --notify`** — 우리 초안이 용어집이 정한 말을 썼는지(드리프트), 그리고
    실제로 올라간 글에서 사람이 그 말을 계속 다른 말로 바꿔 놓는지(오버라이드). 두 질문의 자세한
@@ -1768,7 +1769,7 @@ bash deploy/herald-deploy.sh         # 4단계가 그걸 ~/.herald/output 아래
 "실패"로 알리는 셈이고, 하필 그 알림을 배달해야 할 서브시스템(텔레그램)이 죽어 있을 때만 그렇게
 됩니다.
 
-**설치는 위 "X 발행 재확인" 절의 열한 개짜리 `cp` 목록에 이미 들어 있습니다**
+**설치는 위 "X 발행 재확인" 절의 열세 개짜리 `cp` 목록에 이미 들어 있습니다**
 (`deploy/herald-translate-check.service`, `deploy/herald-translate-check.timer`).
 
 **켜기 전 게이트는 다섯 유닛 중 가장 단순합니다.** 두 명령이 파이프라인 데이터를 아무것도 쓰지
