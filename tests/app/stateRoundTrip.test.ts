@@ -11,6 +11,8 @@ import { PgTranslationStore } from "../../src/adapters/store/PgTranslationStore"
 import { PgFormattingStore } from "../../src/adapters/store/PgFormattingStore";
 import { PgDeliveryLedger } from "../../src/adapters/store/PgDeliveryLedger";
 import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
+import { PgFewShotStore, fewShotStoresByType } from "../../src/adapters/store/PgFewShotStore";
+import { createStateFileStore } from "../../src/cli/stateFiles";
 
 /** An in-memory stand-in for the Drive folder: newest upload wins, exactly like `latest()`. */
 function memoryDrive(): ConfigDrive {
@@ -129,6 +131,67 @@ describe("state:push → state:pull round trip (database-backed, Task 19)", () =
       await source.close();
       await restored.close();
       await rm(archiveDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores every few-shot corpus into an empty database, in order", async () => {
+    const source = await createTestDb();
+    try {
+      const store = new PgFewShotStore(source, "translation");
+      for (const n of ["1", "2", "3"]) await store.add({ source: n, target: n, itemId: `x:${n}` });
+      await fewShotStoresByType(source).x.add({ source: "sx", target: "tx", itemId: "x:9" });
+
+      const snapshot = await createStateFileStore(source).list();
+
+      const target = await createTestDb();
+      try {
+        const store2 = createStateFileStore(target);
+        for (const f of snapshot) await store2.write(f.path, f.content);
+
+        const restored = await new PgFewShotStore(target, "translation").load();
+        expect(restored.map((e) => e.source)).toEqual(["1", "2", "3"]);
+        expect(await fewShotStoresByType(target).x.load()).toEqual([
+          { source: "sx", target: "tx", itemId: "x:9" },
+        ]);
+      } finally {
+        await target.close();
+      }
+    } finally {
+      await source.close();
+    }
+  });
+
+  it("a second pull of the same snapshot does not grow the corpus", async () => {
+    // The property that makes this a backup rather than a one-shot: `add` upserts on
+    // (scope, item_id), so replaying a snapshot is idempotent. Task 1's push-time guard is what
+    // keeps it true, by refusing to snapshot a row whose null item_id would append instead.
+    const source = await createTestDb();
+    try {
+      await new PgFewShotStore(source, "translation").add({ source: "a", target: "가", itemId: "x:1" });
+      const snapshot = await createStateFileStore(source).list();
+
+      const target = await createTestDb();
+      try {
+        const store2 = createStateFileStore(target);
+        for (const f of snapshot) await store2.write(f.path, f.content);
+        for (const f of snapshot) await store2.write(f.path, f.content);
+        expect(await new PgFewShotStore(target, "translation").load()).toHaveLength(1);
+      } finally {
+        await target.close();
+      }
+    } finally {
+      await source.close();
+    }
+  });
+
+  it("refuses a snapshot path that is shaped like a corpus but names no real type", async () => {
+    const db = await createTestDb();
+    try {
+      await expect(
+        createStateFileStore(db).write("output/few-shot/conversion.nosuchtype.json", "[]"),
+      ).rejects.toThrow(/untracked operational-state file/);
+    } finally {
+      await db.close();
     }
   });
 });

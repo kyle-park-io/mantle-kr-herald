@@ -203,6 +203,20 @@ export class DbStateFileStore implements StateFileStore {
   }
 
   async write(path: string, content: string): Promise<void> {
+    // Asked before the switch because the corpora are derived from ALL_TYPES, not literals a `case`
+    // can name. `fewShotScopeFor` returns undefined for anything else, so an unrecognised path falls
+    // through to the switch's own `default:` refusal and there is still exactly one refusal message.
+    //
+    // Replaying `add()` in array order is what preserves ordinal order: `ordinal` is a bigserial
+    // assigned on insert, and `load()` reads `order by ordinal`. That order is prompt content — see
+    // `assertRestorableFewShot`'s comment for why the same replay is also safe to run twice.
+    const fewShotScope = fewShotScopeFor(path);
+    if (fewShotScope !== undefined) {
+      const store = new PgFewShotStore(this.db, fewShotScope);
+      for (const ex of JSON.parse(content) as FewShotExample[]) await store.add(ex);
+      return;
+    }
+
     switch (path) {
       case TRACKED_REL[0]: {
         const store = new PgTranslationStore(this.db);
