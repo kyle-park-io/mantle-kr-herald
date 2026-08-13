@@ -85,7 +85,8 @@ export function unkeyedFewShotResult(scopes: readonly UnkeyedFewShotScope[]): Ch
     detail:
       `${total} example(s) with no item_id (${named}) — unique (scope, item_id) does not constrain ` +
       `nulls, so re-approving one of those examples appends a second copy instead of replacing it. ` +
-      `Give those rows an item_id, or delete them (docs/ko/setup/steering.md). Backups are ` +
-      `unaffected: state:push snapshots them and state:pull restores them once.`,
+      `No command fixes this — db:export/db:import would add a corrected row BESIDE the null one, ` +
+      `not replace it, so it takes SQL against few_shot_examples (docs/ko/setup/steering.md). ` +
+      `Backups are unaffected: state:push snapshots them and state:pull restores them once.`,
   };
 }
