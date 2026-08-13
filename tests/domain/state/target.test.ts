@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { describeBackupTarget } from "../../../src/domain/state/target";
+import { INVALID_DB_URL } from "../../../src/config";
 
 describe("describeBackupTarget", () => {
   it("names the host and database, never the credentials", () => {
@@ -43,5 +44,33 @@ describe("describeBackupTarget", () => {
     const cfg = { url: "postgres://u:p@127.0.0.1:5432/herald", env: "development" } as const;
     expect(describeBackupTarget(cfg, {}).some((l) => l.includes("⚠"))).toBe(true);
     expect(describeBackupTarget(cfg, { warnOnDevelopment: true }).some((l) => l.includes("⚠"))).toBe(true);
+  });
+});
+
+describe("describeBackupTarget — a malformed DATABASE_URL", () => {
+  // `loadDbConfig` never checks that the value parses as a URL, and this is the first line
+  // `state:push` prints — nightly, from `herald-backup.service`, whose `OnFailure=` hook relays
+  // stderr into a Telegram room. `describeDbTarget`'s `new URL()` would throw here, and a URL
+  // constructor's message is not guaranteed across engines not to quote the input back, credentials
+  // and all. `src/config.ts` states the rule this follows: the guard belongs with the call.
+  const MALFORMED = "postgres//postgres:hunter2@127.0.0.1:5432/herald";
+
+  it("prints the fixed fallback instead of throwing", () => {
+    const lines = describeBackupTarget({ url: MALFORMED, env: "production" });
+    expect(lines[0]).toContain(INVALID_DB_URL);
+    expect(lines[0]).toContain("HERALD_DB_ENV=production");
+  });
+
+  it("leaks no part of the URL — not the password, not the host, not the value itself", () => {
+    const printed = describeBackupTarget({ url: MALFORMED, env: "development" }).join("\n");
+    expect(printed).not.toContain("hunter2");
+    expect(printed).not.toContain("postgres:");
+    expect(printed).not.toContain("127.0.0.1");
+    expect(printed).not.toContain(MALFORMED);
+  });
+
+  it("still warns about a development target — the two are independent", () => {
+    const lines = describeBackupTarget({ url: MALFORMED, env: "development" });
+    expect(lines.some((l) => l.includes("⚠"))).toBe(true);
   });
 });
