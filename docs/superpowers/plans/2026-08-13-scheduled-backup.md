@@ -306,19 +306,20 @@ const FEW_SHOT_TRACKED = FEW_SHOT_REL;
 In `snapshotFromDb`, after the `addArray(TRACKED_REL[5], ...)` line and before the `publishEntries` block, add:
 
 ```ts
+  // Synchronous, like `addArray` above it — the `await`s below are on the `load()` calls only.
   const addFewShot = (rel: string, scope: string, rows: readonly FewShotExample[]) => {
     assertRestorableFewShot(rows, scope);
     if (rows.length > 0) files.push({ rel, body: jsonFileText(rows) });
   };
 
-  await addFewShot("output/few-shot/translation.json", "translation", await new PgFewShotStore(db, "translation").load());
+  addFewShot("output/few-shot/translation.json", "translation", await new PgFewShotStore(db, "translation").load());
   const fewShotByType = fewShotStoresByType(db);
   for (const type of ALL_TYPES) {
-    await addFewShot(`output/few-shot/conversion.${type}.json`, `conversion:${type}`, await fewShotByType[type].load());
+    addFewShot(`output/few-shot/conversion.${type}.json`, `conversion:${type}`, await fewShotByType[type].load());
   }
 ```
 
-Note `addFewShot` is synchronous; the `await`s above are on the `load()` calls only. Drop the leading `await` on the `addFewShot(...)` calls if the linter objects — they are written here for symmetry with the surrounding lines and are not required.
+The corpora are read one at a time rather than with `Promise.all`, matching the sequential `addArray` calls above — `snapshotFromDb` runs against one connection and ordering the reads keeps the failure message pointing at a single corpus.
 
 Change `tracked()` to:
 
