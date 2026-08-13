@@ -191,23 +191,20 @@ describe("snapshotFromDb — few-shot corpora", () => {
     expect(rels).not.toContain("output/few-shot/conversion.kol.json");
   });
 
-  it("refuses the whole push when any corpus holds an itemId-less example", async () => {
-    db = await createTestDb();
-    await new PgFewShotStore(db, "translation").add({ source: "a", target: "가" });
-    await expect(snapshotFromDb(db, { assertRestorable: true })).rejects.toThrow(/itemId/);
-  });
-
-  it("reads that same corpus without throwing when nothing is being pushed", async () => {
-    // The refusal is a PUSH-time gate and only a push-time gate. It used to live inside
-    // `snapshotFromDb` unconditionally, which meant one legacy `item_id is null` row in the TARGET
-    // database made `pnpm state:pull` — the read-only preview included — die with "Refusing to push
-    // a snapshot that cannot be restored twice", while no push was happening and the restore was
-    // blocked at the moment it was most needed. `pnpm db:import --yes` (the project's own documented
-    // recovery order, which inserts corpus JSON verbatim) is exactly what puts such a row there.
+  it("snapshots a corpus holding an itemId-less example instead of refusing", async () => {
+    // This read used to throw for exactly this row, on the push path. `PgFewShotStore.replaceAll`
+    // deletes the scope and replays the snapshot in one transaction, so the row restores exactly
+    // once however many times you pull — the refusal was declining to back up data that restores
+    // perfectly, and on `herald-backup.timer` it would have failed the unit nightly. The finding
+    // itself moved to `pnpm doctor` (`src/doctor/fewShot.ts`); nothing in the snapshot path grades
+    // corpus content any more.
     db = await createTestDb();
     await new PgFewShotStore(db, "translation").add({ source: "a", target: "가" });
     const files = await snapshotFromDb(db);
     expect(files.map((f) => f.rel)).toContain("output/few-shot/translation.json");
+    expect(JSON.parse(files.find((f) => f.rel === "output/few-shot/translation.json")!.body)).toEqual([
+      { source: "a", target: "가" },
+    ]);
   });
 
   it("tracked() lists the seven original paths plus every few-shot path", async () => {
@@ -336,11 +333,10 @@ describe("DbStateFileStore.write — few-shot replaces the corpus, it does not m
     expect((await new PgFewShotStore(db, "translation").load()).map((e) => e.source)).toEqual(["A", "B"]);
   });
 
-  it("restores an itemId-less row the push side would have refused, without duplicating it", async () => {
-    // The other half of moving the refusal to push time: a snapshot taken before that gate existed,
-    // or one taken by a checkout that has such a row, still has to be restorable. Delete-then-replay
-    // is what makes even a null-item_id corpus idempotent — the `on conflict` clause never could,
-    // because Postgres does not consider one null equal to another.
+  it("restores an itemId-less row without duplicating it, however many times it runs", async () => {
+    // This is the property that retired the push-time refusal (`pnpm doctor` reports such a row
+    // now). Delete-then-replay is what makes even a null-item_id corpus idempotent — the `on
+    // conflict` clause never could, because Postgres does not consider one null equal to another.
     db = await createTestDb();
     const store = new DbStateFileStore(db);
     const body = JSON.stringify([{ source: "A", target: "가" }, { source: "B", target: "나" }]);
@@ -357,32 +353,32 @@ describe("createStateFileStore", () => {
     expect(createStateFileStore(db)).toBeInstanceOf(DbStateFileStore);
   });
 
-  it("does not assert restorability unless asked — a read is a read", async () => {
+  it("reads a corpus holding an itemId-less row — a read is a read, on either path", async () => {
     db = await createTestDb();
     await new PgFewShotStore(db, "translation").add({ source: "a", target: "가" });
     await expect(createStateFileStore(db).list()).resolves.toHaveLength(1);
-    await expect(createStateFileStore(db, { assertRestorable: true }).list()).rejects.toThrow(/itemId/);
   });
 });
 
 /**
- * Which of the two commands opts in, read out of the entry scripts themselves.
+ * Neither command grades corpus content, read out of the entry scripts themselves.
  *
  * Neither script can be imported by a test — both are top-level-`await` programs that open Google
  * auth and a real database on load — so this is the same source-text pin `tests/cli/serve.ts`'s and
- * `translate-check.ts`'s suites use. It is worth having because the default is permissive: nothing
- * else in the suite would notice `state:push` quietly losing its guard, and the whole point of the
- * guard is that it fires on a database nobody is looking at.
+ * `translate-check.ts`'s suites use. It is worth having because the failure it pins is silent and
+ * scheduled: `state:push` runs nightly from `herald-backup.service` against production, where a
+ * refusal is a failed unit and a Telegram alert rather than something anybody reads on a terminal.
  */
-describe("the restorability gate is wired to the push command and not the pull command", () => {
+describe("neither state command refuses on few-shot corpus content", () => {
   const source = (cli: string): string =>
     readFileSync(fileURLToPath(new URL(`../../src/cli/${cli}`, import.meta.url)), "utf8");
 
-  it("state:push builds its store with assertRestorable", () => {
-    expect(source("state-push.ts")).toMatch(/createStateFileStore\(db, \{ assertRestorable: true \}\)/);
+  it("state:push builds the same plain store state:pull does", () => {
+    expect(source("state-push.ts")).toContain("createStateFileStore(db)");
+    expect(source("state-push.ts")).not.toContain("assertRestorable");
   });
 
-  it("state:pull does not, so a legacy row cannot block a restore or its preview", () => {
+  it("state:pull does too, so a legacy row cannot block a restore or its preview", () => {
     expect(source("state-pull.ts")).toContain("createStateFileStore(db)");
     expect(source("state-pull.ts")).not.toContain("assertRestorable");
   });

@@ -15,6 +15,7 @@ import {
 import { createDb } from "../adapters/db/createDb";
 import { paths, OUTPUT_DIR, REPO_ROOT } from "../paths";
 import { steeringFiles, missingSteeringFiles, skeletonSteeringFiles } from "../doctor/steering";
+import { unkeyedFewShotScopes, unkeyedFewShotResult, FEW_SHOT_KEY_CHECK } from "../doctor/fewShot";
 import { resolveDeployTree, deploySteeringStatus, deploySteeringResult } from "../doctor/deploySteering";
 import { realDeployTreeShow } from "./systemdShow";
 import {
@@ -74,6 +75,34 @@ async function runDatabaseCheck(): Promise<CheckResult> {
   }
 }
 
+/** Corpus hygiene, not connectivity: an itemId-less `few_shot_examples` row is unreachable by
+ *  `add`'s `on conflict (scope, item_id)` key, so re-approving that example appends a second copy
+ *  instead of replacing it. See `src/doctor/fewShot.ts` for the whole argument, including why this
+ *  is a `doctor` line and no longer a `state:push` refusal. Opens its own connection the same way
+ *  `runDatabaseCheck` above does. Never `fail`, and never a second report of a database that is
+ *  simply unreachable — the check above owns that finding, and this one says "not checked" and
+ *  points at it rather than printing the same cause twice. */
+async function runFewShotKeyCheck(): Promise<CheckResult> {
+  let cfg: DbConfig;
+  try {
+    cfg = loadDbConfig();
+  } catch {
+    return { name: FEW_SHOT_KEY_CHECK, status: "warn", detail: "not checked — see the Database line above" };
+  }
+  const db = createDb(cfg);
+  try {
+    return unkeyedFewShotResult(await unkeyedFewShotScopes(db));
+  } catch (err) {
+    return {
+      name: FEW_SHOT_KEY_CHECK,
+      status: "warn",
+      detail: `not checked — could not read few_shot_examples (${err instanceof Error ? err.message : String(err)})`,
+    };
+  } finally {
+    await db.close();
+  }
+}
+
 // --- config checks (offline) ---
 // Always reported, override or not: an invisible HERALD_OUTPUT_DIR would recreate the "silently
 // created a second output/ tree" trap src/paths.ts's REPO_ROOT comment warns about — see the
@@ -81,6 +110,7 @@ async function runDatabaseCheck(): Promise<CheckResult> {
 results.push(outputRootResult(OUTPUT_DIR, process.env.HERALD_OUTPUT_DIR));
 results.push(configCheck("Storage mode", () => loadStorageMode(), `mode: ${process.env.HERALD_STORAGE_MODE?.trim() ?? "(unset)"}`));
 results.push(await runDatabaseCheck());
+results.push(await runFewShotKeyCheck());
 // twitterapi.io / Lark app are source credentials — you need one only if you collect from that
 // source, in either mode. Absence is a warn, never a fail: a Google+X operator has no Lark, and a
 // Lark-only operator has no twitterapi, and both are valid.

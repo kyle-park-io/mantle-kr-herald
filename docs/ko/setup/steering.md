@@ -109,6 +109,24 @@ wc -l translation/style-guide.md conversion/x.md conversion/announcement.md conv
 용어집이 `0 entries`이거나 스타일 가이드가 열 줄 남짓이면 **스켈레톤을 받은 것**입니다. 다시
 요청하세요.
 
+### 3-1. `Few-shot corpus keys` — `item_id` 없는 예시
+
+`pnpm doctor`는 데이터베이스의 `few_shot_examples`도 한 줄로 봅니다. `item_id`가 비어 있는 행이
+있으면 어느 스코프에 몇 개인지와 함께 `warn`을 냅니다(`src/doctor/fewShot.ts`).
+
+이 표는 `unique (scope, item_id)`인데 **Postgres는 null끼리 같다고 보지 않습니다.** 그래서
+`item_id`가 없는 행은 승인 경로의 `on conflict (scope, item_id)`가 영영 잡지 못합니다 — 같은 예시를
+다시 승인하면 그 행을 **덮어쓰지 않고 옆에 한 벌 더 쌓고**, 프롬프트에는 두 벌이 함께 들어갑니다.
+고치는 방법은 그 행에 `item_id`를 넣거나 지우는 것뿐입니다.
+
+승인이 만드는 행에는 항상 들어가므로(`translate:save --approve`, 2차 검수 승인 둘 다) 이 경고가
+뜬다면 손으로 고친 JSON이나 예전 형식 파일이 `pnpm db:import`로 들어온 경우입니다.
+
+> **백업은 이 경고와 무관합니다.** `pnpm state:push`는 그런 행도 그대로 스냅샷하고,
+> `pnpm state:pull`은 스코프 단위 교체라(§5) 몇 번을 돌려도 한 벌만 복원합니다. 예전에는
+> `state:push`가 이 행을 보면 백업 자체를 거부했는데, 매일 도는 `herald-backup.timer`(§6)에서는
+> 아무 해도 없는 행 하나 때문에 백업이 매일 실패하고 매일 알림이 가는 셈이라 이 자리로 옮겼습니다.
+
 ## 4. 원본·정본
 
 스티어링 파일은 **KR 팀 Lark 문서에서 초기 이관**해 온 것이고, 각 파일 맨 위 `> 출처:` 줄에 그 Lark

@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestDb, createUnmigratedTestDb } from "../support/testDb";
@@ -250,5 +252,29 @@ describe("previewExport", () => {
     const root = await mkdtemp(join(tmpdir(), "export-preview-no-ddl-"));
     await previewExport(db, root);
     await expect(db.query("select 1 from deliveries limit 1")).rejects.toThrow(/relation .* does not exist/i);
+  });
+});
+
+/**
+ * The entry-guard block is unreachable from a test — it is only entered when this module is the
+ * process's own argv[1] — so its one line about the target is pinned as source text, the same way
+ * `tests/cli/stateFiles.test.ts` pins which store the state commands build.
+ *
+ * Worth pinning because the two commands share `describeBackupTarget` and only one of them wants all
+ * of it: `state:push` exists to protect production, so a development target there is the accident
+ * the ⚠ was written for. `db:export` is the rollback path, and exporting the development database is
+ * one of its intended uses — an operator who followed "point DATABASE_URL at production instead"
+ * here would overwrite their local corpus files with production's, which is the loss `db:export`
+ * exists to undo.
+ */
+describe("db:export prints the target without state:push's production advice", () => {
+  const source = readFileSync(fileURLToPath(new URL("../../src/cli/db-export.ts", import.meta.url)), "utf8");
+
+  it("opts out of the development warning", () => {
+    expect(source).toContain("describeBackupTarget(cfg, { warnOnDevelopment: false })");
+  });
+
+  it("still prints the host line, which is the half both commands need", () => {
+    expect(source).toMatch(/for \(const line of describeBackupTarget\(cfg, \{ warnOnDevelopment: false \}\)\) console\.log\(line\)/);
   });
 });

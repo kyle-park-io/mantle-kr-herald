@@ -13,7 +13,7 @@ import { PgXArticleLedger } from "../adapters/store/PgXArticleLedger";
 import { PgPublishStore } from "../adapters/store/PgPublishStore";
 import { PgFewShotStore, fewShotStoresByType } from "../adapters/store/PgFewShotStore";
 import { ALL_TYPES } from "../domain/conversion/models";
-import { FEW_SHOT_REL, assertRestorableFewShot, fewShotScopeFor } from "../domain/state/fewShot";
+import { FEW_SHOT_REL, fewShotScopeFor } from "../domain/state/fewShot";
 import type { Translation } from "../domain/translation/models";
 import type { FewShotExample } from "../domain/translation/models";
 import type { ContentVariant } from "../domain/conversion/models";
@@ -108,19 +108,6 @@ const TRACKED_REL = [
 ] as const;
 
 /**
- * The eighth tracked item, kept in its own list rather than appended to `TRACKED_REL` because that
- * array is indexed positionally by `snapshotFromDb` and `write()` below — an eighth literal there
- * would be fine, but eight *derived* entries would not, and splitting the two keeps the seven's
- * indices unarguable. `tracked()` concatenates them.
- *
- * `few_shot_examples` passes this file's own membership test — "everything the database holds that
- * cannot be rebuilt by re-running the pipeline." A few-shot row copies text that is already tracked
- * (`translations`, `variants`), but *which approvals became examples* is not reproducible and no
- * command re-derives the corpus from approved text. Re-running the pipeline yields no corpus at all.
- */
-const FEW_SHOT_TRACKED = FEW_SHOT_REL;
-
-/**
  * Reads the seven tracked stores and serialises each to the exact bytes the matching `Json*` store
  * would have written to its file (`jsonFileText` — 2-space `JSON.stringify` plus a trailing
  * newline), keyed by the same repo-relative path `TRACKED_REL` names. This is `db:export`'s own
@@ -143,32 +130,21 @@ export interface SnapshotFile {
 }
 
 /**
- * Whether this read is the one about to be uploaded.
+ * **This read never refuses, on either path.** It used to, for one case: a corpus holding an
+ * `item_id is null` row made `state:push` throw. That refusal was written when the restore was a
+ * replay of `add()`, where such a row really did duplicate itself on every `state:pull`;
+ * `PgFewShotStore.replaceAll` (delete the scope, replay the snapshot in array order, one
+ * transaction) ended that, so the snapshot it was refusing to take is one a restore now applies
+ * exactly once however many times it runs. What remained was a backup command declining to back up
+ * data that would restore perfectly — on a nightly timer, failing `herald-backup.service` and firing
+ * its Telegram hook every night over a row that harms nothing.
  *
- * `assertRestorableFewShot` used to fire from inside `snapshotFromDb` unconditionally, and that put
- * a *push*-time refusal on the *pull* path: `list()` backs `PullState.run`'s preview and its
- * `backup()`, so one `item_id is null` row in the database being restored INTO killed
- * `pnpm state:pull` outright — flagless preview included — with "Refusing to push a snapshot that
- * cannot be restored twice … push again." No push was happening, the advice named an action the
- * operator was not taking, and the restore was blocked at exactly the moment it was most needed.
- * The entry path for such a row is this project's own documented recovery order: `pnpm db:import
- * --yes` inserts corpus JSON verbatim (`src/cli/db-import.ts`, `ex.itemId ?? null`), and
- * `pnpm state:pull` is the very next step.
- *
- * So the gate is opt-in, and only `state:push` opts in. Reading is never refused; restoring is safe
- * regardless, because `PgFewShotStore.replaceAll` deletes before it replays and so does not depend
- * on `item_id` to stay idempotent. What the gate still buys is what the spec asked it for — a
- * snapshot that lands in Drive is one a later restore can apply repeatedly.
+ * The finding was real, but it is about the SOURCE database, not the snapshot: such a row is
+ * unreachable by `add`'s `on conflict (scope, item_id)` key, so re-approving that example appends a
+ * second copy. It now lives in `pnpm doctor` (`src/doctor/fewShot.ts`), which is read on demand and
+ * grades it a warn.
  */
-export interface SnapshotOptions {
-  /**
-   * Refuse a corpus holding an itemId-less row. `true` on the push path only — see
-   * `assertRestorableFewShot`. Defaults to `false`: a read is a read.
-   */
-  readonly assertRestorable?: boolean;
-}
-
-export async function snapshotFromDb(db: Db, opts: SnapshotOptions = {}): Promise<SnapshotFile[]> {
+export async function snapshotFromDb(db: Db): Promise<SnapshotFile[]> {
   const files: SnapshotFile[] = [];
   const addArray = (rel: string, rows: readonly unknown[]) => {
     if (rows.length > 0) files.push({ rel, body: jsonFileText(rows) });
@@ -181,16 +157,10 @@ export async function snapshotFromDb(db: Db, opts: SnapshotOptions = {}): Promis
   addArray(TRACKED_REL[4], await new PgDeliveryLedger(db).loadAll());
   addArray(TRACKED_REL[5], await new PgXArticleLedger(db).loadAll());
 
-  // Synchronous, like `addArray` above it — the `await`s below are on the `load()` calls only.
-  const addFewShot = (rel: string, scope: string, rows: readonly FewShotExample[]) => {
-    if (opts.assertRestorable) assertRestorableFewShot(rows, scope);
-    if (rows.length > 0) files.push({ rel, body: jsonFileText(rows) });
-  };
-
-  addFewShot("output/few-shot/translation.json", "translation", await new PgFewShotStore(db, "translation").load());
+  addArray("output/few-shot/translation.json", await new PgFewShotStore(db, "translation").load());
   const fewShotByType = fewShotStoresByType(db);
   for (const type of ALL_TYPES) {
-    addFewShot(`output/few-shot/conversion.${type}.json`, `conversion:${type}`, await fewShotByType[type].load());
+    addArray(`output/few-shot/conversion.${type}.json`, await fewShotByType[type].load());
   }
 
   const publishEntries = await new PgPublishStore(db).listEntries();
@@ -238,17 +208,26 @@ export async function snapshotFromDb(db: Db, opts: SnapshotOptions = {}): Promis
  * operator just approved.
  */
 export class DbStateFileStore implements StateFileStore {
-  constructor(
-    private readonly db: Db,
-    private readonly opts: SnapshotOptions = {},
-  ) {}
+  constructor(private readonly db: Db) {}
 
   async list(): Promise<StateFile[]> {
-    return (await snapshotFromDb(this.db, this.opts)).map((f) => ({ path: f.rel, content: f.body }));
+    return (await snapshotFromDb(this.db)).map((f) => ({ path: f.rel, content: f.body }));
   }
 
+  /**
+   * The seven, plus the few-shot corpora — the eighth tracked item, kept in a list of its own
+   * (`FEW_SHOT_REL`, `src/domain/state/fewShot.ts`) rather than appended to `TRACKED_REL` because
+   * that array is indexed positionally by `snapshotFromDb` and `write()` above. An eighth literal
+   * there would be fine, but eight *derived* entries would not, and splitting the two keeps the
+   * seven's indices unarguable.
+   *
+   * `few_shot_examples` passes this file's own membership test — "everything the database holds that
+   * cannot be rebuilt by re-running the pipeline." A few-shot row copies text that is already tracked
+   * (`translations`, `variants`), but *which approvals became examples* is not reproducible and no
+   * command re-derives the corpus from approved text. Re-running the pipeline yields no corpus at all.
+   */
   tracked(): readonly string[] {
-    return [...TRACKED_REL, ...FEW_SHOT_TRACKED];
+    return [...TRACKED_REL, ...FEW_SHOT_REL];
   }
 
   async write(path: string, content: string): Promise<void> {
@@ -321,12 +300,10 @@ export class DbStateFileStore implements StateFileStore {
   }
 }
 
-/**
- * The store both `state:push` and `state:pull` build. `opts.assertRestorable` is the only thing that
- * differs between them and it is `state:push`'s to pass — see `SnapshotOptions`.
- */
-export function createStateFileStore(db: Db, opts: SnapshotOptions = {}): DbStateFileStore {
-  return new DbStateFileStore(db, opts);
+/** The store both `state:push` and `state:pull` build — the same one, with nothing to choose
+ *  between them: the push path's old opt-in refusal moved to `pnpm doctor` (see `snapshotFromDb`). */
+export function createStateFileStore(db: Db): DbStateFileStore {
+  return new DbStateFileStore(db);
 }
 
 /** Names this bundle in `GoogleConfigDrive`'s failure messages — a stale `GDRIVE_STATE_FOLDER_ID`

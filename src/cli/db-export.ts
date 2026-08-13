@@ -513,7 +513,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const allowEmptyOverwrite = process.argv.includes("--allow-empty-overwrite");
 
   console.log(`db:export — exporting into ${outputRoot}`);
-  for (const line of describeBackupTarget(cfg)) console.log(line);
+  // The host line, but not `state:push`'s "point this at production instead" advice: exporting the
+  // development database is one of this command's legitimate uses, and a reader who followed that
+  // advice here would overwrite the local corpus files with production's. See `BackupTargetOptions`.
+  for (const line of describeBackupTarget(cfg, { warnOnDevelopment: false })) console.log(line);
 
   const db = createDb(cfg);
   try {
