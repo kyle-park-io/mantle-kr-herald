@@ -29,4 +29,8 @@ const files = new FsConfigFileStore(
   REPO_ROOT,
 );
 const res = await new PushConfig(files, new GoogleConfigDrive(auth)).run(folderId);
-console.log(`pushed ${res.count} file(s) → ${res.name} (${res.id})`);
+console.log(
+  res.skipped
+    ? `변경 없음 — 올리지 않았습니다. 최신 스냅샷 그대로: ${res.name}`
+    : `${res.count}개 파일을 올렸습니다 → ${res.name} (${res.id})`,
+);

@@ -64,6 +64,35 @@ export class PgFewShotStore implements FewShotStore {
       [this.scope, ex.itemId ?? null, ex.source, ex.target],
     );
   }
+
+  /**
+   * Makes this scope's corpus exactly `examples`, in exactly that order. Not part of `FewShotStore`
+   * — the port is what the pipeline writes through (`add`, one approval at a time), and this is the
+   * restore side, which `DbStateFileStore.write` is the only caller of.
+   *
+   * `add` alone cannot do this, and the gap is silent. Its `on conflict (scope, item_id) do update`
+   * clause deliberately never assigns `ordinal` — that is what keeps an edited row in its place for
+   * the pipeline's own re-approvals — so replaying a snapshot establishes order only for the rows
+   * NEW to this database. Replayed over a target already holding `{C}`, the snapshot `[A, B, C]`
+   * came back C, A, B: the right set in the wrong order. `load()` is `order by ordinal` and
+   * `translate:prepare`/`convert:prepare` lay that order straight into the model's prompt, so order
+   * here is content. Deleting first is what makes the restored corpus the snapshot's rather than a
+   * merge of two.
+   *
+   * One transaction, because the window between the delete and the last insert is a corpus that is
+   * empty or half-written — and an empty corpus is a prompt with no examples in it, which nothing
+   * downstream would report as a failure.
+   */
+  async replaceAll(examples: readonly FewShotExample[]): Promise<void> {
+    await this.db.tx(async (tx) => {
+      await tx.query(`delete from few_shot_examples where scope = $1`, [this.scope]);
+      // Through `add` rather than a second insert statement, so the two paths cannot drift: the
+      // `bigserial` ordinal is assigned in call order, which is the array order, which is the order
+      // `snapshotFromDb` read out of the source database.
+      const scoped = new PgFewShotStore(tx, this.scope);
+      for (const ex of examples) await scoped.add(ex);
+    });
+  }
 }
 
 /** One store per conversion type, built from ALL_TYPES so a new type needs no wiring here. */

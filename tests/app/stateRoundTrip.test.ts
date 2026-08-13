@@ -11,6 +11,8 @@ import { PgTranslationStore } from "../../src/adapters/store/PgTranslationStore"
 import { PgFormattingStore } from "../../src/adapters/store/PgFormattingStore";
 import { PgDeliveryLedger } from "../../src/adapters/store/PgDeliveryLedger";
 import { PgPublishStore } from "../../src/adapters/store/PgPublishStore";
+import { PgFewShotStore, fewShotStoresByType } from "../../src/adapters/store/PgFewShotStore";
+import { createStateFileStore } from "../../src/cli/stateFiles";
 
 /** An in-memory stand-in for the Drive folder: newest upload wins, exactly like `latest()`. */
 function memoryDrive(): ConfigDrive {
@@ -129,6 +131,147 @@ describe("state:push → state:pull round trip (database-backed, Task 19)", () =
       await source.close();
       await restored.close();
       await rm(archiveDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores every few-shot corpus into an empty database, in order", async () => {
+    const source = await createTestDb();
+    try {
+      const store = new PgFewShotStore(source, "translation");
+      for (const n of ["1", "2", "3"]) await store.add({ source: n, target: n, itemId: `x:${n}` });
+      await fewShotStoresByType(source).x.add({ source: "sx", target: "tx", itemId: "x:9" });
+
+      const snapshot = await createStateFileStore(source).list();
+
+      const target = await createTestDb();
+      try {
+        const store2 = createStateFileStore(target);
+        for (const f of snapshot) await store2.write(f.path, f.content);
+
+        const restored = await new PgFewShotStore(target, "translation").load();
+        expect(restored.map((e) => e.source)).toEqual(["1", "2", "3"]);
+        expect(await fewShotStoresByType(target).x.load()).toEqual([
+          { source: "sx", target: "tx", itemId: "x:9" },
+        ]);
+      } finally {
+        await target.close();
+      }
+    } finally {
+      await source.close();
+    }
+  });
+
+  it("a second pull of the same snapshot does not grow the corpus", async () => {
+    // The property that makes this a backup rather than a one-shot: `add` upserts on
+    // (scope, item_id), so replaying a snapshot is idempotent. Task 1's push-time guard is what
+    // keeps it true, by refusing to snapshot a row whose null item_id would append instead.
+    const source = await createTestDb();
+    try {
+      await new PgFewShotStore(source, "translation").add({ source: "a", target: "가", itemId: "x:1" });
+      const snapshot = await createStateFileStore(source).list();
+
+      const target = await createTestDb();
+      try {
+        const store2 = createStateFileStore(target);
+        for (const f of snapshot) await store2.write(f.path, f.content);
+        for (const f of snapshot) await store2.write(f.path, f.content);
+        expect(await new PgFewShotStore(target, "translation").load()).toHaveLength(1);
+      } finally {
+        await target.close();
+      }
+    } finally {
+      await source.close();
+    }
+  });
+
+  it("restores the snapshot's corpus order onto a divergent database, not the target's", async () => {
+    // The realistic shape of this restore, and the one an empty-target round trip cannot see:
+    // production holds 30 few-shot rows, development 23, and pulling production's snapshot onto
+    // development is the whole point of the feature. Replaying `add()` alone upserted the rows the
+    // target already had IN PLACE — `on conflict … do update` never reassigns `ordinal` — so the
+    // target's own order survived and the snapshot's new rows were appended behind it. `load()` is
+    // `order by ordinal` and that order goes straight into the prompt.
+    const source = await createTestDb();
+    const restored = await createTestDb();
+    const archiveDir = await mkdtemp(join(tmpdir(), "herald-state-archive-"));
+    try {
+      const upstream = new PgFewShotStore(source, "translation");
+      for (const n of ["A", "B", "C"]) await upstream.add({ source: n, target: n, itemId: `x:${n}` });
+
+      const drive = memoryDrive();
+      await new PushState(new DbStateFileStore(source), drive, () => "2026-07-29T00:00:00.000Z").run("FOLDER");
+
+      // The target already holds the LAST of the three and nothing else.
+      await new PgFewShotStore(restored, "translation").add({ source: "C", target: "C", itemId: "x:C" });
+
+      await new PullState(new DbStateFileStore(restored), drive, archiveDir, () => "2026-07-30T00:00:00.000Z").run(
+        "FOLDER",
+        { apply: true },
+      );
+
+      const after = await new PgFewShotStore(restored, "translation").load();
+      expect(after.map((e) => e.source)).toEqual(["A", "B", "C"]);
+    } finally {
+      await source.close();
+      await restored.close();
+      await rm(archiveDir, { recursive: true, force: true });
+    }
+  });
+
+  it("previews and backs up a target holding an itemId-less row instead of refusing to run", async () => {
+    // `assertRestorableFewShot` used to throw from inside `snapshotFromDb`, which backs
+    // `StateFileStore.list()` — and `PullState.run` calls `list()` for its preview and again through
+    // `backup()`. So ONE legacy row in the TARGET database killed `pnpm state:pull` outright, with
+    // or without `--yes`, quoting advice about pushing while no push was happening. The documented
+    // recovery order (`pnpm db:import --yes` → `pnpm state:pull --yes`) is precisely how such a row
+    // gets there: db:import inserts corpus JSON verbatim, `ex.itemId ?? null` included.
+    const source = await createTestDb();
+    const restored = await createTestDb();
+    const archiveDir = await mkdtemp(join(tmpdir(), "herald-state-archive-"));
+    try {
+      await new PgFewShotStore(source, "translation").add({ source: "A", target: "가", itemId: "x:1" });
+      const drive = memoryDrive();
+      await new PushState(new DbStateFileStore(source), drive, () => "2026-07-29T00:00:00.000Z").run("FOLDER");
+
+      // The legacy row, in the database being restored INTO.
+      await new PgFewShotStore(restored, "translation").add({ source: "legacy", target: "레거시" });
+
+      const preview = await new PullState(new DbStateFileStore(restored), drive, archiveDir).run("FOLDER");
+      expect(preview!.applied).toBe(false);
+      expect(preview!.diff.find((d) => d.path === "output/few-shot/translation.json")?.change).toBe("overwrite");
+
+      const applied = await new PullState(
+        new DbStateFileStore(restored),
+        drive,
+        archiveDir,
+        () => "2026-07-30T00:00:00.000Z",
+      ).run("FOLDER", { apply: true });
+      expect(applied!.applied).toBe(true);
+
+      // The pre-pull corpus, legacy row and all, is on disk as the operator's rollback.
+      const backedUp = JSON.parse(
+        await readFile(join(archiveDir, "state-2026-07-30T00-00-00-000Z", "output/few-shot/translation.json"), "utf8"),
+      ) as { source: string }[];
+      expect(backedUp.map((e) => e.source)).toEqual(["legacy"]);
+
+      expect(await new PgFewShotStore(restored, "translation").load()).toEqual([
+        { source: "A", target: "가", itemId: "x:1" },
+      ]);
+    } finally {
+      await source.close();
+      await restored.close();
+      await rm(archiveDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a snapshot path that is shaped like a corpus but names no real type", async () => {
+    const db = await createTestDb();
+    try {
+      await expect(
+        createStateFileStore(db).write("output/few-shot/conversion.nosuchtype.json", "[]"),
+      ).rejects.toThrow(/untracked operational-state file/);
+    } finally {
+      await db.close();
     }
   });
 });

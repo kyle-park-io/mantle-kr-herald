@@ -4,6 +4,7 @@ import type { Db } from "../adapters/db/Db";
 import { createDb } from "../adapters/db/createDb";
 import { applySchema, isSchemaApplied } from "../adapters/db/schema";
 import { loadDbConfig } from "../config";
+import { describeBackupTarget } from "../domain/state/target";
 import { OUTPUT_DIR, REPO_ROOT } from "../paths";
 import { ALL_TYPES } from "../domain/conversion/models";
 import { readJsonFile, writeJsonFileAtomic } from "../shared/store/jsonFile";
@@ -511,7 +512,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const confirmed = process.argv.includes("--yes");
   const allowEmptyOverwrite = process.argv.includes("--allow-empty-overwrite");
 
-  console.log(`db:export — exporting the ${cfg.env} database into ${outputRoot}`);
+  console.log(`db:export — exporting into ${outputRoot}`);
+  for (const line of describeBackupTarget(cfg)) console.log(line);
 
   const db = createDb(cfg);
   try {

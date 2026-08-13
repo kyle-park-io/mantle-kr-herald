@@ -6,6 +6,7 @@ import { createDb } from "../adapters/db/createDb";
 import { PushState } from "../app/PushState";
 import { loadGoogleAuthConfig, loadGoogleStateFolder, loadDbConfig } from "../config";
 import { createStateFileStore, describeProvisionedFolder, DRIVE_LABEL } from "./stateFiles";
+import { describeBackupTarget } from "../domain/state/target";
 
 // Sibling of steering-config under the same parent (review · approved · steering-config ·
 // operational-state), but a folder of its own: this one is a record of what THIS machine has sent,
@@ -29,9 +30,14 @@ if (!folderId) {
 }
 
 const drive = new GoogleConfigDrive(auth, fetch, DRIVE_LABEL);
-const db = createDb(loadDbConfig());
+const dbConfig = loadDbConfig();
+for (const line of describeBackupTarget(dbConfig)) console.log(line);
+const db = createDb(dbConfig);
 try {
-  const res = await new PushState(createStateFileStore(db), drive).run(folderId);
+  // `assertRestorable` belongs here and only here: this is the one command that puts a snapshot in
+  // Drive, and the refusal exists to keep what lands there applicable more than once. `state:pull`
+  // must be able to READ a corpus holding an itemId-less row — see `SnapshotOptions`.
+  const res = await new PushState(createStateFileStore(db, { assertRestorable: true }), drive).run(folderId);
   if (!res) {
     console.log("백업할 운영 상태 데이터가 없습니다 — 아직 포크·발송 기록이 하나도 없는 데이터베이스입니다. 올린 것 없음.");
   } else {

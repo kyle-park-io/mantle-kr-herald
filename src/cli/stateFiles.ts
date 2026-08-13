@@ -11,7 +11,11 @@ import { PgOutletOverrideStore } from "../adapters/store/PgOutletOverrideStore";
 import { PgDeliveryLedger } from "../adapters/store/PgDeliveryLedger";
 import { PgXArticleLedger } from "../adapters/store/PgXArticleLedger";
 import { PgPublishStore } from "../adapters/store/PgPublishStore";
+import { PgFewShotStore, fewShotStoresByType } from "../adapters/store/PgFewShotStore";
+import { ALL_TYPES } from "../domain/conversion/models";
+import { FEW_SHOT_REL, assertRestorableFewShot, fewShotScopeFor } from "../domain/state/fewShot";
 import type { Translation } from "../domain/translation/models";
+import type { FewShotExample } from "../domain/translation/models";
 import type { ContentVariant } from "../domain/conversion/models";
 import type { ChannelRendering } from "../domain/formatting/models";
 import type { OutletOverride } from "../domain/outlet/override";
@@ -104,6 +108,19 @@ const TRACKED_REL = [
 ] as const;
 
 /**
+ * The eighth tracked item, kept in its own list rather than appended to `TRACKED_REL` because that
+ * array is indexed positionally by `snapshotFromDb` and `write()` below — an eighth literal there
+ * would be fine, but eight *derived* entries would not, and splitting the two keeps the seven's
+ * indices unarguable. `tracked()` concatenates them.
+ *
+ * `few_shot_examples` passes this file's own membership test — "everything the database holds that
+ * cannot be rebuilt by re-running the pipeline." A few-shot row copies text that is already tracked
+ * (`translations`, `variants`), but *which approvals became examples* is not reproducible and no
+ * command re-derives the corpus from approved text. Re-running the pipeline yields no corpus at all.
+ */
+const FEW_SHOT_TRACKED = FEW_SHOT_REL;
+
+/**
  * Reads the seven tracked stores and serialises each to the exact bytes the matching `Json*` store
  * would have written to its file (`jsonFileText` — 2-space `JSON.stringify` plus a trailing
  * newline), keyed by the same repo-relative path `TRACKED_REL` names. This is `db:export`'s own
@@ -125,7 +142,33 @@ export interface SnapshotFile {
   body: string;
 }
 
-export async function snapshotFromDb(db: Db): Promise<SnapshotFile[]> {
+/**
+ * Whether this read is the one about to be uploaded.
+ *
+ * `assertRestorableFewShot` used to fire from inside `snapshotFromDb` unconditionally, and that put
+ * a *push*-time refusal on the *pull* path: `list()` backs `PullState.run`'s preview and its
+ * `backup()`, so one `item_id is null` row in the database being restored INTO killed
+ * `pnpm state:pull` outright — flagless preview included — with "Refusing to push a snapshot that
+ * cannot be restored twice … push again." No push was happening, the advice named an action the
+ * operator was not taking, and the restore was blocked at exactly the moment it was most needed.
+ * The entry path for such a row is this project's own documented recovery order: `pnpm db:import
+ * --yes` inserts corpus JSON verbatim (`src/cli/db-import.ts`, `ex.itemId ?? null`), and
+ * `pnpm state:pull` is the very next step.
+ *
+ * So the gate is opt-in, and only `state:push` opts in. Reading is never refused; restoring is safe
+ * regardless, because `PgFewShotStore.replaceAll` deletes before it replays and so does not depend
+ * on `item_id` to stay idempotent. What the gate still buys is what the spec asked it for — a
+ * snapshot that lands in Drive is one a later restore can apply repeatedly.
+ */
+export interface SnapshotOptions {
+  /**
+   * Refuse a corpus holding an itemId-less row. `true` on the push path only — see
+   * `assertRestorableFewShot`. Defaults to `false`: a read is a read.
+   */
+  readonly assertRestorable?: boolean;
+}
+
+export async function snapshotFromDb(db: Db, opts: SnapshotOptions = {}): Promise<SnapshotFile[]> {
   const files: SnapshotFile[] = [];
   const addArray = (rel: string, rows: readonly unknown[]) => {
     if (rows.length > 0) files.push({ rel, body: jsonFileText(rows) });
@@ -137,6 +180,18 @@ export async function snapshotFromDb(db: Db): Promise<SnapshotFile[]> {
   addArray(TRACKED_REL[3], await new PgOutletOverrideStore(db).loadAll());
   addArray(TRACKED_REL[4], await new PgDeliveryLedger(db).loadAll());
   addArray(TRACKED_REL[5], await new PgXArticleLedger(db).loadAll());
+
+  // Synchronous, like `addArray` above it — the `await`s below are on the `load()` calls only.
+  const addFewShot = (rel: string, scope: string, rows: readonly FewShotExample[]) => {
+    if (opts.assertRestorable) assertRestorableFewShot(rows, scope);
+    if (rows.length > 0) files.push({ rel, body: jsonFileText(rows) });
+  };
+
+  addFewShot("output/few-shot/translation.json", "translation", await new PgFewShotStore(db, "translation").load());
+  const fewShotByType = fewShotStoresByType(db);
+  for (const type of ALL_TYPES) {
+    addFewShot(`output/few-shot/conversion.${type}.json`, `conversion:${type}`, await fewShotByType[type].load());
+  }
 
   const publishEntries = await new PgPublishStore(db).listEntries();
   if (publishEntries.length > 0) {
@@ -161,19 +216,57 @@ export async function snapshotFromDb(db: Db): Promise<SnapshotFile[]> {
  * intentional difference from the old file-based restore for an already-populated database, recorded
  * here rather than left implicit: a row that exists in the database but not in the snapshot survives
  * a `state:pull` where it would previously have been deleted along with the whole file.
+ *
+ * **The one exception is a few-shot corpus, which IS replaced — scope by scope.** The paragraph
+ * above holds for all seven stores it was written about, and nothing here weakens it: their identity
+ * is a natural key, their row order carries no meaning, and a local row the snapshot never saw is a
+ * record of something this machine really did. None of that is true of `few_shot_examples`. Its
+ * `ordinal` order is what `PgFewShotStore.load()` returns and what `translate:prepare` /
+ * `convert:prepare` lay straight into the model's prompt, so order is content; and a snapshot
+ * carries a scope's WHOLE corpus, not a subset of it, so "the snapshot's rows" and "the corpus"
+ * are the same thing. Importing into a non-empty corpus therefore did not merely keep an extra row
+ * — it silently reordered the corpus, because `add`'s `on conflict … do update` never reassigns
+ * `ordinal` and so only ordered rows NEW to the target. Measured: target `{C}`, snapshot `[A, B, C]`
+ * → C, A, B. Right set, wrong prompt, nothing said so. That is not a theoretical target either;
+ * this project runs two divergent databases on purpose (production 30 rows, development 23).
+ *
+ * So the few-shot branch below deletes the scope's rows and replays the snapshot in its own order
+ * (`PgFewShotStore.replaceAll`). It is also what the preview has been promising all along — a
+ * corpus present in both places prints `덮어씀`, "overwrite". The replacement is per SCOPE and only
+ * for scopes the snapshot actually carries: a corpus with no rows is omitted from a snapshot, and
+ * `diffRowCounts` marks such a path `유지`, so a table-wide delete would contradict the preview the
+ * operator just approved.
  */
 export class DbStateFileStore implements StateFileStore {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly opts: SnapshotOptions = {},
+  ) {}
 
   async list(): Promise<StateFile[]> {
-    return (await snapshotFromDb(this.db)).map((f) => ({ path: f.rel, content: f.body }));
+    return (await snapshotFromDb(this.db, this.opts)).map((f) => ({ path: f.rel, content: f.body }));
   }
 
   tracked(): readonly string[] {
-    return TRACKED_REL;
+    return [...TRACKED_REL, ...FEW_SHOT_TRACKED];
   }
 
   async write(path: string, content: string): Promise<void> {
+    // Asked before the switch because the corpora are derived from ALL_TYPES, not literals a `case`
+    // can name. `fewShotScopeFor` returns undefined for anything else, so an unrecognised path falls
+    // through to the switch's own `default:` refusal and there is still exactly one refusal message.
+    //
+    // `replaceAll`, not a replay of `add()` — the one place this class replaces rather than imports.
+    // See this class's doc comment for why few-shot is the exception and the seven below are not.
+    // Deleting first is also what makes the restore idempotent without leaning on `item_id`: a
+    // second pull of the same snapshot re-establishes the same corpus rather than appending a second
+    // copy of every itemId-less row.
+    const fewShotScope = fewShotScopeFor(path);
+    if (fewShotScope !== undefined) {
+      await new PgFewShotStore(this.db, fewShotScope).replaceAll(JSON.parse(content) as FewShotExample[]);
+      return;
+    }
+
     switch (path) {
       case TRACKED_REL[0]: {
         const store = new PgTranslationStore(this.db);
@@ -228,8 +321,12 @@ export class DbStateFileStore implements StateFileStore {
   }
 }
 
-export function createStateFileStore(db: Db): DbStateFileStore {
-  return new DbStateFileStore(db);
+/**
+ * The store both `state:push` and `state:pull` build. `opts.assertRestorable` is the only thing that
+ * differs between them and it is `state:push`'s to pass — see `SnapshotOptions`.
+ */
+export function createStateFileStore(db: Db, opts: SnapshotOptions = {}): DbStateFileStore {
+  return new DbStateFileStore(db, opts);
 }
 
 /** Names this bundle in `GoogleConfigDrive`'s failure messages — a stale `GDRIVE_STATE_FOLDER_ID`

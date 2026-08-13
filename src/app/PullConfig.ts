@@ -1,7 +1,7 @@
 import type { ConfigFileStore } from "../ports/ConfigFileStore";
 import type { ConfigDrive } from "../ports/ConfigDrive";
 import { parseConfigBundle } from "../domain/config/bundle";
-import { isSteeringConfigFile } from "../domain/config/steering";
+import { isSteeringConfigFile, STEERING_SNAPSHOT_PREFIX } from "../domain/config/steering";
 
 export interface PullChange {
   path: string;
@@ -24,7 +24,7 @@ export class PullConfig {
   ) {}
 
   async run(folderId: string, opts: { dryRun?: boolean } = {}): Promise<PullResult | undefined> {
-    const latest = await this.drive.latest(folderId, "steering-config-");
+    const latest = await this.drive.latest(folderId, STEERING_SNAPSHOT_PREFIX);
     if (!latest) return undefined;
     // Filtered on the way IN, not only on the way out. Every bundle pushed before the few-shot files
     // stopped being treated as configuration still carries them, and `files.list()` no longer

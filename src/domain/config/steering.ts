@@ -48,3 +48,7 @@ export function isExampleFile(fileName: string): boolean {
 export function isSteeringConfigFile(fileName: string): boolean {
   return !isExampleFile(fileName) && !isFewShotExport(fileName);
 }
+
+/** Drive file-name prefix for a steering snapshot. `latest()` matches on it, so it must not be a
+ *  prefix of any other bundle — the state snapshot's is `operational-state-`. */
+export const STEERING_SNAPSHOT_PREFIX = "steering-config-";
