@@ -12,6 +12,21 @@ export interface ConversionSelector {
   since?: string;
   limit?: number;
   types?: ConversionType[];
+  /**
+   * A ceiling on the (item, type) pairs this run may produce, applied AFTER the fan-out below —
+   * which is the only place it can be applied, because `limit` counts source items and the fan-out
+   * is what turns one of those into up to seven pieces of copy.
+   *
+   * It exists because those pairs, not the items, are what a single `claude -p` call has to write
+   * inside `ClaudeCodeAgent`'s ten-minute cap. On 2026-08-17 one item with all seven types
+   * unconverted took an estimated twelve minutes: the agent saved five and was killed mid-sixth.
+   * Lowering `limit` could not have prevented that — it was already 1.
+   *
+   * Omitted means no ceiling, which is what a hand-run `pnpm convert:prepare` and the dashboard's
+   * `[변환 준비]` button both get: a human watching a terminal is not on a timer, and neither is a
+   * button that reports what it prepared. The conversion scheduler is the caller that sets it.
+   */
+  maxVariants?: number;
 }
 
 export interface PendingVariant {
@@ -63,13 +78,20 @@ export class PrepareConversions {
 
     // Fan out each selected translation to its not-yet-converted types (type-major, so
     // the worksheet sections stay grouped by type).
-    const candidates: PendingVariant[] = [];
+    const fanned: PendingVariant[] = [];
     for (const type of types) {
       for (const t of selected) {
         if (convertedKeys.has(`${t.itemId}:${type}`)) continue;
-        candidates.push({ itemId: t.itemId, type, sourceKorean: t.koreanText });
+        fanned.push({ itemId: t.itemId, type, sourceKorean: t.koreanText });
       }
     }
+
+    // The ceiling, applied to the fan-out and to nothing else — see `maxVariants` for why it cannot
+    // live on `limit`. Type-major order makes this slice breadth-first across the selected items: at
+    // `maxVariants` 4 with two items it takes both items' first two types, rather than one item's
+    // four and none of the other's. Whatever is dropped here is not lost, only deferred — the pair
+    // still has no variant row, so the next tick's `listConvertedKeys` offers it again.
+    const candidates = selector.maxVariants === undefined ? fanned : fanned.slice(0, selector.maxVariants);
 
     const glossary = await this.glossaryStore.load();
     const locale = await this.config.loadLocale();

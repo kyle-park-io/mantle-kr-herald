@@ -6,7 +6,7 @@
 // success. The comments here name only what differs from `WatchTick`; the reasoning behind the
 // shared shape lives in `src/app/WatchTick.ts` and in that file's own test, and is not repeated.
 import { describe, it, expect } from "vitest";
-import { ConvertTick } from "../../src/app/ConvertTick";
+import { ConvertTick, MAX_VARIANTS_PER_TICK } from "../../src/app/ConvertTick";
 import { FormatVariants } from "../../src/app/FormatVariants";
 import type { StageResult, WorksheetAgent } from "../../src/ports/WorksheetAgent";
 import type { ConversionStore } from "../../src/ports/ConversionStore";
@@ -125,6 +125,14 @@ function pipeline(
 /** The one stage every successful tick ends with, spelled as `ran` records it. */
 const FORMAT_CALL = `format ${ONLY_MISSING_FLAG}`;
 
+/**
+ * The stage every tick starts with, spelled as `ran` records it: the item limit, then the ceiling on
+ * the pairs those items fan out to. Written once here so that changing the second bound does not mean
+ * editing eight string literals — but NOT used by the test that pins the flag itself, which spells
+ * the whole command out, because a helper that encodes the thing under test cannot fail with it.
+ */
+const prepareCall = (batch: number) => `convert:prepare --limit ${batch} --max-variants ${MAX_VARIANTS_PER_TICK}`;
+
 describe("ConvertTick", () => {
   it("prepares, hands the worksheet to the agent, and brackets it with the count that proves the save", async () => {
     const { run, agent, ran, calls, paths } = pipeline();
@@ -138,7 +146,21 @@ describe("ConvertTick", () => {
     // The two `status` runs bracket the agent pass — they are the before/after of the saved-something
     // check, not pipeline steps. `format` is a pipeline step, and the last one: it is what turns the
     // variants the agent just saved into the cards 2차 검수 reads.
-    expect(ran).toEqual(["convert:prepare --limit 1", "status", "status", FORMAT_CALL]);
+    expect(ran).toEqual([prepareCall(1), "status", "status", FORMAT_CALL]);
+  });
+
+  it("bounds the pairs one claude -p call is handed, not only the items", async () => {
+    // 2026-08-17, the failure this flag answers: `--limit 1` selected one item, that item had all
+    // seven types unconverted, and the single agent call needed an estimated twelve minutes against
+    // `ClaudeCodeAgent`'s ten-minute cap. It saved five, was killed mid-sixth, and the tick exited
+    // non-zero — one Telegram alert per full-fat item. The item limit could not prevent it; it was
+    // already at its floor. So the tick states both bounds, and the second one is the one sized
+    // against the cap.
+    const { run, agent, ran } = pipeline();
+
+    await new ConvertTick(run, agent).run();
+
+    expect(ran[0]).toBe(`convert:prepare --limit 1 --max-variants ${MAX_VARIANTS_PER_TICK}`);
   });
 
   it("does not spend an agent turn when nothing approved is waiting to convert", async () => {
@@ -154,7 +176,7 @@ describe("ConvertTick", () => {
     // No agent pass means nothing to verify: the saved-something check must not spend two extra
     // database reads on a batch nobody was ever asked to convert. `format` still runs — see
     // "formats even when this tick prepared nothing" below for why that is not the same decision.
-    expect(ran).toEqual(["convert:prepare --limit 1", FORMAT_CALL]);
+    expect(ran).toEqual([prepareCall(1), FORMAT_CALL]);
   });
 
   it("still treats a zero count as nothing to do even if a worksheet path comes with it", async () => {
@@ -171,7 +193,7 @@ describe("ConvertTick", () => {
 
     expect(report.ok).toBe(true);
     expect(calls).toEqual([]);
-    expect(ran).toEqual(["convert:prepare --limit 1", FORMAT_CALL]);
+    expect(ran).toEqual([prepareCall(1), FORMAT_CALL]);
   });
 
   it("reports the failing stage and runs nothing after it", async () => {
@@ -181,7 +203,7 @@ describe("ConvertTick", () => {
 
     expect(report.ok).toBe(false);
     expect(report.failure).toEqual({ stage: "convert:prepare", detail: "ECONNREFUSED" });
-    expect(ran).toEqual(["convert:prepare --limit 1"]);
+    expect(ran).toEqual([prepareCall(1)]);
     expect(calls).toEqual([]);
   });
 
@@ -349,7 +371,7 @@ describe("ConvertTick", () => {
     const report = await new ConvertTick(run, agent, { batch: 4 }).run();
 
     expect(report.ok).toBe(true);
-    expect(ran).toContain("convert:prepare --limit 4");
+    expect(ran).toContain(prepareCall(4));
   });
 
   it("defaults to one item per tick when no batch size is configured", async () => {
@@ -361,7 +383,7 @@ describe("ConvertTick", () => {
 
     await new ConvertTick(run, agent, {}).run();
 
-    expect(ran).toContain("convert:prepare --limit 1");
+    expect(ran).toContain(prepareCall(1));
   });
 
   // --- the boundaries this tick must never cross -----------------------------------------------
@@ -399,15 +421,20 @@ describe("ConvertTick", () => {
     expect(paths).toEqual(["output/variants/worksheets/batch-X.md"]);
   });
 
-  it("calls convert:prepare with a limit and nothing else, ever", async () => {
+  it("calls convert:prepare with the two bounds and nothing else, ever", async () => {
     // `--types` would silently narrow what the scheduler ever produces (an item converted for only
     // some of its types looks converted on the board), and `--ids` would pin the tick to one item
     // forever. Both are what a future "make it configurable too" change reaches for first.
+    //
+    // `--max-variants` is on this command and is not one of those: it defers pairs to the next fire
+    // instead of excluding them, because a pair with no variant row is offered again by the very
+    // next `convert:prepare`. That difference is the whole reason it is allowed here, so it is
+    // asserted as part of the expected command rather than tolerated by a looser matcher.
     const { run, agent, ran } = pipeline();
 
     await new ConvertTick(run, agent, { batch: 2 }).run();
 
-    expect(ran.filter((r) => r.startsWith("convert:prepare"))).toEqual(["convert:prepare --limit 2"]);
+    expect(ran.filter((r) => r.startsWith("convert:prepare"))).toEqual([prepareCall(2)]);
   });
 
   it("calls format with the only-missing flag and nothing else, ever", async () => {
@@ -633,7 +660,7 @@ describe("ConvertTick — the format stage", () => {
     const report = await new ConvertTick(run, agent).run();
 
     expect(report.ok).toBe(true);
-    expect(ran).toEqual(["convert:prepare --limit 1", FORMAT_CALL]);
+    expect(ran).toEqual([prepareCall(1), FORMAT_CALL]);
     expect(renderings.map((r) => r.itemId)).toEqual(["x:7"]);
   });
 

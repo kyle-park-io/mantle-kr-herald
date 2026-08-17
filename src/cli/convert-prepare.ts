@@ -1,5 +1,4 @@
 import "./registerErrorHandler";
-import { argValue, parseList } from "./args";
 // src/cli/convert-prepare.ts
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,29 +8,18 @@ import { createStores } from "./stores";
 import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { FileTranslationConfig } from "../adapters/store/FileTranslationConfig";
 import { FileConversionConfig } from "../adapters/store/FileConversionConfig";
-import { PrepareConversions, type ConversionSelector } from "../app/PrepareConversions";
-import { ALL_TYPES, type ConversionType } from "../domain/conversion/models";
+import { PrepareConversions } from "../app/PrepareConversions";
+import { conversionSelectorFrom } from "./convertPrepareSelector";
+import { ALL_TYPES } from "../domain/conversion/models";
 import { archiveFile } from "../shared/store/archive";
 import { writeJsonFileAtomic } from "../shared/store/jsonFile";
 import { NOTHING_TO_CONVERT_LINE, preparedVariantsLine } from "./convertPrepareLines";
 import { paths } from "../paths";
 
-const selector: ConversionSelector = {};
-const ids = parseList(argValue("--ids"));
-if (ids) selector.ids = ids;
-const since = argValue("--since");
-if (since) selector.since = since;
-const limit = argValue("--limit");
-if (limit) {
-  const n = Number(limit);
-  if (Number.isFinite(n)) selector.limit = n;
-}
-const typesArg = parseList(argValue("--types"));
-if (typesArg) {
-  const invalid = typesArg.filter((t) => !ALL_TYPES.includes(t as ConversionType));
-  if (invalid.length > 0) throw new Error(`Invalid --types: ${invalid.join(", ")} (allowed: ${ALL_TYPES.join(", ")})`);
-  selector.types = typesArg as ConversionType[];
-}
+// Parsed in its own module so it can be tested — see `conversionSelectorFrom`'s own comment for why
+// nothing at this file's top level can be. `--max-variants` in particular is read by the scheduler's
+// tick and by nothing else, and it silently stops working if this line stops calling that function.
+const selector = conversionSelectorFrom(process.argv);
 
 const db = createDb(loadDbConfig());
 try {

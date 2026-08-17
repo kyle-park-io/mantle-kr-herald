@@ -436,6 +436,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The conversion tick bounds the *variants* one `claude -p` call is given, not just the items.**
+  `HERALD_CONVERT_BATCH` counts source items and its floor is 1, so it could not describe the shape
+  that actually times out: one item with all seven types unconverted is seven pieces of copy for a
+  single agent call under `ClaudeCodeAgent`'s ten-minute cap. On 2026-08-17 that ran an estimated
+  twelve minutes — measured from the worksheet's own `.ko.txt` mtimes at about five minutes to the
+  first save (reading a 205 KB worksheet, whose size tracks the number of type sections) and about a
+  minute per save after it. Five variants landed, the sixth was cut off, the tick exited non-zero and
+  one Telegram alert went out — for an ordinary item, on the normal path. `convert:prepare` grows a
+  `--max-variants` ceiling, applied to the fan-out (the only place it can be: `--limit` is spent
+  before an item becomes pairs), and `ConvertTick` passes 4 — about seven minutes against a cap of
+  ten. **Raising the cap instead was not available**: `tests/deploy/convertTiming.test.ts` pins
+  `TimeoutStartSec=` at or under half the fire period, which leaves the agent about one more minute
+  than it already has, and the fire period itself is a Neon billing decision. Pairs over the ceiling
+  are deferred, not dropped — `convert:prepare` selects on "has no variant row", so the next fire
+  offers them again and a seven-type item converts across two ticks. Nothing changes for a hand-run
+  `pnpm convert:prepare` or the dashboard's `[변환 준비]` button: an absent ceiling means no ceiling,
+  and only the scheduler is working against a clock. The flag's parsing moved into
+  `src/cli/convertPrepareSelector.ts` to be testable at all — the entry file opens a database
+  connection on import — and both halves of the contract are pinned there, because a CLI that
+  quietly stopped reading the flag would look identical to one that never had it.
+
 - **`pnpm doctor` grades `.env`'s permissions, and the three places that create it say `chmod 600`.**
   The repo already held this position in code — `deploy-freeze.ts`'s `modeFor` writes the frozen
   `.env` and everything under `keys/` at `0o600`, and `writeFrozen` closes even the window where the
