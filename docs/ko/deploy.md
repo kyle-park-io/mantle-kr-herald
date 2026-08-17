@@ -135,7 +135,18 @@ npx vercel deploy --prod
    7일 시계를 그대로 들고 있습니다
 3. **`GOOGLE_OAUTH_CLIENT_ID`·`_SECRET`·`_REFRESH_TOKEN` 세 개를 한 벌로** `.env`와 Vercel 양쪽에
    갱신한 뒤 재배포
-4. `pnpm deploy:smoke <배포 주소>`로 확인 — `live: google_auth`가 초록불인지
+4. **스케줄러 체크아웃에도 반영하세요** — `bash deploy/herald-deploy.sh`, 설정만 옮길 거면
+   `pnpm deploy:freeze --check`로 diff를 본 뒤 `--apply --yes`
+5. `pnpm deploy:smoke <배포 주소>`로 확인 — `live: google_auth`가 초록불인지
+
+> **토큰이 사는 곳은 세 곳입니다.** 이 문단은 오랫동안 두 곳(`.env`와 Vercel)만 적고 있었는데,
+> 타이머는 개발 체크아웃이 아니라 `~/.herald/app`이라는 **별도 체크아웃에서 자기 `.env`로**
+> 돕니다. 2026-08-17에 로컬과 프로덕션을 둘 다 고치고 `deploy:smoke`까지 초록을 받은 뒤에도
+> 스케줄러 사본만 옛 토큰이라, 그대로 뒀으면 다음 날 아침 `herald-backup`·`herald-creds`가
+> 같은 `invalid_grant`로 다시 죽을 상태였습니다.
+>
+> `deploy:smoke`도 `creds:check`도 **이걸 못 잡습니다** — 둘 다 배포본에게 묻지 스케줄러
+> 체크아웃을 보지 않습니다. 3번까지만 하고 초록불을 보면 다 됐다고 믿게 되는 것이 함정입니다.
 
 > **refresh token만 옮기면 안 됩니다.** 토큰은 그것을 발급한 OAuth 클라이언트에 묶여 있어서,
 > 새 토큰을 낡은 `CLIENT_ID`/`_SECRET`과 짝지으면 인증이 깨집니다. 2026-08-10에 실제로 이
@@ -145,7 +156,7 @@ npx vercel deploy --prod
 > **`401`**은 클라이언트 자격증명이 안 맞는 것입니다. 401을 보고 토큰을 다시 발급하면
 > 같은 자리를 맴돌게 됩니다.
 >
-> 그리고 4번이 `pnpm doctor --live`였을 때는 이 실패를 **잡을 수 없었습니다.** doctor는 로컬
+> 그리고 5번이 `pnpm doctor --live`였을 때는 이 실패를 **잡을 수 없었습니다.** doctor는 로컬
 > 토큰을 검사하는데 로컬은 멀쩡했으니까요. 배포본의 크레덴셜이 살아 있는지는 `deploy:smoke`의
 > `live:` 줄만 압니다(2026-08-10에 추가).
 
