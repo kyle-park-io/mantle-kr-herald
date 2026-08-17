@@ -19,6 +19,7 @@ import { paths, OUTPUT_DIR, REPO_ROOT } from "../paths";
 import { steeringFiles, missingSteeringFiles, skeletonSteeringFiles } from "../doctor/steering";
 import { unkeyedFewShotScopes, unkeyedFewShotResult, FEW_SHOT_KEY_CHECK } from "../doctor/fewShot";
 import { resolveDeployTree, deploySteeringStatus, deploySteeringResult } from "../doctor/deploySteering";
+import { deployEnvStatus, deployEnvResult } from "../doctor/deployEnv";
 import { realDeployTreeShow } from "./systemdShow";
 import {
   configCheck,
@@ -181,14 +182,22 @@ results.push(
 // the one place the name is defined: `tests/config/envExample.test.ts` finds a variable by scanning
 // source text for a literal `process.env.<NAME>` read, so an indexed one would be invisible to it
 // and `.env.example`'s entry would be reported as documenting a variable nothing reads.
-results.push(
-  deploySteeringResult(
-    deploySteeringStatus(
-      REPO_ROOT,
-      resolveDeployTree({ override: process.env.HERALD_DEPLOY_DIR, unitShow: realDeployTreeShow() }),
-    ),
-  ),
-);
+const deployTree = resolveDeployTree({
+  override: process.env.HERALD_DEPLOY_DIR,
+  unitShow: realDeployTreeShow(),
+});
+results.push(deploySteeringResult(deploySteeringStatus(REPO_ROOT, deployTree)));
+
+// The same two-tree question for `.env`, which had no line at all until it was noticed that the
+// steering half has been reported since 2026-08-09 while credentials — copied by the same script, at
+// the same moment, into the same tree — had nothing watching them. Rotating a key here without
+// running the deploy leaves the timers authenticating with the old one, and every symptom of that
+// is a downstream authentication error attributed to the credential rather than to the copy.
+//
+// Shares `deployTree` with the check above rather than resolving it twice: two systemd queries could
+// disagree (a `daemon-reload` between them), and a report where one line says "not applicable" while
+// the next names a directory would be read as a bug in doctor, not in the machine.
+results.push(deployEnvResult(deployEnvStatus(REPO_ROOT, deployTree)));
 
 // --- live checks (network, read-only) ---
 if (live) {
