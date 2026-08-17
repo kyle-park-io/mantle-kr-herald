@@ -1,14 +1,18 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { InfoPopover } from "../src/components/InfoPopover";
 
 afterEach(cleanup);
 
 /**
- * jsdom 30은 popover API를 구현하지 않는다 — `showPopover`가 undefined이고 `:popover-open`은
- * 매칭되지 않는다. 그래서 이 컴포넌트는 열림 상태를 React가 들고, 네이티브 popover는 실제
- * 브라우저에서 top layer로 올리는 점진적 향상으로만 쓴다. 여기서 검증하는 것은 그 상태 기계다.
+ * jsdom 30은 popover API의 JS 절반(`showPopover`/`hidePopover`)을 구현하지 않는다 — `showPopover`가
+ * undefined이고 `:popover-open`은 매칭되지 않는다. 그래서 이 컴포넌트는 열림 상태를 React가 들고,
+ * 네이티브 promotion(top layer로 올리고 CSS anchor positioning으로 트리거에 다시 묶는 것)은
+ * `showPopover`와 `CSS.supports("anchor-name: --x")`가 둘 다 있을 때만 얹는 점진적 향상이다.
+ * 여기서 검증하는 것은 그 상태 기계와, jsdom이 (`showPopover`가 없어서) promote를 건너뛴다는
+ * 사실이다 — promote되는 경우는 아래 "anchor positioning을 지원하는 브라우저(스텁)" 블록에서
+ * 따로 검증한다.
  */
 describe("InfoPopover", () => {
   const setup = () =>
@@ -60,16 +64,120 @@ describe("InfoPopover", () => {
   });
 
   /**
-   * React 18의 `@types/react`(18.3.31 기준) `HTMLAttributes`에는 `popover`가 없다 — canary 타입에만
-   * 있다. JSX 속성으로 `popover="manual"`을 쓰면 `pnpm typecheck:web`이 깨지므로, 이 컴포넌트는
-   * `useEffect`에서 `el.setAttribute("popover", "manual")`로 직접 붙인다. React 18이 알 수 없는
-   * 소문자 속성을 그대로 DOM에 통과시키는 런타임 동작 자체는 사실이지만, 타입 체크를 통과시키려면
-   * 어차피 이 경로가 필요하다 — 여기서 실제로 속성이 붙는지 확인한다.
+   * `showPopover`가 없는 브라우저(jsdom 포함)에서는 `popover` 속성 자체를 붙이지 않는다 — 붙이기만
+   * 하고 `showPopover()`를 부르지 않으면, UA 스타일시트의 `[popover] { display: none }` 기본값이
+   * `:popover-open` 여부와 무관하게 패널을 가려 버린다(jsdom 30도 이 부분은 실제로 구현한다). 이
+   * 사실을 실제 Chromium이 아니라 여기서도 확인할 수 있는 건 jsdom이 `showPopover`를 아예 구현하지
+   * 않기 때문이다 — `canPromote`가 항상 false가 된다.
    */
-  it("패널에 popover=manual 속성이 실제로 붙는다", () => {
+  it("jsdom(프로모션 불가)에서는 popover 속성을 붙이지 않는다", () => {
     setup();
     fireEvent.click(screen.getByText("열기"));
-    expect(screen.getByText("설명입니다").closest("[popover]")?.getAttribute("popover")).toBe("manual");
+    expect(screen.getByText("설명입니다").closest("[popover]")).toBeNull();
+  });
+});
+
+/**
+ * `showPopover`가 있는(=native popover를 지원하는) 브라우저를 흉내 낸다. jsdom 30은 이 메서드를
+ * 구현하지 않으므로(바로 위 블록의 마지막 테스트가 그 사실 자체를 검증한다) `HTMLElement.prototype`에
+ * 직접 얹는다. `CSS.supports("anchor-name: --x")`는 스텁하지 않는다 — jsdom 30에서 이미 `true`를
+ * 낸다(진짜 CSS 파서라기보다 프로퍼티 이름을 검증하지 않는 관대한 구현으로 보인다). 그래서 기본
+ * jsdom이 promote를 건너뛰는 건 오로지 `showPopover`가 없기 때문이고, 이 블록은 그것만 채워서
+ * 나머지 절반(anchor positioning 배선)을 검증한다.
+ */
+describe("InfoPopover — anchor positioning을 지원하는 브라우저(스텁)", () => {
+  let showPopover: ReturnType<typeof vi.fn>;
+  let hidePopover: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    showPopover = vi.fn();
+    hidePopover = vi.fn();
+    HTMLElement.prototype.showPopover = showPopover;
+    HTMLElement.prototype.hidePopover = hidePopover;
+  });
+
+  afterEach(() => {
+    cleanup();
+    // jsdom의 `HTMLElement.prototype`에는 원래 이 메서드들이 없다 — 다른 값으로 덮어 두는 대신
+    // 지워서, 이 블록 밖의 테스트가 다시 "구현되지 않은" 상태를 보게 한다.
+    delete (HTMLElement.prototype as { showPopover?: unknown }).showPopover;
+    delete (HTMLElement.prototype as { hidePopover?: unknown }).hidePopover;
+  });
+
+  const setup = (align?: "left" | "right") =>
+    render(
+      <InfoPopover align={align} panel={<span>설명입니다</span>}>
+        <button>열기</button>
+      </InfoPopover>,
+    );
+
+  it("popover=manual 속성을 붙이고 showPopover를 부른다", () => {
+    setup();
+    fireEvent.click(screen.getByText("열기"));
+    const panel = screen.getByText("설명입니다").closest("[popover]");
+    expect(panel?.getAttribute("popover")).toBe("manual");
+    expect(showPopover).toHaveBeenCalled();
+  });
+
+  /**
+   * top layer로 올라간 `position: absolute` 패널의 containing block은 트리거의 `position: relative`
+   * 조상이 아니라 뷰포트가 된다 — 실제 Chromium에서 측정해 확인한 버그(Task 3 작업 보고서).
+   * `anchor-name`/`position-anchor`가 트리거와 패널을 다시 묶어 주는 유일한 표준 경로이므로, 값이
+   * 정확히 같은 커스텀 식별자로 양쪽에 걸리는지 확인한다. `useId()`의 `:`는 CSS 커스텀 식별자에
+   * 쓸 수 없으므로 걸러진 값이어야 한다.
+   */
+  it("트리거에 anchor-name을, 패널에 같은 값의 position-anchor를 건다", () => {
+    const { container } = setup();
+    fireEvent.click(screen.getByText("열기"));
+    const trigger = container.querySelector("[aria-controls]") as HTMLElement;
+    const panel = screen.getByText("설명입니다").closest("[popover]") as HTMLElement;
+    const anchorName = trigger.style.getPropertyValue("anchor-name");
+    expect(anchorName).toMatch(/^--ip-[a-zA-Z0-9]+$/);
+    expect(panel.style.getPropertyValue("position-anchor")).toBe(anchorName);
+  });
+
+  /**
+   * `position-area`가 아니라 `anchor()` 함수로 4변을 직접 쓴다 — `position-area`(예:
+   * `bottom span-left`)는 실제 Chromium(버전 150)에서 `align="right"` 방향의 기본 self-alignment가
+   * 재현 가능하게 틀렸다(뷰포트 왼쪽 끝에 들러붙는다). `anchor()`는 양쪽 방향 모두 정확했다 —
+   * 격리된 재현과 스크린샷은 task-3-report.md 참조. `right`/`left` 각각을 `calc(anchor(...))`로
+   * 감싸는 이유는 jsdom의 CSSOM이 감싸지 않은 `anchor()`를 `top`/`right` 같은 알려진 프로퍼티에
+   * 조용히 거부하기 때문이다(단일 값의 `calc()`는 수학적으로 no-op이라 실제 브라우저에서의 의미는
+   * 같다).
+   */
+  it('align 기본값("left")은 트리거 왼쪽 경계, align="right"는 오른쪽 경계에 anchor()로 묶인다', () => {
+    const { container: leftContainer } = setup();
+    fireEvent.click(screen.getByText("열기"));
+    const leftPanel = screen.getByText("설명입니다").closest("[popover]") as HTMLElement;
+    const leftTrigger = leftContainer.querySelector("[aria-controls]") as HTMLElement;
+    const leftAnchorName = leftTrigger.style.getPropertyValue("anchor-name");
+    expect(leftPanel.style.getPropertyValue("left")).toBe(`calc(anchor(${leftAnchorName} left))`);
+    expect(leftPanel.style.getPropertyValue("right")).toBe("auto");
+    cleanup();
+
+    const { container: rightContainer } = setup("right");
+    fireEvent.click(screen.getByText("열기"));
+    const rightPanel = screen.getByText("설명입니다").closest("[popover]") as HTMLElement;
+    const rightTrigger = rightContainer.querySelector("[aria-controls]") as HTMLElement;
+    const rightAnchorName = rightTrigger.style.getPropertyValue("anchor-name");
+    expect(rightPanel.style.getPropertyValue("right")).toBe(`calc(anchor(${rightAnchorName} right))`);
+    expect(rightPanel.style.getPropertyValue("left")).toBe("auto");
+  });
+
+  /**
+   * `[popover]`의 UA 스타일시트 기본값은 `inset: 0`이다 — `top`/`right`/`bottom`/`left` 네 개가
+   * 전부 명시적으로 `0`이지 `auto`가 아니다. 패널의 너비는 (호출처의 `panelClassName`으로) 확정값을
+   * 갖는 경우가 흔하므로, `right`(또는 `left`)만 anchor 기준으로 새로 설정해도 반대쪽이 UA의
+   * `0`으로 남아 있으면 과확정(over-constrained)되어 CSS 2.1 해소 규칙이 조용히 anchor 기준 값을
+   * 무시해 버린다 — 실제로 그렇게 뷰포트 왼쪽 끝에 들러붙는 버그를 재현해서 잡았다(task-3-report.md).
+   * `bottom`도 대칭성과 안전을 위해 지운다.
+   */
+  it("promote되지 않는 변(right 또는 left)과 bottom, margin은 UA 기본값을 지운다", () => {
+    setup();
+    fireEvent.click(screen.getByText("열기"));
+    const panel = screen.getByText("설명입니다").closest("[popover]") as HTMLElement;
+    expect(panel.style.getPropertyValue("bottom")).toBe("auto");
+    expect(panel.style.getPropertyValue("margin")).toBe("0px");
   });
 });
 

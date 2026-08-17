@@ -13,6 +13,26 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
  * `App.tsx`가 헤더에 `overflow-x-auto`를 못 쓰는 이유가 정확히 그 잘림이었다(그 파일의 주석
  * 참조). Esc와 바깥 클릭 닫기도 브라우저가 해준다.
  *
+ * 왜 CSS Anchor Positioning(`anchor-name`/`position-anchor`/`anchor()`)도 함께 필요한가: top
+ * layer로 올라간 `position: absolute` 엘리먼트의 containing block은 더 이상 트리거의
+ * `position: relative` 조상이 아니라 초기 containing block(뷰포트)이 된다 — 그 상태의
+ * `top-full left-0`는 트리거가 아니라 뷰포트 좌하단을 가리킨다. 실제 Chromium으로 직접 측정해서
+ * 확인한 버그다: anchor positioning 없이 promote한 패널의 `getBoundingClientRect()`가
+ * `{ top: window.innerHeight, left: 0 }`였다(Task 3 작업 보고서 참조) — 헤더에 잘리지는 않지만
+ * 트리거와 아무 관계 없는 위치에 뜬다. CSS Anchor Positioning은 top layer로 올라간 뒤에도 패널을
+ * 트리거에 다시 묶어주는 유일한 표준 방법이라, 이것이 없는 브라우저에서는 애초에 promote하지
+ * 않는다(아래 `canPromote` 참조) — JS로 좌표를 계산하는 대신인 이유는 그러면 스크롤·리사이즈
+ * 리스너가 열린 팝오버마다 필요해지는데, anchor positioning은 그 두 경우 모두 공짜로 따라오기
+ * 때문이다.
+ *
+ * `position-area`가 아니라 저수준 `anchor()` 함수로 4변을 직접 쓰는 이유: `position-area`(예:
+ * `bottom span-left`)의 기본 self-alignment가 실제 Chromium(버전 150)에서 한쪽 방향
+ * (`align="left"`, 트리거 왼쪽 경계에서 오른쪽으로)은 맞게 나오지만 반대 방향(`align="right"`,
+ * 트리거 오른쪽 경계에서 왼쪽으로)은 재현 가능하게 틀렸다 — 뷰포트 왼쪽 끝에 들러붙는다.
+ * `justify-self: end`도, `position-try-fallbacks: none`도, 충돌하는 inset을 미리 지우는 것도
+ * 고치지 못했다. `anchor()`는 양쪽 방향 모두 정확했다(격리된 재현과 스크린샷은 task-3-report.md
+ * 참조). 네 변을 먼저 전부 `auto`로 미는 이유는 아래 `canPromote` 블록의 주석에 있다.
+ *
  * 왜 그런데도 열림 상태를 React가 드는가: jsdom 30이 popover API를 구현하지 않기 때문이다.
  * `showPopover`는 undefined이고 `:popover-open`은 매칭되지 않으므로, DOM 상태에만 기대면 web
  * 테스트에서 검증할 수 있는 것이 없다. 그래서 상태는 여기가 들고, `showPopover()`는 있을 때만
@@ -51,30 +71,91 @@ export function InfoPopover({
 }) {
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
   const id = useId();
+
+  // CSS 커스텀 식별자(`anchor-name`의 값)는 `--`로 시작해야 하고 그 뒤로는 CSS ident 문자만 올 수
+  // 있는데, `useId()`는 `:r1a:` 같은 값을 낸다 — `:`가 섞여 있으면 무효한 식별자가 된다. 영숫자만
+  // 남긴다.
+  const anchorName = `--ip-${id.replace(/[^a-zA-Z0-9]/g, "")}`;
 
   // 패널은 `open`일 때만 렌더되므로, 이 효과들은 반드시 `[open]`에 걸어야 한다. `[]`로 두면 마운트
   // 시점에 `panelRef.current`가 아직 null이라 리스너가 영영 붙지 않는다.
   useEffect(() => {
     if (!open) return;
-    const el = panelRef.current;
-    if (!el) return;
+    const panelEl = panelRef.current;
+    const triggerEl = triggerRef.current;
+    if (!panelEl || !triggerEl) return;
 
-    // `popover` 속성: React 18의 `@types/react`(18.3.31 기준) `HTMLAttributes`에는 `popover`가
-    // 없다(canary 타입에만 있다) — JSX 속성으로 쓰면 `pnpm typecheck:web`이 깨진다. 그래서 여기서
-    // `setAttribute`로 직접 붙인다. 실제 브라우저에서는 이 속성이 있어야 `showPopover()`가 동작한다.
-    el.setAttribute("popover", "manual");
+    // top layer로 올려도 되는지: `showPopover`가 있어야 하고(1단계 향상), CSS Anchor Positioning도
+    // 지원해야 한다(2단계 향상 — 위 doc 주석의 containing block 문제 참조). `CSS.supports`가 없는
+    // 환경(구형 브라우저, `CSS` 자체가 없는 환경)도 방어한다.
+    const canPromote =
+      typeof panelEl.showPopover === "function" &&
+      typeof CSS !== "undefined" &&
+      typeof CSS.supports === "function" &&
+      CSS.supports("anchor-name: --x");
 
-    // 네이티브 popover가 있는 브라우저에서만 top layer로 올린다. jsdom에서는 `showPopover`가
-    // undefined이므로 이 줄을 건너뛰고, 패널은 아래 클래스만으로 보인다 — 양쪽 다 동작한다.
-    if (typeof el.showPopover === "function" && !el.matches(":popover-open")) el.showPopover();
+    if (canPromote) {
+      // `popover` 속성은 promote할 때만 붙인다 — UA 스타일시트가 `[popover]`에는 `:popover-open`
+      // 여부와 무관하게 `display: none`을 걸어 두기 때문이다(jsdom 30도 이 부분은 실제로
+      // 구현한다 — `showPopover`가 undefined인데도 그렇다). `showPopover()`를 부르지 않을 거면
+      // 이 속성 자체를 붙이지 않아야 패널이 (promote되지 않은 채로) 보인다.
+      //
+      // React 18의 `@types/react`(18.3.31 기준) `HTMLAttributes`에는 `popover`가 없다(canary
+      // 타입에만 있다) — JSX 속성으로 쓰면 `pnpm typecheck:web`이 깨진다. 그래서 여기서
+      // `setAttribute`로 직접 붙인다.
+      panelEl.setAttribute("popover", "manual");
+
+      // 트리거를 anchor로 등록하고, 패널을 그 anchor에 묶는다.
+      triggerEl.style.setProperty("anchor-name", anchorName);
+      panelEl.style.setProperty("position-anchor", anchorName);
+
+      // `position-area`가 아니라 `anchor()` 함수로 직접 4변을 지정한다 — `position-area`(예:
+      // `bottom span-left`)로 시도했을 때 "왼쪽 경계 정렬"(`align="left"`, 기본값) 방향은 맞게
+      // 나오지만 "오른쪽 경계 정렬"(`align="right"`) 방향은 실제 Chromium(버전 150)에서 재현
+      // 가능하게 틀렸다 — `justify-self: end`도, `position-try-fallbacks: none`도 고치지 못했다.
+      // `anchor()`는 두 방향 모두 정확했다(task-3-report.md의 격리된 재현 참조).
+      //
+      // 아래 세 줄(top이 아닌 나머지 셋 + margin)을 먼저 `auto`/`0`으로 미는 이유: `[popover]`의
+      // UA 스타일시트 기본값이 `inset: 0`이다 — `top`/`right`/`bottom`/`left` 네 개가 전부 `auto`가
+      // 아니라 명시적으로 `0`이다. 패널의 `width`는 (Tailwind의 `w-72`/`w-80`/`w-64` 등으로)
+      // 확정값이므로, 예를 들어 `right`만 anchor 기준으로 설정해도 `left`가 여전히 UA의 `0`으로
+      // 남아 있으면 "확정 너비 + 확정 left + 확정 right"로 과확정(over-constrained)된다 — CSS 2.1의
+      // 해소 규칙상 LTR에서는 이럴 때 `right`가 무시되고 `left: 0`이 이긴다. 그래서 뷰포트 좌측에
+      // 계속 들러붙어 있었다. `height`는 확정값이 없어(`auto`) 문제가 되지 않지만(과확정 규칙은
+      // `top`+`bottom`이 모두 있고 `height`도 확정일 때만 발동), 대칭성과 안전을 위해 `bottom`도
+      // 함께 지운다. `top`은 지우자마자 바로 실제 값으로 덮으므로 `auto`를 거치지 않는다.
+      panelEl.style.setProperty("right", "auto");
+      panelEl.style.setProperty("bottom", "auto");
+      panelEl.style.setProperty("left", "auto");
+      panelEl.style.setProperty("margin", "0");
+
+      // `0.375rem`은 Tailwind `mt-1.5`와 같은 값 — promote되지 않았을 때의 간격을 그대로 유지한다.
+      // `calc(anchor(...))`로 감싸는 이유는 값 자체가 아니라(단일 값의 `calc()`는 수학적으로
+      // no-op이다) jsdom의 CSSOM(`cssstyle`)이 `top`/`right`처럼 알려진 프로퍼티에 `anchor()`를
+      // 감싸지 않은 채로 주면 `setProperty`를 조용히 무시하기 때문이다 — `calc()` 안에서는
+      // 받아들인다. 이 저장소의 InfoPopover 테스트가 그 값을 읽으려면 필요하다.
+      panelEl.style.setProperty("top", `calc(anchor(${anchorName} bottom) + 0.375rem)`);
+      panelEl.style.setProperty(
+        align === "right" ? "right" : "left",
+        `calc(anchor(${anchorName} ${align === "right" ? "right" : "left"}))`,
+      );
+
+      if (!panelEl.matches(":popover-open")) panelEl.showPopover();
+    }
+    // canPromote가 false면 패널은 지금 이 컴포넌트가 원래 그리던 그대로 — 일반
+    // `position: absolute` 엘리먼트로, `top-full`+`left-0`/`right-0` 클래스가 트리거 기준으로
+    // 올바르게 붙인다. top layer가 아니므로 조상의 `overflow`에 잘릴 수 있지만, 뷰포트 구석에
+    // 뜬 채 트리거와 무관한 위치보다는 낫다.
 
     // 브라우저가 스스로 닫은 것(Esc 등)을 상태로 되돌려 받는다. 없으면 DOM은 닫혔는데 상태는 열린
-    // 채라, 다음 클릭이 "닫기"로 해석돼 한 번 헛돈다.
+    // 채라, 다음 클릭이 "닫기"로 해석돼 한 번 헛돈다. promote되지 않았을 때는 `toggle`이 원천적으로
+    // 발생하지 않으니 그냥 무해하다.
     const onToggle = (e: Event) => {
       if ((e as ToggleEvent).newState === "closed") setOpen(false);
     };
-    el.addEventListener("toggle", onToggle);
+    panelEl.addEventListener("toggle", onToggle);
 
     // jsdom에는 popover의 Esc가 없고, 실제 브라우저에서도 `manual` 팝오버는 Esc로 닫히지 않는다.
     const onKey = (e: KeyboardEvent) => {
@@ -83,12 +164,16 @@ export function InfoPopover({
     window.addEventListener("keydown", onKey);
 
     return () => {
-      el.removeEventListener("toggle", onToggle);
+      panelEl.removeEventListener("toggle", onToggle);
       window.removeEventListener("keydown", onKey);
       // 언마운트 순서에 따라 top layer에 남는 것을 막는다.
-      if (typeof el.hidePopover === "function" && el.matches(":popover-open")) el.hidePopover();
+      if (typeof panelEl.hidePopover === "function" && panelEl.matches(":popover-open")) panelEl.hidePopover();
+      // 트리거는 패널과 달리 열림/닫힘에 걸쳐 계속 존재하므로, `anchor-name`을 직접 지워야 다음
+      // 오픈까지 스타일에 남아있지 않는다 — 값은 매번 같아서 실질적 차이는 없지만, 패널이 없는
+      // 동안 이름 없는 anchor를 자처하고 있을 이유가 없다.
+      triggerEl.style.removeProperty("anchor-name");
     };
-  }, [open]);
+  }, [open, align, anchorName]);
 
   const fromMouse = (e: { pointerType: string }) => e.pointerType !== "touch";
 
@@ -133,6 +218,7 @@ export function InfoPopover({
           e.preventDefault();
           setOpen((v) => !v);
         }}
+        ref={triggerRef}
         tabIndex={0}
         aria-expanded={open}
         aria-controls={id}
