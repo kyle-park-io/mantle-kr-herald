@@ -194,6 +194,9 @@ describe("OutletCard — sends closed account-wide (sendsEnabled: false)", () =>
 
     const button = screen.getByRole("button", { name: "발송 · 잠김" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    // The message now lives in an InfoPopover, which renders nothing until opened — clicking the
+    // (disabled) button still bubbles to the wrapper's click handler, the only one listening.
+    fireEvent.click(button);
     expect(screen.getByText(SENDS_CLOSED_MESSAGE)).toBeTruthy();
   });
 
@@ -205,6 +208,8 @@ describe("OutletCard — sends closed account-wide (sendsEnabled: false)", () =>
 
     const button = screen.getByRole("button", { name: "재발송" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    // See above: open the InfoPopover before reading its text.
+    fireEvent.click(button);
     expect(screen.getByText(SENDS_CLOSED_MESSAGE)).toBeTruthy();
   });
 
@@ -483,14 +488,19 @@ describe("OutletCard — 핀 고정 is offered where it exists", () => {
  * so in its own comment; these controls had simply never been moved onto it.
  *
  * Asserting on `textContent` is the point: a `title` attribute is invisible to a reviewer and to
- * `textContent` alike, so a regression that puts one back fails here. What is NOT pinned is the
- * reveal itself — that is `group-hover/tip:block`, and jsdom applies no CSS.
+ * `textContent` alike, so a regression that puts one back fails here.
+ *
+ * `Tip` now renders through `InfoPopover`, whose panel is not in the DOM until opened — so each of
+ * these clicks the (possibly disabled) control before reading the message. That click still reaches
+ * `InfoPopover`'s wrapper: `fireEvent.click` on a disabled `<button>` still dispatches and bubbles in
+ * jsdom, and the wrapper — not the button — owns the open/close handler.
  */
 describe("OutletCard — a blocked control says why, as text rather than a dead title", () => {
   const APPROVED_LOCK = "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요.";
 
   it("explains the 저장 lock on an approved group", () => {
     const { container } = mount(group({ status: "approved", rows: [row()] }));
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
     expect(container.textContent).toContain(APPROVED_LOCK);
   });
 
@@ -504,8 +514,11 @@ describe("OutletCard — a blocked control says why, as text rather than a dead 
   it("explains a [복사] that cannot copy yet", async () => {
     // `stubFetch()` with no handler rejects the emissions call, which is the card's own tolerated
     // failure path (`api.emissions(...).catch(() => ({}))`) and leaves `segments` null — the exact
-    // state this message describes. It reached the DOM only as a `title` before.
+    // state this message describes. It reached the DOM only as a `title` before. `segments` is
+    // already null on the very first render (state starts empty, before the fetch even settles), so
+    // the click can happen immediately.
     const { container } = mount(group({ status: "rendered", rows: [row()] }));
+    fireEvent.click(screen.getByRole("button", { name: "복사" }));
     await waitFor(() => expect(container.textContent).toContain("붙여넣기용 텍스트를 아직 불러오지 못했습니다"));
   });
 });

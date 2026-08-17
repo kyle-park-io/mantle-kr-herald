@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { InfoPopover } from "./InfoPopover";
 
 export interface ConfirmRequest {
   title: string;
@@ -173,6 +174,10 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
  * conditional straight through (`text={dirty ? SAVE_FIRST : undefined}`) without wrapping the
  * wrapper in a ternary. `className` lands on the wrapper because it becomes the laid-out element in
  * its parent — a control positioned by its own `ml-auto`/`flex-1` hands that class over here.
+ *
+ * 카드 자체는 이제 `InfoPopover`가 그린다 — 호버 전용이던 것이 탭과 키보드로도 열리고, top layer로
+ * 올라가 조상의 `overflow`에 잘리지 않는다. 이 함수는 "텍스트 한 덩이"라는 좁은 경우를 위한 얇은
+ * 껍질로 남는다.
  */
 export function Tip({
   text,
@@ -196,13 +201,18 @@ export function Tip({
 }) {
   if (text === undefined) return <>{children}</>;
   return (
-    <span className={`group/tip relative inline-flex ${className ?? ""}`.trim()}>
+    <InfoPopover
+      align={align}
+      className={className}
+      // `Tip` is one text blob, never interactive content, so `role="tooltip"` is correct here —
+      // unlike `InfoPopover`'s general default of no role, which exists because some panels (the
+      // storage-mode panel Task 3 adds) hold a button and links that `role="tooltip"` would hide
+      // from screen readers.
+      role="tooltip"
+      panelClassName="w-64 px-3 py-2 text-[12px] font-normal leading-relaxed text-muted"
+      panel={text}
+    >
       {children}
-      <span
-        className={`pointer-events-none absolute top-full ${align === "right" ? "right-0" : "left-0"} z-30 mt-1.5 hidden w-64 rounded-lg border border-line bg-surface px-3 py-2 text-[12px] font-normal leading-relaxed text-muted shadow-lg group-hover/tip:block`}
-      >
-        {text}
-      </span>
-    </span>
+    </InfoPopover>
   );
 }

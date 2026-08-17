@@ -239,12 +239,12 @@ describe("TranslationDetail — 게시됨 (posted)", () => {
  * `group/tip` wrapper can reveal on hover.
  *
  * jsdom applies no CSS, so what these pin is the half a unit test CAN see — the message is present,
- * and it is present only when it applies. The reveal itself is CSS (`group-hover/tip:block`) and is
- * NOT pinned here, nor could it usefully be: the shape it replaces was a native `title` tooltip,
- * which the OS draws outside the DOM, so no automated check can see the old behaviour to contrast
- * against. `disabled:pointer-events-none` on the button is what keeps the reveal from depending on
- * how a given browser propagates `:hover` out of a disabled child — the hit test lands on the
- * wrapper instead. Confirm by hovering a greyed 발행 button on the deployed board.
+ * and it is present only when it applies.
+ *
+ * `Tip` now renders through `InfoPopover`, whose panel is not in the DOM until opened — so each test
+ * below clicks the (disabled) button first. That click still reaches `InfoPopover`: `fireEvent.click`
+ * on a disabled `<button>` still dispatches and bubbles in jsdom, and the wrapper span — not the
+ * button — owns the open/close handler. Confirm the real reveal (tap or hover) on the deployed board.
  */
 describe("TranslationDetail — why a 발행 target is unavailable", () => {
   const HOSTED: ("local" | "google" | "lark")[] = ["google", "lark"];
@@ -254,6 +254,7 @@ describe("TranslationDetail — why a 발행 target is unavailable", () => {
     const { container } = mount(translation(), { availableTargets: HOSTED });
     const button = screen.getByRole("button", { name: "로컬 폴더" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    fireEvent.click(button);
     // Not `getAttribute("title")` — that is exactly the shape that did not work.
     expect(container.textContent).toContain("이 모드에서는 사용할 수 없는 타깃");
   });
@@ -269,6 +270,7 @@ describe("TranslationDetail — why a 발행 target is unavailable", () => {
   it("explains the posted lock on the 발행 buttons too", () => {
     // The same dead-`title` bug covered all three reasons, not just the unavailable-target one.
     const { container } = mount(translation({ status: "posted", postedUrl: POSTED_URL }));
+    fireEvent.click(screen.getByRole("button", { name: "로컬 폴더" }));
     expect(container.textContent).toContain("이미 X에 직접 게시된 것으로 확인되어");
   });
 });
