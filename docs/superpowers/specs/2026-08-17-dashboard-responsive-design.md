@@ -124,7 +124,16 @@ effect 하나입니다.
 ### 호버 카드 다섯 곳 → `popover` 컴포넌트 하나
 
 `App.tsx:292`(스토리지 모드), `CollectedBreakdownCard.tsx:34`(수집 내역),
-`MarkerText.tsx:39`(미디어 미리보기), `ConfirmDialog.tsx:202`(힌트), `TranslationDetail.tsx:84`.
+`MarkerText.tsx:39`(미디어 미리보기), `ConfirmDialog.tsx:202`(`Tip`), `TranslationDetail.tsx:84`
+(`OpenLink`).
+
+그중 `Tip` 하나가 이미 **호출처 열 곳**을 먹고 있습니다(`OutletCard` 7, `TranslationDetail` 2,
+`OutletBoard`가 쓰는 경로 포함). API가 `text: string | undefined`로 좁아서, `Tip`의 내부만 바꾸면 그
+열 곳은 호출처를 한 줄도 안 고치고 따라옵니다. 그래서 실제 작업량은 선언 다섯 곳입니다.
+
+`OpenLink`(`TranslationDetail.tsx:77-95`)는 `Tip`과 같은 일을 손으로 다시 쓴 것이므로 — 그 자리
+주석도 *"same as `Tip` and the board's other hover cards"*라고 적고 있습니다 — 이참에 `Tip`으로
+접습니다.
 
 다섯 곳이 같은 idiom입니다 — `group`을 타깃에, `absolute … top-full`과 `hidden … group-hover:block`을
 패널에. `CollectedBreakdownCard.tsx:11`이 직접 그렇게 선언합니다: *"This is that idiom again, not a
@@ -150,6 +159,25 @@ onClick={toggle}   // 터치·키보드 공통 경로
 공짜로 붙습니다.
 
 폰에서는 `w-72`/`w-80` 고정폭이 화면을 넘치므로 `max-w-[calc(100vw-2rem)]`을 함께 겁니다.
+
+#### 열림 상태의 주인은 React이고, `popover`는 그 위에 얹는다
+
+이 스펙을 승인한 뒤 확인한 제약입니다. **jsdom 30은 popover API를 구현하지 않습니다** —
+`element.showPopover`가 `undefined`이고, `element.popover`도 `undefined`이며, `:popover-open`은
+매칭되지 않습니다(이 저장소의 `jsdom@30.0.0`에서 직접 확인). 그러므로 열림/닫힘을 DOM의 popover
+상태에만 맡기면 web 테스트에서 검증할 수 있는 것이 없어집니다.
+
+그래서 순서를 뒤집습니다. **열림 상태는 `useState`가 들고**, 네이티브 popover는 그 위에 얹는
+점진적 향상으로 씁니다.
+
+- 패널의 렌더/숨김은 React 상태가 결정합니다. `:popover-open`에 기대지 않습니다.
+- 열 때 `typeof el.showPopover === "function"`을 확인하고 있을 때만 호출합니다. 실제 브라우저에서는
+  이것이 패널을 top layer로 올리고, jsdom에서는 `popover` 속성이 통째로 무시되므로 우리 클래스가
+  그대로 보이게 합니다. 양쪽 다 동작합니다.
+- 브라우저가 자체적으로 닫는 경우(Esc, 바깥 클릭)를 상태에 되돌려 받기 위해 `toggle` 이벤트를
+  듣습니다. jsdom에서는 이 이벤트가 오지 않지만, 거기서는 우리 핸들러가 이미 상태를 바꿉니다.
+
+top layer 이득은 실제 브라우저에서 그대로 남고, 테스트는 상태를 통해 가능해집니다.
 
 ### 미디어 미리보기는 예외 — 팝오버가 아니라 인라인 확장
 
