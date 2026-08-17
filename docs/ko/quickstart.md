@@ -75,6 +75,7 @@ pnpm db:import --yes
 ```bash
 pnpm install
 cp .env.example .env
+chmod 600 .env          # 자격 증명이 들어갈 파일인데, 복사 원본이 git 추적 파일이라 644로 생깁니다
 # .env를 열어 §1.5의 DATABASE_URL / HERALD_DB_ENV 두 줄을 채웁니다
 pnpm db:import --yes    # 스키마 생성 (빈 DB에 한 번)
 pnpm config:init

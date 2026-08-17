@@ -1,5 +1,6 @@
 import "./registerErrorHandler";
 import { join } from "node:path";
+import { statSync, type Stats } from "node:fs";
 import {
   loadConfig,
   loadLarkConfig,
@@ -33,6 +34,7 @@ import {
   databaseProbe,
   outputRootResult,
   telegramOpsChatResult,
+  envModeResult,
 } from "../doctor/checks";
 import { formatReport, type CheckResult } from "../doctor/report";
 import { tryLoadStorageMode } from "../config";
@@ -48,6 +50,15 @@ const results: CheckResult[] = [];
 // only decides whether the cloud-only checks may downgrade fail → warn, so treat "can't tell" the
 // same as cloud (the current, unchanged, strict behaviour).
 const local = tryLoadStorageMode() === "local";
+
+/** `undefined` for a `.env` that is not there, which `--env-file-if-exists` makes a valid state. */
+function statSyncSafe(path: string): Stats | undefined {
+  try {
+    return statSync(path);
+  } catch {
+    return undefined;
+  }
+}
 
 function authMode(): string {
   try {
@@ -111,6 +122,12 @@ async function runFewShotKeyCheck(): Promise<CheckResult> {
 // created a second output/ tree" trap src/paths.ts's REPO_ROOT comment warns about — see the
 // override's own doc comment there for the incident that made this required.
 results.push(outputRootResult(OUTPUT_DIR, process.env.HERALD_OUTPUT_DIR));
+// Graded here rather than left to the operator's memory for the same reason `deploy-freeze.ts`
+// writes its copy at 0o600 instead of preserving whatever it found: `cp .env.example .env` hands a
+// file full of credentials the mode of the tracked skeleton it came from, and nothing else in the
+// setup path ever looks at it again. `statSync` and not `existsSync` + a second call — a file
+// deleted between the two would throw where a missing one is a valid state.
+results.push(envModeResult(statSyncSafe(join(REPO_ROOT, ".env"))?.mode));
 results.push(configCheck("Storage mode", () => loadStorageMode(), `mode: ${process.env.HERALD_STORAGE_MODE?.trim() ?? "(unset)"}`));
 results.push(await runDatabaseCheck());
 results.push(await runFewShotKeyCheck());

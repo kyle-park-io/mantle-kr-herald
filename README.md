@@ -8,6 +8,7 @@ review, and publish, with a human review gate at every step.
 ```bash
 pnpm install
 cp .env.example .env
+chmod 600 .env          # it will hold every credential; the copy came from a tracked file at 644
 
 # Then open .env and fill in the values `doctor` treats as required. A copied skeleton has none
 # of them, so every command below fails until they are set: DATABASE_URL + HERALD_DB_ENV (no
