@@ -247,7 +247,16 @@ export function TranslationDetail(props: {
 
       <section className="mb-6">
         <div className="eyebrow mb-2">원문 · source</div>
-        <div className="@container rounded-xl border border-line bg-surface p-4 text-[15px] leading-relaxed whitespace-pre-wrap text-ink/80 shadow-sm">
+        {/*
+          No `@container` here. The spec had `MarkerText` branch its preview popover-vs-inline on
+          this pane's width, which would have made this the queried container — the implementation
+          made the preview unconditionally inline instead (see `MarkerText.tsx`'s own comment), so
+          nothing inside this box carries an `@`-variant class to resolve against it. A container
+          with nothing querying it is not inert (`container-type: inline-size` still brings layout
+          containment), so it was removed rather than left as documentation of an intent nobody
+          reads code for.
+        */}
+        <div className="rounded-xl border border-line bg-surface p-4 text-[15px] leading-relaxed whitespace-pre-wrap text-ink/80 shadow-sm">
           <MarkerText text={props.item.sourceText} />
         </div>
       </section>

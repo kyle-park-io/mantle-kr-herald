@@ -4,7 +4,7 @@ import { btn, btnApprove, btnDanger, btnDone, btnPrimary } from "../buttonStyles
 import { reconcileOutcome, rowEditorGate, resendKind } from "../rowEditor";
 import { fromEditor, toEditor } from "../canonicalEditor";
 import { Tip, type ConfirmRequest } from "./ConfirmDialog";
-import { ApprovedButton } from "./ApprovedButton";
+import { ApprovedButton, GROUP_LEVEL_LINES } from "./ApprovedButton";
 import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
 import {
   CHANNEL_FORMAT_NOTE,
@@ -232,9 +232,12 @@ export function OutletCard(props: {
       {/*
         `@container` here, not on the detail pane or the board list: this card sits at full phone
         width in one shell and beside a 320px sidebar in another, and the action rows below need to
-        stack on the card's own narrow box regardless of which shell put it there. `Source`'s
-        `@container` further down is a separate, nested one scoped to the read-only converted-text
-        pane — the `@max-sm:` below resolves against this outer container, not that one.
+        stack on the card's own narrow box regardless of which shell put it there. Every `@max-sm:`
+        in this card resolves against this one container — `Source`'s converted-text pane below used
+        to carry a second, nested `@container` of its own, but nothing inside it (`MarkerText`) has
+        an `@`-variant class to resolve against it, so it queried nothing and was removed. A
+        container with nothing querying it still brings layout containment (`container-type:
+        inline-size`), so it was not free to leave in place as unread documentation.
       */}
       {/*
         A tab hanging from the card's top edge, coloured by approval. The board is a column of
@@ -377,6 +380,11 @@ export function OutletCard(props: {
             <ApprovedButton
               disabled={busy}
               onConfirm={props.onConfirm}
+              // This group's own approval, not the item's — `api.approveRendering(..., false)` flips
+              // only this `(itemId, type, channel)` rendering back to `rendered` (`ApproveRendering.run`).
+              // The default `ITEM_LEVEL_LINES` ("이 항목이 다시 검수 대기로 돌아갑니다") would be
+              // false here: the 1차 item and every other group on this board are untouched.
+              lines={GROUP_LEVEL_LINES}
               onUnapprove={() =>
                 run(async () => {
                   await api.approveRendering(itemId, type, channel, false);
@@ -487,7 +495,7 @@ export function OutletCard(props: {
         ) : (
           <>
             <button
-              className="text-[13px] font-medium text-muted transition-colors hover:text-ink"
+              className="inline-flex items-center text-[13px] font-medium text-muted transition-colors pointer-coarse:min-h-11 hover:text-ink"
               onClick={() => setPicking((p) => !p)}
             >
               {picking ? "− 닫기" : "+ 다른 방 추가"}
@@ -497,7 +505,7 @@ export function OutletCard(props: {
                 {addable.map((id) => (
                   <button
                     key={id}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-line bg-bg px-2 py-1 text-[13px] text-ink transition-colors hover:bg-surface"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-line bg-bg px-2 py-1 text-[13px] text-ink transition-colors pointer-coarse:min-h-11 hover:bg-surface"
                     onClick={() => {
                       setAdded((p) => [...p, id]);
                       setPicking(false);
@@ -561,7 +569,7 @@ function Source({ convertedText }: { convertedText: string }) {
         // card. The `<details>` this sits in is already collapsed by default, so the cap was a second
         // space-saving mechanism inside a section the reviewer has deliberately expanded to read —
         // and a preview that cannot be seen is worse than a taller expanded pane.
-        <div className="@container mt-2 whitespace-pre-wrap text-[14px] leading-relaxed text-muted">
+        <div className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed text-muted">
           <MarkerText text={convertedText} />
         </div>
       ) : (
@@ -602,7 +610,7 @@ function DestinationPreview(props: {
             <button
               key={d}
               onClick={() => setTab(d)}
-              className={`rounded-[7px] px-2.5 py-1 text-[13px] font-medium transition-colors ${
+              className={`inline-flex items-center rounded-[7px] px-2.5 py-1 text-[13px] font-medium transition-colors pointer-coarse:min-h-11 ${
                 d === active ? "bg-bg text-ink shadow-sm" : "text-muted hover:text-ink"
               }`}
             >
@@ -880,7 +888,7 @@ function Row(props: {
         >
           <button
             onClick={props.onToggle}
-            className={`rounded px-1.5 py-0.5 text-[12px] font-medium transition-colors ${
+            className={`inline-flex items-center rounded px-1.5 py-0.5 text-[12px] font-medium transition-colors pointer-coarse:min-h-11 ${
               row.forked ? "bg-amber-soft text-amber-ink" : "text-faint hover:text-ink"
             }`}
           >
@@ -1066,7 +1074,10 @@ function Row(props: {
           {row.pending && !row.deliveryStatus && (
             <Tip text="이 행을 목록에서 뺍니다">
               <button
-                className="text-[13px] text-faint transition-colors hover:text-ink"
+                // Icon-only, no padding at all before this — ~17px. `min-w` alongside `min-h`
+                // because a single glyph has no text to give the box width the way a labelled
+                // button does.
+                className="inline-flex items-center justify-center text-[13px] text-faint transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11 hover:text-ink"
                 onClick={props.onDrop}
               >
                 ✕

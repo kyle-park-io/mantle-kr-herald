@@ -22,9 +22,16 @@ import { countMediaMarkers, splitMediaMarkers } from "../media";
  * Unlike the board's other hover cards (now `InfoPopover`), this one stays an inline accordion. A
  * 320px popover on a phone covers almost all of the source text it sits in, and the preview's whole
  * job is letting a reviewer compare that text against the photo — cover it and the preview has no job
- * left. So it expands downward in place instead, and because the same component sits in both a narrow
- * detail pane and a wide desktop one, the width decision is the caller's `@container`, not the
- * viewport.
+ * left. So it expands downward in place instead.
+ *
+ * The spec that proposed this had the preview itself branch popover-vs-inline on the source pane's
+ * width, via a `@container` on the caller. The implementation below does not — it renders
+ * unconditionally inline, at a fixed `w-full max-w-80` (see `PhotoMarker`/`VideoMarker`'s `preview`),
+ * with no `@`-variant class anywhere in this file. That is the better call (a preview that changes
+ * shape under the reviewer mid-scroll is its own kind of confusing), but it means the `@container`s
+ * `TranslationDetail`'s 원문 pane and `OutletCard`'s `Source` used to carry for this component's sake
+ * query nothing — nothing inside either one has an `@`-variant class. Both were removed; if this
+ * component ever does need to know its container's width again, the container has to come back too.
  *
  * Mount is deferred behind `armed` rather than left to `preload="none"`: `autoPlay` overrides that
  * hint the moment a `<video>` exists, and a merely-hidden (`display: none`) element still fetches. A
@@ -158,9 +165,12 @@ export function MarkerText({ text }: { text: string }) {
 }
 
 /**
- * Why this box has no preview. A `<textarea>` cannot host a hover target on a substring, so the
- * preview lives in the read-only pane and this line says where — but only when the text actually
- * carries media, so a copy without it looks exactly as it did before.
+ * Why this box has no preview. This used to say a `<textarea>` cannot host a *hover* target on a
+ * substring — true when this idiom was hover-only, but Task 5 made the preview a click target
+ * (tap the label to expand it in place), and a `<textarea>` cannot host a click target on a
+ * substring either: there is no element inside it to attach a handler to, only characters. So the
+ * preview still lives in the read-only pane and this line still says where — but only when the
+ * text actually carries media, so a copy without it looks exactly as it did before.
  */
 export function MediaEditNotice({ text, where }: { text: string; where: string }) {
   const { photos, videos, videosWithUrl } = countMediaMarkers(text);

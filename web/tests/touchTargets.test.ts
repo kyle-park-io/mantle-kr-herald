@@ -56,6 +56,18 @@ const EXEMPT: { file: string; className: string }[] = [
 
 const normalize = (s: string) => s.replace(/\s+/g, " ").trim();
 
+/**
+ * "다음 태그가 어디서 시작하는가"를 아무 `<`나 잡아서 답하면 뚫린다: `disabled={n < 3}`처럼 JSX
+ * 표현식 안의 비교 연산자도 `<`다. 이 저장소(그리고 Prettier 기본값)의 스타일은 비교 연산자
+ * 앞뒤에 공백을 두므로(`n < 3`, `i < len`), 실제 태그 시작(`<button`, `</div`, `<Icon`, …)만 골라내는
+ * 값싼 방법은 "`<` 바로 뒤에 공백이 아니라 글자·`/`가 오는" 자리만 taggerdms 후보로 본다.
+ */
+function findNextTagOpen(source: string, from: number): number {
+  const rest = source.slice(from);
+  const m = /<[a-zA-Z/]/.exec(rest);
+  return m ? from + m.index : -1;
+}
+
 /** `<button` 태그 하나에 딸린 className 리터럴(따옴표 문자열이든, 템플릿 리터럴이든, 그 템플릿이
  *  `{}`로 한 번 더 감싸여 있든)을 뽑는다. `className={someExport}`처럼 식별자 하나뿐이면 훑을 리터럴이
  *  없다는 뜻이므로 건너뛴다 — 그런 경우는 이미 공유 export를 쓰고 있다는 신호다. */
@@ -63,7 +75,7 @@ function extractButtonClassNames(source: string): string[] {
   const found: string[] = [];
   for (const m of source.matchAll(/<button\b/g)) {
     const start = m.index;
-    const nextTag = source.indexOf("<", start + 1);
+    const nextTag = findNextTagOpen(source, start + 1);
     const clsIdx = source.indexOf("className=", start);
     if (clsIdx === -1 || (nextTag !== -1 && clsIdx > nextTag)) continue;
     const afterEq = clsIdx + "className=".length;

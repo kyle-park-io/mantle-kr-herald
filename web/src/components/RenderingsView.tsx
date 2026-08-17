@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { type Rendering } from "../types";
+import { datePrefix, type Rendering } from "../types";
 import { RenderingList } from "./RenderingList";
 import { OutletBoard } from "./OutletBoard";
 import { ListDetailShell } from "./ListDetailShell";
@@ -48,7 +48,14 @@ export function RenderingsView(props: {
         <div className="shrink-0 border-b border-red-200 bg-red-50 px-5 py-2 text-sm text-red-700">{error}</div>
       )}
       <ListDetailShell
-        current={selected?.itemId}
+        // A human label, not the raw `itemId` — see `App.tsx`'s same-purpose prop for why. The
+        // rendering list identifies a row by date + first card's text (`toItemRows`'s own
+        // `preview`), so the phone bar names the current selection the same way.
+        current={
+          selected
+            ? `${datePrefix(selected.postedAt)} ${selected.text.replace(/\s+/g, " ").trim()}`.trim()
+            : undefined
+        }
         list={<RenderingList items={items} selectedId={selectedId} onSelect={handleSelect} />}
         detail={
           selected ? (

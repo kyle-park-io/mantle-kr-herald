@@ -38,9 +38,12 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
  * 폰에서 트리거가 화면 중앙 근처에 있으면 `flip-inline`으로도 못 피한다 — 왼쪽 정렬로 펴도, 뒤집어
  * 오른쪽 정렬로 펴도 반대쪽이 넘친다(양쪽 다 남는 여유가 패널 너비보다 작으면 필연적이다). 인라인
  * 축(왼쪽/오른쪽)을 트리거가 아니라 뷰포트 자체에 고정하면(`inset-inline` + `width: auto`) 이
- * 문제 자체가 사라진다 — promote된 패널은 top layer의 `position: fixed`라 containing block이
- * 이미 뷰포트이므로, 이것은 메커니즘을 거스르는 편법이 아니라 메커니즘이 이미 준 containing
- * block을 그대로 쓰는 것이다. 세로 축(트리거 바로 아래)은 그대로 유지한다 — 카드가 트리거와
+ * 문제 자체가 사라진다 — promote된 패널의 실제 계산값은 top layer 안에서도 `position: absolute`다
+ * (UA `[popover]` 시트가 미는 기본값은 `position: fixed`이지만, Tailwind의 `.absolute`가 그것을
+ * 이긴다 — 실제 Chromium에서 `getComputedStyle`로 확인했다). 그래도 top layer로 올라간
+ * `position: absolute` 엘리먼트의 containing block은 여전히 initial containing block, 즉
+ * 뷰포트이므로 결론은 같다: 이것은 메커니즘을 거스르는 편법이 아니라 메커니즘이 이미 준
+ * containing block을 그대로 쓰는 것이다. 세로 축(트리거 바로 아래)은 그대로 유지한다 — 카드가 트리거와
  * 무관한 위치로 떠 보이는 것을 막는 것이 애초에 anchor positioning을 쓰는 이유였다.
  *
  * 이것은 `@container`가 아니라 뷰포트 쿼리(`tablet` 미디어쿼리)로 가른다 — 이 저장소의 계획 문서는
@@ -87,6 +90,55 @@ function supportsPromotion(): boolean {
   );
 }
 
+/**
+ * Critical 1's fix. `Tip` was built assuming its only children were ever disabled controls — the
+ * trigger wrapper's own `onClick`/`onKeyDown` fired on ANY event that reached it, bubbled or not,
+ * because a bubbled event from a disabled descendant was the only case that ever happened (disabled
+ * controls generate no click/keydown of their own; the wrapper had to invent one). Task 10 then
+ * wrapped eight *enabled* controls in `Tip` (`되돌리기`, `✎ 따로 쓰기`, the drop `✕`, …), and the
+ * premise stopped holding: a tap on one of those now fired the control's own action AND toggled the
+ * wrapper at once (no outside-click/Esc on a phone to undo it), and the wrapper's unconditional
+ * `preventDefault()` on Enter/Space swallowed the control's native keyboard activation before it
+ * ever ran.
+ *
+ * The fix has to tell these two cases apart: an event that lands on the wrapper itself (or on inert
+ * content with no behaviour of its own — a plain `<span>` badge, the storage-mode pill, the funnel's
+ * `수집` count) is the wrapper's own to act on; an event that lands on a control which already has
+ * (or will have) its own enabled, native activation is not — the wrapper has to back off and let
+ * that control's own click/keyboard handling run unimpeded.
+ *
+ * `e.target === e.currentTarget` alone is not that test: `e.target` for a click is the actual
+ * element under the pointer regardless of who has a listener, so it is almost NEVER the wrapper
+ * itself once there is any visible child at all — that check would also silence the storage-mode
+ * panel and the funnel breakdown card's own click-to-open (both wrap plain, non-interactive `<span>`
+ * content with no listener of their own), which nothing in this fix is asking to break. The walk
+ * below asks the narrower, correct question instead: is there a *native, enabled, interactive*
+ * element between `e.target` and the wrapper boundary? If yes, that element owns the event. If no —
+ * whether because `e.target` IS the wrapper (a disabled child's click, redirected here by
+ * `[&_:disabled]:pointer-events-none` — a real pointer's hit-test skips a `pointer-events: none`
+ * descendant entirely and lands on the wrapper directly) or because every node in between is inert —
+ * the wrapper owns it, exactly as it always did for a disabled child.
+ *
+ * This also makes the disabled path correct in jsdom, not only in a real browser's hit-testing:
+ * `fireEvent.click` dispatches straight at whatever node the test calls it on, bypassing hit-testing
+ * entirely, so a test that clicks a *disabled* `<button>` directly still lands with `target` on that
+ * button — this walk explicitly excludes a `.disabled` element from counting as "owns the event," so
+ * it keeps working there too, not only when a real pointer's hit-test does the redirecting for it.
+ */
+function targetsEnabledControl(target: EventTarget | null, boundary: Element): boolean {
+  let el = target instanceof Element ? target : null;
+  while (el && el !== boundary) {
+    if (
+      el.matches("button, a, input, select, textarea, [role='button']") &&
+      !(el as HTMLButtonElement | HTMLInputElement).disabled
+    ) {
+      return true;
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+
 const PROMOTED_STYLE_ID = "info-popover-promoted-styles";
 
 /**
@@ -102,10 +154,31 @@ const PROMOTED_STYLE_ID = "info-popover-promoted-styles";
  * `.ip-panel`의 기본 규칙이 `right`/`bottom`/`left`/`margin`을 먼저 미는 이유는 위 doc 주석의
  * over-constrained 설명과 같다 — `top`은 없다: 아래 두 미디어쿼리가 always 서로 배타적으로 전체
  * 폭을 덮으므로 `top`은 항상 둘 중 하나가 실제 값으로 덮어써서, `auto`를 거칠 일이 없다.
+ *
+ * `top`이 `anchor(bottom) + 0.375rem`이 아니라 그냥 `anchor(bottom)`인 이유, 그리고 아래 JSX가
+ * 패널을 두 겹(바깥/안쪽) 박스로 그리는 이유는 한 버그의 앞뒤다. 트리거와 패널 사이의 여백을
+ * `top`의 덧셈으로(또는 그 전의 un-promoted 경로처럼 `margin`으로) 주면 그 여백은 엘리먼트
+ * *자신의* 히트테스트 영역 바깥에 남는다 — 포인터가 트리거에서 패널로 곧장 내려가다 그 몇 픽셀
+ * 띠를 지나는 순간 `pointerleave`가 뜨고 패널이 닫혀, 패널 자체에는 영영 도달하지 못한다. 이
+ * 저장소가 이미 한 번 고쳤던 자리다 — `App.tsx`의 커밋 `bd2baa7`에서 지워진 주석: "margin sits
+ * outside an element's own hit-test area, padding sits inside it. Splitting the box keeps the
+ * visible result identical … while making that whole 8px strip hit-testable." 그래서 여백은 이제
+ * 바깥 박스의 `pt-1.5`(패딩)이고, `top`은 정확히 `anchor(bottom)`을 가리킨다 — 바깥 박스 자신이
+ * 트리거 바로 아래에서 시작해 화면에 보이지 않는 채로 그 패딩만큼 안쪽(보이는) 박스를 밀어낸다.
+ * 마우스가 트리거에서 패널로 내려가는 경로 전체가 이제 어느 한 엘리먼트의 히트테스트 영역
+ * 안이다.
+ *
+ * 아래 JSX의 안쪽(보이는) 박스가 `promotable`일 때 `ip-panel`(align 변형 없이 기본 클래스만)을
+ * 함께 받는 이유는 위치 때문이 아니다 — 그 박스는 `position: static`이라 `anchor()`/`inset-inline`
+ * 같은 위치 프로퍼티는 전부 무시된다. 폭 때문이다: 아래 좁은 화면 미디어쿼리가 미는
+ * `width: auto`가 바깥 박스뿐 아니라 이 박스의 `panelClassName`발 `w-*`도 같이 덮어써야,
+ * `inset-inline`으로 뷰포트 양끝에 고정된 바깥 박스를 안쪽(보이는) 박스가 실제로 채운다 — 안
+ * 그러면 바깥은 넓어지는데 눈에 보이는 카드는 원래 `w-64`/`w-72`/`w-80`에 그대로 남아, 보이는
+ * 결과가 이 restructuring 이전과 달라진다.
  */
 const PROMOTED_STYLE_TEXT = `
 .ip-panel {
-  top: calc(anchor(bottom) + 0.375rem);
+  top: anchor(bottom);
   right: auto;
   bottom: auto;
   left: auto;
@@ -273,8 +346,18 @@ export function InfoPopover({
         // 실제로 이 저장소의 여러 테스트가 그 중복으로 깨졌다. `tabIndex`+`onKeyDown`만으로도
         // 키보드 조작은 되고, 이 래퍼가 진짜 트리거인 경우(자식이 버튼이 아닌 경우)는 스크린
         // 리더가 `aria-expanded`·`aria-controls`로 그 성격을 여전히 읽는다.
-        onClick={() => setOpen((v) => !v)}
+        // `targetsEnabledControl`(모듈 위쪽, Critical 1의 긴 doc 주석 참조)을 클릭·키다운 둘 다에서
+        // 먼저 묻는 이유: Task 10이 여덟 개의 *활성* 컨트롤을 이 래퍼로 감싼 뒤에야 드러난 버그다.
+        // 이 확인이 없으면 자식에서 버블된 이벤트도 래퍼 자신이 처리해야 할 이벤트와 구별되지
+        // 않는다 — 활성 자식(자기 onClick이 있는 진짜 버튼)에서는 래퍼가 손을 떼야 그 자식의 네이티브
+        // 클릭·키보드 활성화가 방해 없이 그대로 일어나고, disabled 자식이나 `<span>` 배지처럼 자기
+        // 행동이 없는 자식에서는 여전히 이 래퍼가 열고 닫는다.
+        onClick={(e) => {
+          if (targetsEnabledControl(e.target, e.currentTarget)) return;
+          setOpen((v) => !v);
+        }}
         onKeyDown={(e) => {
+          if (targetsEnabledControl(e.target, e.currentTarget)) return;
           if (e.key !== "Enter" && e.key !== " ") return;
           // Space의 기본 동작(페이지 스크롤)을 막는다 — 네이티브 버튼이라면 브라우저가 이미 하는 일.
           e.preventDefault();
@@ -293,15 +376,38 @@ export function InfoPopover({
           ref={panelRef}
           id={id}
           role={role}
+          // 위치·anchor·popover 속성은 전부 이 바깥 박스가 진다 — top layer로 promote되는 것도,
+          // CSS anchor positioning이 걸리는 것도 이 엘리먼트 자신이다(effect 참조). 시각적으로는
+          // 보이지 않는다 — 테두리·배경·그림자는 안쪽 박스가 진다(아래). `pt-1.5`가 트리거와
+          // 패널 사이의 여백이다: 예전의 `mt-1.5`(마진)였다면 그 여백은 이 박스 자신의 히트테스트
+          // 영역 바깥이었다 — 마우스가 트리거에서 패널로 곧장 내려가다 그 6px 띠를 지나는 순간
+          // `pointerleave`가 뜨고 패널이 닫혔다(Critical 2, `PROMOTED_STYLE_TEXT` 위 doc 주석
+          // 참조). 패딩은 이 박스 자신의 히트테스트 영역 *안*이라 같은 문제가 없다.
+          //
           // `ip-panel`/`ip-panel--left`/`ip-panel--right`는 promote될 때만 뜻이 있다
           // (`PROMOTED_STYLE_TEXT` 참조) — `promotable`이 false인 브라우저에서는 이 클래스에
           // 대응하는 규칙이 애초에 존재하지 않으므로 붙여도 무해하지만, 붙이지 않아 두 경로가 서로
           // 완전히 무관하다는 것을 코드로도 분명히 한다.
-          className={`absolute top-full ${align === "right" ? "right-0" : "left-0"} z-30 mt-1.5 block max-w-[calc(100vw-2rem)] rounded-lg border border-line bg-surface shadow-lg ${
+          className={`absolute top-full ${align === "right" ? "right-0" : "left-0"} z-30 pt-1.5 max-w-[calc(100vw-2rem)] ${
             promotable ? `ip-panel ip-panel--${align === "right" ? "right" : "left"}` : ""
-          } ${panelClassName ?? ""}`.trim()}
+          }`.trim()}
         >
-          {panel}
+          {/*
+            안쪽 박스. 보이는 카드 전부 — 테두리·배경·그림자·`panelClassName`(폭·패딩·글자) — 를
+            여기서 진다. `promotable`일 때 이 박스에도 `ip-panel`(align 변형 없이 기본 클래스만)을
+            얹는 것은 위치 때문이 아니다 — 이 박스는 `position: static`이라 anchor/inset 관련
+            프로퍼티는 전부 무시된다. 폭 때문이다: 좁은 화면 미디어쿼리의 `width: auto`가 바깥
+            박스뿐 아니라 이 박스의 `panelClassName`발 `w-*`도 같이 덮어써야, `inset-inline`으로
+            뷰포트 양끝에 고정된 바깥 박스를 이 박스가 실제로 채운다 — 안 그러면 바깥은 넓어지는데
+            보이는 카드는 원래 폭(`w-64`/`w-72`/`w-80`)에 그대로 남는다.
+          */}
+          <div
+            className={`rounded-lg border border-line bg-surface shadow-lg max-w-[calc(100vw-2rem)] ${
+              promotable ? "ip-panel" : ""
+            } ${panelClassName ?? ""}`.trim()}
+          >
+            {panel}
+          </div>
         </div>
       )}
     </span>

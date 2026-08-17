@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "./api";
-import type { Translation, AppStatus, PublishStateRow } from "./types";
+import { datePrefix, type Translation, type AppStatus, type PublishStateRow } from "./types";
 import { TranslationList } from "./components/TranslationList";
 import { TranslationDetail } from "./components/TranslationDetail";
 import { RenderingsView } from "./components/RenderingsView";
@@ -562,7 +562,17 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
 
       {mode === "translations" && (
         <ListDetailShell
-          current={selected?.itemId}
+          // A human label, not the raw `itemId` (`x:2081711456320655644` truncated to illegibility
+          // in the phone bar's `truncate` span) — the list itself identifies a row by date + Korean
+          // preview (`TranslationList`'s own `preview()`), so the phone bar names the current
+          // selection the same way.
+          current={
+            selected
+              ? `${datePrefix(selected.sourcePostedAt)} ${(selected.koreanText || selected.sourceText)
+                  .replace(/\s+/g, " ")
+                  .trim()}`.trim()
+              : undefined
+          }
           list={<TranslationList items={items} selectedId={selectedId} onSelect={handleSelect} />}
           detail={
             selected ? (

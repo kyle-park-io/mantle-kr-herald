@@ -6,6 +6,15 @@ import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 const ITEM_LEVEL_LINES = ["이 항목이 다시 검수 대기로 돌아갑니다.", "저장된 글은 그대로 남습니다."];
 
 /**
+ * `OutletCard`'s group-level control's own lines — see `lines`'s doc comment below for why the
+ * item-level default is false here. `ApproveRendering.run` (`src/app/ApproveRendering.ts`) shows
+ * exactly what `approve: false` touches: it flips only this one `(itemId, type, channel)` rendering
+ * from `approved` back to `rendered`. The item's 1차 status and every other group on the board are
+ * untouched.
+ */
+export const GROUP_LEVEL_LINES = ["이 채널 그룹만 다시 검수 대기로 돌아갑니다.", "항목과 다른 그룹에는 영향이 없습니다."];
+
+/**
  * `승인됨 ✓`. 마우스에서는 호버로 `승인 취소`가 되고, 터치에서는 확인 다이얼로그를 거친다.
  *
  * 호버 스왑이 터치에서 성립하지 않는 것은 단순히 "호버가 없어서"가 아니다. 일부 터치 브라우저는
@@ -26,12 +35,25 @@ export function ApprovedButton({
   onUnapprove: () => void;
   disabled?: boolean;
   /**
-   * What withdrawing this particular approval undoes, as the dialog's body lines. Defaults to the
-   * item-level wording (`TranslationDetail`'s and the group-level `OutletCard` control both
-   * withdraw the whole item's/group's approval, so they take the default). The row-level control in
-   * `OutletCard`'s `Row` withdraws only that one forked room's approval — the item and every other
-   * room are untouched — so it passes its own room-scoped lines rather than the default, which would
-   * otherwise tell a reviewer the item goes back to 검수 대기 when it does not.
+   * What withdrawing this particular approval undoes, as the dialog's body lines. Three call sites,
+   * three different things actually get undone — none of them the same fact, so none of them may
+   * share wording carelessly:
+   *
+   * - `TranslationDetail`'s control withdraws the 1차 item's own approval (`status: "approved"` →
+   *   `"translated"`). This is the one case `ITEM_LEVEL_LINES` is actually true for, so it takes
+   *   the default.
+   * - `OutletCard`'s group-level control withdraws only THAT `(type, channel)` group's 2차
+   *   rendering approval (`ApproveRendering.run` with `approve: false`) — the item's 1차 status and
+   *   every other group on the board are untouched. `ITEM_LEVEL_LINES` ("이 항목이 다시 검수
+   *   대기로 돌아갑니다") is false here: nothing about "the item" reverts, only this one channel
+   *   group. It passes `GROUP_LEVEL_LINES`.
+   * - `OutletCard`'s row-level control (`Row`) withdraws only that one forked room's own approval —
+   *   the item and every other room, including the group's own approval, are untouched. It passes
+   *   its own room-scoped lines.
+   *
+   * Defaults to `ITEM_LEVEL_LINES` since `TranslationDetail`'s is the one call site where saying
+   * nothing extra is still correct; the other two must pass their own lines or the dialog states
+   * something false about what the click is about to do.
    */
   lines?: string[];
   /**

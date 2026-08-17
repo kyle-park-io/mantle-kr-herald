@@ -36,7 +36,11 @@ export function SearchBox(props: { value: string; onChange: (value: string) => v
           type="button"
           onClick={() => props.onChange("")}
           aria-label="검색어 지우기"
-          className="absolute right-1 top-1/2 -translate-y-1/2 rounded px-1 text-[15px] leading-none text-faint transition-colors hover:text-ink"
+          // ~20px otherwise (a single glyph with `px-1`) — this sits inside the drawer, the phone's
+          // primary list surface, so it needs the same `pointer-coarse:` floor as everything else a
+          // finger can reach there. `min-h`/`min-w` (not padding) so the box grows without shifting
+          // the × off-center.
+          className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-center rounded px-1 text-[15px] leading-none text-faint transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11 hover:text-ink"
         >
           ×
         </button>

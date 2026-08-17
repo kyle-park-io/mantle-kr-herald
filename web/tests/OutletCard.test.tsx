@@ -485,9 +485,14 @@ describe("OutletCard — 핀 고정 is offered where it exists", () => {
  * one shared dialog (`props.onConfirm`) rather than a second one of its own. These pin two things a
  * unit test can still catch without rendering the real `ConfirmDialog`: the click itself never
  * reaches the unapprove route directly, and the copy that reaches the dialog says what THIS control
- * actually withdraws. Fix round 1 shipped the group-level wording ("이 항목이 다시 검수 대기로
+ * actually withdraws. Fix round 1 shipped the item-level wording ("이 항목이 다시 검수 대기로
  * 돌아갑니다") at the row-level control too, where it is false — a forked room's own approval, not
- * the item's — which is exactly the class of bug these two guard against.
+ * the item's. The final review round found the SAME class of bug one level up: the group-level
+ * control (this file's `ITEM_LEVEL_LINES` default) also stated the item-level fact, which is false
+ * for it too — `approveRendering(..., false)` withdraws only that one channel group's approval, not
+ * the item's and not any other group's. Both cases guard against the same mistake: `ApprovedButton`'s
+ * default lines are true for exactly one caller (`TranslationDetail`'s item-level control), and every
+ * other caller has to pass its own.
  */
 describe("OutletCard 승인 취소 — asks through the board's shared dialog, with copy scoped to what it withdraws", () => {
   it("group-level: withdraws the whole group's approval, and says so before doing it", async () => {
@@ -505,7 +510,12 @@ describe("OutletCard 승인 취소 — asks through the board's shared dialog, w
     // Nothing happens on the click itself — only the shared dialog opens.
     expect(approveRendering).toHaveLength(0);
     expect(confirms).toHaveLength(1);
-    expect(said(confirms[0])).toContain("이 항목이 다시 검수 대기로 돌아갑니다");
+    // `approveRendering(..., false)` (`ApproveRendering.run`) flips only THIS group's rendering
+    // back to `rendered` — the item's 1차 status and every other group are untouched. The
+    // item-level wording ("이 항목이 다시 검수 대기로 돌아갑니다") would be false here.
+    expect(said(confirms[0])).toContain("이 채널 그룹만 다시 검수 대기로 돌아갑니다");
+    expect(said(confirms[0])).toContain("항목과 다른 그룹에는 영향이 없습니다");
+    expect(said(confirms[0])).not.toContain("이 항목이 다시 검수 대기로 돌아갑니다");
 
     confirms[0].onConfirm({ toggled: false });
     await waitFor(() => expect(approveRendering).toHaveLength(1));

@@ -1,9 +1,30 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { InfoPopover } from "../src/components/InfoPopover";
 
 afterEach(cleanup);
+
+/**
+ * `PROMOTED_STYLE_TEXT`가 `48rem`을 두 번 하드코딩하는 이유(`InfoPopover.tsx`의 doc 주석 참조)는
+ * CSS 커스텀 프로퍼티가 `@media` 안에서 쓰일 수 없어서다 — `--breakpoint-tablet`을 참조할 수 없다.
+ * 그래서 이 저장소의 유일한 뷰포트 경계가 바뀌면 이 두 리터럴은 아무 에러 없이 조용히 따로 논다.
+ * 이 테스트는 그 둘이 여전히 같은 값을 말하는지만 고정한다 — `styles.css`의 값이 진실이고, 여기
+ * 두 리터럴이 그것을 따라가는지 본다.
+ */
+it("PROMOTED_STYLE_TEXT의 두 48rem이 --breakpoint-tablet과 일치한다", () => {
+  const stylesCss = readFileSync(join(__dirname, "../src/styles.css"), "utf8");
+  const breakpoint = stylesCss.match(/--breakpoint-tablet:\s*([\d.]+rem)/)?.[1];
+  expect(breakpoint).toBeDefined();
+
+  const infoPopoverSrc = readFileSync(join(__dirname, "../src/components/InfoPopover.tsx"), "utf8");
+  const widths = [...infoPopoverSrc.matchAll(/width\s*[<>]=?\s*([\d.]+rem)/g)].map((m) => m[1]);
+  expect(widths).toHaveLength(2);
+  expect(widths[0]).toBe(breakpoint);
+  expect(widths[1]).toBe(breakpoint);
+});
 
 /**
  * jsdom 30은 popover API의 JS 절반(`showPopover`/`hidePopover`)을 구현하지 않는다 — `showPopover`가
@@ -15,10 +36,16 @@ afterEach(cleanup);
  * 따로 검증한다.
  */
 describe("InfoPopover", () => {
+  // 일부러 `<span>`이다, `<button>`이 아니라 — 이 블록은 래퍼 자신의 열기/닫기 메커니즘을
+  // 검증하지, 자식이 자기 행동을 갖는 경우(진짜 버튼)를 검증하지 않는다. 후자는 아래
+  // "활성(enabled) 자식 트리거" 블록의 몫이다. `<button>`으로 두면 `targetsEnabledControl`
+  // (`InfoPopover.tsx`)이 이 버튼도 "이미 활성 컨트롤"로 보고 래퍼가 손을 떼므로, disabled도
+  // 아니고 자기 onClick도 없는 이 자리에서는 `<span>`이 실제로 이 컴포넌트의 다른 실사용
+  // (스토리지 모드 패널, 수집 카드 — 둘 다 `<span>` 자식)과 같은 모양이다.
   const setup = () =>
     render(
       <InfoPopover panel={<span>설명입니다</span>}>
-        <button>열기</button>
+        <span>열기</span>
       </InfoPopover>,
     );
 
@@ -68,7 +95,7 @@ describe("InfoPopover", () => {
    * 하고 `showPopover()`를 부르지 않으면, UA 스타일시트의 `[popover] { display: none }` 기본값이
    * `:popover-open` 여부와 무관하게 패널을 가려 버린다(jsdom 30도 이 부분은 실제로 구현한다). 이
    * 사실을 실제 Chromium이 아니라 여기서도 확인할 수 있는 건 jsdom이 `showPopover`를 아예 구현하지
-   * 않기 때문이다 — `canPromote`가 항상 false가 된다.
+   * 않기 때문이다 — `promotable`(= `supportsPromotion()`의 결과)이 항상 false가 된다.
    */
   it("jsdom(프로모션 불가)에서는 popover 속성을 붙이지 않는다", () => {
     setup();
@@ -104,10 +131,12 @@ describe("InfoPopover — anchor positioning을 지원하는 브라우저(스텁
     delete (HTMLElement.prototype as { hidePopover?: unknown }).hidePopover;
   });
 
+  // 위 블록과 같은 이유로 `<span>` — 여기서 검증하는 것은 anchor positioning 배선이지 자식의
+  // 활성 컨트롤 처리가 아니다.
   const setup = (align?: "left" | "right") =>
     render(
       <InfoPopover align={align} panel={<span>설명입니다</span>}>
-        <button>열기</button>
+        <span>열기</span>
       </InfoPopover>,
     );
 
@@ -173,13 +202,13 @@ describe("InfoPopover — anchor positioning을 지원하는 브라우저(스텁
   it("promote되는 브라우저에서 위치 스타일시트를 한 번만 주입한다", () => {
     const first = render(
       <InfoPopover panel={<span>설명입니다 A</span>}>
-        <button>열기 A</button>
+        <span>열기 A</span>
       </InfoPopover>,
     );
     fireEvent.click(screen.getByText("열기 A"));
     const second = render(
       <InfoPopover panel={<span>설명입니다 B</span>}>
-        <button>열기 B</button>
+        <span>열기 B</span>
       </InfoPopover>,
     );
     fireEvent.click(screen.getByText("열기 B"));
@@ -267,5 +296,48 @@ describe("InfoPopover — disabled 트리거", () => {
     trigger.focus();
     fireEvent.keyDown(trigger, { key: " " });
     expect(screen.getByText("설명입니다")).toBeTruthy();
+  });
+});
+
+/**
+ * 활성(enabled) 자식 — Task 10이 여덟 개의 활성 컨트롤(`되돌리기`, `✎ 따로 쓰기`, 드롭 `✕` 등)을
+ * `Tip`으로 감싼 뒤에야 드러난 회귀. `onClick`/`onKeyDown`이 래퍼가 아니라 "래퍼까지 버블된 모든
+ * 이벤트"에 반응하던 예전 코드는, disabled 자식(위 블록)에서만 옳았다 — disabled 자식은
+ * `pointer-events-none` 덕에 클릭이 정말 래퍼 자신을 때리지만, 활성 자식은 클릭이 자식 자신을
+ * 때리고 래퍼까지는 버블만 해온다. 그 차이를 `e.target === e.currentTarget`으로 보지 않으면
+ * 래퍼가 자식의 클릭·키보드 이벤트를 자기 것처럼 가로챈다 — 실측된 두 증상: 터치에서 탭 한 번이
+ * 자식의 동작과 팝오버 열기를 동시에 일으키고(닫을 방법이 폰에는 없다), 키보드에서는 래퍼의
+ * `preventDefault()`가 포커스가 자식 위에 있어도 매번 먼저 불려 자식 버튼의 네이티브 Enter/Space
+ * 활성화를 삼킨다.
+ *
+ * 여기서 검증 가능한 것: 자식에서 버블된 클릭·키다운은 래퍼를 토글하지 않고(`e.target`이 자식이지
+ * 래퍼가 아니므로), 키다운 쪽은 `preventDefault()`도 불리지 않는다(`fireEvent`의 반환값이 그것을
+ * 직접 증명한다 — 취소되면 `false`). "탭이 실제로 자식의 클릭을 실제 브라우저에서 억제 없이
+ * 발생시키는가"는 disabled 블록과 같은 이유로 여기서 원리적으로 증명할 수 없다 — Playwright로
+ * 실제 Chromium을 띄워 확인했다(작업 보고서 참조).
+ */
+describe("InfoPopover — 활성(enabled) 자식 트리거", () => {
+  const setupEnabled = (onChildClick: () => void) =>
+    render(
+      <InfoPopover panel={<span>설명입니다</span>}>
+        <button onClick={onChildClick}>열기</button>
+      </InfoPopover>,
+    );
+
+  it("자식(버튼)에서 버블된 클릭은 래퍼를 토글하지 않는다 — 자식 자신의 onClick만 불린다", () => {
+    const onChildClick = vi.fn();
+    setupEnabled(onChildClick);
+    fireEvent.click(screen.getByText("열기"));
+    expect(onChildClick).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("설명입니다")).toBeNull();
+  });
+
+  it("자식에 포커스가 있을 때의 Enter는 래퍼에 막히지 않는다 — preventDefault가 불리지 않는다", () => {
+    setupEnabled(() => {});
+    const child = screen.getByText("열기");
+    child.focus();
+    const notCancelled = fireEvent.keyDown(child, { key: "Enter" });
+    expect(notCancelled).toBe(true);
+    expect(screen.queryByText("설명입니다")).toBeNull();
   });
 });

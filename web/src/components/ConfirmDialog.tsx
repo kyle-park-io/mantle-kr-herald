@@ -164,9 +164,23 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
  * ignore: a `title` whose condition ALSO appears in the control's `disabled` expression never
  * renders. The message is in the markup, reads correctly in review, and no operator has ever seen
  * it. Nine of them had accumulated that way across this board and 1차 — every one a "why can't I
- * press this" message, which is exactly the moment the explanation was needed. Reach for `Tip`
- * whenever the reason and the disabling share a condition; a plain `title` is fine only on a
- * control that is still enabled when it carries one.
+ * press this" message, which is exactly the moment the explanation was needed.
+ *
+ * The rule used to stop there — "reach for `Tip` whenever the reason and the disabling share a
+ * condition; a plain `title` is fine only on a control that is still enabled when it carries one."
+ * That was true when `Tip` only ever wrapped disabled children. Task 10 then moved eight *enabled*
+ * controls onto `Tip` (`되돌리기`, `✎ 따로 쓰기`, the drop `✕`, and others), and the old rule went
+ * quiet without anyone noticing — nothing enforced it, so it simply stopped matching what the
+ * codebase actually did. That silent expiry is what let Critical 1 happen: `InfoPopover`'s trigger
+ * wrapper was built assuming its only child was ever disabled, and an *enabled* child's own click
+ * and keydown, merely bubbling up through it, were treated as if they had originated on the
+ * wrapper itself.
+ *
+ * The rule now is what it has actually become: every advisory string — reachable or not, on a
+ * disabled control or an enabled one — goes through `Tip`, never a native `title`. Not just because
+ * a `disabled` control never fires hover reliably, but because a plain `title` is unreachable on
+ * touch at all, on any control, disabled or not. Write it down here so the next person does not
+ * have to re-derive it the way this fix round had to.
  *
  * `text: undefined` renders `children` alone rather than an empty card, so a call site can pass a
  * conditional straight through (`text={dirty ? SAVE_FIRST : undefined}`) without wrapping the
@@ -175,9 +189,9 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
  *
  * 카드 자체는 이제 `InfoPopover`가 그린다 — 호버 전용이던 것이 탭과 키보드로도 열린다. 조상의
  * `overflow`에 잘리지 않는 것은 브라우저가 native `popover`와 CSS anchor positioning을 둘 다
- * 지원할 때만이다(`InfoPopover.tsx`의 `canPromote` 참조) — 그렇지 않은 브라우저에서는 여느 때처럼
- * 잘릴 수 있는, 평범하게 absolute-positioned된 엘리먼트로 남는다. 이 함수는 "텍스트 한 덩이"라는
- * 좁은 경우를 위한 얇은 껍질로 남는다.
+ * 지원할 때만이다(`InfoPopover.tsx`의 `supportsPromotion` 참조) — 그렇지 않은 브라우저에서는 여느
+ * 때처럼 잘릴 수 있는, 평범하게 absolute-positioned된 엘리먼트로 남는다. 이 함수는 "텍스트 한
+ * 덩이"라는 좁은 경우를 위한 얇은 껍질로 남는다.
  */
 export function Tip({
   text,
@@ -189,8 +203,13 @@ export function Tip({
   className?: string;
   /**
    * Which edge the card hangs from. `left` (the default) opens down and to the right, which is where
-   * the eye already is after reading the control — and matches the board's other three hover cards
-   * (`CollectedBreakdownCard`, `MarkerText`, the env panel in `App.tsx`), all `left-0 top-full`.
+   * the eye already is after reading the control — and matches the board's other two hover cards
+   * (`CollectedBreakdownCard`, the env panel in `App.tsx`). `MarkerText` used to be a third, but
+   * Task 4 turned its preview into an inline accordion rather than a hover card, so it no longer
+   * belongs on this list. Nor are these `left-0 top-full` any more on the promoted path (native
+   * `popover` + CSS anchor positioning supported): there the panel's horizontal edge is
+   * `left: anchor(left)`/`right: anchor(right)` (`InfoPopover.tsx`'s `PROMOTED_STYLE_TEXT`), not a
+   * Tailwind `left-0`. `top-full`'s intent survives as `top: anchor(bottom)` on that same path.
    *
    * `right` is for a control pinned to the right edge of its container, where a `w-64` card opening
    * rightward would run off the card. There is exactly one today: `DestinationPreview`'s `ml-auto`
