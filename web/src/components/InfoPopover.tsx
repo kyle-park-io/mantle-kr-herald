@@ -26,6 +26,13 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
  * 있다(예: 스토리지 모드 패널의 `지금 확인` 버튼) — 상호작용 요소를 `role="tooltip"` 안에 두면
  * 스크린 리더가 그 요소를 도달 불가능한 것으로 취급할 수 있다. 그래서 `role`은 호출처가 필요할
  * 때만 넘긴다. 텍스트 한 덩이일 뿐인 `Tip`은 `role="tooltip"`을 넘긴다.
+ *
+ * disabled인 `children`이 왜 특별 취급인가: `Tip`의 주요 용도가 disabled된 컨트롤이 눌리지 않는
+ * 이유를 설명하는 것이다(`ConfirmDialog.tsx`의 `Tip` 주석 참조) — 즉 disabled 컨트롤이 이
+ * 컴포넌트의 엣지 케이스가 아니라 주 사용례다. 그런데 네이티브 disabled 폼 컨트롤은 클릭을
+ * "무시"하는 게 아니라 브라우저가 애초에 click을 발생시키지 않는다(포인터·키보드 둘 다), 그리고
+ * 탭 순서에서도 빠진다. 트리거 래퍼의 `[&_:disabled]:pointer-events-none`과 자체 `tabIndex`·
+ * `onKeyDown`이 그 두 경로를 각각 고친다 — 아래 트리거 주석에 자세히 있다.
  */
 export function InfoPopover({
   panel,
@@ -94,10 +101,42 @@ export function InfoPopover({
       <span
         // 트리거는 클릭 가능해야 한다 — 터치와 키보드의 유일한 경로다. `children`이 이미 버튼인
         // 경우가 있어 여기서 `<button>`을 겹치지 않고, 래퍼가 클릭을 받는다.
+        //
+        // 그런데 `children`이 disabled 네이티브 컨트롤이면 클릭이 아예 여기까지 오지 않는다 —
+        // 브라우저는 disabled 폼 컨트롤에 대해 click을 "버블시키지 않는" 게 아니라 애초에
+        // 발생시키지 않는다(포인터·키보드 둘 다). `Tip`의 주요 용도가 바로 이 경우다: disabled된
+        // 컨트롤이 눌리지 않는 이유를 설명하는 카드이므로, disabled가 열리지 않는 경로를 막으면
+        // 이 컴포넌트의 존재 이유가 없어진다.
+        //
+        // `[&_:disabled]:pointer-events-none`이 포인터 쪽을 고친다: disabled 후손에서 hit-test를
+        // 꺼버리면 그 자리를 누른 포인터(마우스든 터치든)는 그 아래, 즉 이 래퍼로 떨어진다 — 이제
+        // 클릭의 타깃이 이 래퍼 자신이 된다(자식에서 버블된 게 아니라). disabled 버튼에 tooltip을
+        // 붙이는 표준적인 우회법과 같다.
+        //
+        // 키보드 쪽은 CSS로 안 풀린다 — disabled 네이티브 컨트롤은 pointer-events와 무관하게 탭
+        // 순서에서 아예 빠진다. 그래서 이 래퍼 자신을 항상 포커스 가능하게 만들고(`tabIndex={0}`)
+        // Enter·Space를 직접 받는다(`onKeyDown`). `children`이 이미 활성 상태의 `<button>`이라면
+        // 그 버튼 자신도 탭 정지점이라 여기서 하나가 더 생긴다 — 중첩된 상호작용 요소가 생기는
+        // 비용이지만, disabled·플레인 `<span>` 배지처럼 자기 탭 정지점이 없는 `children`에서
+        // 키보드 경로를 얻으려면 이 래퍼가 무조건 탭 가능해야 한다.
+        //
+        // `role="button"`은 일부러 안 붙인다 — `children`이 실제 `<button>`이면(disabled여도
+        // 접근성 트리에는 남는다) 래퍼에도 role="button"을 붙이는 순간 이름이 같은 버튼 두 개가
+        // 생겨 스크린 리더에도, `getByRole("button", { name })`에도 어느 쪽인지 모호해진다 —
+        // 실제로 이 저장소의 여러 테스트가 그 중복으로 깨졌다. `tabIndex`+`onKeyDown`만으로도
+        // 키보드 조작은 되고, 이 래퍼가 진짜 트리거인 경우(자식이 버튼이 아닌 경우)는 스크린
+        // 리더가 `aria-expanded`·`aria-controls`로 그 성격을 여전히 읽는다.
         onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          // Space의 기본 동작(페이지 스크롤)을 막는다 — 네이티브 버튼이라면 브라우저가 이미 하는 일.
+          e.preventDefault();
+          setOpen((v) => !v);
+        }}
+        tabIndex={0}
         aria-expanded={open}
         aria-controls={id}
-        className="inline-flex"
+        className="inline-flex [&_:disabled]:pointer-events-none"
       >
         {children}
       </span>

@@ -491,9 +491,17 @@ describe("OutletCard — 핀 고정 is offered where it exists", () => {
  * `textContent` alike, so a regression that puts one back fails here.
  *
  * `Tip` now renders through `InfoPopover`, whose panel is not in the DOM until opened — so each of
- * these clicks the (possibly disabled) control before reading the message. That click still reaches
- * `InfoPopover`'s wrapper: `fireEvent.click` on a disabled `<button>` still dispatches and bubbles in
- * jsdom, and the wrapper — not the button — owns the open/close handler.
+ * these clicks the (possibly disabled) control before reading the message.
+ *
+ * What that click here does NOT prove: in a real browser, a native disabled control never dispatches
+ * a click at all — no bubbling, no keyboard activation, and it drops out of the tab order. jsdom has
+ * no layout engine, so it cannot hit-test `[&_:disabled]:pointer-events-none` on `InfoPopover`'s
+ * trigger (the fix that makes a real click land on the wrapper instead of the disabled child), and
+ * `fireEvent.click` dispatches directly to the node regardless of `disabled`, bypassing the native
+ * suppression entirely. That gap is exactly what let fix round 1 ship with these six tests green while
+ * every one of these cards was still unreachable in Chromium — see `InfoPopover.test.tsx`'s
+ * "disabled 트리거" describe block for the keyboard half jsdom CAN check, and the task report for the
+ * Playwright verification of the half it cannot.
  */
 describe("OutletCard — a blocked control says why, as text rather than a dead title", () => {
   const APPROVED_LOCK = "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요.";

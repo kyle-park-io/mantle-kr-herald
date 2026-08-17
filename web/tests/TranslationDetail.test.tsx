@@ -242,9 +242,15 @@ describe("TranslationDetail — 게시됨 (posted)", () => {
  * and it is present only when it applies.
  *
  * `Tip` now renders through `InfoPopover`, whose panel is not in the DOM until opened — so each test
- * below clicks the (disabled) button first. That click still reaches `InfoPopover`: `fireEvent.click`
- * on a disabled `<button>` still dispatches and bubbles in jsdom, and the wrapper span — not the
- * button — owns the open/close handler. Confirm the real reveal (tap or hover) on the deployed board.
+ * below clicks the (disabled) button first.
+ *
+ * What that click here does NOT prove: a real disabled control dispatches no click at all — no
+ * bubbling, no keyboard activation, and no tab stop. jsdom has no layout engine, so it cannot
+ * hit-test `[&_:disabled]:pointer-events-none` on `InfoPopover`'s trigger (the fix that makes a real
+ * click land on the wrapper instead of the disabled child), and `fireEvent.click` dispatches straight
+ * to the node regardless of `disabled`, bypassing that native suppression entirely. See
+ * `InfoPopover.test.tsx`'s "disabled 트리거" block for the keyboard half jsdom CAN check, and the task
+ * report for the Playwright check (real Chromium, tap + Tab/Enter) of the half it cannot.
  */
 describe("TranslationDetail — why a 발행 target is unavailable", () => {
   const HOSTED: ("local" | "google" | "lark")[] = ["google", "lark"];
