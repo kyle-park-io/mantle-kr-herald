@@ -1,6 +1,7 @@
 import { agentStage, type StageResult, type StageRunner, type WorksheetAgent } from "../ports/WorksheetAgent";
 import type { TickReport } from "./TickReport";
 import { DEFAULT_CONVERT_BATCH } from "../cli/convertBatch";
+import { MAX_VARIANTS_FLAG } from "../cli/convertPrepareSelector";
 import { ONLY_MISSING_FLAG, WARNING_PREFIX } from "../cli/formatLines";
 
 /**
@@ -41,6 +42,34 @@ import { ONLY_MISSING_FLAG, WARNING_PREFIX } from "../cli/formatLines";
 const PREPARE_STAGE = "convert:prepare";
 const STATUS_STAGE = "status";
 const FORMAT_STAGE = "format";
+
+/**
+ * The most (item, type) pairs one tick will hand to its single `claude -p` call.
+ *
+ * Not a dial, and deliberately not one: it is not a preference, it is arithmetic against
+ * `ClaudeCodeAgent`'s `DEFAULT_TIMEOUT_MS`, and the failure mode of raising it is the incident it
+ * was written for. Measured from that incident's own worksheet, by the mtimes of the `.ko.txt` files
+ * the agent wrote (2026-08-17, seven pairs, one item): about five minutes before the first save —
+ * the agent reading a 205 KB worksheet, whose size is roughly proportional to the number of type
+ * sections in it — and about a minute per save after that. Five saves landed, the sixth was cut off
+ * at the ten-minute cap, and the tick exited non-zero. The re-run over the two remaining pairs took
+ * six minutes end to end, format included.
+ *
+ * Four therefore sits at roughly seven minutes, against a cap of ten. Seven pairs is about twelve.
+ *
+ * **Raising this cannot be paid for with `TimeoutStartSec=`.** That directive is pinned at or under
+ * half the timer's fire period by `tests/deploy/convertTiming.test.ts` — 900s against a 30-minute
+ * cadence — and the agent's cap has to fit inside it with the tick's other four stages, so the
+ * ten minutes it has now is within about a minute of the most it can ever be given. The cadence
+ * itself is a Neon billing decision, not a tuning one (that test says so too).
+ *
+ * What a pair over the ceiling costs is one tick of latency, not a conversion: `convert:prepare`
+ * selects by "has no variant row", so a deferred pair is offered again 30 minutes later, and a
+ * seven-type item is simply converted across two ticks. What it buys is that the ten-minute cap
+ * stops being reachable by a single ordinary item — which is what made the alert fire on every
+ * full-fat item rather than on anything actually wrong.
+ */
+export const MAX_VARIANTS_PER_TICK = 4;
 
 // `src/cli/convert-prepare.ts` prints exactly one of two first lines, both built by
 // `src/cli/convertPrepareLines.ts` (which explains why they are built there and not inline):
@@ -170,10 +199,21 @@ export class ConvertTick {
   async run(): Promise<TickReport> {
     const stagesRun: string[] = [];
 
-    // `--limit` and nothing else. `--types` would silently narrow what the scheduler ever produces
-    // (an item converted for only some of its types still looks converted on the board), and `--ids`
-    // would pin every tick to the same item forever.
-    const prepare = await this.runStage(PREPARE_STAGE, ["--limit", String(this.batch)]);
+    // Two bounds, and they measure different things: `--limit` counts source items, `--max-variants`
+    // counts the pairs those items fan out to — which is what the one `claude -p` call below actually
+    // has to write, and what the ten-minute cap is spent on. See `MAX_VARIANTS_PER_TICK`.
+    //
+    // Still no `--types`, which would silently narrow what the scheduler ever produces (an item
+    // converted for only some of its types still looks converted on the board), and still no `--ids`,
+    // which would pin every tick to the same item forever. `--max-variants` is neither of those: it
+    // defers pairs to the next fire rather than excluding them, because the pairs it drops are
+    // exactly the ones `convert:prepare` will offer again while they have no variant row.
+    const prepare = await this.runStage(PREPARE_STAGE, [
+      "--limit",
+      String(this.batch),
+      MAX_VARIANTS_FLAG,
+      String(MAX_VARIANTS_PER_TICK),
+    ]);
     stagesRun.push(PREPARE_STAGE);
 
     if (!prepare.ok) {

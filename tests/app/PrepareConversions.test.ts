@@ -94,6 +94,23 @@ describe("PrepareConversions", () => {
     expect(pending).toEqual([{ itemId: "x:2", type: "x", sourceKorean: "new" }]);
   });
 
+  it("caps the fan-out at maxVariants, and the worksheet carries only what survived the cap", async () => {
+    // 2026-08-17: one item, seven unconverted types, one `claude -p` call under a ten-minute cap.
+    // The agent saved five and was killed mid-sixth, and the tick failed. `--limit` cannot express
+    // that ceiling — it counts source items, and the item was already one — so the bound has to sit
+    // on the pairs the fan-out produces, after it produces them.
+    const uc = new PrepareConversions(
+      translationStore([tr("x:1", "approved", "승인 카피")]),
+      glossaryStore, config, conversionConfig, fewShotByType(), convStore(),
+    );
+    const { worksheet, pending } = await uc.run({ maxVariants: 4 });
+    expect(pending).toEqual(ALL_TYPES.slice(0, 4).map((type) => ({ itemId: "x:1", type, sourceKorean: "승인 카피" })));
+    // The worksheet has to be cut with the same knife. It is what the agent reads, and `pending.json`
+    // is what the tick counts the agent's saves against — a section for a dropped pair asks the agent
+    // to save a variant nobody is expecting, on top of the ones it was actually given.
+    for (const type of ALL_TYPES.slice(4)) expect(worksheet, `section for ${type}`).not.toContain(`guide-${type}`);
+  });
+
   it("never offers a posted translation for conversion", async () => {
     // A `posted` item was already retired by the reconcile flow — offering it back for conversion
     // would let it re-enter a pipeline whose whole job is to stop it being sent again.
