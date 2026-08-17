@@ -879,7 +879,7 @@ function Row(props: {
           {gate.readOnly ? (row.forked ? "✎따로 · 보기" : "글 보기") : row.forked ? "✎따로" : "✎ 따로 쓰기"}
         </button>
 
-        <span className="ml-auto flex flex-wrap items-center gap-2 @max-sm:flex-col @max-sm:items-stretch">
+        <span className="ml-auto flex flex-wrap items-center gap-2 @max-sm:ml-0 @max-sm:flex-col @max-sm:items-stretch">
           {sent ? (
             <>
               {/*
@@ -888,14 +888,22 @@ function Row(props: {
                 that 발송됨 with a time beside it asserts something that has not happened yet.
               */}
               {row.awaitingPublish ? (
-                <Tip text={`${stampFull(row.at) ?? ""}에 예약했습니다. X는 링크가 있는 글을 즉시 게시하지 않아 2분 뒤 큐를 통해 올라갑니다. [게시 확인]을 누르면 실제 주소를 가져옵니다.`}>
+                <Tip
+                  text={`${stampFull(row.at) ?? ""}에 예약했습니다. X는 링크가 있는 글을 즉시 게시하지 않아 2분 뒤 큐를 통해 올라갑니다. [게시 확인]을 누르면 실제 주소를 가져옵니다.`}
+                  // `text` here is never `undefined` (the template literal always has a value), so
+                  // `Tip` always wraps this in `InfoPopover` — whose own root span is what actually
+                  // lays out in the row, not the `<span>` below. `@max-sm:self-start` has to ride on
+                  // this `className`, the same way `DestinationPreview`'s `ml-auto` [복사] does, or
+                  // it lands on an element `items-stretch` never touches.
+                  className="@max-sm:self-start"
+                >
                   <span className="inline-flex items-center gap-1 rounded-lg bg-amber-soft px-3.5 py-1.5 text-[13px] font-medium text-amber-ink">
                     예약됨 {stamp(row.at)}
                   </span>
                 </Tip>
               ) : (
                 <span
-                  className="inline-flex items-center gap-1 rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint"
+                  className="inline-flex items-center gap-1 rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint @max-sm:self-start"
                   title={stampFull(row.at)}
                 >
                   발송됨 {stamp(row.at)}
@@ -1130,7 +1138,7 @@ function Row(props: {
               />
             ) : (
               gate.showApproved && (
-                <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[13px] font-medium text-mint">
+                <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[13px] font-medium text-mint @max-sm:self-start">
                   승인됨 ✓
                 </span>
               )
