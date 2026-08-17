@@ -276,31 +276,37 @@ export function TranslationDetail(props: {
         />
         {/* Same problem the "편집 중" chip above solves, and the same fix — see `MediaEditNoticeSlot`. */}
         <MediaEditNoticeSlot text={korean} where="원문" className="mt-1.5" />
-        {/* `POSTED_LOCK` used to ride this textarea's own `title` — invisible on touch, and on a
-            *disabled* control not reliably visible on desktop either (see `Tip`'s doc comment). "Lock,
-            do not hide" means the reason a reviewer cannot edit belongs where they are already looking,
-            not behind a hover they may never trigger — so it is inline text now, not a tooltip. */}
+        {/* `POSTED_LOCK` used to ride this textarea's own `title` — invisible on touch. "Lock, do not
+            hide" means the reason a reviewer cannot edit belongs where they are already looking, not
+            behind a hover they may never trigger — so it is inline text now, not a tooltip. */}
         {posted && <p className="mt-1.5 text-[12px] leading-relaxed text-faint">{POSTED_LOCK}</p>}
+        {/* Fix round 1: this used to be the enabled-only half of 저장's `title` below, but nothing
+            about it is enabled-only — it appears nowhere else in the UI, and a reviewer who has not
+            typed anything yet (저장's *default* disabled state) still benefits from knowing 저장 alone
+            never touches Drive/local files. Inline and unconditional-on-`dirty` beats a `Tip` tied to
+            저장's disabled branch, which would lose this the moment there is something to save — the
+            one time a reviewer is about to actually press it. */}
+        {!posted && !approved && (
+          <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
+            Drive/로컬 파일은 오른쪽 발행 버튼을 눌러야 갱신됩니다.
+          </p>
+        )}
       </section>
 
       <PublishedCopy item={props.item} posted={posted} />
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        {/* Split by whether the message survives its own control: `posted` and `approved` are both in
-            the `disabled` expression, so those two only reach a reviewer through `Tip`. The third is
-            the ordinary hint on a live 저장 button and stays a `title`. */}
-        <Tip
-          text={posted ? POSTED_LOCK : approved ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요." : undefined}
-        >
+        {/* `posted`/`approved` are both in 저장's `disabled` expression, so they only ever reach a
+            reviewer through `Tip` — a `title` conditioned on either never renders. The Drive/local
+            reminder that used to share this button's `title` moved to the always-visible paragraph
+            above instead (see its comment): unlike these two lock reasons, it is not about why 저장 is
+            disabled, and tying it to 저장's `Tip` would hide it in exactly the state — draft dirty,
+            about to save — where it is most worth reading. */}
+        <Tip text={posted ? POSTED_LOCK : approved ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요." : undefined}>
           <button
             className={btn}
             disabled={busy || !dirty || approved || posted}
             onClick={() => run(() => props.onSave(props.item.itemId, korean))}
-            title={
-              posted || approved
-                ? undefined
-                : "편집한 번역을 저장합니다. Drive/로컬 파일은 오른쪽 발행 버튼을 눌러야 갱신됩니다."
-            }
           >
             저장
           </button>

@@ -546,16 +546,22 @@ describe("OutletCard 승인 취소 — asks through the board's shared dialog, w
  * the ones that never appeared.
  *
  * Each of these hung on a native `title` whose condition ALSO sat in the control's `disabled`
- * expression — `groupApproved` on 저장, `groupDirty` on 승인하기, `reason` on 복사, `blocked` on
- * 발송/전달함, `gate.approveDisabled` on the row's 승인하기. A disabled button fires no hover, so the
- * browser never drew any of them. `ConfirmDialog`'s `Tip` already existed for exactly this and says
- * so in its own comment; these controls had simply never been moved onto it.
+ * expression — `groupDirty` on 승인하기, `reason` on 복사, `blocked` on 발송/전달함,
+ * `gate.approveDisabled` on the row's 승인하기. A disabled button fires no hover, so the browser
+ * never drew any of them. `ConfirmDialog`'s `Tip` already existed for exactly this and says so in its
+ * own comment; these controls had simply never been moved onto it.
+ *
+ * `groupApproved` on 저장 used to be in this list too (Task 10's first pass moved it onto a `Tip` here,
+ * same as the others). Fix round 1 found it already said, permanently and without any interaction, as
+ * inline text next to the textarea above (also Task 10) — the `Tip` was a second, harder-to-reach copy
+ * of the same sentence, not a second message. Dropped the `Tip`; the case below now asserts the inline
+ * text directly rather than clicking a control that no longer carries the reason.
  *
  * Asserting on `textContent` is the point: a `title` attribute is invisible to a reviewer and to
  * `textContent` alike, so a regression that puts one back fails here.
  *
  * `Tip` now renders through `InfoPopover`, whose panel is not in the DOM until opened — so each of
- * these clicks the (possibly disabled) control before reading the message.
+ * the remaining cases clicks the (possibly disabled) control before reading the message.
  *
  * What that click here does NOT prove: in a real browser, a native disabled control never dispatches
  * a click at all — no bubbling, no keyboard activation, and it drops out of the tab order. jsdom has
@@ -570,15 +576,16 @@ describe("OutletCard 승인 취소 — asks through the board's shared dialog, w
 describe("OutletCard — a blocked control says why, as text rather than a dead title", () => {
   const APPROVED_LOCK = "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요.";
 
-  it("explains the 저장 lock on an approved group", () => {
+  it("explains the 저장 lock on an approved group, unconditionally rather than behind a Tip", () => {
+    // No click here: unlike the other cases below, this reason is inline text now (Task 10 fix round
+    // 1), not a `Tip` — it has to be on screen without any interaction at all.
     const { container } = mount(group({ status: "approved", rows: [row()] }));
-    fireEvent.click(screen.getByRole("button", { name: "저장" }));
     expect(container.textContent).toContain(APPROVED_LOCK);
   });
 
   it("stays quiet about that lock while the group is still editable", () => {
     // The scope check: without it, rendering the reason unconditionally would pass the test above and
-    // park a permanent hover card over a button the reviewer is meant to use.
+    // park a permanent notice next to a textarea the reviewer is meant to use.
     const { container } = mount(group({ status: "rendered", rows: [row()] }));
     expect(container.textContent).not.toContain(APPROVED_LOCK);
   });

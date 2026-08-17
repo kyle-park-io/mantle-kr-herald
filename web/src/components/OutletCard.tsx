@@ -283,9 +283,8 @@ export function OutletCard(props: {
           }`}
           // Approved copy is locked, exactly as in 1차. Editing it would silently drop the card back
           // to `rendered` — the rooms stop being sendable with nothing on screen having said so. The
-          // reason used to ride this element's own `title` — invisible on touch, and duplicated
-          // (dead, before Task 10) as the same string on the disabled 저장 button below — and now
-          // lands as the inline notice beside `MediaEditNoticeSlot`, so a reviewer reads it without
+          // reason used to ride this element's own `title` — invisible on touch — and now lands as
+          // the inline notice beside `MediaEditNoticeSlot` instead, so a reviewer reads it without
           // hovering anything.
           readOnly={groupApproved}
           value={text}
@@ -345,31 +344,32 @@ export function OutletCard(props: {
             `MediaEditNoticeSlot` is what reserves that height.
           */}
           <MediaEditNoticeSlot text={fromEditor(text)} where="변환 원문" />
-          {/* `APPROVED_LOCK` used to ride the textarea's own `title` above — invisible on touch, and
-              already duplicated (dead, before Task 10) as the identical string on 저장's `Tip` below.
-              Inline text here means a reviewer reads why the box is locked without hovering it. */}
+          {/* `APPROVED_LOCK` used to ride the textarea's own `title` above — invisible on touch. Now
+              inline and permanently visible instead of behind a hover/tap. Fix round 1: this used to
+              ALSO sit behind a `Tip` on 저장 below (`text={groupApproved ? APPROVED_LOCK : undefined}`,
+              from Task 2) — the same message in two places, one of them requiring an interaction the
+              other doesn't. Kept this one, dropped the `Tip`: a reviewer reads the reason with zero
+              interaction rather than needing to know to hover/tap 저장 first. */}
           {groupApproved && <p>{APPROVED_LOCK}</p>}
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2 @max-sm:flex-col @max-sm:items-stretch">
-          <Tip text={groupApproved ? APPROVED_LOCK : undefined}>
-            <button
-              className={btn}
-              disabled={busy || !groupDirty || groupApproved}
-              onClick={() =>
-                run(async () => {
-                  // Adopt what the server actually stored. `toCanonical` trims and collapses blank
-                  // lines, so a save can legitimately return the string that was already there —
-                  // and waiting for `group.text` to change would then leave the card `편집 중`
-                  // forever, with 저장 inert and 승인 greyed until a reload.
-                  const saved = await api.editRendering(itemId, type, channel, text);
-                  setText(toEditor(saved.text));
-                  await props.onGroupChanged();
-                })
-              }
-            >
-              저장
-            </button>
-          </Tip>
+          <button
+            className={btn}
+            disabled={busy || !groupDirty || groupApproved}
+            onClick={() =>
+              run(async () => {
+                // Adopt what the server actually stored. `toCanonical` trims and collapses blank
+                // lines, so a save can legitimately return the string that was already there —
+                // and waiting for `group.text` to change would then leave the card `편집 중`
+                // forever, with 저장 inert and 승인 greyed until a reload.
+                const saved = await api.editRendering(itemId, type, channel, text);
+                setText(toEditor(saved.text));
+                await props.onGroupChanged();
+              })
+            }
+          >
+            저장
+          </button>
           {group.status === "approved" ? (
             // Same hover-swap control as 1차: one grid cell holds both labels so the button sizes to
             // the wider and never jumps. Approval has to be withdrawable here — the editor above is
@@ -911,8 +911,12 @@ function Row(props: {
                   </span>
                 </Tip>
               ) : (
+                // `@max-sm:self-start` on BOTH, same reason as `DestinationPreview`'s `ml-auto` [복사]
+                // (`:641-643` below): `stampFull(row.at)` is `string | undefined`, so `Tip` renders
+                // bare children whenever a row has no stamp — leaving the span itself as the actual
+                // flex item, uncovered by a class that only ever landed on `Tip`'s own wrapper.
                 <Tip text={stampFull(row.at)} className="@max-sm:self-start">
-                  <span className="inline-flex items-center gap-1 rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint">
+                  <span className="inline-flex items-center gap-1 rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint @max-sm:self-start">
                     발송됨 {stamp(row.at)}
                   </span>
                 </Tip>
