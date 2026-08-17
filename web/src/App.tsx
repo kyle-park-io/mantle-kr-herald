@@ -382,6 +382,14 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
               <button
                 key={id}
                 onClick={() => switchMode(id)}
+                // Without this, the accessible name would be content-derived — correctly, in a real
+                // browser: `display: none` removes a span from the a11y tree, so only whichever span
+                // the CSS currently shows is ever announced (the doubled name jsdom sees is a jsdom
+                // artifact, with no CSS applied there at all). But that means a phone's screen reader
+                // would hear only `short` — "1차" rather than "1차 검수 · 번역" — since `short` exists
+                // purely to save on-screen space, not because the shorter phrase is what a listener
+                // should hear. `aria-label` pins the announced name to the full label at every width.
+                aria-label={label}
                 className={`whitespace-nowrap rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors pointer-coarse:min-h-11 ${
                   mode === id ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
                 }`}

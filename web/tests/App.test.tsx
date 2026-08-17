@@ -175,20 +175,21 @@ describe("App's 링크 수집 tab", () => {
     });
     render(<App onSignOut={() => {}} authEpoch={0} />);
 
-    fireEvent.click(screen.getByText("링크 수집"));
+    fireEvent.click(screen.getByRole("button", { name: "링크 수집" }));
     expect(await screen.findByTestId("intake-fake")).toBeTruthy();
     expect(window.location.hash).toBe("#intake");
   });
 
-  it("탭은 축약 라벨과 전체 라벨을 둘 다 들고 있다 — 어느 쪽이 보이는지는 CSS가 정한다", async () => {
+  it("탭은 축약 라벨과 전체 라벨을 둘 다 들고 있다 — 어느 쪽이 보이는지는 CSS가 정한다, 접근성 이름은 항상 전체 라벨이다", async () => {
     stubFetch();
     render(<App onSignOut={() => {}} authEpoch={0} />);
 
     await screen.findByText("1차 검수 · 번역");
     expect(screen.getByText("1차")).toBeTruthy();
-    // "수집" is also the funnel's 수집 stage label (see "App's header funnel" below) once `status`
-    // loads, so this is scoped to the nav rather than asserted on the bare text.
-    const intakeTab = within(screen.getByRole("navigation")).getAllByRole("button").at(-1)!;
+    // `aria-label` keeps the button's accessible name at the full label regardless of which span
+    // the CSS shows, so this finds it by role+name — unambiguous even though "수집" is also the
+    // funnel's 수집 stage label (see "App's header funnel" below) once `status` loads.
+    const intakeTab = screen.getByRole("button", { name: "링크 수집" });
     expect(within(intakeTab).getByText("수집")).toBeTruthy();
   });
 });
