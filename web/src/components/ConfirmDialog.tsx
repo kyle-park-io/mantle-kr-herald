@@ -175,9 +175,11 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
  * wrapper in a ternary. `className` lands on the wrapper because it becomes the laid-out element in
  * its parent — a control positioned by its own `ml-auto`/`flex-1` hands that class over here.
  *
- * 카드 자체는 이제 `InfoPopover`가 그린다 — 호버 전용이던 것이 탭과 키보드로도 열리고, top layer로
- * 올라가 조상의 `overflow`에 잘리지 않는다. 이 함수는 "텍스트 한 덩이"라는 좁은 경우를 위한 얇은
- * 껍질로 남는다.
+ * 카드 자체는 이제 `InfoPopover`가 그린다 — 호버 전용이던 것이 탭과 키보드로도 열린다. 조상의
+ * `overflow`에 잘리지 않는 것은 브라우저가 native `popover`와 CSS anchor positioning을 둘 다
+ * 지원할 때만이다(`InfoPopover.tsx`의 `canPromote` 참조) — 그렇지 않은 브라우저에서는 여느 때처럼
+ * 잘릴 수 있는, 평범하게 absolute-positioned된 엘리먼트로 남는다. 이 함수는 "텍스트 한 덩이"라는
+ * 좁은 경우를 위한 얇은 껍질로 남는다.
  */
 export function Tip({
   text,

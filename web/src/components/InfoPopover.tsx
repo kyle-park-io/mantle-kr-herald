@@ -2,8 +2,9 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 /**
  * 보드의 호버 카드 idiom 하나. `group` + `absolute top-full` + `hidden … group-hover:block`으로
- * 손으로 쓰던 다섯 곳(`App.tsx`의 스토리지 패널, `CollectedBreakdownCard`, `MarkerText`, `Tip`,
- * `OpenLink`)이 여기로 모인다.
+ * 손으로 쓰던 네 곳(`App.tsx`의 스토리지 패널, `CollectedBreakdownCard`, `Tip`, `OpenLink`)이 여기로
+ * 모인다. `MarkerText`는 이 목록에 없다 — Task 5가 그것을 인라인 아코디언으로 바꾼다. 팝오버는
+ * 정확히 그것이 설명하는 텍스트를 덮어버리기 때문이다.
  *
  * 왜 호버만으로는 안 되는가: Tailwind v4는 `hover:`를 `@media (hover: hover)`로 감싸 내보내므로
  * 터치 기기에서는 확정적으로 열리지 않는다. 그리고 그것은 모바일만의 문제가 아니다 — 호버가
@@ -142,12 +143,30 @@ export function InfoPopover({
         `calc(anchor(${anchorName} ${align === "right" ? "right" : "left"}))`,
       );
 
+      // 헤더 오른쪽 절반에 가까운 트리거는 `align="left"`(기본값)로도 패널이 뷰포트 오른쪽 밖으로
+      // 나갈 수 있다 — `max-w-[calc(100vw-2rem)]`는 패널의 *너비*만 뷰포트에 맞춰 줄일 뿐, 트리거
+      // 기준의 *오프셋*은 그대로이기 때문이다(390px처럼 좁은 화면일수록 실제로 벌어진다). `anchor()`도
+      // `position-area`도 스스로 뒤집지는 않으므로, `flip-inline`으로 인라인 축(왼쪽/오른쪽)이
+      // 넘칠 때만 자동으로 반대쪽 정렬을 시도하게 한다 — 커스텀 `@position-try` 블록이 아니라
+      // 내장 키워드를 쓰는 이유는 Safari가 전자는 18.4+에서야, 후자는 18.2+에서 지원해서다(둘 다
+      // `CSS.supports("anchor-name: ...")` 한 줄로는 구분되지 않는 차이지만, 내장 키워드 쪽이 더
+      // 넓게 지원되므로 그쪽을 쓴다). 실제 Chromium 390px 창에서 오른쪽 절반의 트리거로 측정
+      // 확인함 — task-3-report.md 참조.
+      panelEl.style.setProperty("position-try-fallbacks", "flip-inline");
+
       if (!panelEl.matches(":popover-open")) panelEl.showPopover();
     }
     // canPromote가 false면 패널은 지금 이 컴포넌트가 원래 그리던 그대로 — 일반
     // `position: absolute` 엘리먼트로, `top-full`+`left-0`/`right-0` 클래스가 트리거 기준으로
     // 올바르게 붙인다. top layer가 아니므로 조상의 `overflow`에 잘릴 수 있지만, 뷰포트 구석에
-    // 뜬 채 트리거와 무관한 위치보다는 낫다.
+    // 뜬 채 트리거와 무관한 위치보다는 낫다. 이 경로에는 `flip-inline`과 같은 뒤집기가 없다 —
+    // anchor positioning 자체가 없는 브라우저에서 켤 수 있는 기능이 아니다. 그래서 오른쪽 절반의
+    // 트리거가 좁은 화면에서 뷰포트 밖으로 나가는 위험은 이 경로에서는 여전히 남는다: CSS만으로
+    // "이 트리거가 지금 화면 오른쪽 절반에 있는지"를 알 방법이 없고(그걸 알려면 JS로 트리거 위치를
+    // 재는 수밖에 없는데, 그러면 열린 팝오버마다 스크롤·리사이즈 리스너가 필요해진다 — 이 파일
+    // 맨 위 doc 주석이 그것을 피하려는 이유다), 유일한 완화책은 호출부가 트리거가 오른쪽에
+    // 붙어 있다는 것을 이미 아는 채로 `align="right"`를 직접 고르는 것뿐이다(`Tip`의 `align` 문서
+    // 참조) — 이 저장소의 새 회귀는 아니고, promote 이전부터 있던 한계다.
 
     // 브라우저가 스스로 닫은 것(Esc 등)을 상태로 되돌려 받는다. 없으면 DOM은 닫혔는데 상태는 열린
     // 채라, 다음 클릭이 "닫기"로 해석돼 한 번 헛돈다. promote되지 않았을 때는 `toggle`이 원천적으로

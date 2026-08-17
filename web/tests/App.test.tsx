@@ -430,6 +430,22 @@ describe("App's header funnel", () => {
     expect(screen.getByTestId("funnel-translated").textContent).toBe("번역23");
     expect(screen.getByTestId("funnel-rendered").textContent).toBe("렌더313건");
   });
+
+  /**
+   * 수집's own regression guard: its label/count spans sit two levels inside `InfoPopover`'s trigger
+   * span (not direct children of `funnel-collected` the way every other stage's are — see `stage()`'s
+   * own comment above), which is exactly the shape that let the stage's `gap-1.5` go missing once
+   * without any test catching it (the label and count spans still concatenate to the same text either
+   * way, `gap` is invisible to `textContent`, and `stage()`'s `.join(" ")` papers over it too). This
+   * cannot prove the gap renders — jsdom has no layout engine, see the InfoPopover verification report
+   * for the real-browser numbers — but it does pin the DOM shape a future edit could still get wrong:
+   * the label and count as two live, separately-readable text nodes, not one that swallowed the other.
+   */
+  it("수집's own text survives being wrapped by InfoPopover's trigger", async () => {
+    renderHeader(PRODUCTION_BREAKDOWN);
+    await screen.findByTestId("funnel");
+    expect(screen.getByTestId("funnel-collected").textContent).toBe("수집134");
+  });
 });
 
 /**
@@ -642,12 +658,6 @@ describe("App's 수집 breakdown card", () => {
  * Every test below opens the panel first with `fireEvent.click(await screen.findByText("local"))`.
  * That click is unambiguous at the moment it runs, because the panel — whose own "현재 local 모드"
  * line repeats the word — has not rendered yet; querying for `"local"` again afterwards would not be.
- *
- * Every `getByRole`/`findByRole` for the [지금 확인] button below also passes `hidden: true`: jsdom 30
- * applies the UA stylesheet's `[popover] { display: none }` default to the panel `<div>` regardless of
- * `:popover-open` (which jsdom never matches), so role queries — which, unlike text queries, filter out
- * elements the accessibility tree would hide — would otherwise never find a button that is genuinely in
- * the DOM and, once a real browser has the popover actually open, genuinely visible.
  */
 describe("App's liveness chip", () => {
   afterEach(() => {
@@ -659,11 +669,7 @@ describe("App's liveness chip", () => {
     stubFetchWithStatus({ liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 7 } });
     render(<App onSignOut={() => {}} authEpoch={0} />);
     fireEvent.click(await screen.findByText("local"));
-    // `hidden: true` — jsdom 30 applies the UA stylesheet's `[popover] { display: none }` default to
-    // any element carrying the attribute, `:popover-open` or not (it never matches in jsdom), so a
-    // role query would otherwise treat this button as inaccessible even though it is genuinely in the
-    // DOM and, in a real browser with the popover actually open, genuinely visible.
-    expect(await screen.findByRole("button", { name: "지금 확인", hidden: true })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "지금 확인" })).toBeTruthy();
     expect(screen.queryByText(/응답 없음/)).toBeNull();
   });
 
@@ -715,10 +721,9 @@ describe("App's liveness chip", () => {
     });
     render(<App onSignOut={() => {}} authEpoch={0} />);
     fireEvent.click(await screen.findByText("local"));
-    // `hidden: true` here and below — see the comment on the same pattern earlier in this block.
-    await screen.findByRole("button", { name: "지금 확인", hidden: true });
+    await screen.findByRole("button", { name: "지금 확인" });
     fetchMock.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "지금 확인", hidden: true }));
+    fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
     // Order is the load-bearing part of this flow — the deployment must record what it observed
     // (`/api/diagnostics/live`) before the graded summary is re-read (`/api/status`), or the second
     // request could race the first and read back a stale observation.
@@ -776,8 +781,8 @@ describe("App's liveness chip", () => {
 
     render(<App onSignOut={() => {}} authEpoch={0} />);
     fireEvent.click(await screen.findByText("local"));
-    await screen.findByRole("button", { name: "지금 확인", hidden: true });
-    fireEvent.click(screen.getByRole("button", { name: "지금 확인", hidden: true }));
+    await screen.findByRole("button", { name: "지금 확인" });
+    fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
     expect(await screen.findByText("⚠ credential probe timed out")).toBeTruthy();
   });
 
@@ -821,8 +826,8 @@ describe("App's liveness chip", () => {
 
     render(<App onSignOut={() => {}} authEpoch={0} />);
     fireEvent.click(await screen.findByText("local"));
-    await screen.findByRole("button", { name: "지금 확인", hidden: true });
-    fireEvent.click(screen.getByRole("button", { name: "지금 확인", hidden: true }));
+    await screen.findByRole("button", { name: "지금 확인" });
+    fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
     expect(await screen.findByText("⚠ credential probe timed out")).toBeTruthy();
     // "방금 전" (reportAge's under-a-minute wording) — the preserved summary from the fixture above,
     // proof `setStatus` was not called on this failed re-check.

@@ -434,10 +434,11 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                   {FUNNEL_STEPS.map(([label, key], i) => {
                     const tally = status.funnel[key];
                     // 수집 is the one stage whose number needs qualifying — see
-                    // `CollectedBreakdownCard`. The strip itself is untouched: `InfoPopover` renders
-                    // the card only while its popover is open, as a sibling of the label/count spans
-                    // rather than a wrapper around them, so `수집 134` keeps its value and its density
-                    // whether the card is open or not.
+                    // `CollectedBreakdownCard`. The strip itself is untouched: `InfoPopover`'s own
+                    // trigger span *is* a wrapper around the label/count spans below, but the card it
+                    // renders (only while its popover is open) is a sibling of that trigger span, not
+                    // of the label/count spans themselves — so `수집 134` keeps its value whether the
+                    // card is open or not, and keeps its density via its own `flex gap-1.5` wrapper.
                     const collected = key === "collected";
                     // Both `undefined` on the three stages no timer feeds. The sentence is built once
                     // and used twice — as the pointer's tooltip and as the pie's accessible name —
@@ -464,16 +465,35 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                               <TickPie fraction={phase.fraction} label={tickTip} />
                             </span>
                           )}
+                          {/* No `title=""` on this stage any more, unlike before this task — that
+                              trick existed only to stop the funnel div's own `title` (items-vs-rows,
+                              above) from surfacing as a native OS tooltip over this stage's card. On
+                              the promoted path (native `showPopover` + CSS anchor positioning both
+                              supported) the card is in the top layer, above everything painted in
+                              normal flow including a native tooltip from an ancestor, so nothing can
+                              overlap it there. That is not true on the un-promoted path: there the
+                              card is an ordinary absolutely-positioned element with no such
+                              protection, and the funnel's `title` can still render over it on a long
+                              enough hover. Left unrestored anyway — it is a native tooltip, on a
+                              browser too old for the top layer, saying something the card's own text
+                              already covers, not a silent loss. */}
                           {collected ? (
                             <InfoPopover
                               panelClassName="w-80 p-3 text-[12px] font-normal leading-relaxed text-muted"
                               panel={<CollectedBreakdownCard breakdown={status.funnel.collected.breakdown} />}
                             >
-                              <span className="text-muted">{label}</span>
-                              <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
-                              {tally.rows !== tally.items && (
-                                <span className="font-mono text-[11px] tabular-nums text-faint">{tally.rows}건</span>
-                              )}
+                              {/* `InfoPopover`'s own trigger span is `inline-flex` with no gap of its
+                                  own (it has to work for any `children`, most of which are a single
+                                  element) — without this wrapper the three spans below sit flush
+                                  against each other (`수집134`, not `수집 134`), because JSX drops the
+                                  whitespace between adjacent JSX elements. */}
+                              <span className="flex items-center gap-1.5">
+                                <span className="text-muted">{label}</span>
+                                <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
+                                {tally.rows !== tally.items && (
+                                  <span className="font-mono text-[11px] tabular-nums text-faint">{tally.rows}건</span>
+                                )}
+                              </span>
                             </InfoPopover>
                           ) : (
                             <>

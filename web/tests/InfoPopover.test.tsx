@@ -179,6 +179,22 @@ describe("InfoPopover — anchor positioning을 지원하는 브라우저(스텁
     expect(panel.style.getPropertyValue("bottom")).toBe("auto");
     expect(panel.style.getPropertyValue("margin")).toBe("0px");
   });
+
+  /**
+   * `max-w-[calc(100vw-2rem)]`는 패널의 *너비*만 뷰포트에 맞춰 줄인다 — 트리거 기준의 *오프셋*은
+   * 그대로라, 헤더 오른쪽 절반에 가까운 트리거는 `align="left"`(기본값)로도 좁은 화면에서 패널이
+   * 뷰포트 밖으로 나갈 수 있다. `anchor()`도 `position-area`도 스스로 뒤집지 않으므로
+   * `position-try-fallbacks: flip-inline`이 필요하다 — 커스텀 `@position-try` 대신 내장 키워드를
+   * 쓰는 이유는 Safari가 전자는 18.4+에서야 지원해서다. jsdom에는 레이아웃 엔진이 없어 실제로
+   * 뒤집히는지는 여기서 볼 수 없다 — 390px 창에서의 실측은 task-3-report.md 참조. 여기서 확인하는
+   * 것은 그 프로퍼티가 실제로 걸리는지뿐이다.
+   */
+  it("좁은 화면에서 넘치면 뒤집도록 position-try-fallbacks: flip-inline을 건다", () => {
+    setup();
+    fireEvent.click(screen.getByText("열기"));
+    const panel = screen.getByText("설명입니다").closest("[popover]") as HTMLElement;
+    expect(panel.style.getPropertyValue("position-try-fallbacks")).toBe("flip-inline");
+  });
 });
 
 /**
