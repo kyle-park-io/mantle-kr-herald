@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { InfoPopover } from "./InfoPopover";
+import { btn } from "../buttonStyles";
 
 export interface ConfirmRequest {
   title: string;
@@ -131,10 +132,7 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
         </div>
 
         <div className="flex justify-end gap-2 border-t border-line bg-bg px-5 py-3">
-          <button
-            className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors pointer-coarse:min-h-11 hover:bg-bg"
-            onClick={onCancel}
-          >
+          <button className={btn} onClick={onCancel}>
             취소
           </button>
           <button
