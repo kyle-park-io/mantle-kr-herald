@@ -6,6 +6,7 @@ import { Tip } from "./ConfirmDialog";
 import { ApprovedButton } from "./ApprovedButton";
 import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
 import { diffPublished } from "../publishedDiff";
+import { btn, btnApprove } from "../buttonStyles";
 
 const TARGET_LABEL: Record<"local" | "google" | "lark", string> = {
   local: "로컬 폴더",
@@ -280,7 +281,7 @@ export function TranslationDetail(props: {
           text={posted ? POSTED_LOCK : approved ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요." : undefined}
         >
           <button
-            className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors pointer-coarse:min-h-11 hover:bg-bg disabled:opacity-40"
+            className={btn}
             disabled={busy || !dirty || approved || posted}
             onClick={() => run(() => props.onSave(props.item.itemId, korean))}
             title={
@@ -304,7 +305,7 @@ export function TranslationDetail(props: {
               게시됨 ✓
             </span>
             <button
-              className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors pointer-coarse:min-h-11 hover:bg-bg disabled:opacity-40"
+              className={btn}
               disabled={busy}
               onClick={() => run(() => props.onUnretire(props.item.itemId))}
               title="게시 처리를 취소하고 검수 대기로 되돌립니다. 게시 기록은 남아 있어 다음 자동 확인이 다시 게시됨으로 표시하지 않습니다."
@@ -317,7 +318,7 @@ export function TranslationDetail(props: {
         ) : (
           <Tip text={dirty ? "편집 내용을 먼저 저장하세요" : undefined}>
             <button
-              className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-mint px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors pointer-coarse:min-h-11 hover:bg-mint-hover disabled:opacity-40"
+              className={btnApprove}
               disabled={busy || dirty}
               onClick={() => run(() => props.onApprove(props.item.itemId))}
             >

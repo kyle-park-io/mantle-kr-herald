@@ -38,3 +38,15 @@ export const btnApproved = `${BASE} group grid ${APPROVE_WIDTH} place-items-cent
 /** The two labels inside `btnApproved`, stacked in the same cell. */
 export const btnApprovedRest = "col-start-1 row-start-1 whitespace-nowrap transition-opacity group-hover:opacity-0";
 export const btnApprovedHover = "col-start-1 row-start-1 whitespace-nowrap opacity-0 transition-opacity group-hover:opacity-100";
+
+/**
+ * Flat "marked done, click to undo" treatment — one label, a plain hover darken. `OutletCard`'s
+ * `전달함 ☑` (undo a manual delivery mark) is the one interactive use, but the same
+ * bg-mint-soft/text-mint pairing already marks completion on the read-only `발송됨` badge beside it,
+ * so this gives the color language a name instead of leaving the button as its own hand-copy.
+ *
+ * Not `btnApproved`: that one swaps its whole label to a red warning on hover because undoing it
+ * costs the item's approval state; undoing a delivery mark only affects this one room, so a plain
+ * hover darken is warning enough and there is no second label to stack.
+ */
+export const btnDone = `${BASE} inline-flex items-center bg-mint-soft text-mint hover:bg-mint-soft/70 disabled:opacity-40`;
