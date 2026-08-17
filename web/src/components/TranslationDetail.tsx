@@ -206,7 +206,11 @@ export function TranslationDetail(props: {
         row, plus a pointer to the match a human already disputed.
       */}
       {!posted && props.item.postedUrl && (
-        <p className="mb-6 flex flex-wrap items-center gap-1.5 rounded-lg bg-slate-soft px-3 py-2 text-[12px] text-slate-ink">
+        // `<div>`, not `<p>`: `Tip` below can render a `<div>` panel (through `InfoPopover`) once
+        // opened, and a `<div>` nested inside a `<p>` is invalid HTML — a real browser splits the `<p>`
+        // in two right at that point, which broke this row's flex layout (`validateDOMNesting` catches
+        // it in jsdom too). Nothing here relies on `<p>`'s semantics; this was always a flex notice bar.
+        <div className="mb-6 flex flex-wrap items-center gap-1.5 rounded-lg bg-slate-soft px-3 py-2 text-[12px] text-slate-ink">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-ink" />
           되돌리기 전 게시됨으로 연결됐던 글이 있습니다 —{" "}
           <a
@@ -226,15 +230,19 @@ export function TranslationDetail(props: {
               re-asserting. Not shown when the item is already `posted`: 되돌리기 is the control
               there, and two buttons naming the same axis in opposite directions would read as a
               toggle the rest of this pane deliberately avoids. */}
-          <button
-            className="ml-auto rounded-md border border-slate-ink/25 bg-surface px-2.5 py-1 text-[12px] font-medium text-slate-ink transition-colors pointer-coarse:min-h-11 hover:bg-slate-soft disabled:opacity-40"
-            disabled={busy}
-            onClick={() => run(() => props.onRetire(props.item.itemId))}
-            title="이 항목을 다시 게시됨으로 표시합니다. 지금 초안이 실제 게시본과 다르면, 1차 검수에 그 차이가 표시됩니다."
+          <Tip
+            text="이 항목을 다시 게시됨으로 표시합니다. 지금 초안이 실제 게시본과 다르면, 1차 검수에 그 차이가 표시됩니다."
+            className="ml-auto"
           >
-            게시됨으로
-          </button>
-        </p>
+            <button
+              className="rounded-md border border-slate-ink/25 bg-surface px-2.5 py-1 text-[12px] font-medium text-slate-ink transition-colors pointer-coarse:min-h-11 hover:bg-slate-soft disabled:opacity-40"
+              disabled={busy}
+              onClick={() => run(() => props.onRetire(props.item.itemId))}
+            >
+              게시됨으로
+            </button>
+          </Tip>
+        </div>
       )}
 
       <section className="mb-6">
@@ -264,11 +272,15 @@ export function TranslationDetail(props: {
           value={korean}
           onChange={(e) => setKorean(e.target.value)}
           readOnly={approved || posted}
-          title={posted ? POSTED_LOCK : undefined}
           spellCheck={false}
         />
         {/* Same problem the "편집 중" chip above solves, and the same fix — see `MediaEditNoticeSlot`. */}
         <MediaEditNoticeSlot text={korean} where="원문" className="mt-1.5" />
+        {/* `POSTED_LOCK` used to ride this textarea's own `title` — invisible on touch, and on a
+            *disabled* control not reliably visible on desktop either (see `Tip`'s doc comment). "Lock,
+            do not hide" means the reason a reviewer cannot edit belongs where they are already looking,
+            not behind a hover they may never trigger — so it is inline text now, not a tooltip. */}
+        {posted && <p className="mt-1.5 text-[12px] leading-relaxed text-faint">{POSTED_LOCK}</p>}
       </section>
 
       <PublishedCopy item={props.item} posted={posted} />
@@ -297,21 +309,18 @@ export function TranslationDetail(props: {
           <>
             {/* Not a button — 게시됨 is a fact about this item, not a toggle a click could undo the
                 way 승인 취소 undoes approval. 되돌리기 below is the actual (distinct, deliberate)
-                undo. */}
-            <span
-              className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-slate-soft px-3.5 py-1.5 text-[13px] font-medium text-slate-ink"
-              title={POSTED_LOCK}
-            >
+                undo. No `title` here either: it used to repeat `POSTED_LOCK` verbatim, which is now
+                permanently visible as inline text beside the textarea above (Task 10) whenever
+                `posted` is true — exactly the condition this badge renders under, so a second copy
+                would only be noise. */}
+            <span className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-slate-soft px-3.5 py-1.5 text-[13px] font-medium text-slate-ink">
               게시됨 ✓
             </span>
-            <button
-              className={btn}
-              disabled={busy}
-              onClick={() => run(() => props.onUnretire(props.item.itemId))}
-              title="게시 처리를 취소하고 검수 대기로 되돌립니다. 게시 기록은 남아 있어 다음 자동 확인이 다시 게시됨으로 표시하지 않습니다."
-            >
-              되돌리기
-            </button>
+            <Tip text="게시 처리를 취소하고 검수 대기로 되돌립니다. 게시 기록은 남아 있어 다음 자동 확인이 다시 게시됨으로 표시하지 않습니다.">
+              <button className={btn} disabled={busy} onClick={() => run(() => props.onUnretire(props.item.itemId))}>
+                되돌리기
+              </button>
+            </Tip>
           </>
         ) : approved ? (
           <ApprovedButton onUnapprove={() => run(() => props.onUnapprove(props.item.itemId))} disabled={busy} />

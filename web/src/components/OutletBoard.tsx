@@ -14,7 +14,7 @@ import {
   type HeadroomView,
 } from "../types";
 import { OutletCard } from "./OutletCard";
-import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
+import { ConfirmDialog, Tip, type ConfirmRequest } from "./ConfirmDialog";
 import { KindBadge } from "./TranslationList";
 
 /**
@@ -234,20 +234,20 @@ export function OutletBoard(props: {
               const mine = rows.filter((r) => r.outletId === id);
               const ok = mine.filter(deliveredToRoom).length;
               return (
-                <button
-                  key={id}
-                  type="button"
-                  onMouseEnter={() => setHovered(id)}
-                  onMouseLeave={() => setHovered(null)}
-                  onClick={() => scrollToOutlet(id)}
-                  title={`${mine[0].label} 줄로 이동`}
-                  className={`rounded px-1 ${hovered === id ? "bg-mint-soft text-mint" : "hover:bg-bg"}`}
-                >
-                  {mine[0].label}{" "}
-                  <span className={`font-mono tabular-nums ${ok === mine.length ? "text-mint" : "text-faint"}`}>
-                    {ok}/{mine.length}
-                  </span>
-                </button>
+                <Tip key={id} text={`${mine[0].label} 줄로 이동`}>
+                  <button
+                    type="button"
+                    onMouseEnter={() => setHovered(id)}
+                    onMouseLeave={() => setHovered(null)}
+                    onClick={() => scrollToOutlet(id)}
+                    className={`rounded px-1 ${hovered === id ? "bg-mint-soft text-mint" : "hover:bg-bg"}`}
+                  >
+                    {mine[0].label}{" "}
+                    <span className={`font-mono tabular-nums ${ok === mine.length ? "text-mint" : "text-faint"}`}>
+                      {ok}/{mine.length}
+                    </span>
+                  </button>
+                </Tip>
               );
             })}
           </div>

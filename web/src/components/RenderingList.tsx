@@ -191,11 +191,16 @@ export function RenderingList(props: {
                       <KindBadge kind={row.kind} />
                       {/* The count only when it says something: `승인 2/3` is the state a reviewer
                           has to come back to, and a bare 대기 chip would hide it. */}
+                      {/* No `title` here (Task 10 removed one): its text — "채널 문구 N건 중 M건
+                          승인" — was fully redundant with what the chip already shows: "승인" when
+                          `N===M`, or the same two numbers spelled out as "대기 M/N" otherwise. It was
+                          also unreachable to promote cleanly — this span sits inside the row's own
+                          `<button onSelect>`, and wrapping it in `Tip` would nest a second focusable,
+                          click-toggling element inside that button and hijack the row-select click. */}
                       <span
                         className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium ${
                           allApproved ? "bg-mint-soft text-mint" : "bg-amber-soft text-amber-ink"
                         }`}
-                        title={`채널 문구 ${row.total}건 중 ${row.approved}건 승인`}
                       >
                         <span className={`h-1.5 w-1.5 rounded-full ${allApproved ? "bg-mint" : "bg-amber-ink"}`} />
                         {allApproved ? "승인" : `대기 ${row.approved}/${row.total}`}
@@ -208,12 +213,14 @@ export function RenderingList(props: {
                   </p>
                   <div className="flex flex-wrap gap-1">
                     {row.groups.map((g) => (
+                      // No `title` here either, for the same two reasons as the chip above: "승인됨"/
+                      // "검수 대기" mostly restates the `✓ ` prefix + colour already on this chip, and
+                      // this span too sits inside the row's `<button onSelect>`.
                       <span
                         key={`${g.type}:${g.channel}`}
                         className={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${
                           g.approved ? "border-mint/30 bg-mint-soft text-mint" : "border-line text-muted"
                         }`}
-                        title={g.approved ? "승인됨" : "검수 대기"}
                       >
                         {g.approved && "✓ "}
                         {TYPE_LABEL[g.type]} · {CHANNEL_LABEL[g.channel]}

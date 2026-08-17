@@ -282,9 +282,12 @@ export function OutletCard(props: {
               : "bg-surface text-ink focus:border-mint focus:ring-4 focus:ring-mint/10"
           }`}
           // Approved copy is locked, exactly as in 1차. Editing it would silently drop the card back
-          // to `rendered` — the rooms stop being sendable with nothing on screen having said so.
+          // to `rendered` — the rooms stop being sendable with nothing on screen having said so. The
+          // reason used to ride this element's own `title` — invisible on touch, and duplicated
+          // (dead, before Task 10) as the same string on the disabled 저장 button below — and now
+          // lands as the inline notice beside `MediaEditNoticeSlot`, so a reviewer reads it without
+          // hovering anything.
           readOnly={groupApproved}
-          title={groupApproved ? APPROVED_LOCK : undefined}
           value={text}
           onChange={(e) => setText(e.target.value)}
           spellCheck={false}
@@ -342,6 +345,10 @@ export function OutletCard(props: {
             `MediaEditNoticeSlot` is what reserves that height.
           */}
           <MediaEditNoticeSlot text={fromEditor(text)} where="변환 원문" />
+          {/* `APPROVED_LOCK` used to ride the textarea's own `title` above — invisible on touch, and
+              already duplicated (dead, before Task 10) as the identical string on 저장's `Tip` below.
+              Inline text here means a reviewer reads why the box is locked without hovering it. */}
+          {groupApproved && <p>{APPROVED_LOCK}</p>}
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2 @max-sm:flex-col @max-sm:items-stretch">
           <Tip text={groupApproved ? APPROVED_LOCK : undefined}>
@@ -840,12 +847,11 @@ function Row(props: {
       <div className="flex flex-wrap items-center gap-2 px-4 py-2">
         <span className="text-[14px] font-medium text-ink">{row.label}</span>
         {row.siblingCount > 1 && (
-          <span
-            className="rounded bg-bg px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-muted"
-            title={`이 방은 이 항목에서 ${row.siblingCount}건을 받습니다`}
-          >
-            {row.siblingIndex}/{row.siblingCount}
-          </span>
+          <Tip text={`이 방은 이 항목에서 ${row.siblingCount}건을 받습니다`}>
+            <span className="rounded bg-bg px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-muted">
+              {row.siblingIndex}/{row.siblingCount}
+            </span>
+          </Tip>
         )}
         <span className="text-[12px] text-faint">{row.delivery === "auto" ? "자동" : "수동"}</span>
         {row.pending && (
@@ -863,12 +869,8 @@ function Row(props: {
           </Tip>
         )}
 
-        <button
-          onClick={props.onToggle}
-          className={`rounded px-1.5 py-0.5 text-[12px] font-medium transition-colors ${
-            row.forked ? "bg-amber-soft text-amber-ink" : "text-faint hover:text-ink"
-          }`}
-          title={
+        <Tip
+          text={
             gate.readOnly
               ? "이 방에 나간 글을 봅니다 — 고칠 수 없습니다"
               : row.forked
@@ -876,8 +878,15 @@ function Row(props: {
                 : "이 방만 다른 글을 씁니다"
           }
         >
-          {gate.readOnly ? (row.forked ? "✎따로 · 보기" : "글 보기") : row.forked ? "✎따로" : "✎ 따로 쓰기"}
-        </button>
+          <button
+            onClick={props.onToggle}
+            className={`rounded px-1.5 py-0.5 text-[12px] font-medium transition-colors ${
+              row.forked ? "bg-amber-soft text-amber-ink" : "text-faint hover:text-ink"
+            }`}
+          >
+            {gate.readOnly ? (row.forked ? "✎따로 · 보기" : "글 보기") : row.forked ? "✎따로" : "✎ 따로 쓰기"}
+          </button>
+        </Tip>
 
         <span className="ml-auto flex flex-wrap items-center gap-2 @max-sm:ml-0 @max-sm:flex-col @max-sm:items-stretch">
           {sent ? (
@@ -902,12 +911,11 @@ function Row(props: {
                   </span>
                 </Tip>
               ) : (
-                <span
-                  className="inline-flex items-center gap-1 rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint @max-sm:self-start"
-                  title={stampFull(row.at)}
-                >
-                  발송됨 {stamp(row.at)}
-                </span>
+                <Tip text={stampFull(row.at)} className="@max-sm:self-start">
+                  <span className="inline-flex items-center gap-1 rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint">
+                    발송됨 {stamp(row.at)}
+                  </span>
+                </Tip>
               )}
               {row.awaitingPublish && (
                 <button
@@ -1052,13 +1060,14 @@ function Row(props: {
             both `pending` and `dropped` at once.
           */}
           {row.pending && !row.deliveryStatus && (
-            <button
-              className="text-[13px] text-faint transition-colors hover:text-ink"
-              onClick={props.onDrop}
-              title="이 행을 목록에서 뺍니다"
-            >
-              ✕
-            </button>
+            <Tip text="이 행을 목록에서 뺍니다">
+              <button
+                className="text-[13px] text-faint transition-colors hover:text-ink"
+                onClick={props.onDrop}
+              >
+                ✕
+              </button>
+            </Tip>
           )}
         </span>
       </div>
@@ -1105,25 +1114,33 @@ function Row(props: {
           */}
           <MediaEditNoticeSlot text={fromEditor(shownDraft)} where="변환 원문" className="mt-1.5" />
           <div className="mt-2 flex flex-wrap items-center gap-2 @max-sm:flex-col @max-sm:items-stretch">
+            {/* No `title`/`Tip` here (Task 10 removed one): its message — "저장하면 이 방은 그룹과
+                분리되어 따로 검수·발송합니다" — is already permanently visible, unconditionally, as
+                `gate.showForkHint`'s span a few lines below ("저장하면 이 방만 따로 검수·발송합니다"),
+                which renders under the identical condition (`!locked && !row.forked`). A `Tip` saying
+                the same thing again would be noise nobody needs to click through: the always-on span
+                already beats a hover/tap card for a reader who has not interacted with anything yet. */}
             {gate.showSave && (
               <button
                 className={btn}
                 disabled={gate.saveDisabled}
-                title={row.forked ? undefined : "저장하면 이 방은 그룹과 분리되어 따로 검수·발송합니다"}
                 onClick={() => run(async () => apply(await api.editOutlet(itemId, type, row.outletId, props.draft)))}
               >
                 저장
               </button>
             )}
             {gate.showCancel && (
-              <button
-                className={btn}
-                disabled={busy}
-                title={row.forked ? "고친 내용을 버리고 저장된 이 방 글로 되돌립니다" : "고친 내용을 버립니다 — 이 방은 그룹 글을 계속 씁니다"}
-                onClick={props.onCancel}
+              <Tip
+                text={
+                  row.forked
+                    ? "고친 내용을 버리고 저장된 이 방 글로 되돌립니다"
+                    : "고친 내용을 버립니다 — 이 방은 그룹 글을 계속 씁니다"
+                }
               >
-                취소
-              </button>
+                <button className={btn} disabled={busy} onClick={props.onCancel}>
+                  취소
+                </button>
+              </Tip>
             )}
             {/* Withdrawable until the room has actually been posted to; after that it is a record. */}
             {gate.showUnapprove ? (
@@ -1158,18 +1175,19 @@ function Row(props: {
               </Tip>
             )}
             {gate.showRevert && (
-              <button
-                className={btn}
-                disabled={busy}
-                title="이 방만의 글을 지우고 그룹 글과 그룹 승인을 따릅니다"
-                onClick={() =>
-                  // Collapse on the way out: the row is no longer forked, so leaving the editor
-                  // open would show the group text under a row that no longer has its own.
-                  run(async () => apply(await api.revertOutlet(itemId, type, row.outletId), true))
-                }
-              >
-                그룹 글로 되돌리기
-              </button>
+              <Tip text="이 방만의 글을 지우고 그룹 글과 그룹 승인을 따릅니다">
+                <button
+                  className={btn}
+                  disabled={busy}
+                  onClick={() =>
+                    // Collapse on the way out: the row is no longer forked, so leaving the editor
+                    // open would show the group text under a row that no longer has its own.
+                    run(async () => apply(await api.revertOutlet(itemId, type, row.outletId), true))
+                  }
+                >
+                  그룹 글로 되돌리기
+                </button>
+              </Tip>
             )}
             {gate.showForkHint && <span className="text-[12px] text-faint">저장하면 이 방만 따로 검수·발송합니다.</span>}
             {gate.showGroupApprovalHint && (
