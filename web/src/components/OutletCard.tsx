@@ -362,6 +362,7 @@ export function OutletCard(props: {
             // locked while approved, so this is the only way back to editing.
             <ApprovedButton
               disabled={busy}
+              onConfirm={props.onConfirm}
               onUnapprove={() =>
                 run(async () => {
                   await api.approveRendering(itemId, type, channel, false);
@@ -1111,8 +1112,13 @@ function Row(props: {
             )}
             {/* Withdrawable until the room has actually been posted to; after that it is a record. */}
             {gate.showUnapprove ? (
+              // A forked room's own approval, not the item's or the group's — the default
+              // item-level copy ("검수 대기로 돌아갑니다") would be false here, so this passes its
+              // own room-scoped lines. See ApprovedButton's `lines` doc comment.
               <ApprovedButton
                 disabled={busy}
+                onConfirm={props.onConfirm}
+                lines={[`${row.label}의 승인만 취소됩니다.`, "항목이나 다른 방에는 영향이 없습니다."]}
                 onUnapprove={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId, false)))}
               />
             ) : (

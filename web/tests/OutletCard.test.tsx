@@ -480,6 +480,68 @@ describe("OutletCard — 핀 고정 is offered where it exists", () => {
 });
 
 /**
+ * `승인됨 ✓`/`승인 취소` used to swap on hover; Task 6 routed it through a confirm dialog instead —
+ * and, like every other irreversible action on this card (재발송, 발송 above), through the board's
+ * one shared dialog (`props.onConfirm`) rather than a second one of its own. These pin two things a
+ * unit test can still catch without rendering the real `ConfirmDialog`: the click itself never
+ * reaches the unapprove route directly, and the copy that reaches the dialog says what THIS control
+ * actually withdraws. Fix round 1 shipped the group-level wording ("이 항목이 다시 검수 대기로
+ * 돌아갑니다") at the row-level control too, where it is false — a forked room's own approval, not
+ * the item's — which is exactly the class of bug these two guard against.
+ */
+describe("OutletCard 승인 취소 — asks through the board's shared dialog, with copy scoped to what it withdraws", () => {
+  it("group-level: withdraws the whole group's approval, and says so before doing it", async () => {
+    const approveRendering: unknown[] = [];
+    const { confirms } = mount(group({ status: "approved", rows: [row()] }), {
+      api: {
+        approveRendering: async (...args: Parameters<typeof api.approveRendering>) => {
+          approveRendering.push(args);
+          return {} as Awaited<ReturnType<typeof api.approveRendering>>;
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "승인됨 ✓" }));
+    // Nothing happens on the click itself — only the shared dialog opens.
+    expect(approveRendering).toHaveLength(0);
+    expect(confirms).toHaveLength(1);
+    expect(said(confirms[0])).toContain("이 항목이 다시 검수 대기로 돌아갑니다");
+
+    confirms[0].onConfirm({ toggled: false });
+    await waitFor(() => expect(approveRendering).toHaveLength(1));
+    expect((approveRendering[0] as unknown[])[3]).toBe(false);
+  });
+
+  it("row-level: withdraws only that forked room's approval, and says so — not the item-level copy", async () => {
+    const approveOutlet: unknown[] = [];
+    const forkedRow = row({ forked: true, status: "approved" });
+    // `group.status` deliberately NOT "approved": the group-level control above renders on that
+    // condition alone, and having both controls on screen would make `getByRole` ambiguous — the
+    // row-level one (`gate.showUnapprove`) only needs the row itself forked and approved.
+    const { confirms } = mount(group({ status: "rendered", rows: [forkedRow] }), {
+      api: {
+        approveOutlet: async (...args: Parameters<typeof api.approveOutlet>) => {
+          approveOutlet.push(args);
+          return { board: board() };
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "승인됨 ✓" }));
+    expect(approveOutlet).toHaveLength(0);
+    expect(confirms).toHaveLength(1);
+    expect(said(confirms[0])).toContain(`${forkedRow.label}의 승인만 취소됩니다`);
+    expect(said(confirms[0])).toContain("항목이나 다른 방에는 영향이 없습니다");
+    // The group-level wording would be false here — this room's approval is not the item's.
+    expect(said(confirms[0])).not.toContain("검수 대기로 돌아갑니다");
+
+    confirms[0].onConfirm({ toggled: false });
+    await waitFor(() => expect(approveOutlet).toHaveLength(1));
+    expect((approveOutlet[0] as unknown[])[3]).toBe(false);
+  });
+});
+
+/**
  * "Why can't I press this" messages, which on this board are the ones a reviewer needs most and were
  * the ones that never appeared.
  *
