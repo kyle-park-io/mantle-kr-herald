@@ -461,12 +461,44 @@ export function loadDbEnv(): "production" | "development" {
   return env as "production" | "development";
 }
 
+/**
+ * The three `sslmode` values `pg` is about to redefine, matched only where they are a query
+ * parameter — after `?` or `&`, and running to the next `&` or the end. A bare `sslmode=` further
+ * up the DSN (in a password, or a database name) is not a connection parameter and is left alone.
+ */
+const ALIASED_SSL_MODES = /([?&]sslmode=)(require|prefer|verify-ca)(?=&|$)/i;
+
+/**
+ * Pins `sslmode` to what it means today, so a `pg` upgrade cannot quietly weaken the production
+ * connection.
+ *
+ * `pg` warns on every production connect that `prefer`, `require` and `verify-ca` are currently
+ * aliases for `verify-full`, and that pg 9 / pg-connection-string 3 will give them libpq's
+ * semantics instead — encryption without verifying the certificate chain or the hostname. Our
+ * production DSN says `require`. The failure mode is the bad kind: the upgrade is a version bump
+ * in `package.json`, the connection still succeeds, and nothing observable says the transport
+ * stopped being authenticated.
+ *
+ * Fixed here rather than in the DSN because of where the DSN lives: Vercel's marketplace
+ * integration with Neon owns that value and re-syncs it, so an edit there is not durable. This is
+ * the only reader of `DATABASE_URL` in the codebase, which makes it the one place that covers the
+ * deployment, `~/.herald/prod.env`, and any DSN a teammate exports by hand.
+ *
+ * Not a tightening: `verify-full` is what all three already do under the pinned `pg` 8, and it is
+ * what the warning itself prescribes for keeping current behaviour. Modes pg 9 does not redefine
+ * (`verify-full`, `disable`, `no-verify`) and DSNs with no `sslmode` at all — the local container
+ * of `docs/ko/quickstart.md` §1.5 serves no TLS — are returned untouched.
+ */
+export function pinSslMode(url: string): string {
+  return url.replace(ALIASED_SSL_MODES, "$1verify-full");
+}
+
 export function loadDbConfig(): DbConfig {
   const url = process.env.DATABASE_URL?.trim();
   if (!url) {
     throw new Error(`Missing required environment variable: DATABASE_URL. ${DB_REMEDY}`);
   }
-  return { url, env: loadDbEnv() };
+  return { url: pinSslMode(url), env: loadDbEnv() };
 }
 
 /** `"host[:port]/dbname"` — never the credentials embedded in `DATABASE_URL`. Shared by `doctor`

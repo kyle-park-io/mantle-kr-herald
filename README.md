@@ -8,6 +8,14 @@ review, and publish, with a human review gate at every step.
 ```bash
 pnpm install
 cp .env.example .env
+
+# Then open .env and fill in the values `doctor` treats as required. A copied skeleton has none
+# of them, so every command below fails until they are set: DATABASE_URL + HERALD_DB_ENV (no
+# database yet? `docs/ko/quickstart.md` §1.5 starts one in a container), and the dashboard's
+# three — HERALD_AUTH_USERNAME, HERALD_AUTH_PASSWORD_HASH (both printed by `pnpm auth:hash`) and
+# HERALD_SESSION_SECRET (`openssl rand -hex 32`).
+
+pnpm db:import --yes    # applies the schema; a fresh clone has nothing to import, so that is all
 pnpm config:init
 pnpm doctor
 pnpm status

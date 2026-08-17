@@ -390,6 +390,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`pnpm doctor` grades the three variables the dashboard cannot start without.** It reported
+  `0 fail` on a setup where `pnpm serve` died on its first line — `Missing required environment
+  variable: HERALD_SESSION_SECRET` — because the report had no check for the session secret or the
+  dashboard account at all; its only `auth` lines were Google's. That is precisely the state a
+  fresh `cp .env.example .env` produces, so the report was most reassuring exactly when it should
+  not have been. `Dashboard account` (`loadAuthConfig`) and `Session secret` (`loadSessionConfig`)
+  are graded `fail`, the same as `DATABASE_URL`: all three carry `●` in every profile of
+  `.env.example`'s table, and `serve.ts` loads all three before it binds anything. No local-mode
+  downgrade — there is no mode in which the dashboard runs without an account and a signing key.
+  `tests/cli/doctorWiring.test.ts` runs `doctor` twice per check, configured and not, because one
+  run cannot tell a real read of the environment from a hardcoded line.
+
+- **`sslmode` is pinned to what it means today, so a `pg` upgrade cannot quietly weaken the
+  production connection.** `pg` warns on every production connect that `prefer`, `require` and
+  `verify-ca` are currently aliases for `verify-full` and that pg 9 / pg-connection-string 3 will
+  give them libpq's semantics instead — encryption with no verification of the certificate chain
+  or the hostname. Our production DSN says `require`. The failure mode is the bad kind: a version
+  bump in `package.json`, the connection still succeeds, and nothing observable says the transport
+  stopped being authenticated. Fixed in `loadDbConfig` — the only reader of `DATABASE_URL` — rather
+  than in the DSN, because Vercel's marketplace integration with Neon owns that value and re-syncs
+  it, so an edit there is not durable; here it covers the deployment, `~/.herald/prod.env`, and any
+  DSN exported by hand. Not a tightening: `verify-full` is what all three already do under the
+  pinned `pg` 8, and is what the warning itself prescribes for keeping current behaviour. Modes pg
+  9 does not redefine and DSNs with no `sslmode` — the local container of `quickstart.md` §1.5
+  serves no TLS — are untouched.
+
+- **The root `README.md` quick start runs `pnpm db:import` before `pnpm doctor`.** Followed
+  literally on a fresh clone it could not work: `config:init` straight after `cp .env.example .env`
+  left `DATABASE_URL` empty, so `doctor` exited 1 on `✗ Database` and `status` failed outright.
+  `docs/ko/quickstart.md` §1.5 had the missing step all along — only the README was wrong, which is
+  the copy a new contributor reads first. It now also names the five values a copied skeleton has
+  none of, the dashboard's three included.
+
 - **The 2차 검수 sidebar lists newest first, the way 1차 does.** It had no sort at all: `/api/renderings`
   returns `loadAll()`'s `order by ordinal` — insertion order, oldest-first — and `toItemRows` folded
   those renderings into rows in `Map` insertion order, so the item a reviewer most likely wanted sat
