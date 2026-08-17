@@ -3,6 +3,7 @@ import { api } from "../api";
 import { type Rendering } from "../types";
 import { RenderingList } from "./RenderingList";
 import { OutletBoard } from "./OutletBoard";
+import { ListDetailShell } from "./ListDetailShell";
 
 export function RenderingsView(props: {
   onDirtyChange: (dirty: boolean) => void;
@@ -46,12 +47,11 @@ export function RenderingsView(props: {
       {error && (
         <div className="shrink-0 border-b border-red-200 bg-red-50 px-5 py-2 text-sm text-red-700">{error}</div>
       )}
-      <div className="flex min-h-0 flex-1">
-        <aside className="w-80 shrink-0 overflow-y-auto border-r border-line bg-surface [scrollbar-gutter:stable]">
-          <RenderingList items={items} selectedId={selectedId} onSelect={handleSelect} />
-        </aside>
-        <section className="min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-          {selected ? (
+      <ListDetailShell
+        current={selected?.itemId}
+        list={<RenderingList items={items} selectedId={selectedId} onSelect={handleSelect} />}
+        detail={
+          selected ? (
             // The board is per *item*, not per rendering: picking any of an item's renderings opens
             // every group that item has, because delivery is decided across them (a room receiving
             // both 공지 and 해설 has to be seen as one room).
@@ -85,9 +85,9 @@ export function RenderingsView(props: {
                 </p>
               </div>
             </div>
-          )}
-        </section>
-      </div>
+          )
+        }
+      />
     </>
   );
 }

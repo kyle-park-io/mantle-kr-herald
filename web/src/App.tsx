@@ -4,6 +4,7 @@ import type { Translation, AppStatus, PublishStateRow } from "./types";
 import { TranslationList } from "./components/TranslationList";
 import { TranslationDetail } from "./components/TranslationDetail";
 import { RenderingsView } from "./components/RenderingsView";
+import { ListDetailShell } from "./components/ListDetailShell";
 import { IntakeView } from "./components/IntakeView";
 import { EnvironmentBanner } from "./components/EnvironmentBanner";
 import { CollectedBreakdownCard } from "./components/CollectedBreakdownCard";
@@ -535,12 +536,11 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
       )}
 
       {mode === "translations" && (
-        <div className="flex min-h-0 flex-1">
-          <aside className="w-80 shrink-0 overflow-y-auto border-r border-line bg-surface [scrollbar-gutter:stable]">
-            <TranslationList items={items} selectedId={selectedId} onSelect={handleSelect} />
-          </aside>
-          <section className="min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-            {selected ? (
+        <ListDetailShell
+          current={selected?.itemId}
+          list={<TranslationList items={items} selectedId={selectedId} onSelect={handleSelect} />}
+          detail={
+            selected ? (
               <TranslationDetail
                 item={selected}
                 publishRows={publishRows.filter((r) => r.itemId === selected.itemId)}
@@ -555,9 +555,9 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
               />
             ) : (
               <EmptyState title="검수할 항목을 선택하세요" hint="왼쪽 목록에서 번역을 골라 원문과 나란히 확인하고 승인합니다." />
-            )}
-          </section>
-        </div>
+            )
+          }
+        />
       )}
 
       {mode === "renderings" && (
