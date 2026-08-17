@@ -102,9 +102,13 @@ rm ~/herald-hash.txt
 **진짜 나갈 딜리버러블이 준비된 뒤에** 합니다.
 
 ```bash
-printf 'true' | npx vercel env add HERALD_SENDS_ENABLED production -y
+printf 'true' | npx vercel env add HERALD_SENDS_ENABLED production --no-sensitive -y
 npx vercel deploy --prod
 ```
+
+**`--no-sensitive`가 필요한 이유는 아래 "링크 수집 열기·닫기"에 적어 뒀습니다** — 요약하면, 없으면
+sensitive로 저장되어 `vercel env ls`가 값을 가리고, 그러면 발송이 열려 있는지 닫혀 있는지를 이 변수로
+확인할 수 없게 됩니다.
 
 - [ ] 보드에서 `발송 · 잠김`이 `발송`으로 바뀐 것 확인
 - [ ] **딱 1건** 발송하고 지켜보기
@@ -120,11 +124,19 @@ npx vercel deploy --prod
 키는 §3의 일괄 등록에 이미 들어 있으니, 평소 켜고 끄는 건 플래그 한 줄입니다:
 
 ```bash
-printf 'true' | npx vercel env add HERALD_INTAKE_ENABLED production -y
+printf 'true' | npx vercel env add HERALD_INTAKE_ENABLED production --no-sensitive -y
 npx vercel deploy --prod
 ```
 
 닫을 때: `npx vercel env rm HERALD_INTAKE_ENABLED production -y` 후 다시 `deploy --prod`.
+
+> **`--no-sensitive`를 빠뜨리지 마세요.** 이 CLI는 `--sensitive`를 안 줘도 기본이 sensitive이고,
+> 그러면 `vercel env ls`가 값을 `Hidden`으로 가려서 **지금 켜져 있는지 꺼져 있는지 확인할 수
+> 없습니다.** 값은 `true` 한 단어라 가릴 것이 없고, 가리면 잃는 것만 있습니다 — 이 변수의
+> 존재 이유가 "지금 어느 상태인가"를 말해 주는 것이기 때문입니다. 이미 sensitive로 넣었다면
+> `env rm` 후 `--no-sensitive`로 다시 넣으면 됩니다(값이 바뀌는 게 아니므로 재배포는 불필요).
+>
+> 같은 이유로 `HERALD_SENDS_ENABLED`도 열 때 `--no-sensitive`를 붙이세요.
 
 - [ ] `링크 수집` 탭의 `[넣기]`가 활성화된 것 확인
 - [ ] x.com 링크 **한 개**만 넣어 보고, 대기 목록에 뜨는지 확인
@@ -519,6 +531,26 @@ done
 **빠진 것은 반드시 끝에서 다시 확인하세요.** 24개를 도는 루프 한가운데의 한 줄짜리 경고는 스크롤에
 묻힙니다. 실제로 `TWITTERAPI_IO_KEY`가 그렇게 빠진 채로 배포됐고, 증상은 배포가 실패하는 게 아니라
 **링크 수집 탭 하나가 조용히 닫혀 있는 것**이었습니다 — 아무도 안 보면 모릅니다.
+
+> **이 목록의 네 개는 배포가 읽지 않습니다 — 읽는 것은 전부 CLI뿐입니다:**
+>
+> | 변수 | 읽는 곳 |
+> | --- | --- |
+> | `GDRIVE_CONFIG_FOLDER_ID` | `config:push` / `config:pull` |
+> | `GDRIVE_STATE_FOLDER_ID` | `state:push` / `state:pull` |
+> | `GDRIVE_PARENT_FOLDER_NAME` | `drive:init`, 그리고 `config:push`·`state:push` (이 둘이 폴더를 만들 때의 부모 이름) |
+> | `GDRIVE_SHARE_EMAILS` | `drive:init` 뿐 |
+>
+> 앞의 세 개는 스케줄러의 `herald-backup`이 매일 돌리는 명령들이고, `drive:init`은 로컬 프로비저닝을
+> 한 번 할 때만 씁니다.
+>
+> **그런데도 일부러 목록에 남겨 뒀습니다.** 루프의 일은 "`.env`에 있는 Drive·발송 계열을 한 번에
+> 올린다"이고, 여기서 네 개를 예외 처리하면 읽기 어려워지는 대신 얻는 건 폴더 ID 네 개뿐입니다.
+> 시크릿도 아니고요. `vercel env ls`에서 보고 "이건 왜 여기 있지" 싶을 때의 답이 이 문단이며,
+> 소유 관계는 `.env.example`의 프로파일 표가 변수별로 적어 둡니다.
+>
+> 지워야 할 때는 있습니다 — Drive 폴더를 다시 만들어 저 ID들이 **낡은 값**이 되면, 그때는 안 읽히는
+> 값이 아니라 틀린 값이므로 루프에서 빼고 `env rm` 하세요.
 
 옮기지 **않는** 것:
 
