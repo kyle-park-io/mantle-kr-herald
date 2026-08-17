@@ -436,6 +436,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`pnpm doctor` reports whether the `.env` the timers read still matches this checkout's.**
+  `Steering deploy sync` has watched the steering half of this since 2026-08-09, while credentials —
+  copied by the same script, at the same moment, into the same tree — had nothing watching them at
+  all. The scheduler does not read this checkout's `.env`: its units set
+  `WorkingDirectory=%h/.herald/app`, so `pnpm <script>` reads the copy `deploy/herald-deploy.sh`
+  froze there. Rotate a key here, skip the deploy, and the timers keep authenticating with the old
+  one — nothing fails, nothing alerts, and every symptom points at the credential rather than at the
+  copy. The new line names the drifted variables and nothing else: it produces them with `diffEnv`,
+  the deploy gate's own function, so the check and the gate can never disagree about what changed,
+  and neither ever holds a value long enough to print one. A `.env` missing from the deploy tree
+  entirely is a `fail` rather than drift — every timer reads it, so the scheduler cannot run at all —
+  while names left only over there stay `ok`, since the next deploy sweeps them and a warn on a
+  self-resolving state is how a report teaches people to stop reading it.
+
 - **The two feature flags are registered `--no-sensitive`, so `vercel env ls` can still answer
   "is it on?"** The CLI stores a variable as sensitive unless told otherwise, and a sensitive value
   reads back as `Hidden` — which for `HERALD_INTAKE_ENABLED` and `HERALD_SENDS_ENABLED` hides the

@@ -113,4 +113,20 @@ describe("pnpm doctor's report", () => {
 
     expect(configured.stdout).not.toContain("Missing required environment variable: HERALD_SESSION_SECRET");
   }, 60000);
+
+  /**
+   * `deployEnvResult` is thoroughly tested as a function (`tests/doctor/deployEnv.test.ts`) and was
+   * deletable from `doctor.ts` with that suite green — the same gap this file was written for. The
+   * invariant it carries is that a credential rotated here without a deploy is reported at all,
+   * and that rests on the wiring.
+   *
+   * `HERALD_DEPLOY_DIR` names a directory that does not exist, so the check resolves a tree and
+   * then finds no `.env` in it — reached without depending on whether the machine running the
+   * test has systemd, a deploy checkout, or `herald-watch.service` installed.
+   */
+  it("always reports whether this checkout's .env matches the one the timers read", async () => {
+    const { stdout } = await runDoctor({ HERALD_DEPLOY_DIR: "/tmp/herald-doctor-wiring-no-such-tree" });
+
+    expect(stdout).toContain(".env deploy sync");
+  }, 30000);
 });
