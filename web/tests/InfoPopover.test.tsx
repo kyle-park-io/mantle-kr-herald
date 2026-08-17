@@ -140,60 +140,70 @@ describe("InfoPopover — anchor positioning을 지원하는 브라우저(스텁
    * `position-area`가 아니라 `anchor()` 함수로 4변을 직접 쓴다 — `position-area`(예:
    * `bottom span-left`)는 실제 Chromium(버전 150)에서 `align="right"` 방향의 기본 self-alignment가
    * 재현 가능하게 틀렸다(뷰포트 왼쪽 끝에 들러붙는다). `anchor()`는 양쪽 방향 모두 정확했다 —
-   * 격리된 재현과 스크린샷은 task-3-report.md 참조. `right`/`left` 각각을 `calc(anchor(...))`로
-   * 감싸는 이유는 jsdom의 CSSOM이 감싸지 않은 `anchor()`를 `top`/`right` 같은 알려진 프로퍼티에
-   * 조용히 거부하기 때문이다(단일 값의 `calc()`는 수학적으로 no-op이라 실제 브라우저에서의 의미는
-   * 같다).
+   * 격리된 재현과 스크린샷은 task-3-report.md 참조.
+   *
+   * 실제 위치 계산은 더 이상 인라인 스타일이 아니라 `PROMOTED_STYLE_TEXT`(주입된 `<style>`)가
+   * 한다 — 인스턴스가 여기서 결정하는 것은 `align`에 따라 `ip-panel--left`/`ip-panel--right` 중
+   * 어느 클래스를 붙이느냐뿐이다. jsdom에는 레이아웃 엔진이 없어 그 클래스가 실제로 어느 쪽에
+   * 붙는지는 여기서 볼 수 없다 — 390px/1280px 실측은 task-3-report.md 참조.
    */
-  it('align 기본값("left")은 트리거 왼쪽 경계, align="right"는 오른쪽 경계에 anchor()로 묶인다', () => {
-    const { container: leftContainer } = setup();
+  it('align 기본값("left")은 ip-panel--left를, align="right"는 ip-panel--right를 붙인다', () => {
+    setup();
     fireEvent.click(screen.getByText("열기"));
     const leftPanel = screen.getByText("설명입니다").closest("[popover]") as HTMLElement;
-    const leftTrigger = leftContainer.querySelector("[aria-controls]") as HTMLElement;
-    const leftAnchorName = leftTrigger.style.getPropertyValue("anchor-name");
-    expect(leftPanel.style.getPropertyValue("left")).toBe(`calc(anchor(${leftAnchorName} left))`);
-    expect(leftPanel.style.getPropertyValue("right")).toBe("auto");
+    expect(leftPanel.classList.contains("ip-panel")).toBe(true);
+    expect(leftPanel.classList.contains("ip-panel--left")).toBe(true);
+    expect(leftPanel.classList.contains("ip-panel--right")).toBe(false);
     cleanup();
 
-    const { container: rightContainer } = setup("right");
+    setup("right");
     fireEvent.click(screen.getByText("열기"));
     const rightPanel = screen.getByText("설명입니다").closest("[popover]") as HTMLElement;
-    const rightTrigger = rightContainer.querySelector("[aria-controls]") as HTMLElement;
-    const rightAnchorName = rightTrigger.style.getPropertyValue("anchor-name");
-    expect(rightPanel.style.getPropertyValue("right")).toBe(`calc(anchor(${rightAnchorName} right))`);
-    expect(rightPanel.style.getPropertyValue("left")).toBe("auto");
+    expect(rightPanel.classList.contains("ip-panel--right")).toBe(true);
+    expect(rightPanel.classList.contains("ip-panel--left")).toBe(false);
   });
 
   /**
-   * `[popover]`의 UA 스타일시트 기본값은 `inset: 0`이다 — `top`/`right`/`bottom`/`left` 네 개가
-   * 전부 명시적으로 `0`이지 `auto`가 아니다. 패널의 너비는 (호출처의 `panelClassName`으로) 확정값을
-   * 갖는 경우가 흔하므로, `right`(또는 `left`)만 anchor 기준으로 새로 설정해도 반대쪽이 UA의
-   * `0`으로 남아 있으면 과확정(over-constrained)되어 CSS 2.1 해소 규칙이 조용히 anchor 기준 값을
-   * 무시해 버린다 — 실제로 그렇게 뷰포트 왼쪽 끝에 들러붙는 버그를 재현해서 잡았다(task-3-report.md).
-   * `bottom`도 대칭성과 안전을 위해 지운다.
+   * `PROMOTED_STYLE_TEXT`가 실제로 문서에 주입되는지, 그리고 두 개의 `InfoPopover`가 동시에
+   * promote되어도 중복으로 들어가지 않는지 확인한다. 이 stylesheet의 *내용*(`.ip-panel`의
+   * over-constrained 방지, `tablet` 아래에서의 뷰포트 고정, `flip-inline`)은 jsdom이 레이아웃도
+   * CSS 검증도 하지 않으므로 텍스트 포함 여부로만 핀으로 고정한다 — 값이 실제로 그렇게 계산되는지는
+   * 여기서 증명할 수 없다는 뜻이다. 실제 계산 결과는 task-3-report.md의 390px/1280px 실측 참조.
    */
-  it("promote되지 않는 변(right 또는 left)과 bottom, margin은 UA 기본값을 지운다", () => {
-    setup();
-    fireEvent.click(screen.getByText("열기"));
-    const panel = screen.getByText("설명입니다").closest("[popover]") as HTMLElement;
-    expect(panel.style.getPropertyValue("bottom")).toBe("auto");
-    expect(panel.style.getPropertyValue("margin")).toBe("0px");
-  });
+  it("promote되는 브라우저에서 위치 스타일시트를 한 번만 주입한다", () => {
+    const first = render(
+      <InfoPopover panel={<span>설명입니다 A</span>}>
+        <button>열기 A</button>
+      </InfoPopover>,
+    );
+    fireEvent.click(screen.getByText("열기 A"));
+    const second = render(
+      <InfoPopover panel={<span>설명입니다 B</span>}>
+        <button>열기 B</button>
+      </InfoPopover>,
+    );
+    fireEvent.click(screen.getByText("열기 B"));
 
-  /**
-   * `max-w-[calc(100vw-2rem)]`는 패널의 *너비*만 뷰포트에 맞춰 줄인다 — 트리거 기준의 *오프셋*은
-   * 그대로라, 헤더 오른쪽 절반에 가까운 트리거는 `align="left"`(기본값)로도 좁은 화면에서 패널이
-   * 뷰포트 밖으로 나갈 수 있다. `anchor()`도 `position-area`도 스스로 뒤집지 않으므로
-   * `position-try-fallbacks: flip-inline`이 필요하다 — 커스텀 `@position-try` 대신 내장 키워드를
-   * 쓰는 이유는 Safari가 전자는 18.4+에서야 지원해서다. jsdom에는 레이아웃 엔진이 없어 실제로
-   * 뒤집히는지는 여기서 볼 수 없다 — 390px 창에서의 실측은 task-3-report.md 참조. 여기서 확인하는
-   * 것은 그 프로퍼티가 실제로 걸리는지뿐이다.
-   */
-  it("좁은 화면에서 넘치면 뒤집도록 position-try-fallbacks: flip-inline을 건다", () => {
-    setup();
-    fireEvent.click(screen.getByText("열기"));
-    const panel = screen.getByText("설명입니다").closest("[popover]") as HTMLElement;
-    expect(panel.style.getPropertyValue("position-try-fallbacks")).toBe("flip-inline");
+    const styleEls = document.querySelectorAll("#info-popover-promoted-styles");
+    expect(styleEls).toHaveLength(1);
+    const css = styleEls[0].textContent ?? "";
+    // over-constrained 방지 (UA `inset: 0`을 지운다).
+    expect(css).toContain("right: auto");
+    expect(css).toContain("bottom: auto");
+    expect(css).toContain("left: auto");
+    expect(css).toContain("margin: 0");
+    // narrow: 뷰포트에 고정, 트리거에는 세로축만.
+    expect(css).toContain("width < 48rem");
+    expect(css).toContain("inset-inline: 1rem");
+    expect(css).toContain("width: auto");
+    // tablet 이상: 양쪽 축 다 트리거에, 넘치면 뒤집는다.
+    expect(css).toContain("width >= 48rem");
+    expect(css).toContain("flip-inline");
+    expect(css).toContain(".ip-panel--left");
+    expect(css).toContain(".ip-panel--right");
+
+    first.unmount();
+    second.unmount();
   });
 });
 
