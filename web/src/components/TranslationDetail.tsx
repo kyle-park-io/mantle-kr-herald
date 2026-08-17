@@ -3,6 +3,7 @@ import { datePrefix, itemUrl, kstStamp } from "../types";
 import type { Translation, PublishStateRow } from "../types";
 import { StatusChip, KindBadge } from "./TranslationList";
 import { Tip } from "./ConfirmDialog";
+import { ApprovedButton } from "./ApprovedButton";
 import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
 import { diffPublished } from "../publishedDiff";
 
@@ -312,20 +313,7 @@ export function TranslationDetail(props: {
             </button>
           </>
         ) : approved ? (
-          <button
-            className="group grid min-w-[5.5rem] place-items-center rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
-            disabled={busy}
-            onClick={() => run(() => props.onUnapprove(props.item.itemId))}
-            title="클릭하면 승인을 취소합니다"
-          >
-            {/* Both labels share one grid cell, so the button sizes to the wider and never jumps on hover. */}
-            <span className="col-start-1 row-start-1 whitespace-nowrap transition-opacity group-hover:opacity-0">
-              승인됨 ✓
-            </span>
-            <span className="col-start-1 row-start-1 whitespace-nowrap opacity-0 transition-opacity group-hover:opacity-100">
-              승인 취소
-            </span>
-          </button>
+          <ApprovedButton onUnapprove={() => run(() => props.onUnapprove(props.item.itemId))} disabled={busy} />
         ) : (
           <Tip text={dirty ? "편집 내용을 먼저 저장하세요" : undefined}>
             <button

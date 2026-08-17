@@ -26,6 +26,9 @@ export const btnDanger = `${BASE} inline-flex items-center border border-red-200
  * `승인됨 ✓` that becomes `승인 취소` on hover. Both labels sit in one grid cell so the button sizes
  * to the wider of the two and never jumps mid-hover — the same control 1차 uses, shared here so the
  * two modes cannot drift apart.
+ *
+ * 이 세 문자열을 직접 쓰지 말고 `ApprovedButton`을 쓸 것 — 터치에서 호버 스왑이 성립하지 않는
+ * 문제(손가락 아래에서 라벨이 바뀐다)를 그 컴포넌트가 확인 다이얼로그로 막는다.
  */
 export const btnApproved = `${BASE} group grid ${APPROVE_WIDTH} place-items-center bg-mint-soft text-mint hover:bg-red-50 hover:text-red-600 disabled:opacity-40`;
 /** The two labels inside `btnApproved`, stacked in the same cell. */

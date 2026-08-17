@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
-import { btn, btnApprove, btnApproved, btnApprovedHover, btnApprovedRest, btnDanger, btnPrimary } from "../buttonStyles";
+import { btn, btnApprove, btnDanger, btnPrimary } from "../buttonStyles";
 import { reconcileOutcome, rowEditorGate, resendKind } from "../rowEditor";
 import { fromEditor, toEditor } from "../canonicalEditor";
 import { Tip, type ConfirmRequest } from "./ConfirmDialog";
+import { ApprovedButton } from "./ApprovedButton";
 import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
 import {
   CHANNEL_FORMAT_NOTE,
@@ -359,24 +360,15 @@ export function OutletCard(props: {
             // Same hover-swap control as 1차: one grid cell holds both labels so the button sizes to
             // the wider and never jumps. Approval has to be withdrawable here — the editor above is
             // locked while approved, so this is the only way back to editing.
-            <button
-              className={btnApproved}
+            <ApprovedButton
               disabled={busy}
-              title="클릭하면 승인을 취소합니다"
-              onClick={() =>
+              onUnapprove={() =>
                 run(async () => {
                   await api.approveRendering(itemId, type, channel, false);
                   await props.onGroupChanged();
                 })
               }
-            >
-              <span className={btnApprovedRest}>
-                승인됨 ✓
-              </span>
-              <span className={btnApprovedHover}>
-                승인 취소
-              </span>
-            </button>
+            />
           ) : (
             <Tip text={groupDirty ? SAVE_FIRST : undefined}>
               <button
@@ -1119,19 +1111,10 @@ function Row(props: {
             )}
             {/* Withdrawable until the room has actually been posted to; after that it is a record. */}
             {gate.showUnapprove ? (
-              <button
-                className={btnApproved}
+              <ApprovedButton
                 disabled={busy}
-                title="클릭하면 이 방의 승인을 취소합니다"
-                onClick={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId, false)))}
-              >
-                <span className={btnApprovedRest}>
-                  승인됨 ✓
-                </span>
-                <span className={btnApprovedHover}>
-                  승인 취소
-                </span>
-              </button>
+                onUnapprove={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId, false)))}
+              />
             ) : (
               gate.showApproved && (
                 <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[13px] font-medium text-mint">

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TranslationDetail } from "../src/components/TranslationDetail";
 import type { PublishStateRow, Translation } from "../src/types";
@@ -20,6 +20,7 @@ const translation = (o: Partial<Translation> = {}): Translation => ({
 function mount(
   item: Translation,
   o: {
+    onUnapprove?: (id: string) => Promise<void>;
     onUnretire?: (id: string) => Promise<void>;
     onRetire?: (id: string) => Promise<void>;
     publishRows?: PublishStateRow[];
@@ -33,7 +34,7 @@ function mount(
       availableTargets={o.availableTargets ?? ["local"]}
       onSave={async () => {}}
       onApprove={async () => {}}
-      onUnapprove={async () => {}}
+      onUnapprove={o.onUnapprove ?? (async () => {})}
       onUnretire={o.onUnretire ?? (async () => {})}
       onRetire={o.onRetire ?? (async () => {})}
       onPublish={async () => {}}
@@ -43,6 +44,29 @@ function mount(
 }
 
 afterEach(cleanup);
+
+describe("승인 취소", () => {
+  it("확인을 거쳐야 취소된다 — 터치에는 호버 스왑이 없고, 탭에 :hover가 걸리는 브라우저에서는 손가락 아래 라벨이 바뀐다", async () => {
+    const onUnapprove = vi.fn().mockResolvedValue(undefined);
+    mount(translation({ status: "approved" }), { onUnapprove });
+
+    fireEvent.click(screen.getByRole("button", { name: /승인됨/ }));
+    expect(onUnapprove).not.toHaveBeenCalled();
+
+    // 다이얼로그가 뜬 뒤의 확인 버튼. 트리거의 호버 라벨은 `aria-hidden`이라 이름이 겹치지 않는다.
+    fireEvent.click(screen.getByRole("button", { name: "승인 취소" }));
+    await waitFor(() => expect(onUnapprove).toHaveBeenCalledTimes(1));
+  });
+
+  it("확인을 취소하면 승인이 유지된다", () => {
+    const onUnapprove = vi.fn();
+    mount(translation({ status: "approved" }), { onUnapprove });
+
+    fireEvent.click(screen.getByRole("button", { name: /승인됨/ }));
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(onUnapprove).not.toHaveBeenCalled();
+  });
+});
 
 describe("TranslationDetail media", () => {
   it("previews the photo the source post carries", () => {
