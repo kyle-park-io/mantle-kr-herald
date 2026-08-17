@@ -129,4 +129,17 @@ describe("pnpm doctor's report", () => {
 
     expect(stdout).toContain(".env deploy sync");
   }, 30000);
+
+  /**
+   * Reads the mode of the real `.env` in `REPO_ROOT`, so this asserts the line is present rather
+   * than what it says — the file's mode belongs to whoever's checkout is running the suite, and a
+   * test that demanded one answer would fail on a machine that is merely configured differently.
+   * The grading itself is `tests/doctor/envMode.test.ts`; what is untestable there, and untested
+   * before this, is that `doctor` calls it at all.
+   */
+  it("always reports the mode of the .env holding this machine's credentials", async () => {
+    const { stdout } = await runDoctor();
+
+    expect(stdout).toContain(".env permissions");
+  }, 30000);
 });

@@ -44,6 +44,16 @@ pnpm install
 본인 백업에서 저장소 루트에 `.env`로 놓습니다. 없다면 [`.env.example`](../../../.env.example)을
 복사해 채우되, **어느 값이 어디 것인지는 그 파일 맨 위의 프로파일 표**가 변수별로 말해 줍니다.
 
+```bash
+chmod 600 .env
+```
+
+**어느 쪽으로 놓든 권한을 확인하세요.** `cp .env.example .env`는 git 추적 파일의 모드를 물려받아
+`644`로 생기고, 백업에서 복사해 온 파일도 어떻게 옮겼느냐에 따라 열려 있을 수 있습니다. 이 한 파일에
+이 머신의 자격 증명이 전부 들어갑니다. 배포 트리 쪽 사본은 `deploy:freeze`가 알아서 `0o600`으로
+쓰지만(`src/cli/deploy-freeze.ts`의 `modeFor`), 원본은 아무도 안 건드립니다 — `pnpm doctor`의
+`.env permissions` 줄이 그래서 있습니다.
+
 `DATABASE_URL`과 `HERALD_DB_ENV` 두 줄은 **이 머신의 로컬 데이터베이스**를 가리켜야 합니다 —
 프로덕션 DSN을 여기 넣으면 안 됩니다([`team-runbook.md`](../team-runbook.md)가 그 이유를 적어
 뒀습니다: 로컬 CLI 스물몇 개가 전부 프로덕션을 치게 되고, 더 나쁘게는 `db:import`의 프로덕션 거부가

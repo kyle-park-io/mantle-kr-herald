@@ -249,6 +249,36 @@ export function outputRootResult(outputDir: string, override: string | undefined
  * just means the watch scheduler's `OnFailure=` hook will exit 0 without telling anyone until both
  * are set.
  */
+export const ENV_MODE_CHECK = ".env permissions";
+
+/**
+ * `.env` holds every credential this machine has, and `cp .env.example .env` gives it `644` —
+ * a tracked file's mode, inherited by a file that is nothing like one.
+ *
+ * The repo already states its position in code: `src/cli/deploy-freeze.ts`'s `modeFor` writes the
+ * frozen `.env` and everything under `keys/` at `0o600` because "a glossary is a team document" and
+ * these are not, and `writeFrozen` goes out of its way to close the window where the bytes exist at
+ * the wrong mode. So the deploy tree is right whatever happens; the development checkout it is
+ * copied *from* was the half nobody applied it to.
+ *
+ * Warn, never fail. The exposure is to other local users of the same machine, which on a
+ * single-account laptop is nobody, and failing a `doctor && …` chain over it would cost more than
+ * it saves. `undefined` — no `.env` at all — is ok rather than a finding: `--env-file-if-exists`
+ * makes that a valid state, and doctor's other lines already name whatever is missing because of it.
+ */
+export function envModeResult(mode: number | undefined): CheckResult {
+  if (mode === undefined) return { name: ENV_MODE_CHECK, status: "ok", detail: "no .env in this checkout" };
+  const openTo = mode & 0o077;
+  if (openTo === 0) return { name: ENV_MODE_CHECK, status: "ok", detail: `${(mode & 0o777).toString(8)} — owner only` };
+  return {
+    name: ENV_MODE_CHECK,
+    status: "warn",
+    detail:
+      `${(mode & 0o777).toString(8)} — readable by other users of this machine, and it holds every credential here. ` +
+      `Run chmod 600 .env (the mode deploy:freeze already writes its copy at).`,
+  };
+}
+
 export function telegramOpsChatResult(botToken: string | undefined, chatIdOps: string | undefined): CheckResult {
   const configured = Boolean(botToken) && Boolean(chatIdOps);
   return {

@@ -436,6 +436,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`pnpm doctor` grades `.env`'s permissions, and the three places that create it say `chmod 600`.**
+  The repo already held this position in code — `deploy-freeze.ts`'s `modeFor` writes the frozen
+  `.env` and everything under `keys/` at `0o600`, and `writeFrozen` closes even the window where the
+  bytes briefly exist at the wrong mode — so the deploy tree was right whatever happened. The
+  development checkout it is copied *from* was the half nobody applied it to: `cp .env.example .env`
+  hands a file full of credentials the `644` of the tracked skeleton it came from, and nothing in
+  the setup path looked at it again. Warn rather than fail — the exposure is to other local users of
+  the same machine, which on a single-account laptop is nobody, and failing a `doctor && …` chain
+  over it would cost more than it saves.
+
 - **`pnpm doctor` reports whether the `.env` the timers read still matches this checkout's.**
   `Steering deploy sync` has watched the steering half of this since 2026-08-09, while credentials —
   copied by the same script, at the same moment, into the same tree — had nothing watching them at
