@@ -24,6 +24,15 @@
 - **B** = `pnpm serve` + `cloud` — 로컬 운영자
 - **C** = Vercel 배포 — **항상 cloud**. `local`이면 기동을 거부합니다
 
+> **스케줄러는 이 `.env`를 읽지 않습니다 — 사본을 읽습니다.** 여섯 systemd 타이머는
+> `WorkingDirectory=%h/.herald/app`에서 돌므로 `bash deploy/herald-deploy.sh`가 배포 시점에 얼려 둔
+> `~/.herald/app/.env`를 읽습니다. **그래서 키를 여기서 바꾸고 배포를 안 돌리면 타이머는 옛 키로
+> 계속 인증합니다** — 위 표의 어느 실패도 아니고, 나중에 터졌을 때 증상이 "자격 증명이 잘못됐다"로
+> 보여서 사본이 낡았다는 쪽을 아무도 의심하지 않습니다.
+>
+> `pnpm doctor`의 **`.env deploy sync`** 줄이 어긋난 변수 이름을 알려줍니다. 절차는
+> [`team-runbook.md`](team-runbook.md) §6 "배포 체크아웃".
+
 ---
 
 ## 1. 항상 필요한 것 — 없으면 대시보드가 안 뜹니다
@@ -273,7 +282,20 @@
 pnpm doctor          # 크레덴셜 존재 여부 — 외부 호출 없음
 pnpm doctor --live   # 실제로 호출해봄. 부여된 Google 스코프, Typefully 잔여 쿼터까지
 pnpm status          # 접속 대상 DB와 단계별 건수
+pnpm env:diff        # 이 .env와 Vercel 프로덕션에 같은 자격 증명이 들어 있는지 (이름만)
 ```
+
+`pnpm doctor`가 보는 것 중 **다른 데서는 안 보이는 두 줄**:
+
+| 줄 | 무엇을 말하나 |
+|---|---|
+| `.env deploy sync` | 이 `.env`와 스케줄러가 읽는 사본(`~/.herald/app/.env`)이 어긋났는지 — §0의 그 함정 |
+| `.env permissions` | 이 파일이 다른 로컬 사용자에게 읽히는지. `cp .env.example .env`는 `644`로 만듭니다 |
+
+`pnpm env:diff`는 **값을 비교하지 않습니다.** Vercel이 sensitive 값을 `[SENSITIVE]`로만 돌려주기
+때문이고, 읽을 수 있는 값들은 오히려 양쪽이 달라야 정상입니다(이 머신은 개발 DB·자기 계정, 배포는
+프로덕션·팀 계정). 비밀이 **살아 있는지**는 `pnpm doctor --live`(이 머신)와
+`pnpm creds:check`(배포)가 답합니다.
 
 화면에서도 같은 걸 볼 수 있습니다. 대시보드 헤더의 **`local`/`cloud` 배지에 마우스를 올리면**
 호버 카드가 뜨고, 수집·발행·발송·데이터 네 묶음으로 항목마다 **`설정됨`** 또는 **`키 없음`**을
