@@ -409,6 +409,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The two feature flags are registered `--no-sensitive`, so `vercel env ls` can still answer
+  "is it on?"** The CLI stores a variable as sensitive unless told otherwise, and a sensitive value
+  reads back as `Hidden` — which for `HERALD_INTAKE_ENABLED` and `HERALD_SENDS_ENABLED` hides the
+  one thing they exist to say. Neither value is a secret; both are the literal word `true`. Fixing
+  an already-sensitive one is `env rm` then `env add --no-sensitive`, and needs no redeploy, since
+  the value is unchanged.
+
+- **`.env.example`'s profile table stops implying the deployment reads two Drive folder ids.**
+  `GDRIVE_CONFIG_FOLDER_ID` and `GDRIVE_STATE_FOLDER_ID` fell under the "every other `GDRIVE_*`"
+  row, marked optional-but-present for the hosted deployment. Nothing the deployment runs reads
+  either: their only readers are `config:push`/`config:pull` and `state:push`/`state:pull`, the four
+  CLIs `herald-backup` runs on the scheduler machine. They now have their own row saying so.
+
 - **`.env.example`'s profile table no longer says the deployment never collects.** It does — 링크
   수집 fetches the one thread a pasted link names, which is why `TWITTERAPI_IO_KEY` is the single §2
   value the hosted function reads. The line grouped it with the sweep-only credentials and said

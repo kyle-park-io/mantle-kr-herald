@@ -102,9 +102,13 @@ rm ~/herald-hash.txt
 **진짜 나갈 딜리버러블이 준비된 뒤에** 합니다.
 
 ```bash
-printf 'true' | npx vercel env add HERALD_SENDS_ENABLED production -y
+printf 'true' | npx vercel env add HERALD_SENDS_ENABLED production --no-sensitive -y
 npx vercel deploy --prod
 ```
+
+**`--no-sensitive`가 필요한 이유는 아래 "링크 수집 열기·닫기"에 적어 뒀습니다** — 요약하면, 없으면
+sensitive로 저장되어 `vercel env ls`가 값을 가리고, 그러면 발송이 열려 있는지 닫혀 있는지를 이 변수로
+확인할 수 없게 됩니다.
 
 - [ ] 보드에서 `발송 · 잠김`이 `발송`으로 바뀐 것 확인
 - [ ] **딱 1건** 발송하고 지켜보기
@@ -120,11 +124,19 @@ npx vercel deploy --prod
 키는 §3의 일괄 등록에 이미 들어 있으니, 평소 켜고 끄는 건 플래그 한 줄입니다:
 
 ```bash
-printf 'true' | npx vercel env add HERALD_INTAKE_ENABLED production -y
+printf 'true' | npx vercel env add HERALD_INTAKE_ENABLED production --no-sensitive -y
 npx vercel deploy --prod
 ```
 
 닫을 때: `npx vercel env rm HERALD_INTAKE_ENABLED production -y` 후 다시 `deploy --prod`.
+
+> **`--no-sensitive`를 빠뜨리지 마세요.** 이 CLI는 `--sensitive`를 안 줘도 기본이 sensitive이고,
+> 그러면 `vercel env ls`가 값을 `Hidden`으로 가려서 **지금 켜져 있는지 꺼져 있는지 확인할 수
+> 없습니다.** 값은 `true` 한 단어라 가릴 것이 없고, 가리면 잃는 것만 있습니다 — 이 변수의
+> 존재 이유가 "지금 어느 상태인가"를 말해 주는 것이기 때문입니다. 이미 sensitive로 넣었다면
+> `env rm` 후 `--no-sensitive`로 다시 넣으면 됩니다(값이 바뀌는 게 아니므로 재배포는 불필요).
+>
+> 같은 이유로 `HERALD_SENDS_ENABLED`도 열 때 `--no-sensitive`를 붙이세요.
 
 - [ ] `링크 수집` 탭의 `[넣기]`가 활성화된 것 확인
 - [ ] x.com 링크 **한 개**만 넣어 보고, 대기 목록에 뜨는지 확인
