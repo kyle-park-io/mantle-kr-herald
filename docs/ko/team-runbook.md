@@ -1179,6 +1179,27 @@ systemd가 순서를 맞춰 주니 신경 쓸 일이 없어집니다.
 - **재시작을 넘겨서까지 확실히 멈춰 있어야 하면** — `systemctl --user disable --now
   herald-watch.timer`. `enable` 자체를 해제하므로 재시작해도 돌아오지 않습니다.
 
+**여섯 개를 한꺼번에 멈출 때** — 사고 대응처럼 파이프라인 전체를 세워야 하는 경우입니다.
+유닛 이름을 여섯 번 칠 필요는 없지만, **`stop`과 `disable`은 문법이 다릅니다.**
+
+```bash
+systemctl --user stop  'herald-*.timer'   # 일시 정지 — 글롭이 됩니다
+systemctl --user start 'herald-*.timer'   # 다시 켜기
+
+# 재시작을 넘겨서까지 멈출 때는 글롭이 안 되므로 중괄호 확장을 씁니다
+systemctl --user disable --now herald-{watch,convert,x-reconcile,creds,translate-check,backup}.timer
+systemctl --user enable  --now herald-{watch,convert,x-reconcile,creds,translate-check,backup}.timer
+```
+
+`stop`·`start`·`status`처럼 **이미 로드된 유닛**을 다루는 명령은 글롭을 받지만, `enable`·`disable`은
+유닛 *파일*을 다루는 명령이라 거부합니다 — `Glob pattern passed to enable, but globs are not
+supported for this.`가 그 메시지입니다. 모르고 `disable --now 'herald-*.timer'`를 치면 **명령이
+실패하고 타이머는 계속 돕니다.** 여기서 나올 수 있는 사고는 하나뿐인데, 그게 제일 흔한 것이기도
+합니다 — 에러를 흘려보고 멈춘 줄 알고 자리를 뜨는 것.
+
+여섯이 전부 멈췄는지는 `systemctl --user list-timers 'herald-*'`로 확인하세요 — `disable`까지 한
+뒤라면 이 목록에서 아예 사라집니다.
+
 ### 한 tick이 몇 건씩 처리할지 (HERALD_WATCH_BATCH)
 
 한 tick이 `translate:prepare --limit`과 `translate:align --limit`에 넘기는 항목 수입니다.
