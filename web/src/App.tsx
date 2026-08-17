@@ -379,7 +379,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
               <button
                 key={id}
                 onClick={() => switchMode(id)}
-                className={`whitespace-nowrap rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors ${
+                className={`whitespace-nowrap rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors pointer-coarse:min-h-11 ${
                   mode === id ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
                 }`}
               >

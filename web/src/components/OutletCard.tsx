@@ -973,7 +973,7 @@ function Row(props: {
           ) : delivered ? (
             <Tip text={`${stampFull(row.at) ?? ""} — 누르면 전달 기록이 지워집니다. 방에 붙여넣은 글은 그대로 남습니다.`}>
               <button
-                className="rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint transition-colors hover:bg-mint-soft/70 disabled:opacity-40"
+                className="rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint transition-colors pointer-coarse:min-h-11 hover:bg-mint-soft/70 disabled:opacity-40"
                 disabled={busy}
                 onClick={() => run(async () => apply(await api.markOutlet(itemId, type, row.outletId, false)))}
               >

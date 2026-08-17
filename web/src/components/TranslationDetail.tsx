@@ -226,7 +226,7 @@ export function TranslationDetail(props: {
               there, and two buttons naming the same axis in opposite directions would read as a
               toggle the rest of this pane deliberately avoids. */}
           <button
-            className="ml-auto rounded-md border border-slate-ink/25 bg-surface px-2.5 py-1 text-[12px] font-medium text-slate-ink transition-colors hover:bg-slate-soft disabled:opacity-40"
+            className="ml-auto rounded-md border border-slate-ink/25 bg-surface px-2.5 py-1 text-[12px] font-medium text-slate-ink transition-colors pointer-coarse:min-h-11 hover:bg-slate-soft disabled:opacity-40"
             disabled={busy}
             onClick={() => run(() => props.onRetire(props.item.itemId))}
             title="이 항목을 다시 게시됨으로 표시합니다. 지금 초안이 실제 게시본과 다르면, 1차 검수에 그 차이가 표시됩니다."
@@ -280,7 +280,7 @@ export function TranslationDetail(props: {
           text={posted ? POSTED_LOCK : approved ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요." : undefined}
         >
           <button
-            className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:opacity-40"
+            className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors pointer-coarse:min-h-11 hover:bg-bg disabled:opacity-40"
             disabled={busy || !dirty || approved || posted}
             onClick={() => run(() => props.onSave(props.item.itemId, korean))}
             title={
@@ -304,7 +304,7 @@ export function TranslationDetail(props: {
               게시됨 ✓
             </span>
             <button
-              className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:opacity-40"
+              className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors pointer-coarse:min-h-11 hover:bg-bg disabled:opacity-40"
               disabled={busy}
               onClick={() => run(() => props.onUnretire(props.item.itemId))}
               title="게시 처리를 취소하고 검수 대기로 되돌립니다. 게시 기록은 남아 있어 다음 자동 확인이 다시 게시됨으로 표시하지 않습니다."
@@ -317,7 +317,7 @@ export function TranslationDetail(props: {
         ) : (
           <Tip text={dirty ? "편집 내용을 먼저 저장하세요" : undefined}>
             <button
-              className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-mint px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40"
+              className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-mint px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors pointer-coarse:min-h-11 hover:bg-mint-hover disabled:opacity-40"
               disabled={busy || dirty}
               onClick={() => run(() => props.onApprove(props.item.itemId))}
             >
@@ -347,7 +347,7 @@ export function TranslationDetail(props: {
           return (
             <Tip key={t} text={blocked}>
               <button
-                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:border-line disabled:bg-bg disabled:text-faint disabled:opacity-60"
+                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors pointer-coarse:min-h-11 hover:bg-bg disabled:border-line disabled:bg-bg disabled:text-faint disabled:opacity-60"
                 // `posted` disables these for the same reason it disables 저장 and 승인 above: the item
                 // is terminal for the Drive path. The server refuses it too (409) — this is the half
                 // that stops a reviewer being invited into it in the first place. Leaving them live was

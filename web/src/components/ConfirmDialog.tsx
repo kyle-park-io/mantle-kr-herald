@@ -132,14 +132,14 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
 
         <div className="flex justify-end gap-2 border-t border-line bg-bg px-5 py-3">
           <button
-            className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg"
+            className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors pointer-coarse:min-h-11 hover:bg-bg"
             onClick={onCancel}
           >
             취소
           </button>
           <button
             ref={confirmRef}
-            className={`rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors ${
+            className={`rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors pointer-coarse:min-h-11 ${
               danger ? "bg-red-600 hover:bg-red-700" : "bg-mint hover:bg-mint-hover"
             }`}
             onClick={() => {

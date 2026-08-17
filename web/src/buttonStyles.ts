@@ -6,7 +6,11 @@
 // row of buttons lines up whatever mix it holds. Only the pair that swaps in place — `승인하기` and
 // the `승인됨 ✓`/`승인 취소` control — also shares a minimum width, or the card visibly resizes at the
 // moment of approval, which reads as something having gone wrong.
-const BASE = "rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors";
+//
+// `pointer-coarse:min-h-11`(44px)은 손가락용 최소 크기다. 뷰포트가 아니라 입력 장치를 보는 변형이라
+// 창을 좁힌 데스크톱에서는 버튼이 그대로고, 터치 노트북에서는 커진다 — 밀도 높은 이 보드에서
+// 브레이크포인트로 같은 일을 하면 마우스 쓰는 사람까지 뚱뚱한 버튼을 받는다.
+const BASE = "rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors pointer-coarse:min-h-11";
 /**
  * Width of the approve/approved pair ONLY. Both must carry it — either alone still jumps — and
  * nothing else should: on a two-syllable label like `발송` it just stretches the button.
