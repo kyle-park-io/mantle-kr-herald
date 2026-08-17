@@ -119,5 +119,7 @@
 ## 다음으로
 
 - 각 스케줄러의 설치·확인·정지, 배치 크기 조정, 사고 대응 → [`team-runbook.md`](team-runbook.md) §6
+  ([여섯 개를 한꺼번에 멈추는 법](team-runbook.md#멈추기)도 거기 있습니다 — `stop`은 글롭을 받고
+  `disable`은 받지 않습니다)
 - 명령이 정확히 무엇을 읽고 쓰는지 → [`artifacts.md`](artifacts.md)
 - 파이프라인이 무엇을 하고 무엇을 하지 않는지 → [`capabilities.md`](capabilities.md)
