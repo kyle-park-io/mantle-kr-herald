@@ -7,6 +7,7 @@ import { RenderingsView } from "./components/RenderingsView";
 import { IntakeView } from "./components/IntakeView";
 import { EnvironmentBanner } from "./components/EnvironmentBanner";
 import { CollectedBreakdownCard } from "./components/CollectedBreakdownCard";
+import { InfoPopover } from "./components/InfoPopover";
 import { TickPie } from "./components/TickPie";
 import { btn } from "./buttonStyles";
 import { livenessChip, livenessHeadline, probeLabel } from "./liveness";
@@ -258,39 +259,11 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
           </div>
 
           {status && (
-            <div className="group relative shrink-0">
-              <span
-                className={`inline-flex cursor-default items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
-                  isCloud ? "bg-mint-soft text-mint" : "bg-amber-soft text-amber-ink"
-                }`}
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${isCloud ? "bg-mint" : "bg-amber-ink"}`} />
-                {status.storageMode}
-              </span>
-              {chip && (
-                <span
-                  className={`ml-1.5 inline-flex shrink-0 items-center rounded-full px-2 py-1 text-xs font-medium ${
-                    chip.tone === "red" ? "bg-red-50 text-red-700" : "bg-amber-soft text-amber-ink"
-                  }`}
-                >
-                  ⚠ {chip.text}
-                </span>
-              )}
-              {/*
-               * Two nested boxes, not one. The outer carries the absolute positioning, `hidden
-               * group-hover:block`, and the gap to the pill as `pt-2` *padding*; the inner carries
-               * the visible border/background/shadow. Before this task the card was
-               * `pointer-events-none`, so nothing inside it could ever hold `:hover` and a gap between
-               * the pill and the card never mattered. Now [지금 확인] needs the pointer to be able to
-               * travel from the pill down into the card without crossing a dead zone — a `margin` on
-               * a single box would have left exactly that: margin sits outside an element's own
-               * hit-test area, padding sits inside it. Splitting the box keeps the visible result
-               * identical to before (the inner box still starts 8px below the pill) while making that
-               * whole 8px strip hit-testable, so a pointer crossing it in a straight line keeps
-               * `group-hover` — and the card — alive instead of dropping it mid-transit.
-               */}
-              <div className="pointer-events-auto absolute left-0 top-full z-30 hidden w-72 pt-2 group-hover:block">
-                <div className="rounded-lg border border-line bg-surface p-3 text-[12px] leading-relaxed text-muted shadow-lg">
+            <InfoPopover
+              className="shrink-0"
+              panelClassName="w-72 p-3 text-[12px] leading-relaxed text-muted"
+              panel={
+                <>
                   <p className="mb-1 font-semibold text-ink">
                     현재 <span className={isCloud ? "text-mint" : "text-amber-ink"}>{status.storageMode}</span> 모드
                   </p>
@@ -377,9 +350,27 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                       채우고 서버를 다시 실행하면 활성화됩니다.
                     </p>
                   )}
-                </div>
-              </div>
-            </div>
+                </>
+              }
+            >
+              <span
+                className={`inline-flex cursor-default items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                  isCloud ? "bg-mint-soft text-mint" : "bg-amber-soft text-amber-ink"
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${isCloud ? "bg-mint" : "bg-amber-ink"}`} />
+                {status.storageMode}
+              </span>
+              {chip && (
+                <span
+                  className={`ml-1.5 inline-flex shrink-0 items-center rounded-full px-2 py-1 text-xs font-medium ${
+                    chip.tone === "red" ? "bg-red-50 text-red-700" : "bg-amber-soft text-amber-ink"
+                  }`}
+                >
+                  ⚠ {chip.text}
+                </span>
+              )}
+            </InfoPopover>
           )}
 
           <nav className="ml-2 inline-flex shrink-0 rounded-lg border border-line bg-bg p-0.5">
@@ -443,9 +434,10 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                   {FUNNEL_STEPS.map(([label, key], i) => {
                     const tally = status.funnel[key];
                     // 수집 is the one stage whose number needs qualifying — see
-                    // `CollectedBreakdownCard`. The strip itself is untouched: the card is a
-                    // descendant of the stage but not one of its own two spans, so `수집 134` keeps
-                    // its value, its density, and the way a test reads one stage at a time.
+                    // `CollectedBreakdownCard`. The strip itself is untouched: `InfoPopover` renders
+                    // the card only while its popover is open, as a sibling of the label/count spans
+                    // rather than a wrapper around them, so `수집 134` keeps its value and its density
+                    // whether the card is open or not.
                     const collected = key === "collected";
                     // Both `undefined` on the three stages no timer feeds. The sentence is built once
                     // and used twice — as the pointer's tooltip and as the pie's accessible name —
@@ -458,23 +450,12 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                       // text is exactly its own — which is what lets a test read one stage at a time.
                       <Fragment key={key}>
                         {i > 0 && <span className="text-line-strong">·</span>}
-                        <div
-                          data-testid={`funnel-${key}`}
-                          className={`flex items-center gap-1.5${
-                            collected ? " group/collected relative cursor-help" : ""
-                          }`}
-                          // The funnel's own `title` explains items-vs-rows for every stage; over 수집
-                          // it would open on top of the card. An empty `title` is the spec's way for an
-                          // element to say it has no advisory information of its own — an omitted one
-                          // inherits the nearest ancestor's, which is exactly what has to stop here.
-                          title={collected ? "" : undefined}
-                        >
+                        <div data-testid={`funnel-${key}`} className="flex items-center gap-1.5">
                           {/* The countdown's own tooltip, on a span of its own. Same problem 수집
-                              solves two lines up and a cheaper answer: the funnel's `title` explains
+                              solves below and a cheaper answer: the funnel's `title` explains
                               items-vs-rows, and the nearest titled ancestor is what the pointer gets,
                               so a `title` here simply wins for the pixels the pie occupies — no
-                              `title=""` and no hover card needed, because this one is a sentence
-                              rather than a table. */}
+                              hover card needed, because this one is a sentence rather than a table. */}
                           {phase && tickTip && (
                             <span
                               className="flex shrink-0 cursor-help items-center"
@@ -483,13 +464,25 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                               <TickPie fraction={phase.fraction} label={tickTip} />
                             </span>
                           )}
-                          <span className="text-muted">{label}</span>
-                          <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
-                          {tally.rows !== tally.items && (
-                            <span className="font-mono text-[11px] tabular-nums text-faint">{tally.rows}건</span>
-                          )}
-                          {collected && (
-                            <CollectedBreakdownCard breakdown={status.funnel.collected.breakdown} />
+                          {collected ? (
+                            <InfoPopover
+                              panelClassName="w-80 p-3 text-[12px] font-normal leading-relaxed text-muted"
+                              panel={<CollectedBreakdownCard breakdown={status.funnel.collected.breakdown} />}
+                            >
+                              <span className="text-muted">{label}</span>
+                              <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
+                              {tally.rows !== tally.items && (
+                                <span className="font-mono text-[11px] tabular-nums text-faint">{tally.rows}건</span>
+                              )}
+                            </InfoPopover>
+                          ) : (
+                            <>
+                              <span className="text-muted">{label}</span>
+                              <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
+                              {tally.rows !== tally.items && (
+                                <span className="font-mono text-[11px] tabular-nums text-faint">{tally.rows}건</span>
+                              )}
+                            </>
                           )}
                         </div>
                       </Fragment>

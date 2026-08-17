@@ -77,14 +77,9 @@ function PublishedCopy({ item, posted }: { item: Translation; posted: boolean })
 function OpenLink({ href, active, children }: { href: string; active: boolean; children: string }) {
   if (!active) {
     return (
-      <span className="group/tip relative cursor-not-allowed text-faint">
-        {children}
-        {/* Down-and-right, same as `Tip` and the board's other hover cards. Keeps its own compact
-            `whitespace-nowrap` styling — this is one short line beside a link, not a `w-64` card. */}
-        <span className="pointer-events-none absolute left-0 top-full z-30 mt-1.5 hidden whitespace-nowrap rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-normal text-muted shadow-md group-hover/tip:block">
-          발행을 다시 눌러야 열 수 있어요
-        </span>
-      </span>
+      <Tip text="발행을 다시 눌러야 열 수 있어요">
+        <span className="cursor-not-allowed text-faint">{children}</span>
+      </Tip>
     );
   }
   return (
