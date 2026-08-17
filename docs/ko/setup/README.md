@@ -2,6 +2,9 @@
 
 셋업 절차의 SSOT입니다. 다른 문서는 절차를 다시 설명하지 않고 여기로 링크합니다.
 
+- **[운영 머신 재구성](./operator-machine.md)** — 노트북을 바꿨을 때 타이머가 도는 머신을 처음부터
+  다시 세우는 순서. **`.env`는 Vercel에서 복구되지 않습니다** — sensitive 값이 `[SENSITIVE]`로만
+  오므로 본인 사본이 필요하고, 가져온 것이 프로덕션과 어긋나지 않는지는 `pnpm env:diff`가 봅니다.
 - **[스티어링 설정 받기](./steering.md)** — `translation/`·`conversion/`의 실제 파일. git에 없으므로 팀에서 받아야 합니다. **먼저 읽으세요.**
 - **[Vercel 호스팅 배포 가이드](./vercel.md)** — 팀이 URL에서 검수·승인·발송하도록 대시보드를
   **처음 한 번** 올리는 절차. PostgreSQL, 대시보드 계정, `HERALD_TRUST_PROXY`, 오리진 되먹임,

@@ -13,6 +13,7 @@
 | 팀 계정으로 매주 운영한다 | [`team-runbook.md`](team-runbook.md) | 필요 |
 | **호스팅 대시보드를 재배포하거나 비밀번호를 바꿔야 한다** | [`deploy.md`](deploy.md) | 필요 |
 | **팀 용어집·문체 규칙을 받아야 한다** | [`setup/steering.md`](setup/steering.md) | 필요 |
+| **노트북을 바꿔서 운영 머신을 다시 세워야 한다** | [`setup/operator-machine.md`](setup/operator-machine.md) | 필요 |
 | 자격 증명(Lark·Google)을 발급해야 한다 | [`setup/`](setup/) | 필요 |
 | 어떤 명령이 어떤 파일을 건드리는지 확인해야 한다 | [`artifacts.md`](artifacts.md) | 필요 |
 | **환경변수를 안 넣거나 잘못 넣으면 어디서 막히는지 알아야 한다** | [`env.md`](env.md) | 필요 |
@@ -39,6 +40,8 @@ ko/
                      (단가 반올림 주의, sheetLabel 미확정 채널, active를 비워 둔 이유)
   setup/             자격 증명 발급 절차 (SSOT — 다른 문서는 여기로 링크만)
     README.md          어떤 가이드를 볼지
+    operator-machine.md 노트북 교체 — 타이머가 도는 머신을 처음부터 다시 세우는 순서.
+                       `.env`는 Vercel에서 복구되지 않는다(sensitive는 `[SENSITIVE]`로만 옴)
     steering.md        스티어링 설정(용어집·문체·변환 규칙) 받기 — git에 없음
     google-drive.md    Google OAuth·서비스 계정·폴더 ID
     lark.md            Lark 앱·스코프·Drive 폴더 token

@@ -390,6 +390,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`docs/ko/setup/operator-machine.md` — how to rebuild the machine the timers run on.** The
+  pieces were already written down, in three documents, in the order each of them cared about; the
+  one thing missing was the order a person actually needs, and the one fact that makes the obvious
+  approach fail. **`.env` cannot be recovered from Vercel.** `vercel env pull` returns every value
+  stored as sensitive — Google OAuth, `GDRIVE_*`, `GSHEET_*`, `LARK_*`, `TELEGRAM_*`,
+  `TYPEFULLY_*`, `TWITTERAPI_IO_KEY`, the auth hash and the session secret — as the literal string
+  `[SENSITIVE]`. Only the non-sensitive handful comes back, which is why the runbook's
+  `~/.herald/prod.env` procedure works (`DATABASE_URL` happens to be one of them) and why
+  generalising from it costs an afternoon. The operator brings their own `.env`; the document says
+  so first, then gives the seven steps, and ends with what is worth backing up and what has a
+  recovery path already.
+
+- **`pnpm env:diff` — is the `.env` I brought still in sync with production?** Compares which of the
+  twenty-two credentials both sides are meant to hold each one actually has, and names the ones that
+  are missing on either side. This is the shape of the failure that prompted it: `TWITTERAPI_IO_KEY`
+  sat in the repo's `.env` and not in Vercel, `checkEnvNames` had no opinion because the name is in
+  neither of its lists, and the only symptom was 링크 수집 quietly staying shut on the deployed
+  board.
+
+  **Names only, and the report says why in its own footer.** Values stored as sensitive cannot be
+  read at all, and the ones that can be read are the ones the two sides are *supposed* to disagree
+  about — this machine runs `local` storage against a development database with its own dashboard
+  account. A check that reported those as drift would be wrong on every run until someone switched
+  it off. Reads `vercel env ls --json` rather than `vercel env pull`, so no production secret
+  reaches this machine's disk, following the rule `deploy-check.ts` already states. Whether the
+  secrets still *work* stays where it was: `pnpm doctor --live` here, `pnpm creds:check` there.
+
 - **`HERALD_INTAKE_ENABLED` — 링크 수집 is a switch you flip, not a secret you delete.** The hosted
   board opened intake the moment `TWITTERAPI_IO_KEY` existed and closed it the moment it did not,
   which made the credential the toggle: turning intake off meant deleting a secret, and turning it

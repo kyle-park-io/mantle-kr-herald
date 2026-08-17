@@ -42,6 +42,7 @@
     "doctor": "tsx --env-file-if-exists=.env src/cli/doctor.ts",
     "deploy:check": "tsx --env-file-if-exists=.env src/cli/deploy-check.ts",
     "deploy:smoke": "tsx --env-file-if-exists=.env src/cli/deploy-smoke.ts",
+    "env:diff": "tsx --env-file-if-exists=.env src/cli/env-diff.ts",
     "creds:check": "tsx --env-file-if-exists=.env src/cli/creds-check.ts",
     "check:pr-title": "tsx src/cli/check-pr-title.ts",
     "deploy:freeze": "tsx src/cli/deploy-freeze.ts",
