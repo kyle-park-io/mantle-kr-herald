@@ -175,9 +175,21 @@ describe("App's 링크 수집 tab", () => {
     });
     render(<App onSignOut={() => {}} authEpoch={0} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "링크 수집" }));
+    fireEvent.click(screen.getByText("링크 수집"));
     expect(await screen.findByTestId("intake-fake")).toBeTruthy();
     expect(window.location.hash).toBe("#intake");
+  });
+
+  it("탭은 축약 라벨과 전체 라벨을 둘 다 들고 있다 — 어느 쪽이 보이는지는 CSS가 정한다", async () => {
+    stubFetch();
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+
+    await screen.findByText("1차 검수 · 번역");
+    expect(screen.getByText("1차")).toBeTruthy();
+    // "수집" is also the funnel's 수집 stage label (see "App's header funnel" below) once `status`
+    // loads, so this is scoped to the nav rather than asserted on the bare text.
+    const intakeTab = within(screen.getByRole("navigation")).getAllByRole("button").at(-1)!;
+    expect(within(intakeTab).getByText("수집")).toBeTruthy();
   });
 });
 
@@ -498,7 +510,9 @@ describe("App's 수집 breakdown card", () => {
   const card = async (breakdown: unknown) => {
     vi.stubGlobal("fetch", statusWith(breakdown));
     render(<App onSignOut={() => {}} authEpoch={0} />);
-    fireEvent.click(await screen.findByText("수집")); // opens the 수집 stage's InfoPopover
+    // Scoped to the funnel stage rather than a bare `findByText("수집")` — the 링크 수집 tab's own
+    // short label (Task 8) is the same string, so an unscoped query would now match both.
+    fireEvent.click(within(await screen.findByTestId("funnel-collected")).getByText("수집")); // opens the 수집 stage's InfoPopover
     return await screen.findByTestId("collected-breakdown");
   };
 

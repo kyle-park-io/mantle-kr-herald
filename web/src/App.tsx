@@ -23,11 +23,14 @@ import { CONVERT_TICK, WATCH_TICK, tickPhase, tickTooltip, type TickSchedule } f
  * quietly opens 1차 검수 instead.
  *
  * The first entry is the default, and its hash is "" — the bare url is 1차 검수.
+ *
+ * 다섯 번째 사실은 `short` — 폰에서 쓰는 축약 라벨이다. 세 탭의 전체 라벨은 390px 헤더에서 다른
+ * 컨트롤들과 함께 세 줄로 접히는데, 이 대시보드에서 헤더 세 줄은 상세 pane을 그만큼 밀어낸다.
  */
 const TABS = [
-  { id: "translations", hash: "", label: "1차 검수 · 번역" },
-  { id: "renderings", hash: "#renderings", label: "2차 검수 · 채널" },
-  { id: "intake", hash: "#intake", label: "링크 수집" },
+  { id: "translations", hash: "", label: "1차 검수 · 번역", short: "1차" },
+  { id: "renderings", hash: "#renderings", label: "2차 검수 · 채널", short: "2차" },
+  { id: "intake", hash: "#intake", label: "링크 수집", short: "수집" },
 ] as const;
 
 type Mode = (typeof TABS)[number]["id"];
@@ -255,7 +258,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
           <div className="flex shrink-0 items-center gap-2.5">
             <span className="h-2.5 w-2.5 rounded-full bg-mint" />
             <span className="whitespace-nowrap text-[15px] font-semibold tracking-tight">
-              Mantle KR <span className="text-faint font-normal">Review</span>
+              Mantle KR <span className="text-faint font-normal hidden tablet:inline">Review</span>
             </span>
           </div>
 
@@ -375,7 +378,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
           )}
 
           <nav className="ml-2 inline-flex shrink-0 rounded-lg border border-line bg-bg p-0.5">
-            {TABS.map(({ id, label }) => (
+            {TABS.map(({ id, label, short }) => (
               <button
                 key={id}
                 onClick={() => switchMode(id)}
@@ -383,22 +386,32 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                   mode === id ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
                 }`}
               >
-                {label}
+                <span className="tablet:hidden">{short}</span>
+                <span className="hidden tablet:inline">{label}</span>
               </button>
             ))}
           </nav>
 
           {/* Wraps the (desktop-only) status funnel and the sign-out control together so the whole
               group pushes to the header's right edge — on a narrow screen the funnel hides
-              (`hidden tablet:flex` below) but 로그아웃 still lands at the far right on its own. */}
-          <div className="ml-auto flex shrink-0 items-center gap-3">
+              (`hidden tablet:flex` below) but 로그아웃 still lands at the far right on its own.
+              `flex-wrap` on both this div and the one below it: every other control in this header
+              is narrow enough to fit a tablet-width line by itself, but sheet links + a five-stage
+              funnel + the sync badge, combined, are not — at 834px wide with a non-empty sync badge
+              this group alone measured wider than the viewport, and being `shrink-0` (like every
+              other child here, so none of them squish to illegible text) it overflowed sideways
+              instead of shrinking. The fix is the same one the outer header row already uses:
+              wrap instead of shrink, at the granularity of this group's own three chunks — sheet
+              links, the funnel, and the sync badge — each `shrink-0` below for the same reason the
+              row's own children are. */}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
             {status && (
-              <div className="hidden items-center gap-3 tablet:flex">
+              <div className="hidden flex-wrap items-center justify-end gap-x-3 gap-y-2 tablet:flex">
                 {/* Left of the funnel and set apart with a wider gap: these leave the dashboard,
                     while everything to the right of them reports on it. Each appears only when its id
                     is configured, so an empty GSHEET_QA_ID hides QA rather than linking nowhere. */}
                 {(status.sheetLinks.data || status.sheetLinks.qa) && (
-                  <span className="mr-3 flex items-center gap-3 text-[13px]">
+                  <span className="mr-3 flex shrink-0 items-center gap-3 text-[13px]">
                     {status.sheetLinks.data && (
                       <a
                         href={status.sheetLinks.data.url}
@@ -425,7 +438,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                 )}
                 <div
                   data-testid="funnel"
-                  className="flex items-center gap-1.5 text-[13px]"
+                  className="flex shrink-0 items-center gap-1.5 text-[13px]"
                   title={
                     "숫자는 항목 수, N건은 그 항목들이 만든 행 수입니다 — " +
                     "변환은 타입마다, 렌더는 채널마다, 발행은 업로드 대상마다 한 행씩 생깁니다. " +
@@ -510,15 +523,19 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                     );
                   })}
                 </div>
-                <span className="h-4 w-px bg-line" />
-                <span
-                  className={`inline-flex items-center gap-1.5 text-xs font-medium ${syncWarn ? "text-amber-ink" : "text-mint"}`}
-                  title="발행됨 · 재발행 필요 · 미발행"
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full ${syncWarn ? "bg-amber-ink" : "bg-mint"}`} />
-                  발행됨 {status.sync.synced}
-                  {status.sync.needsRepublish > 0 ? ` · 재발행 필요 ${status.sync.needsRepublish}` : ""}
-                  {status.sync.unpublished > 0 ? ` · 미발행 ${status.sync.unpublished}` : ""}
+                {/* One `shrink-0` wrap unit, not two — a lone divider bar wrapped onto its own line
+                    with the sync badge below it would read as a stray mark. */}
+                <span className="flex shrink-0 items-center gap-3">
+                  <span className="h-4 w-px bg-line" />
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-xs font-medium ${syncWarn ? "text-amber-ink" : "text-mint"}`}
+                    title="발행됨 · 재발행 필요 · 미발행"
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${syncWarn ? "bg-amber-ink" : "bg-mint"}`} />
+                    발행됨 {status.sync.synced}
+                    {status.sync.needsRepublish > 0 ? ` · 재발행 필요 ${status.sync.needsRepublish}` : ""}
+                    {status.sync.unpublished > 0 ? ` · 미발행 ${status.sync.unpublished}` : ""}
+                  </span>
                 </span>
               </div>
             )}
