@@ -228,7 +228,14 @@ export function OutletCard(props: {
   const addable = group.addableOutletIds.filter((id) => !added.includes(id));
 
   return (
-    <article className="relative rounded-xl border border-line bg-surface shadow-sm">
+    <article className="relative rounded-xl border border-line bg-surface shadow-sm @container">
+      {/*
+        `@container` here, not on the detail pane or the board list: this card sits at full phone
+        width in one shell and beside a 320px sidebar in another, and the action rows below need to
+        stack on the card's own narrow box regardless of which shell put it there. `Source`'s
+        `@container` further down is a separate, nested one scoped to the read-only converted-text
+        pane — the `@max-sm:` below resolves against this outer container, not that one.
+      */}
       {/*
         A tab hanging from the card's top edge, coloured by approval. The board is a column of
         near-identical cards, and the one thing a reviewer scans for is which of them still need
@@ -872,7 +879,7 @@ function Row(props: {
           {gate.readOnly ? (row.forked ? "✎따로 · 보기" : "글 보기") : row.forked ? "✎따로" : "✎ 따로 쓰기"}
         </button>
 
-        <span className="ml-auto flex flex-wrap items-center gap-2">
+        <span className="ml-auto flex flex-wrap items-center gap-2 @max-sm:flex-col @max-sm:items-stretch">
           {sent ? (
             <>
               {/*
@@ -1089,7 +1096,7 @@ function Row(props: {
             describe a string the reviewer is no longer looking at.
           */}
           <MediaEditNoticeSlot text={fromEditor(shownDraft)} where="변환 원문" className="mt-1.5" />
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2 @max-sm:flex-col @max-sm:items-stretch">
             {gate.showSave && (
               <button
                 className={btn}
