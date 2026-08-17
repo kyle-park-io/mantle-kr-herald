@@ -327,6 +327,8 @@ describe("media markers", () => {
 
   it("previews the photo in the converted source", () => {
     const { container } = mount(group({ text: "그룹 글", rows: [row()] }), { convertedText: `변환 원문\n\n${PHOTO}` });
+    // Photo previews are click-to-open now: open the marker before looking for its image.
+    fireEvent.click(screen.getByText("[이미지]"));
     expect([...container.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual([URL]);
   });
 

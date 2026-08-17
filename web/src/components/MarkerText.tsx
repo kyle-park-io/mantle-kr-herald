@@ -2,9 +2,9 @@ import { Fragment, useState, type ReactNode } from "react";
 import { countMediaMarkers, splitMediaMarkers } from "../media";
 
 /**
- * The shape every media marker takes: the label, with the media one hover away and the original one
- * click away. Photos and videos share it because they are the same thing to a reviewer — a line that
- * stands in for something they have to look at before approving the copy beside it.
+ * The shape every media marker takes: the label, with the media one click away and the original one
+ * click away too. Photos and videos share it because they are the same thing to a reviewer — a line
+ * that stands in for something they have to look at before approving the copy beside it.
  *
  * The raw url is no longer printed. It used to be, on the reasoning that "it is what the reviewer
  * reads today, and the send path uploads that exact string" — but a 60-character CDN url is not
@@ -12,49 +12,75 @@ import { countMediaMarkers, splitMediaMarkers } from "../media";
  * is still there in the stored text, unchanged and still what gets uploaded; this is the read-only
  * pane, and the editable textarea beside it shows the line verbatim.
  *
- * `원본 보기` rather than making the label itself a link: the label is the hover target for the
- * preview, and one element cannot usefully be both "hover to peek" and "click to leave".
+ * `원본 보기` rather than making the label itself a link: the label toggles the preview open and
+ * closed, and one element cannot usefully be both "click to open/close in place" and "click to leave".
  *
  * `preview` is a render prop, not a node, so the caller's element can be wired to this shell's own
  * `onError` — a photo and a clip fail the same way (a dead CDN url) and both have to degrade to a
  * line of Korean rather than a broken box the reviewer has to interpret.
+ *
+ * Unlike the board's other hover cards (now `InfoPopover`), this one stays an inline accordion. A
+ * 320px popover on a phone covers almost all of the source text it sits in, and the preview's whole
+ * job is letting a reviewer compare that text against the photo — cover it and the preview has no job
+ * left. So it expands downward in place instead, and because the same component sits in both a narrow
+ * detail pane and a wide desktop one, the width decision is the caller's `@container`, not the
+ * viewport.
+ *
+ * Mount is deferred behind `armed` rather than left to `preload="none"`: `autoPlay` overrides that
+ * hint the moment a `<video>` exists, and a merely-hidden (`display: none`) element still fetches. A
+ * 2차 card can show a dozen markers at once, so mounting eagerly would pull every photo and clip down
+ * before anyone opened one. `onMouseEnter` used to be the arm signal; the first open now does that
+ * job instead. Once armed, the preview element stays mounted — collapsing only hides it — so a
+ * second look is instant and a buffered clip is not thrown away.
  */
 function MediaMarker({
   label,
   url,
   broken,
   preview,
-  onMouseEnter,
 }: {
   label: string;
   url: string;
   broken: string;
   preview: (onError: () => void) => ReactNode;
-  onMouseEnter?: () => void;
 }) {
   const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [armed, setArmed] = useState(false);
+
   return (
-    <span className="group/media relative cursor-help text-mint" onMouseEnter={onMouseEnter}>
-      {label}
-      <span className="pointer-events-none absolute left-0 top-full z-30 mt-1 hidden rounded-lg border border-line bg-surface p-1.5 shadow-lg group-hover/media:block">
-        {failed ? (
-          <span className="block w-64 px-1 py-0.5 text-[12px] leading-relaxed text-muted">
-            {broken}
-          </span>
-        ) : (
-          preview(() => setFailed(true))
-        )}
-      </span>
-      {/* Outside the hover target above, so moving the pointer here to click does not dismiss the
-          preview the reviewer is comparing against. */}
+    <span className="inline">
+      <button
+        type="button"
+        onClick={() => {
+          setArmed(true);
+          setOpen((v) => !v);
+        }}
+        aria-expanded={open}
+        className="cursor-pointer text-mint underline-offset-2 hover:underline"
+      >
+        {label}
+      </button>
       <a
         href={url}
         target="_blank"
         rel="noreferrer"
-        className="ml-1.5 cursor-pointer text-[12px] font-medium text-muted underline-offset-2 hover:text-mint hover:underline"
+        className="ml-1.5 text-[12px] font-medium text-muted underline-offset-2 hover:text-mint hover:underline"
       >
         원본 보기 ↗
       </a>
+      {armed && (
+        <span
+          data-testid="media-preview"
+          className={`${open ? "block" : "hidden"} mt-1.5 rounded-lg border border-line bg-surface p-1.5`}
+        >
+          {failed ? (
+            <span className="block px-1 py-0.5 text-[12px] leading-relaxed text-muted">{broken}</span>
+          ) : (
+            preview(() => setFailed(true))
+          )}
+        </span>
+      )}
     </span>
   );
 }
@@ -70,7 +96,7 @@ function PhotoMarker({ text, url }: { text: string; url: string }) {
         <img
           src={url}
           alt=""
-          className="block max-h-64 w-80 max-w-[70vw] object-contain"
+          className="block max-h-64 w-full max-w-80 object-contain"
           onError={onError}
         />
       )}
@@ -79,46 +105,35 @@ function PhotoMarker({ text, url }: { text: string; url: string }) {
 }
 
 /**
- * A video marker, the same shape as the photo one — except the clip is only mounted once the pointer
- * has actually reached the marker.
+ * A video marker, the same shape as the photo one.
  *
  * `muted` is what lets it play at all: browsers block autoplay with sound, so an unmuted `autoPlay`
  * would either sit frozen or, where it is allowed, put audio into a shared office because someone
- * moved a pointer. `playsInline` keeps iOS Safari from taking the clip fullscreen instead of playing
- * it in the popover, and `loop` suits clips that run a few seconds while the reviewer reads the copy.
- *
- * The mount is deferred behind `armed` rather than left to `preload="none"`: `autoPlay` overrides
- * that hint the moment the element exists, and the popover is merely CSS-hidden (`display: none`),
- * which does not stop a media element from fetching. A 2차 card can show a dozen markers at once, so
- * an eagerly mounted `<video>` per marker would pull every mp4 down before anyone hovered one. Once
- * armed it stays mounted, so a second look is instant and the buffered clip is not thrown away.
+ * clicked a marker. `playsInline` keeps iOS Safari from taking the clip fullscreen instead of playing
+ * it in place, and `loop` suits clips that run a few seconds while the reviewer reads the copy.
  */
 function VideoMarker({ url }: { url: string }) {
-  const [armed, setArmed] = useState(false);
   return (
     <MediaMarker
       label="[영상]"
       url={url}
       broken="영상을 불러오지 못했습니다"
-      onMouseEnter={() => setArmed(true)}
-      preview={(onError) =>
-        armed ? (
-          <video
-            src={url}
-            className="block max-h-64 w-80 max-w-[70vw] object-contain"
-            autoPlay
-            muted
-            loop
-            playsInline
-            onError={onError}
-          />
-        ) : null
-      }
+      preview={(onError) => (
+        <video
+          src={url}
+          className="block max-h-64 w-full max-w-80 object-contain"
+          autoPlay
+          muted
+          loop
+          playsInline
+          onError={onError}
+        />
+      )}
     />
   );
 }
 
-/** Reviewed text, with each media marker shown as its label plus a hover preview and a link. */
+/** Reviewed text, with each media marker shown as its label plus a click-to-expand preview and a link. */
 export function MarkerText({ text }: { text: string }) {
   const segments = splitMediaMarkers(text);
   return (

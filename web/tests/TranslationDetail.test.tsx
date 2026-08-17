@@ -47,6 +47,8 @@ afterEach(cleanup);
 describe("TranslationDetail media", () => {
   it("previews the photo the source post carries", () => {
     const { container } = mount(translation());
+    // Photo previews are click-to-open now: open the marker before looking for its image.
+    fireEvent.click(screen.getByText("[이미지]"));
     expect([...container.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual([URL]);
   });
 

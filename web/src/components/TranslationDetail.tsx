@@ -237,7 +237,7 @@ export function TranslationDetail(props: {
 
       <section className="mb-6">
         <div className="eyebrow mb-2">원문 · source</div>
-        <div className="rounded-xl border border-line bg-surface p-4 text-[15px] leading-relaxed whitespace-pre-wrap text-ink/80 shadow-sm">
+        <div className="@container rounded-xl border border-line bg-surface p-4 text-[15px] leading-relaxed whitespace-pre-wrap text-ink/80 shadow-sm">
           <MarkerText text={props.item.sourceText} />
         </div>
       </section>
