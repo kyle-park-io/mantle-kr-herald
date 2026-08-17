@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { IntakeView } from "../src/components/IntakeView";
+import { INTAKE_DISABLED_MESSAGE } from "../src/types";
 
 // `@testing-library/user-event` is not a dependency of this repo (checked `package.json` and
 // `node_modules/@testing-library` before writing this), so every interaction below goes through
@@ -96,14 +97,18 @@ describe("IntakeView", () => {
     ).toBeTruthy();
   });
 
-  it("disables 넣기 and says why when the deployment has no X credentials", async () => {
+  it("disables 넣기 and says so when intake is closed on this deployment", async () => {
     stubFetch();
     render(<IntakeView authEpoch={0} intakeEnabled={false} />);
     await screen.findByText("waiting post");
 
     const button = screen.getByRole("button", { name: "넣기" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
-    expect(screen.getByText("이 배포에는 TWITTERAPI_IO_KEY가 없어 링크 수집을 할 수 없습니다")).toBeTruthy();
+    // The constant rather than a second copy of the sentence: `tests/web/typeMirror.test.ts`
+    // already pins it byte-identical to the server's, and intake is closed by either the
+    // HERALD_INTAKE_ENABLED flag or a missing credential, so this assertion has no business
+    // naming one of the two.
+    expect(screen.getByText(INTAKE_DISABLED_MESSAGE)).toBeTruthy();
   });
 
   it("keeps the queue visible when intake is closed", async () => {

@@ -386,6 +386,26 @@ export function loadSendsEnabled(): boolean {
   return (process.env.HERALD_SENDS_ENABLED ?? "").trim().toLowerCase() === "true";
 }
 
+/**
+ * Whether the hosted deployment offers 링크 수집 (`POST /api/intake/x`). Read only by
+ * `createDeps.ts` for `routes: "hosted"`, the same shape and the same exemption as
+ * `loadSendsEnabled` above: the local entry point always intakes, given the credential.
+ *
+ * The credential is still required — this flag cannot conjure a `TWITTERAPI_IO_KEY`, and intake
+ * stays closed without one. What the flag changes is which of the two is the *switch*. While the
+ * key alone decided it, closing intake meant deleting a secret and reopening it meant producing
+ * that secret again from somewhere; a toggle whose off position destroys the value it gates is one
+ * an operator reaches for once and then avoids. Splitting them makes the everyday action adding and
+ * removing the word `true`, and leaves the credential where it was.
+ *
+ * Defaults closed for the same reason sends do: "not yet decided" and "deliberately still closed"
+ * are one state, and the unsafe direction is defaulting to open — intake spends the project's
+ * twitterapi.io quota on whatever link is pasted.
+ */
+export function loadIntakeEnabled(): boolean {
+  return (process.env.HERALD_INTAKE_ENABLED ?? "").trim().toLowerCase() === "true";
+}
+
 export interface TypefullyConfig {
   apiKey: string;
   socialSetId: string;

@@ -43,6 +43,7 @@ import {
   loadSessionConfig,
   loadClientIpConfig,
   loadSendsEnabled,
+  loadIntakeEnabled,
 } from "../config";
 import { Login, type LoginResult } from "./Login";
 import { singleFlight } from "../shared/concurrency/singleFlight";
@@ -292,6 +293,17 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * dep exists (which is what makes the route refuse) and `StatusView.intakeEnabled` (which is what
    * makes the tab say why before anyone clicks).
    *
+   * Two conditions, not one, and the flag is checked first because it is the cheaper question: the
+   * hosted board opens intake only when `HERALD_INTAKE_ENABLED` says so (`loadIntakeEnabled`, whose
+   * own comment argues why the credential is a bad switch), while the local entry point always
+   * intakes — the same exemption `sendsEnabled` grants on the line above. A credential that throws
+   * still closes intake either way, so the flag opens the tab but cannot conjure a key.
+   *
+   * The gate belongs on the construction rather than on `intakeEnabled` below, because that boolean
+   * is *derived* from the dep for the express purpose of keeping the tab and the route on one
+   * answer. Gating the boolean alone would put the board on "closed" while `POST /api/intake/x`
+   * went on accepting links.
+   *
    * Constructed in its own try/catch, the way `reconcilePublished` and `headroomReader` guard theirs:
    * `loadConfig()` throws when `TWITTERAPI_IO_KEY` is absent, and an install that never collects —
    * a review-only hosted deployment — must still boot. A throw on this line would take the whole
@@ -304,16 +316,18 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
    * the scheduler's own record of the floor it ran with.
    */
   let collectLinkedThread: CollectLinkedThread | undefined;
-  try {
-    collectLinkedThread = new CollectLinkedThread(
-      new TwitterApiSourceGateway(new TwitterClient(loadConfig().apiKey)),
-      stores.collectionRepository,
-      translationStore,
-      undefined,
-      readFloorReport,
-    );
-  } catch {
-    collectLinkedThread = undefined;
+  if (routes === "local" || loadIntakeEnabled()) {
+    try {
+      collectLinkedThread = new CollectLinkedThread(
+        new TwitterApiSourceGateway(new TwitterClient(loadConfig().apiKey)),
+        stores.collectionRepository,
+        translationStore,
+        undefined,
+        readFloorReport,
+      );
+    } catch {
+      collectLinkedThread = undefined;
+    }
   }
   const intakeEnabled = collectLinkedThread !== undefined;
 

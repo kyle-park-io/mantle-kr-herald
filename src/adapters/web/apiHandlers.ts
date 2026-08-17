@@ -117,7 +117,14 @@ export interface IntakePendingItem {
   kind?: "post" | "article";
 }
 
-export const INTAKE_DISABLED_MESSAGE = "이 배포에는 TWITTERAPI_IO_KEY가 없어 링크 수집을 할 수 없습니다";
+/**
+ * Deliberately does not name the cause. Intake is closed by either of two things now — the
+ * `HERALD_INTAKE_ENABLED` flag being off, or `TWITTERAPI_IO_KEY` being absent (`createDeps.ts`) —
+ * and this sentence is read by a reviewer, who can act on neither. Naming one of the two would be
+ * wrong half the time; naming both would explain deployment configuration to someone who came to
+ * paste a link. Which of the two it is belongs to `pnpm deploy:check` and `docs/ko/deploy.md`.
+ */
+export const INTAKE_DISABLED_MESSAGE = "이 배포는 링크 수집이 꺼져 있습니다";
 
 export interface ApiResult {
   status: number;
