@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { hashPassword } from "../../src/domain/auth/password";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TSX_BIN = join(REPO_ROOT, "node_modules", ".bin", "tsx");
@@ -29,7 +30,7 @@ const DOCTOR_ENTRY = join(REPO_ROOT, "src", "cli", "doctor.ts");
  */
 const OUTPUT_ROOT = "/tmp/herald-doctor-wiring-test-output";
 
-function runDoctor(): Promise<{ stdout: string; exitCode: number }> {
+function runDoctor(extraEnv: Record<string, string> = {}): Promise<{ stdout: string; exitCode: number }> {
   const child = spawn(TSX_BIN, [DOCTOR_ENTRY], {
     cwd: REPO_ROOT,
     env: {
@@ -40,6 +41,7 @@ function runDoctor(): Promise<{ stdout: string; exitCode: number }> {
       HERALD_OUTPUT_DIR: OUTPUT_ROOT,
       TELEGRAM_BOT_TOKEN: "test-token",
       TELEGRAM_CHAT_ID_OPS: "-1001234567890",
+      ...extraEnv,
     },
   });
 
@@ -75,4 +77,40 @@ describe("pnpm doctor's report", () => {
     // them.
     expect(stdout).toContain("configured — deploy/herald-notify-failure.sh will post here");
   }, 30000);
+
+  /**
+   * The gap these two close: a setup could pass `doctor` with `0 fail` and still be one where
+   * `pnpm serve` refuses to start on its first line. `serve.ts` calls `loadSessionConfig()` and
+   * `loadAuthConfig()` before it binds anything, and `.env.example`'s profile table marks all
+   * three variables `●` in every profile that runs a dashboard — the same marking `DATABASE_URL`
+   * carries — so `doctor` has to grade them the same way it grades that one, as a fail.
+   *
+   * Each runs `doctor` twice, configured and not: one run alone cannot tell a real read of the
+   * environment from a hardcoded line saying whatever this run expects.
+   */
+  it("fails when the dashboard has no account, and passes once one is configured", async () => {
+    const unconfigured = await runDoctor();
+
+    expect(unconfigured.stdout).toContain("Dashboard account");
+    expect(unconfigured.stdout).toContain("No dashboard account configured");
+
+    const configured = await runDoctor({
+      HERALD_AUTH_USERNAME: "reviewer",
+      HERALD_AUTH_PASSWORD_HASH: await hashPassword("correct-horse-battery"),
+    });
+
+    expect(configured.stdout).toContain("user: reviewer");
+    expect(configured.stdout).not.toContain("No dashboard account configured");
+  }, 60000);
+
+  it("fails when the session secret is missing, and passes once one is set", async () => {
+    const unconfigured = await runDoctor();
+
+    expect(unconfigured.stdout).toContain("Session secret");
+    expect(unconfigured.stdout).toContain("Missing required environment variable: HERALD_SESSION_SECRET");
+
+    const configured = await runDoctor({ HERALD_SESSION_SECRET: "a".repeat(64) });
+
+    expect(configured.stdout).not.toContain("Missing required environment variable: HERALD_SESSION_SECRET");
+  }, 60000);
 });

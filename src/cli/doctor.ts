@@ -10,6 +10,8 @@ import {
   loadStorageMode,
   loadTypefullyConfig,
   loadDbConfig,
+  loadAuthConfig,
+  loadSessionConfig,
   type DbConfig,
 } from "../config";
 import { createDb } from "../adapters/db/createDb";
@@ -111,6 +113,16 @@ results.push(outputRootResult(OUTPUT_DIR, process.env.HERALD_OUTPUT_DIR));
 results.push(configCheck("Storage mode", () => loadStorageMode(), `mode: ${process.env.HERALD_STORAGE_MODE?.trim() ?? "(unset)"}`));
 results.push(await runDatabaseCheck());
 results.push(await runFewShotKeyCheck());
+// The dashboard's gate. Graded `fail` like DATABASE_URL above, and for the same reason: both carry
+// `●` in every profile of `.env.example`'s table, and `serve.ts` loads all three before it binds
+// anything. Without these lines `doctor` could report `0 fail` on a setup where `pnpm serve` dies
+// on startup — which is what a fresh `cp .env.example .env` produces, so the report would be
+// reassuring exactly when it should not be. Neither loader is given the storage-mode downgrade:
+// there is no mode in which the dashboard runs without an account and a signing key.
+results.push(
+  configCheck("Dashboard account", () => loadAuthConfig(), `user: ${process.env.HERALD_AUTH_USERNAME?.trim() ?? ""}`),
+);
+results.push(configCheck("Session secret", () => loadSessionConfig(), "set — dashboard sessions can be signed"));
 // twitterapi.io / Lark app are source credentials — you need one only if you collect from that
 // source, in either mode. Absence is a warn, never a fail: a Google+X operator has no Lark, and a
 // Lark-only operator has no twitterapi, and both are valid.
