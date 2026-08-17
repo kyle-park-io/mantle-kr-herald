@@ -114,6 +114,31 @@ npx vercel deploy --prod
 
 되돌릴 때: `npx vercel env rm HERALD_SENDS_ENABLED production -y` 후 다시 `deploy --prod`.
 
+### 링크 수집 열기·닫기
+
+**두 값이 다 있어야 열립니다** — `TWITTERAPI_IO_KEY`(자격증명)와 `HERALD_INTAKE_ENABLED`(스위치).
+키는 §3의 일괄 등록에 이미 들어 있으니, 평소 켜고 끄는 건 플래그 한 줄입니다:
+
+```bash
+printf 'true' | npx vercel env add HERALD_INTAKE_ENABLED production -y
+npx vercel deploy --prod
+```
+
+닫을 때: `npx vercel env rm HERALD_INTAKE_ENABLED production -y` 후 다시 `deploy --prod`.
+
+- [ ] `링크 수집` 탭의 `[넣기]`가 활성화된 것 확인
+- [ ] x.com 링크 **한 개**만 넣어 보고, 대기 목록에 뜨는지 확인
+- [ ] `pnpm status`의 수집 수가 1 늘었는지 확인
+
+> **`TWITTERAPI_IO_KEY`를 지워서 끄지 마세요.** 그것도 닫히긴 하지만, 다시 열려면 시크릿을 어딘가에서
+> 찾아와야 합니다. 스위치는 플래그 쪽입니다 — 키는 한 번 넣고 그대로 둡니다.
+>
+> 이 키는 **배포와 스케줄러 양쪽에** 필요합니다. 배포는 링크 하나를 가져오는 데 쓰고, 스케줄러 머신은
+> `pnpm collect`의 계정 스윕에 씁니다. `.env.example`의 프로파일 표에서 §2 값 중 유일하게 세 프로파일
+> 모두에 표시된 이유입니다.
+>
+> 재배포를 빠뜨리면 아무 일도 일어나지 않습니다 — 함수는 부팅 시점에 읽습니다(`createDeps.ts`).
+
 ### Google OAuth 토큰이 7일마다 죽을 때
 
 **증상:** 일주일쯤 지나면 Drive 업로드·Sheet 기록이 조용히 실패하고, `pnpm doctor --live`가
@@ -485,10 +510,15 @@ for k in TYPEFULLY_API_KEY TYPEFULLY_SOCIAL_SET_ID X_PREMIUM \
          LARK_DRIVE_REVIEW_FOLDER_TOKEN LARK_DRIVE_APPROVED_FOLDER_TOKEN LARK_DRIVE_SENT_FOLDER_TOKEN \
          GSHEET_ID GSHEET_QA_ID; do
   v=$(grep -m1 "^$k=" .env | cut -d= -f2-)
-  [ -z "$v" ] && { echo "SKIP(.env에 없음): $k"; continue; }
+  [ -z "$v" ] && { missing="$missing $k"; continue; }
   printf '%s' "$v" | npx vercel env add "$k" production -y
 done
+[ -n "$missing" ] && printf '\n⚠️  .env에 없어 등록되지 않음:%s\n' "$missing"
 ```
+
+**빠진 것은 반드시 끝에서 다시 확인하세요.** 24개를 도는 루프 한가운데의 한 줄짜리 경고는 스크롤에
+묻힙니다. 실제로 `TWITTERAPI_IO_KEY`가 그렇게 빠진 채로 배포됐고, 증상은 배포가 실패하는 게 아니라
+**링크 수집 탭 하나가 조용히 닫혀 있는 것**이었습니다 — 아무도 안 보면 모릅니다.
 
 옮기지 **않는** 것:
 

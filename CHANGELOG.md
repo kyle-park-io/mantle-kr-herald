@@ -388,7 +388,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deploy side of the freeze listing is deliberately left unfiltered, so copies earlier deploys
   already froze show up once as `- ` removals and are swept rather than sitting there forever.
 
+### Added
+
+- **`HERALD_INTAKE_ENABLED` — 링크 수집 is a switch you flip, not a secret you delete.** The hosted
+  board opened intake the moment `TWITTERAPI_IO_KEY` existed and closed it the moment it did not,
+  which made the credential the toggle: turning intake off meant deleting a secret, and turning it
+  back on meant producing that secret again from wherever it had been kept. A toggle whose off
+  position destroys the value it gates is one an operator uses once. The flag now decides, the
+  credential stays put, and the everyday action is adding or removing the word `true` — the same
+  shape and the same local-entry-point exemption `HERALD_SENDS_ENABLED` already has
+  (`docs/ko/deploy.md`, "링크 수집 열기·닫기"). The key is still required: the flag opens the tab
+  but cannot conjure a credential, and intake stays closed without one.
+
+  The gate sits on the `CollectLinkedThread` construction rather than on `StatusView.intakeEnabled`,
+  because that boolean is *derived* from the dep for the express purpose of keeping the tab and
+  `POST /api/intake/x` on one answer — gating the boolean alone would have put the board on "closed"
+  while the route went on accepting links. `INTAKE_DISABLED_MESSAGE` stopped naming a cause for the
+  same reason it exists: it is read by a reviewer who can act on neither cause, and with two ways to
+  be closed, naming one would be wrong half the time.
+
 ### Fixed
+
+- **`.env.example`'s profile table no longer says the deployment never collects.** It does — 링크
+  수집 fetches the one thread a pasted link names, which is why `TWITTERAPI_IO_KEY` is the single §2
+  value the hosted function reads. The line grouped it with the sweep-only credentials and said
+  "the deployment never collects" flatly, and that sentence cost real time: it is the reason the key
+  was read as belonging only on the scheduler machine, and it made a Production deployment that was
+  silently missing it look correct. The sweep (`pnpm collect`) is still the scheduler's alone, and
+  that machine needs the key too — the table now marks it in all three profiles and says why.
+  `docs/ko/deploy.md`'s bulk-register loop, which is where the key went missing, now collects the
+  names it skipped and prints them once at the end instead of one warning per iteration, twenty-four
+  lines deep.
 
 - **`pnpm doctor` grades the three variables the dashboard cannot start without.** It reported
   `0 fail` on a setup where `pnpm serve` died on its first line — `Missing required environment

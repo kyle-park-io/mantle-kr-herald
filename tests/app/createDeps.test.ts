@@ -254,6 +254,71 @@ describe("createDeps", () => {
   });
 
   /**
+   * Intake is a separate axis from the credential, the way sends are separate from the route set —
+   * and for a reason the credential alone cannot serve. While the key's presence *was* the switch,
+   * closing intake on the hosted board meant deleting a secret, and reopening it meant finding that
+   * secret again; a toggle whose "off" position destroys the value it gates is one nobody reaches
+   * for twice. The flag is the switch now, and the credential stays put.
+   *
+   * The flag gates the *dep*, never `intakeEnabled` alone: that boolean is derived from the dep
+   * (`createDeps.ts`, the block above `storageMode`) precisely so the tab and `POST /api/intake/x`
+   * cannot disagree, and gating only the boolean would have the board say "closed" while the route
+   * happily took links.
+   */
+  describe("the intake flag (HERALD_INTAKE_ENABLED)", () => {
+    const INTAKE_KEY = "HERALD_INTAKE_ENABLED" as const;
+    let savedFlag: string | undefined;
+    let savedApiKey: string | undefined;
+
+    beforeEach(() => {
+      savedFlag = process.env[INTAKE_KEY];
+      savedApiKey = process.env.TWITTERAPI_IO_KEY;
+      delete process.env[INTAKE_KEY];
+      process.env.TWITTERAPI_IO_KEY = "test-only-key";
+    });
+    afterEach(() => {
+      if (savedFlag === undefined) delete process.env[INTAKE_KEY];
+      else process.env[INTAKE_KEY] = savedFlag;
+      if (savedApiKey === undefined) delete process.env.TWITTERAPI_IO_KEY;
+      else process.env.TWITTERAPI_IO_KEY = savedApiKey;
+    });
+
+    it("intakes on the local route set even with the flag unset", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      expect(deps.collectLinkedThread).toBeDefined();
+      expect((await deps.loadStatus()).intakeEnabled).toBe(true);
+    });
+
+    it("is closed on the hosted route set by default, and the route refuses a link", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "hosted" });
+      expect(deps.collectLinkedThread).toBeUndefined();
+      expect((await deps.loadStatus()).intakeEnabled).toBe(false);
+
+      const res = await handleApi(authenticated(deps), "POST", "/api/intake/x", { url: "https://x.com/a/status/1" });
+      expect(res.status).toBe(400);
+    });
+
+    it("opens on the hosted route set once the flag is true", async () => {
+      process.env[INTAKE_KEY] = "true";
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "hosted" });
+      expect(deps.collectLinkedThread).toBeDefined();
+      expect((await deps.loadStatus()).intakeEnabled).toBe(true);
+    });
+
+    it("stays closed when the flag is on but the credential is gone", async () => {
+      process.env[INTAKE_KEY] = "true";
+      delete process.env.TWITTERAPI_IO_KEY;
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "hosted" });
+      expect(deps.collectLinkedThread).toBeUndefined();
+      expect((await deps.loadStatus()).intakeEnabled).toBe(false);
+    });
+  });
+
+  /**
    * The whole point of 되돌리기 is that `postedUrl` survives it — that is what stops the next
    * unattended `x:reconcile` tick from re-retiring an item a human just disputed (see
    * `RetireTranslation`'s own doc comment). `tests/adapters/web/apiHandlers.test.ts`'s equivalent

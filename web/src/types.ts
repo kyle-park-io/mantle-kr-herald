@@ -670,12 +670,13 @@ export type IntakeOutcome = "collected" | "already-pending" | "already-translate
 
 /**
  * Mirrors `INTAKE_DISABLED_MESSAGE` in `src/adapters/web/apiHandlers.ts` — what `POST
- * /api/intake/x` answers on a deployment with no `TWITTERAPI_IO_KEY`. `IntakeView` prints it under
+ * /api/intake/x` answers on a deployment where intake is closed, by either the
+ * `HERALD_INTAKE_ENABLED` flag or a missing `TWITTERAPI_IO_KEY`. `IntakeView` prints it under
  * the disabled `[넣기]` before anyone clicks, and the route answers it to anyone who posts anyway,
  * so the two must be one sentence rather than two wordings of one state.
  * `tests/web/typeMirror.test.ts` keeps them byte-identical.
  */
-export const INTAKE_DISABLED_MESSAGE = "이 배포에는 TWITTERAPI_IO_KEY가 없어 링크 수집을 할 수 없습니다";
+export const INTAKE_DISABLED_MESSAGE = "이 배포는 링크 수집이 꺼져 있습니다";
 
 export interface IntakeReply {
   itemId: string;
