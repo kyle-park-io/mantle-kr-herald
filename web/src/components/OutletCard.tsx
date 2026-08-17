@@ -343,7 +343,7 @@ export function OutletCard(props: {
           */}
           <MediaEditNoticeSlot text={fromEditor(text)} where="변환 원문" />
         </div>
-        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 @max-sm:flex-col @max-sm:items-stretch">
           <Tip text={groupApproved ? APPROVED_LOCK : undefined}>
             <button
               className={btn}
