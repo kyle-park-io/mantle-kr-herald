@@ -152,7 +152,7 @@ export function TranslationDetail(props: {
   const stalePublish = !posted && props.publishRows.some((r) => r.synced === false);
 
   return (
-    <div className="mx-auto max-w-3xl p-6 sm:p-8">
+    <div className="mx-auto max-w-3xl p-6 tablet:p-8">
       <div className="mb-6 flex flex-wrap items-center gap-2.5">
         {props.item.sourcePostedAt && (
           <span className="font-mono text-[13px] font-medium text-faint">{datePrefix(props.item.sourcePostedAt)}</span>

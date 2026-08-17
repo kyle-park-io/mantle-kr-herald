@@ -236,7 +236,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
   const chip = livenessChip(status?.liveness, new Date());
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-ink">
+    <div className="flex h-dvh flex-col bg-bg text-ink">
       <EnvironmentBanner status={status} />
       <header className="shrink-0 border-b border-line bg-surface">
         {/* Every child below is `shrink-0` so a control never squishes down to illegible,
@@ -398,10 +398,10 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
 
           {/* Wraps the (desktop-only) status funnel and the sign-out control together so the whole
               group pushes to the header's right edge — on a narrow screen the funnel hides
-              (`hidden md:flex` below) but 로그아웃 still lands at the far right on its own. */}
+              (`hidden tablet:flex` below) but 로그아웃 still lands at the far right on its own. */}
           <div className="ml-auto flex shrink-0 items-center gap-3">
             {status && (
-              <div className="hidden items-center gap-3 md:flex">
+              <div className="hidden items-center gap-3 tablet:flex">
                 {/* Left of the funnel and set apart with a wider gap: these leave the dashboard,
                     while everything to the right of them reports on it. Each appears only when its id
                     is configured, so an empty GSHEET_QA_ID hides QA rather than linking nowhere. */}
