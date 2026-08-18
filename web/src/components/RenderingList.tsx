@@ -135,7 +135,10 @@ export function RenderingList(props: {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="sticky top-0 z-10 space-y-2 border-b border-line bg-surface/90 px-3 py-2.5 backdrop-blur">
+      {/* `px-5` matches the shell's one phone-width left rail — see `TranslationList.tsx`'s own
+          copy of this comment, which this sidebar mirrors exactly. `tablet:px-3` keeps today's
+          value at 48rem+. */}
+      <div className="sticky top-0 z-10 space-y-2 border-b border-line bg-surface/90 px-5 tablet:px-3 py-2.5 backdrop-blur">
         <div className="inline-flex w-full rounded-lg border border-line bg-bg p-0.5">
           {STATUS_FILTERS.map(([f, label]) => (
             <button
@@ -171,7 +174,7 @@ export function RenderingList(props: {
       </div>
 
       {shown.length === 0 ? (
-        <p className="px-4 py-6 text-[13px] text-faint">해당하는 항목이 없습니다.</p>
+        <p className="px-5 tablet:px-4 py-6 text-[13px] text-faint">해당하는 항목이 없습니다.</p>
       ) : (
         <ul className="flex-1">
           {shown.map((row) => {
@@ -181,12 +184,14 @@ export function RenderingList(props: {
               <li key={row.itemId}>
                 <button
                   onClick={() => props.onSelect(row.itemId)}
-                  className={`flex w-full flex-col gap-1.5 border-b border-line px-4 py-3 text-left transition-colors ${
+                  className={`flex w-full flex-col gap-1.5 border-b border-line px-5 tablet:px-4 py-3 text-left transition-colors ${
                     active ? "bg-mint-soft/60 shadow-[inset_2px_0_0_var(--color-mint)]" : "hover:bg-bg"
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <code className="truncate font-mono text-[11px] text-faint">{row.itemId}</code>
+                    {/* Dropped entirely at phone width, kept at `tablet:` — same call and same
+                        reason as `TranslationList.tsx`'s copy of this row (see its comment). */}
+                    <code className="hidden truncate font-mono text-[11px] text-faint tablet:inline">{row.itemId}</code>
                     <span className="ml-auto flex items-center gap-1.5">
                       <KindBadge kind={row.kind} />
                       {/* The count only when it says something: `승인 2/3` is the state a reviewer

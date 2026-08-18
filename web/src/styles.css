@@ -74,6 +74,21 @@
     border: 2px solid transparent;
     background-clip: content-box;
   }
+  /* The app's own keyboard focus ring, replacing the UA default (a heavy black rectangle in some
+     browsers) — noticeable on `ListDetailShell`'s ☰ and drawer-close buttons specifically, since
+     this app moves focus to and from them programmatically (open/close), not just on tab. Keyed on
+     `:focus-visible`, not `:focus`: a pointer click that focuses a button should stay quiet, and a
+     keyboard user tabbing through should always see where they are.
+
+     Lives in `@layer base` on purpose, not `@layer components`/inline `focus:` utilities: Tailwind
+     v4's cascade layers rank `utilities` above `base`, so wherever a control already carries its
+     own focus treatment — `focus:border-mint`/`focus:ring-*` on the search input and both
+     textareas, all `outline-none` themselves — that utility wins outright and this rule never
+     fires there. No `:not()` exclusion list to keep in sync; the layer order does it. */
+  :focus-visible {
+    outline: 2px solid var(--color-mint);
+    outline-offset: 2px;
+  }
 }
 
 @layer components {

@@ -107,7 +107,11 @@ export function TranslationList(props: {
   const count = (f: Filter) => found.filter((t) => matches(t, f)).length;
   return (
     <div className="flex h-full flex-col">
-      <div className="sticky top-0 z-10 space-y-2 border-b border-line bg-surface/90 px-3 py-2.5 backdrop-blur">
+      {/* `px-5` matches the shell's one phone-width left rail (see `TranslationDetail.tsx`'s own
+          comment on its own `px-5`) — this drawer used to start its filter tabs and search box 8px
+          further in (`px-3`) than everything else on the phone. `tablet:px-3` keeps today's value
+          at 48rem+, where this same `aside` is the static desktop sidebar rather than a drawer. */}
+      <div className="sticky top-0 z-10 space-y-2 border-b border-line bg-surface/90 px-5 tablet:px-3 py-2.5 backdrop-blur">
         <div className="inline-flex w-full rounded-lg border border-line bg-bg p-0.5">
           {FILTERS.map(([f, label]) => (
             <button
@@ -142,7 +146,7 @@ export function TranslationList(props: {
       </div>
 
       {shown.length === 0 ? (
-        <p className="px-4 py-6 text-[13px] text-faint">해당하는 항목이 없습니다.</p>
+        <p className="px-5 tablet:px-4 py-6 text-[13px] text-faint">해당하는 항목이 없습니다.</p>
       ) : (
         <ul className="flex-1">
           {shown.map((t) => {
@@ -151,12 +155,19 @@ export function TranslationList(props: {
               <li key={t.itemId}>
                 <button
                   onClick={() => props.onSelect(t.itemId)}
-                  className={`flex w-full flex-col gap-1.5 border-b border-line px-4 py-3 text-left transition-colors ${
+                  className={`flex w-full flex-col gap-1.5 border-b border-line px-5 tablet:px-4 py-3 text-left transition-colors ${
                     active ? "bg-mint-soft/60 shadow-[inset_2px_0_0_var(--color-mint)]" : "hover:bg-bg"
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <code className="truncate font-mono text-[11px] text-faint">{t.itemId}</code>
+                    {/* `x:2081711456320655933` is 20 characters of grey monospace nobody reads on a
+                        phone — it identifies nothing to a human, and this row already leads with
+                        one line down: the `[YYMMDD]` prefix + Korean preview below. Dropped
+                        entirely at phone width rather than shortened, the same call
+                        `TranslationDetail.tsx` already made for its own copy of this id (see its
+                        comment by the `원문` link) — a shortened id is still unreadable, and the
+                        full id is only ever needed "at a desk", where `tablet:` restores it. */}
+                    <code className="hidden truncate font-mono text-[11px] text-faint tablet:inline">{t.itemId}</code>
                     <span className="ml-auto flex items-center gap-1.5">
                       <KindBadge kind={t.kind} />
                       <StatusChip status={t.status} />
