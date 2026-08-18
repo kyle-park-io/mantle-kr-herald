@@ -7,6 +7,17 @@
 export type LineageStage = "translated" | "converted" | "rendered" | "forked";
 
 /**
+ * Who wrote a lineage entry. Two values, because the question this exists for is one line: did a
+ * person change this, or did a machine? `translate:align` runs inside `herald-watch` every two
+ * hours and saves through the same use case a dashboard edit does, so without this the two are
+ * indistinguishable on disk — see docs/superpowers/specs/2026-08-18-human-edit-signal-design.md.
+ *
+ * `agent:translate` vs `agent:align` is deliberately not modelled: it is derivable from order (an
+ * item's first agent entry is the draft, later ones are alignment revisions) and nothing needs it.
+ */
+export type LineageActor = "human" | "agent";
+
+/**
  * A lineage row with its text left behind — when something happened and what kind of thing it was,
  * and nothing that grows with the copy.
  *
@@ -34,6 +45,11 @@ export interface LineageEvent {
    * "(내용 동일)". Any future producer of a removal should use the same string.
    */
   status?: string;
+  /**
+   * Absent on every row written before 2026-08-18 — the information was never recorded and is not
+   * recoverable, so a null is "nobody said", never "an agent did it". Readers skip such rows.
+   */
+  actor?: LineageActor;
   at: string; // ISO timestamp
 }
 

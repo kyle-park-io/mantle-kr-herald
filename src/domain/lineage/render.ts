@@ -19,7 +19,10 @@ export function renderLineage(entries: LineageEntry[]): string {
     const prev = prevByKey.get(key);
     const variant = e.variant ? `(${e.variant})` : "";
     const status = e.status ? ` [${e.status}]` : "";
-    out.push(`── ${e.at} · ${e.stage}${variant}${status}`);
+    // A null prints nothing at all rather than a placeholder — an old row (predates 2026-08-18)
+    // has no answer, and inventing "미상" would put a word where the absence is the information.
+    const who = e.actor === "human" ? " · 사람" : e.actor === "agent" ? " · 에이전트" : "";
+    out.push(`── ${e.at} · ${e.stage}${variant}${status}${who}`);
     if (e.stage === "translated" && !prev && e.sourceText) out.push("원문:", e.sourceText);
     /**
      * A `reverted` entry records a *removal* (the convention is documented on `LineageEntry.status`,
