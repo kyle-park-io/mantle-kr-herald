@@ -17,12 +17,14 @@ function sheetWith(rows: string[][]): { sheet: SheetClient; ranges: string[] } {
   return { sheet, ranges };
 }
 
-const HEADER = ["kolId", "tgHandle", "sheetLabel", "pricePerPost", "active"];
+// "Social media link", not "tgHandle": the roster now lives in the humans' `KOL list` tab, whose
+// handle column already existed under that name (see LoadKolMap's COL_TG_HANDLE).
+const HEADER = ["kolId", "Social media link", "sheetLabel", "pricePerPost", "active"];
 
 describe("LoadKolMap", () => {
   it("maps columns by header name, not position", async () => {
     const { sheet } = sheetWith([
-      ["sheetLabel", "kolId", "active", "tgHandle", "pricePerPost"],
+      ["sheetLabel", "kolId", "active", "Social media link", "pricePerPost"],
       ["Marine", "marine", "TRUE", "https://t.me/marshallog", "100"],
     ]);
     expect(await new LoadKolMap(sheet).run()).toEqual([
@@ -194,5 +196,39 @@ describe("LoadKolMap", () => {
   it("throws a named error when a required column is absent", async () => {
     const { sheet } = sheetWith([["kolId", "sheetLabel"], ["a", "A"]]);
     await expect(new LoadKolMap(sheet).run()).rejects.toThrow(/tgHandle/);
+  });
+
+  /**
+   * The roster moved out of the machine-only `kol-map` tab into the humans' `KOL list`, which is
+   * what lets a monthly-tab row be resolved through a declared roster instead of a guessed name.
+   * `Social media link` was already there and empty, and `extractTelegramHandle` already reads all
+   * four spellings a human might put in it, so no new handle column was added.
+   */
+  it("reads the roster from 'KOL list', taking the handle from Social media link", async () => {
+    const { sheet } = sheetWith([
+      ["KOL", "KOL Type", "Social media", "Content Price", "Social media link", "Note",
+       "kolId", "sheetLabel", "pricePerPost", "active"],
+      ["In contract"],
+      ["Marshall", "General", "Telegram", "150", "https://t.me/marshallog", "",
+       "marine", "Marine", "100", "TRUE"],
+      ["Cek", "General", "Telegram", "125", "@airdr0p_lab", "",
+       "cek", "CEK", "60", "TRUE"],
+    ]);
+
+    const entries = await new LoadKolMap(sheet).run();
+
+    expect(entries).toEqual([
+      { kolId: "marine", tgHandle: "marshallog", sheetLabel: "Marine", pricePerPost: 100, active: true },
+      { kolId: "cek", tgHandle: "airdr0p_lab", sheetLabel: "CEK", pricePerPost: 60, active: true },
+    ]);
+  });
+
+  it("skips a section row like 'In contract', which carries no kolId", async () => {
+    const { sheet } = sheetWith([
+      ["KOL", "Social media link", "kolId", "sheetLabel", "pricePerPost", "active"],
+      ["In contract"],
+      ["Marshall", "https://t.me/marshallog", "marine", "Marine", "100", "TRUE"],
+    ]);
+    expect((await new LoadKolMap(sheet).run()).map((e) => e.kolId)).toEqual(["marine"]);
   });
 });

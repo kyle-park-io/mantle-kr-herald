@@ -50,3 +50,13 @@ export const KOL_TELEGRAM_HEADER: string[] = [
 
 /** Column order for the human-maintained `kol-map` tab (A-E). Same load-bearing rule as above. */
 export const KOL_MAP_HEADER: string[] = ["kolId", "tgHandle", "sheetLabel", "pricePerPost", "active"];
+
+/**
+ * The columns `LoadKolMap` reads out of the humans' `KOL list` tab. Four are new (`kolId`,
+ * `sheetLabel`, `pricePerPost`, `active`); `Social media link` was already there and empty.
+ *
+ * `pricePerPost` is separate from the tab's existing `Content Price` on purpose: that column is
+ * free text a human negotiates in (`150~180`, `0.01`) and disagrees with this one (Marine is 150
+ * there, 100 here) because they measure different things. Merging them would fabricate agreement.
+ */
+export const KOL_LIST_HEADER = ["kolId", "Social media link", "sheetLabel", "pricePerPost", "active"] as const;

@@ -1,10 +1,11 @@
 import type { SheetClient } from "../ports/SheetClient";
 import type { KolMapEntry } from "../domain/kol/models";
-import { KOL_MAP_HEADER } from "../domain/kol/models";
+import { KOL_MAP_HEADER, KOL_LIST_HEADER } from "../domain/kol/models";
 import { extractTelegramHandle } from "../domain/metrics/handles";
 
-// The kol-map tab is coupled to the team workbook; update here if the tab is renamed.
-const KOL_MAP_RANGE = "'kol-map'!A:Z";
+// The roster lives in the humans' `KOL list` tab; `kol-map` is retired (see the 2026-08-19
+// kol-quarter-tracking spec). Update here if the tab is renamed.
+const KOL_MAP_RANGE = "'KOL list'!A:Z";
 const SEED_DOC = "docs/ko/kol-map-seed.md";
 
 /**
@@ -22,11 +23,24 @@ function headerText(field: keyof KolMapEntry): string {
   return name.toLowerCase();
 }
 
+/**
+ * `KolMapEntry.tgHandle` has no column of that name in `KOL list` — the tab's existing, empty
+ * `Social media link` column (already read by `LoadRoster` for X handles) is read instead, since
+ * `extractTelegramHandle` accepts every form a human might paste there. This can't go through
+ * `headerText()` above, which matches a header cell against a `KolMapEntry` field *name*, and
+ * "Social media link" isn't one — so it's matched against the literal header text instead.
+ */
+function requireHeader(header: readonly string[], text: string): string {
+  const name = header.find((h) => h === text);
+  if (!name) throw new Error(`KOL_LIST_HEADER no longer declares a "${text}" column`);
+  return name.toLowerCase();
+}
+
 const COL_KOL_ID = headerText("kolId");
-const COL_TG_HANDLE = headerText("tgHandle");
 const COL_SHEET_LABEL = headerText("sheetLabel");
 const COL_PRICE = headerText("pricePerPost");
 const COL_ACTIVE = headerText("active");
+const COL_TG_HANDLE = requireHeader(KOL_LIST_HEADER, "Social media link");
 
 /** A leading currency symbol Sheets' FORMATTED_VALUE rendering may prepend to a rate cell. */
 const CURRENCY_PREFIX = /^(?:US\$|\$|₩)\s*/i;
