@@ -403,7 +403,11 @@ export function TranslationDetail(props: {
           width, so the old inline divider (`mx-1 h-5 w-px bg-line`) that separated them within one
           line is gone — there is no longer an adjacent element on the same line for it to separate. */}
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-medium text-faint">발행</span>
+        {/* `w-full`이 이 라벨을 같은 flex-wrap 행 안에서 자기 줄로 올린다. 인라인으로 두면 라벨
+            폭만큼 뒤 버튼들이 밀려서, 바로 위 저장/승인 행의 버튼들과 왼쪽이 어긋난다 —
+            두 행의 버튼은 같은 레일에서 시작해야 한다. 클래스는 아래 `발행 상태`와 같은
+            `eyebrow`로 맞춘다: 둘 다 자기 블록 위에 붙는 라벨이라는 같은 역할이다. */}
+        <span className="eyebrow w-full">발행</span>
         {(["local", "google", "lark"] as const).map((t) => {
           const usable = props.availableTargets.includes(t);
           /**
