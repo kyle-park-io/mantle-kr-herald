@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
-import { btn, btnApprove, btnDanger, btnDone, btnPrimary } from "../buttonStyles";
+import { badge, btn, btnApprove, btnDanger, btnDone, btnPrimary } from "../buttonStyles";
 import { reconcileOutcome, rowEditorGate, resendKind } from "../rowEditor";
 import { fromEditor, toEditor } from "../canonicalEditor";
 import { Tip, type ConfirmRequest } from "./ConfirmDialog";
@@ -914,7 +914,7 @@ function Row(props: {
                   // it lands on an element `items-stretch` never touches.
                   className="@max-sm:self-start"
                 >
-                  <span className="inline-flex items-center gap-1 rounded-lg bg-amber-soft px-3.5 py-1.5 text-[13px] font-medium text-amber-ink">
+                  <span className={`${badge} inline-flex items-center gap-1 bg-amber-soft text-amber-ink`}>
                     예약됨 {stamp(row.at)}
                   </span>
                 </Tip>
@@ -924,7 +924,7 @@ function Row(props: {
                 // bare children whenever a row has no stamp — leaving the span itself as the actual
                 // flex item, uncovered by a class that only ever landed on `Tip`'s own wrapper.
                 <Tip text={stampFull(row.at)} className="@max-sm:self-start">
-                  <span className="inline-flex items-center gap-1 rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint @max-sm:self-start">
+                  <span className={`${badge} inline-flex items-center gap-1 bg-mint-soft text-mint @max-sm:self-start`}>
                     발송됨 {stamp(row.at)}
                   </span>
                 </Tip>

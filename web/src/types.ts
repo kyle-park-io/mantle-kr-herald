@@ -38,6 +38,31 @@ export const kstStamp = (iso?: string): string | undefined => {
 };
 
 /**
+ * `kstStamp` without the year or the trailing `KST` label — `08-12 14:30` instead of
+ * `2026-08-12 14:30 KST`. For the phone width of 1차's detail header, where the labelled/zoned
+ * form (~180px) is why that row wraps to two lines it did not choose deliberately. The label
+ * (`게시 시각`) still says what this is and the `[YYMMDD]` source-date prefix beside it still names
+ * the other date — that gap is the thing the row exists to show (see `kstStamp`'s own comment) —
+ * so this only drops characters a phone reader does not need (year, zone), never the comparison
+ * itself. `tablet:` swaps back to `kstStamp` where there is room to spell both out.
+ */
+export const kstStampCompact = (iso?: string): string | undefined => {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const at = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${at("month")}-${at("day")} ${at("hour")}:${at("minute")}`;
+};
+
+/**
  * `07. 29. 06:20` in Korea time — the compact form for a chip label ("발송됨", "전달함 ☑", "예약됨").
  *
  * Unlabelled on purpose: those chips sit in narrow rows where a trailing ` KST` would wrap. The

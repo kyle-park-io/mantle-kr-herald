@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { datePrefix, itemUrl, kstStamp } from "../types";
+import { datePrefix, itemUrl, kstStamp, kstStampCompact } from "../types";
 import type { Translation, PublishStateRow } from "../types";
 import { StatusChip, KindBadge } from "./TranslationList";
 import { Tip } from "./ConfirmDialog";
 import { ApprovedButton } from "./ApprovedButton";
 import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
 import { diffPublished } from "../publishedDiff";
-import { btn, btnApprove } from "../buttonStyles";
+import { badge, btn, btnApprove } from "../buttonStyles";
 
 const TARGET_LABEL: Record<"local" | "google" | "lark", string> = {
   local: "로컬 폴더",
@@ -151,51 +151,81 @@ export function TranslationDetail(props: {
   return (
     <div className="mx-auto max-w-3xl p-6 tablet:p-8">
       <div className="mb-6 flex flex-wrap items-center gap-2.5">
-        {props.item.sourcePostedAt && (
-          <span className="font-mono text-[13px] font-medium text-faint">{datePrefix(props.item.sourcePostedAt)}</span>
-        )}
-        {url ? (
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="font-mono text-[13px] text-muted underline-offset-2 hover:text-mint hover:underline"
-          >
-            {props.item.itemId}
-          </a>
-        ) : (
-          <code className="font-mono text-[13px] text-muted">{props.item.itemId}</code>
-        )}
-        <span className="rounded-md border border-line px-1.5 py-0.5 font-mono text-[11px] text-faint uppercase">
-          {props.item.source}
-        </span>
-        <KindBadge kind={props.item.kind} />
-        <StatusChip status={props.item.status} />
-        {/* The reviewer's own read on what actually went out — "lock, do not hide": the Korean text
-            below is locked read-only for a posted item, but the live post itself must stay one click
-            away, not merely asserted by the chip above. */}
-        {posted && props.item.postedUrl && (
-          <>
+        {/* Identity: source date, id (or 원문 link), source badge, kind badge. Never the group that
+            breaks — see the state group below for why the split sits here and not wherever each
+            item's text happens to run out of room. */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {props.item.sourcePostedAt && (
+            <span className="font-mono text-[13px] font-medium text-faint">{datePrefix(props.item.sourcePostedAt)}</span>
+          )}
+          {url ? (
             <a
-              href={props.item.postedUrl}
+              href={url}
               target="_blank"
               rel="noreferrer"
-              className="text-[12px] font-medium text-slate-ink underline-offset-2 hover:underline"
+              className="font-mono text-[13px] text-muted underline-offset-2 hover:text-mint hover:underline"
             >
-              게시된 글 보기 ↗
+              {/* `x:2081711456320655644` is ~150px of a 342px phone line for an id nobody reads —
+                  operators copy it into CLI commands, but only at a desk. `tablet:` brings the full
+                  id back for exactly that use. The href/target/rel above are untouched either way. */}
+              <span className="tablet:hidden">원문 ↗</span>
+              <span className="hidden tablet:inline">{props.item.itemId}</span>
             </a>
-            {/* When it went out, beside the link to it. A reviewer's first question about a row they
-                did not approve is "when did this happen?", and the answer is one field away.
+          ) : (
+            // No `postedUrl` to shorten to (a `lark:` item has none), so there is nothing to send
+            // the reader to — dropping the `↗` here rather than promising a tap that goes nowhere.
+            // The id itself is still noise on a phone for the same reason as the link case, so it
+            // gets the same tablet-only treatment.
+            <code className="font-mono text-[13px] text-muted">
+              <span className="tablet:hidden">원문</span>
+              <span className="hidden tablet:inline">{props.item.itemId}</span>
+            </code>
+          )}
+          <span className="rounded-md border border-line px-1.5 py-0.5 font-mono text-[11px] text-faint uppercase">
+            {props.item.source}
+          </span>
+          <KindBadge kind={props.item.kind} />
+        </div>
 
-                Labelled, because this header carries TWO dates: the `[YYMMDD]` prefix at the far
-                left is the *English source* post's date, and this is when our Korean copy actually
-                went out on X. Unlabelled they read as the same kind of thing, and the gap between
-                them — how long the item sat in review — is the very thing worth noticing. */}
-            {kstStamp(props.item.postedAt) && (
-              <span className="text-[12px] text-faint">게시 시각 {kstStamp(props.item.postedAt)}</span>
-            )}
-          </>
-        )}
+        {/* State: status chip, plus (posted-only) the live-post link and when it went out. At 390
+            these two groups' natural widths (~308px/~340px against a 342px content width) do not
+            both fit on one line no matter how short either group's text is, so `w-full` forces this
+            one onto its own line rather than letting `flex-wrap` pick the break by content — the
+            same technique the header's `<nav>` uses (`App.tsx`). `tablet:w-auto` resets it to a
+            content-sized item, restoring the single line this row has always had at 48rem+. */}
+        <div className="flex w-full flex-wrap items-center gap-2.5 tablet:w-auto">
+          <StatusChip status={props.item.status} />
+          {/* The reviewer's own read on what actually went out — "lock, do not hide": the Korean text
+              below is locked read-only for a posted item, but the live post itself must stay one click
+              away, not merely asserted by the chip above. */}
+          {posted && props.item.postedUrl && (
+            <>
+              <a
+                href={props.item.postedUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[12px] font-medium text-slate-ink underline-offset-2 hover:underline"
+              >
+                게시된 글 보기 ↗
+              </a>
+              {/* When it went out, beside the link to it. A reviewer's first question about a row they
+                  did not approve is "when did this happen?", and the answer is one field away.
+
+                  Labelled, because this header carries TWO dates: the `[YYMMDD]` prefix at the far
+                  left is the *English source* post's date, and this is when our Korean copy actually
+                  went out on X. Unlabelled they read as the same kind of thing, and the gap between
+                  them — how long the item sat in review — is the very thing worth noticing. Only the
+                  rendered stamp shrinks on phone (`kstStampCompact` drops the year and ` KST`); the
+                  comparison itself, and the label naming it, do not. */}
+              {kstStamp(props.item.postedAt) && (
+                <span className="text-[12px] text-faint">
+                  <span className="tablet:hidden">게시 시각 {kstStampCompact(props.item.postedAt)}</span>
+                  <span className="hidden tablet:inline">게시 시각 {kstStamp(props.item.postedAt)}</span>
+                </span>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/*
@@ -328,7 +358,7 @@ export function TranslationDetail(props: {
                 permanently visible as inline text beside the textarea above (Task 10) whenever
                 `posted` is true — exactly the condition this badge renders under, so a second copy
                 would only be noise. */}
-            <span className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-slate-soft px-3.5 py-1.5 text-[13px] font-medium text-slate-ink">
+            <span className={`${badge} inline-flex min-w-[5.5rem] items-center justify-center bg-slate-soft text-slate-ink`}>
               게시됨 ✓
             </span>
             <Tip text="게시 처리를 취소하고 검수 대기로 되돌립니다. 게시 기록은 남아 있어 다음 자동 확인이 다시 게시됨으로 표시하지 않습니다.">
