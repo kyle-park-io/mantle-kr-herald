@@ -163,7 +163,7 @@ describe("LoadKolMap", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("says the kol-map tab does not exist instead of surfacing a bare HTTP 400", async () => {
+  it("says the KOL list tab does not exist instead of surfacing a bare HTTP 400", async () => {
     // The very first real run happens before anyone has created the tab.
     const sheet: SheetClient = {
       getValues: async () => { throw new Error("Sheets getValues failed: HTTP 400"); },
@@ -173,7 +173,7 @@ describe("LoadKolMap", () => {
       createSpreadsheet: async () => ({ spreadsheetId: "x" }),
       ensureTab: async () => {},
     };
-    await expect(new LoadKolMap(sheet).run()).rejects.toThrow(/'kol-map' tab does not exist.*kol-map-seed\.md/s);
+    await expect(new LoadKolMap(sheet).run()).rejects.toThrow(/'KOL list' tab does not exist.*kol-map-seed\.md/s);
   });
 
   it("passes a non-400 sheet error through untouched", async () => {
@@ -195,7 +195,12 @@ describe("LoadKolMap", () => {
 
   it("throws a named error when a required column is absent", async () => {
     const { sheet } = sheetWith([["kolId", "sheetLabel"], ["a", "A"]]);
-    await expect(new LoadKolMap(sheet).run()).rejects.toThrow(/tgHandle/);
+    // The message must name the tab it actually reads and the column it actually needs — this
+    // regressed to naming the retired 'kol-map' tab and its "tgHandle" column when LoadKolMap
+    // moved to 'KOL list', which is not where the handle lives there ("Social media link" is).
+    await expect(new LoadKolMap(sheet).run()).rejects.toThrow(
+      /'KOL list' is missing a required column.*"Social media link"/,
+    );
   });
 
   /**
