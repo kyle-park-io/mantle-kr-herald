@@ -47,6 +47,9 @@ export function corpusSummary(corpus: CorpusStatus): string {
   }
 }
 
+/** Korean label for `EditSource`, printed on every substitution row — see `candidateEntry`. */
+const SOURCE_LABEL = { published: "게시 수정", review: "검수 수정" } as const;
+
 function candidateEntry(c: GlossaryCandidate): Record<string, unknown> {
   const entry: Record<string, unknown> = { term: c.term };
   if (c.signal === "substitution") {
@@ -55,6 +58,12 @@ function candidateEntry(c: GlossaryCandidate): Record<string, unknown> {
     // `term`, which must match the ENGLISH source (`checkGlossary` matches against `sourceText`).
     entry._초안_발행 = `${c.draft} → ${c.published}`;
     entry._원문_후보 = c.sourceTerms ?? [];
+    // Which feed(s) produced this pair. A reviewer's own correction (검수 수정) is stronger evidence
+    // than an unattributed difference between our draft and whatever got posted (게시 수정) — the
+    // reviewer had the draft in front of them and chose the words on purpose, where a published-only
+    // pair could just as easily be someone else's copyedit downstream of us. Both labels together mean
+    // both feeds independently produced the same pair, which is stronger evidence than either alone.
+    entry._근거 = (c.sources ?? []).map((s) => SOURCE_LABEL[s]).join(" + ");
   }
   if (c.rule) entry.rule = c.rule;
   if (c.target) entry.target = c.target;

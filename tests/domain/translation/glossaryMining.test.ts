@@ -142,6 +142,7 @@ const SOURCE_TWEETS: string[] = [
 const input = (over: Partial<MiningInput> = {}): MiningInput => ({
   sourceTweets: SOURCE_TWEETS,
   translations: TRANSLATIONS,
+  humanEdits: [],
   glossary: GLOSSARY,
   dismissed: [],
   corpusTweets: CORPUS_TWEETS,
@@ -709,5 +710,49 @@ describe("a degraded corpus", () => {
     expect(result.candidates.every((c) => c.tier === "B")).toBe(true);
     expect(byKey(result, "RWA")!.corpus).toEqual({ ours: 24 });
     expect(result.rejected.map((r) => r.key)).toContain("규모 → 사이즈");
+  });
+});
+
+// ── the third signal: a reviewer's own correction ───────────────────────────────────────────────────
+//
+// `humanEdits` (Task 3's `humanEditPairs`) is the second feed into the same substitution aligner —
+// see the merge comment above `byPair` in glossaryMining.ts. These fixtures do not reuse
+// TRANSLATIONS/CORPUS_TWEETS above: they only need to prove the feed is read and tagged, not repeat
+// the rejection-rule or tiering coverage already pinned further up this file.
+describe("the reviewer-edit feed", () => {
+  it("raises a candidate from a reviewer's edit alone, and says where it came from", () => {
+    // No published pair anywhere in this input — if a substitution shows up at all, it can only have
+    // come from `humanEdits`.
+    const result = mineGlossaryCandidates({
+      sourceTweets: ["Openstock pre-IPO access"],
+      translations: [{ itemId: "x:1", sourceText: "Openstock pre-IPO access", koreanText: "오픈스톡 프리 IPO 접근" }],
+      humanEdits: [{ itemId: "x:1", before: "프리 IPO 접근 권한이 있습니다", after: "프리 IPO 이용 권한이 있습니다" }],
+      glossary: [entry("Mantle", "translate", "맨틀")],
+      dismissed: [],
+      corpusTweets: [],
+      corpusRuns: [],
+      now: "2026-08-18T00:00:00.000Z",
+    });
+    const sub = result.candidates.find((c) => c.signal === "substitution");
+    expect(sub?.sources).toEqual(["review"]);
+  });
+
+  /** The same pair seen in both feeds is stronger evidence, not two findings. */
+  it("merges a pair that both feeds produced, keeping both sources", () => {
+    const result = mineGlossaryCandidates({
+      sourceTweets: [],
+      translations: [
+        { itemId: "x:1", sourceText: "en", koreanText: "구매하신 자산이 좋습니다", publishedText: "구매한 자산이 좋습니다" },
+      ],
+      humanEdits: [{ itemId: "x:2", before: "구매하신 자산이 좋습니다", after: "구매한 자산이 좋습니다" }],
+      glossary: [entry("Mantle", "translate", "맨틀")],
+      dismissed: [],
+      corpusTweets: [],
+      corpusRuns: [],
+      now: "2026-08-18T00:00:00.000Z",
+    });
+    const sub = result.candidates.find((c) => c.signal === "substitution");
+    expect(sub?.sources).toEqual(["published", "review"]);
+    expect(sub?.itemIds).toEqual(["x:1", "x:2"]);
   });
 });

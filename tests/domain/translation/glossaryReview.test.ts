@@ -145,6 +145,23 @@ describe("renderCandidateReview", () => {
   });
 });
 
+describe("the substitution source label", () => {
+  it("says which feed a substitution came from, so the reader knows how strong the evidence is", () => {
+    const rows = renderCandidateReview(
+      {
+        candidates: [{
+          key: "구매하신 → 구매한", signal: "substitution", tier: "A", term: "구매한",
+          draft: "구매하신", published: "구매한", occurrences: 1, itemIds: ["x:1"], sources: ["review"],
+        }],
+        rejected: [],
+        corpus: { state: "missing" },
+      } as never,
+      { path: "/tmp/c.json", now: "2026-08-18T00:00:00.000Z", sourceTweetCount: 0, translationCount: 0 },
+    );
+    expect(JSON.stringify(rows)).toContain("검수 수정");
+  });
+});
+
 describe("corpusSummary", () => {
   it("names the collection window it graded against", () => {
     expect(corpusSummary(FRESH)).toContain("2026-06-01~2026-08-11");

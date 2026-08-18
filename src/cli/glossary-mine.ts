@@ -7,6 +7,7 @@ import { JsonGlossaryStore } from "../adapters/store/JsonGlossaryStore";
 import { JsonGlossaryDismissalStore } from "../adapters/store/JsonGlossaryDismissalStore";
 import { mineGlossaryCandidates, type ReferenceRun } from "../domain/translation/glossaryMining";
 import { corpusSummary, renderCandidateReview } from "../domain/translation/glossaryReview";
+import { humanEditPairs, type TextPair } from "../domain/lineage/humanEdits";
 import { miningNotification } from "./glossaryMineReport";
 import { notifyOps } from "../shared/notifyOps";
 import { readJsonFile, writeJsonFileAtomic } from "../shared/store/jsonFile";
@@ -24,7 +25,8 @@ import { OUTPUT_DIR, glossaryCandidatesPath, paths } from "../paths";
  *
  * Three signals, all in `src/domain/translation/glossaryMining.ts` where a test can fail on them:
  * un-glossed recurring proper nouns in the English source, word-level substitutions a human made
- * between our draft and the published post, and cross-validation of both against the @0xMantleKR
+ * between our draft and what actually went out — either the published post, or a reviewer's own
+ * correction at 1차 검수 (`humanEditPairs`) — and cross-validation of both against the @0xMantleKR
  * reference corpus. The corpus half is what makes the output usable rather than a word list — on the
  * hand-run it threw away two candidates (`시장가`, `사이즈`) that would otherwise have gone into the
  * glossary as wrong renderings.
@@ -109,9 +111,24 @@ try {
   const sourceTweets = threads.flatMap((t) => t.tweets.map((tw) => tw.text ?? ""));
   const corpusTweets = corpusThreads.flatMap((t) => t.tweets.map((tw) => tw.text ?? ""));
 
+  // The second substitution feed: what a reviewer changed at 1차 검수, one pair per item. One `load()`
+  // per item rather than a whole-table read — `listEvents` (`LineageStore.listEvents`) deliberately
+  // drops `content` to keep a whole-table scan cheap, and the diff `humanEditPairs` runs needs the
+  // text. `stage === "translated"` only: a per-channel (`converted`) edit has no English source to
+  // anchor a term against and must not be mined.
+  const lineageItems = await stores.lineageStore.listItems();
+  const humanEdits: TextPair[] = (
+    await Promise.all(
+      lineageItems.map(async (s) =>
+        humanEditPairs((await stores.lineageStore.load(s.itemId)).filter((e) => e.stage === "translated")),
+      ),
+    )
+  ).flat();
+
   const result = mineGlossaryCandidates({
     sourceTweets,
     translations,
+    humanEdits,
     glossary,
     dismissed,
     corpusTweets,
@@ -133,8 +150,9 @@ try {
 
   const tierA = result.candidates.filter((c) => c.tier === "A").length;
   console.log(
-    `\nmined ${sourceTweets.length} source tweet(s) and ${translations.filter((t) => t.publishedText).length} ` +
-      `published translation(s) against ${glossary.length} glossary entries and ${dismissed.length} dismissal(s).`,
+    `\nmined ${sourceTweets.length} source tweet(s), ${translations.filter((t) => t.publishedText).length} ` +
+      `published translation(s), and ${humanEdits.length} reviewer edit(s) against ${glossary.length} glossary ` +
+      `entries and ${dismissed.length} dismissal(s).`,
   );
   console.log(corpusSummary(result.corpus));
   // The positional rule's bulk effect, on stdout as well as in the review file. It is the single
