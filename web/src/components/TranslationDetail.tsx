@@ -149,7 +149,14 @@ export function TranslationDetail(props: {
   const stalePublish = !posted && props.publishRows.some((r) => r.synced === false);
 
   return (
-    <div className="mx-auto max-w-3xl p-6 tablet:p-8">
+    // `px-5`(20px) — the shell's one phone-width left rail. The header, the drawer's own header,
+    // its filter tabs, its search box and its list rows all start at this same x now
+    // (`App.tsx`'s header row, `ListDetailShell.tsx`, `TranslationList.tsx`/`RenderingList.tsx`);
+    // this pane used to sit 4px further in (`p-6`, 24px) than the header above it, which is the
+    // "edge moves twice" a reviewer's eye catches scanning top to bottom. Vertical padding is
+    // untouched — only the horizontal side had a rail to join. `tablet:` keeps today's `p-8`
+    // exactly, on both axes: the two-pane desktop layout is not in scope here.
+    <div className="mx-auto max-w-3xl px-5 py-6 tablet:px-8 tablet:py-8">
       <div className="mb-6 flex flex-wrap items-center gap-2.5">
         {/* Identity: source date, id (or 원문 link), source badge, kind badge. Never the group that
             breaks — see the state group below for why the split sits here and not wherever each
@@ -334,7 +341,14 @@ export function TranslationDetail(props: {
 
       <PublishedCopy item={props.item} posted={posted} />
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      {/* `mt-6`(24px) — every top-level break in this pane reads the same now: identity/state row
+          → 원문 (24, that section's own `mb-6`), 원문 → 한글 (24, ditto), and now 한글's editor →
+          this action row (24). It used to be `mt-4`(16px), a smaller value with no stated reason,
+          which read as a *closer* relationship to the editor than 원문/한글 have to each other —
+          backwards, since "here is what to do with the text" is exactly as big a shift as "here is
+          the next thing to read." `발행 상태` below stays at its own larger `mt-8`/`pt-5`: that one
+          also crosses a `border-t` divider, which earns the extra room this row does not have. */}
+      <div className="mt-6 flex flex-wrap items-center gap-2">
         {/* `posted`/`approved` are both in 저장's `disabled` expression, so they only ever reach a
             reviewer through `Tip` — a `title` conditioned on either never renders. The Drive/local
             reminder that used to share this button's `title` moved to the always-visible paragraph

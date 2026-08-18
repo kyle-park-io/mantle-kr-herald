@@ -97,7 +97,7 @@ export function ListDetailShell({
       >
         {/* 드로우 자신의 헤더. 태블릿 이상에서는 숨는다 — 그 폭에서는 `aside`가 이미 평범한 컬럼이라
             닫을 것이 없다. */}
-        <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface px-3 py-2 tablet:hidden">
+        <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface px-5 py-2 tablet:hidden">
           <span className="text-[13px] font-medium text-muted">목록</span>
           {/* 테두리 없이 글리프만 — 히트 영역은 44x44로 유지하되(손가락이 닿아야 하니까),
               보이는 무게는 옆의 작은 `목록` 라벨에 맞춘다. 테두리를 두르면 이 작은 헤더에서
@@ -121,7 +121,7 @@ export function ListDetailShell({
             `App`까지 올려 `RenderingsView`에도 내려보내야 하는데, 셸이 자기 트리거를 직접 들면 그
             배선이 아예 없다. 그리고 드로우가 닫히면 목록의 하이라이트가 안 보이므로, 폰에는 "지금
             무엇을 보고 있는지" 적을 자리가 따로 필요하다. */}
-        <div className="flex shrink-0 items-center gap-2.5 border-b border-line bg-surface px-4 py-2 tablet:hidden">
+        <div className="flex shrink-0 items-center gap-2.5 border-b border-line bg-surface px-5 py-2 tablet:hidden">
           <button
             type="button"
             ref={triggerRef}

@@ -107,7 +107,11 @@ export function TranslationList(props: {
   const count = (f: Filter) => found.filter((t) => matches(t, f)).length;
   return (
     <div className="flex h-full flex-col">
-      <div className="sticky top-0 z-10 space-y-2 border-b border-line bg-surface/90 px-3 py-2.5 backdrop-blur">
+      {/* `px-5` matches the shell's one phone-width left rail (see `TranslationDetail.tsx`'s own
+          comment on its own `px-5`) — this drawer used to start its filter tabs and search box 8px
+          further in (`px-3`) than everything else on the phone. `tablet:px-3` keeps today's value
+          at 48rem+, where this same `aside` is the static desktop sidebar rather than a drawer. */}
+      <div className="sticky top-0 z-10 space-y-2 border-b border-line bg-surface/90 px-5 tablet:px-3 py-2.5 backdrop-blur">
         <div className="inline-flex w-full rounded-lg border border-line bg-bg p-0.5">
           {FILTERS.map(([f, label]) => (
             <button
@@ -142,7 +146,7 @@ export function TranslationList(props: {
       </div>
 
       {shown.length === 0 ? (
-        <p className="px-4 py-6 text-[13px] text-faint">해당하는 항목이 없습니다.</p>
+        <p className="px-5 tablet:px-4 py-6 text-[13px] text-faint">해당하는 항목이 없습니다.</p>
       ) : (
         <ul className="flex-1">
           {shown.map((t) => {
@@ -151,19 +155,43 @@ export function TranslationList(props: {
               <li key={t.itemId}>
                 <button
                   onClick={() => props.onSelect(t.itemId)}
-                  className={`flex w-full flex-col gap-1.5 border-b border-line px-4 py-3 text-left transition-colors ${
+                  className={`flex w-full flex-col gap-1.5 border-b border-line px-5 tablet:px-4 py-3 text-left transition-colors ${
                     active ? "bg-mint-soft/60 shadow-[inset_2px_0_0_var(--color-mint)]" : "hover:bg-bg"
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <code className="truncate font-mono text-[11px] text-faint">{t.itemId}</code>
-                    <span className="ml-auto flex items-center gap-1.5">
+                    {/* Dropping the id on phone (below) left this line with nothing on its left —
+                        badges floating alone, right-aligned, above a ragged blank run. The
+                        `[YYMMDD]` prefix moves up from the preview line to fill that spot: it is
+                        the thing a reviewer's eye already goes to first, so promoting it costs
+                        nothing new to read. `tablet:hidden` here / `tablet:inline` on the copy
+                        still in the preview paragraph below swap the two back at 48rem+, where the
+                        id (still `tablet:inline`) is the row's left anchor and the date stays where
+                        it always sat, inline with the preview text. Absent for a `lark:` item (no
+                        joined source item, so no `sourcePostedAt`) — the badges' `ml-auto` is then
+                        conditional too, so they sit flush left instead of floating right of a blank
+                        run in that case as well. */}
+                    {t.sourcePostedAt && (
+                      <span className="font-mono text-[11px] text-faint tablet:hidden">{datePrefix(t.sourcePostedAt)}</span>
+                    )}
+                    {/* `x:2081711456320655933` is 20 characters of grey monospace nobody reads on a
+                        phone — it identifies nothing to a human, and this row already leads with
+                        one line down: the `[YYMMDD]` prefix (now on this line, see above) +
+                        Korean preview below. Dropped entirely at phone width rather than
+                        shortened, the same call `TranslationDetail.tsx` already made for its own
+                        copy of this id (see its comment by the `원문` link) — a shortened id is
+                        still unreadable, and the full id is only ever needed "at a desk", where
+                        `tablet:` restores it. */}
+                    <code className="hidden truncate font-mono text-[11px] text-faint tablet:inline">{t.itemId}</code>
+                    <span className={`flex items-center gap-1.5 tablet:ml-auto ${t.sourcePostedAt ? "ml-auto" : ""}`}>
                       <KindBadge kind={t.kind} />
                       <StatusChip status={t.status} />
                     </span>
                   </div>
                   <p className="line-clamp-2 text-[13px] leading-snug text-ink/90">
-                    {t.sourcePostedAt && <span className="mr-1 font-mono text-faint">{datePrefix(t.sourcePostedAt)}</span>}
+                    {t.sourcePostedAt && (
+                      <span className="mr-1 hidden font-mono text-faint tablet:inline">{datePrefix(t.sourcePostedAt)}</span>
+                    )}
                     {preview(t)}
                   </p>
                 </button>
