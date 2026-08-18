@@ -46,7 +46,9 @@ describe("lineage capture", () => {
     await new SaveRendering(fakeFormatting, () => "T", l.store, "agent").run({
       itemId: "x:1", type: "announcement", channel: "telegram", text: "본문",
     });
-    expect(l.appended[0]).toMatchObject({ itemId: "x:1", stage: "rendered", variant: "announcement/telegram", status: "rendered", at: "T" });
+    // `toEqual`, not `toMatchObject`: a subset match would pass whether `actor` was populated
+    // correctly, dropped, or hardcoded to the wrong value — see task-2-report.md's fix-round-1 note.
+    expect(l.appended[0]).toEqual({ itemId: "x:1", stage: "rendered", variant: "announcement/telegram", content: "본문", status: "rendered", at: "T", actor: "agent" });
   });
 
   it("SaveConversion appends a converted entry", async () => {
@@ -69,7 +71,28 @@ describe("lineage capture", () => {
       listRenderedKeys: async () => new Set(),
     };
     await new ApproveRendering(store, fakeConversionStore, fakeFewShotByType, () => "T", l.store, "agent").run({ itemId: "x:1", type: "announcement", channel: "telegram" });
-    expect(l.appended[0]).toMatchObject({ itemId: "x:1", stage: "rendered", variant: "announcement/telegram", content: "본문", status: "approved", at: "T" });
+    // `toEqual`, not `toMatchObject`: see the `SaveRendering` test above for why a subset match
+    // cannot prove `actor` is wired.
+    expect(l.appended[0]).toEqual({ itemId: "x:1", stage: "rendered", variant: "announcement/telegram", content: "본문", status: "approved", at: "T", actor: "agent" });
+  });
+
+  /**
+   * The append at the bottom of `ApproveRendering.run` is unconditional — it fires whether `approve`
+   * ends up `true` or `false` — so the approve-path test above and this one exercise the exact same
+   * `this.lineage.append(...)` call. Both are kept because a future change that only checked `if
+   * (approve)` before appending would still pass the approve-path test alone.
+   */
+  it("ApproveRendering appends a rendered entry with status \"rendered\" on 승인 취소", async () => {
+    const l = fakeLineage();
+    const store: FormattingStore = {
+      loadAll: async () => [
+        { itemId: "x:1", type: "announcement", channel: "telegram", text: "본문", refined: true, createdAt: "C", status: "approved", approvedAt: "A" },
+      ],
+      upsert: async () => {},
+      listRenderedKeys: async () => new Set(),
+    };
+    await new ApproveRendering(store, fakeConversionStore, fakeFewShotByType, () => "T", l.store, "agent").run({ itemId: "x:1", type: "announcement", channel: "telegram", approve: false });
+    expect(l.appended[0]).toEqual({ itemId: "x:1", stage: "rendered", variant: "announcement/telegram", content: "본문", status: "rendered", at: "T", actor: "agent" });
   });
 
   it("ApproveRendering does NOT append when the rendering is not found", async () => {
