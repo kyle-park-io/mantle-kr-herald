@@ -52,6 +52,18 @@ npx vercel deploy --prod
 pnpm deploy:smoke https://mantle-kr-herald.vercel.app
 ```
 
+> ⚠️ **스키마가 바뀌는 머지라면 이 순서를 뒤집으세요 — `bash deploy/herald-deploy.sh --yes`를
+> 먼저 돌립니다.** 그 스크립트만 `pnpm db:migrate`를 실행하므로, Vercel을 먼저 올리면 새 칼럼을
+> 쓰는 함수가 아직 그 칼럼이 없는 프로덕션 데이터베이스를 보게 됩니다. 위 세 줄은 스키마 변경이
+> 없는 배포를 전제한 것이고, 그 전제가 여기 적혀 있지 않아서 2026-08-19 `lineage.actor` 배포에서
+> 실제로 순서가 뒤바뀌었습니다. 그때 열린 창은 조용합니다: 대시보드의 저장은 성공하고
+> **계보(lineage) 기록만 남지 않습니다** — `SaveTranslation`이 append 실패를 잡아 경고만 찍기
+> 때문입니다(`src/app/SaveTranslation.ts`). 그날은 그 사이 저장이 없어서 손실이 없었지만, 그건
+> 운이었습니다.
+>
+> 스키마가 바뀌었는지 모르겠으면 `git diff main~1 -- src/adapters/db/schema.ts`가 비어 있는지
+> 보세요. 비어 있지 않으면 스키마 변경입니다.
+
 `deploy:check`가 로컬 개발 DB 연결로 거부하면(`pnpm doctor --live` 실패) 프로덕션 문제가 아니라
 로컬 컨테이너가 내려간 것입니다 — `docker start herald-db`로 올리고 다시 돌리세요. 게이트를
 `--skip-tests`로 우회하지 마세요, 그 플래그는 테스트만 건너뜁니다.
