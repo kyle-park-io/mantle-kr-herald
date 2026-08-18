@@ -113,11 +113,28 @@ export function TranslationList(props: {
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`flex-1 whitespace-nowrap rounded-[7px] px-2 py-1 text-[12px] font-medium transition-colors ${
+              // ~26px before this — already clears WCAG 2.2 SC 2.5.8's 24×24 floor, which is why an
+              // earlier pass left it. Reopened because the drawer this sits in is now the phone's
+              // primary list surface, not a secondary one. `pointer-coarse:` only grows it for a
+              // finger — a mouse in a narrowed desktop window sees the same 4-way segmented control
+              // at the same density as before, since the whole row (`align-items: stretch` by
+              // default) grows to match whichever tab's `min-h` applies.
+              className={`flex-1 inline-flex items-center justify-center whitespace-nowrap rounded-[7px] px-2 py-1 text-[12px] font-medium transition-colors pointer-coarse:min-h-11 ${
                 filter === f ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
               }`}
             >
-              {label} <span className="font-mono text-[11px] tabular-nums text-faint">{count(f)}</span>
+              {/* Same trap `App.tsx` documents on 수집134: this button became `inline-flex` for
+                  `pointer-coarse:min-h-11` to size it, and a whitespace-only text run between two
+                  JSX elements is not rendered as an anonymous flex item — so the space between
+                  `{label}` and the count span was dropping (전체12, not 전체 12). The literal space
+                  in `{label} <span>` below stays — it is what keeps the accessible name "전체 3",
+                  not "전체3" — but since that text run still renders as zero-width once this wrapper
+                  is itself a flex container, `gap-[3.34px]` supplies the visible space instead.
+                  `gap-[3.34px]` rather than a step on the spacing scale: that is the measured width
+                  of the space it replaces at this button's own `text-[12px]`, not just "some" gap. */}
+              <span className="flex items-center gap-[3.34px]">
+                {label} <span className="font-mono text-[11px] tabular-nums text-faint">{count(f)}</span>
+              </span>
             </button>
           ))}
         </div>

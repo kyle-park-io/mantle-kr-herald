@@ -6,9 +6,10 @@ import { kstStamp, type CollectedBreakdown } from "../types";
  *
  * A card rather than more terms on the strip: `수집 134 · 번역 23 · 변환 3 10건 · 렌더 3 13건 · 발행 9
  * 16건` has no room for four more numbers, and this dashboard already answers "the number has a
- * story" with a hover popover — the storage-mode chip in `App.tsx` and every media marker in
- * `MarkerText.tsx` use this exact shell (`group` on the target, `absolute left-0 top-full` on a
- * `hidden … group-hover:block` panel). This is that idiom again, not a second one.
+ * story" with a hover popover — the storage-mode chip in `App.tsx` and `Tip` open the same
+ * `InfoPopover`. This is that idiom again, not a second one. Positioning, open/close and the trigger
+ * live in `InfoPopover`; this component renders only the card's own content, which `App.tsx` wraps in
+ * an `InfoPopover` at the 수집 stage of the funnel.
  *
  * Two halves, with different reach, and the difference is stated rather than smoothed over:
  *
@@ -29,10 +30,7 @@ import { kstStamp, type CollectedBreakdown } from "../types";
 export function CollectedBreakdownCard({ breakdown }: { breakdown: CollectedBreakdown }) {
   const reach = reachCopy(breakdown.reach);
   return (
-    <div
-      data-testid="collected-breakdown"
-      className="pointer-events-none absolute left-0 top-full z-30 mt-2 hidden w-80 rounded-lg border border-line bg-surface p-3 text-left text-[12px] font-normal leading-relaxed text-muted shadow-lg group-hover/collected:block"
-    >
+    <div data-testid="collected-breakdown" className="text-left">
       <p className="font-semibold text-ink">수집 {breakdown.total}건은 이렇게 나온 숫자입니다</p>
 
       {/* Absent when there is no honest funnel to draw — no X threads at all, or two reads of the

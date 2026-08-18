@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
-import { btn, btnApprove, btnApproved, btnApprovedHover, btnApprovedRest, btnDanger, btnPrimary } from "../buttonStyles";
+import { btn, btnApprove, btnDanger, btnDone, btnPrimary } from "../buttonStyles";
 import { reconcileOutcome, rowEditorGate, resendKind } from "../rowEditor";
 import { fromEditor, toEditor } from "../canonicalEditor";
 import { Tip, type ConfirmRequest } from "./ConfirmDialog";
+import { ApprovedButton, GROUP_LEVEL_LINES } from "./ApprovedButton";
 import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
 import {
   CHANNEL_FORMAT_NOTE,
@@ -227,7 +228,17 @@ export function OutletCard(props: {
   const addable = group.addableOutletIds.filter((id) => !added.includes(id));
 
   return (
-    <article className="relative rounded-xl border border-line bg-surface shadow-sm">
+    <article className="relative rounded-xl border border-line bg-surface shadow-sm @container">
+      {/*
+        `@container` here, not on the detail pane or the board list: this card sits at full phone
+        width in one shell and beside a 320px sidebar in another, and the action rows below need to
+        stack on the card's own narrow box regardless of which shell put it there. Every `@max-sm:`
+        in this card resolves against this one container — `Source`'s converted-text pane below used
+        to carry a second, nested `@container` of its own, but nothing inside it (`MarkerText`) has
+        an `@`-variant class to resolve against it, so it queried nothing and was removed. A
+        container with nothing querying it still brings layout containment (`container-type:
+        inline-size`), so it was not free to leave in place as unread documentation.
+      */}
       {/*
         A tab hanging from the card's top edge, coloured by approval. The board is a column of
         near-identical cards, and the one thing a reviewer scans for is which of them still need
@@ -274,9 +285,11 @@ export function OutletCard(props: {
               : "bg-surface text-ink focus:border-mint focus:ring-4 focus:ring-mint/10"
           }`}
           // Approved copy is locked, exactly as in 1차. Editing it would silently drop the card back
-          // to `rendered` — the rooms stop being sendable with nothing on screen having said so.
+          // to `rendered` — the rooms stop being sendable with nothing on screen having said so. The
+          // reason used to ride this element's own `title` — invisible on touch — and now lands as
+          // the inline notice beside `MediaEditNoticeSlot` instead, so a reviewer reads it without
+          // hovering anything.
           readOnly={groupApproved}
-          title={groupApproved ? APPROVED_LOCK : undefined}
           value={text}
           onChange={(e) => setText(e.target.value)}
           spellCheck={false}
@@ -334,49 +347,51 @@ export function OutletCard(props: {
             `MediaEditNoticeSlot` is what reserves that height.
           */}
           <MediaEditNoticeSlot text={fromEditor(text)} where="변환 원문" />
+          {/* `APPROVED_LOCK` used to ride the textarea's own `title` above — invisible on touch. Now
+              inline and permanently visible instead of behind a hover/tap. Fix round 1: this used to
+              ALSO sit behind a `Tip` on 저장 below (`text={groupApproved ? APPROVED_LOCK : undefined}`,
+              from Task 2) — the same message in two places, one of them requiring an interaction the
+              other doesn't. Kept this one, dropped the `Tip`: a reviewer reads the reason with zero
+              interaction rather than needing to know to hover/tap 저장 first. */}
+          {groupApproved && <p>{APPROVED_LOCK}</p>}
         </div>
-        <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          <Tip text={groupApproved ? APPROVED_LOCK : undefined}>
-            <button
-              className={btn}
-              disabled={busy || !groupDirty || groupApproved}
-              onClick={() =>
-                run(async () => {
-                  // Adopt what the server actually stored. `toCanonical` trims and collapses blank
-                  // lines, so a save can legitimately return the string that was already there —
-                  // and waiting for `group.text` to change would then leave the card `편집 중`
-                  // forever, with 저장 inert and 승인 greyed until a reload.
-                  const saved = await api.editRendering(itemId, type, channel, text);
-                  setText(toEditor(saved.text));
-                  await props.onGroupChanged();
-                })
-              }
-            >
-              저장
-            </button>
-          </Tip>
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 @max-sm:flex-col @max-sm:items-stretch">
+          <button
+            className={btn}
+            disabled={busy || !groupDirty || groupApproved}
+            onClick={() =>
+              run(async () => {
+                // Adopt what the server actually stored. `toCanonical` trims and collapses blank
+                // lines, so a save can legitimately return the string that was already there —
+                // and waiting for `group.text` to change would then leave the card `편집 중`
+                // forever, with 저장 inert and 승인 greyed until a reload.
+                const saved = await api.editRendering(itemId, type, channel, text);
+                setText(toEditor(saved.text));
+                await props.onGroupChanged();
+              })
+            }
+          >
+            저장
+          </button>
           {group.status === "approved" ? (
             // Same hover-swap control as 1차: one grid cell holds both labels so the button sizes to
             // the wider and never jumps. Approval has to be withdrawable here — the editor above is
             // locked while approved, so this is the only way back to editing.
-            <button
-              className={btnApproved}
+            <ApprovedButton
               disabled={busy}
-              title="클릭하면 승인을 취소합니다"
-              onClick={() =>
+              onConfirm={props.onConfirm}
+              // This group's own approval, not the item's — `api.approveRendering(..., false)` flips
+              // only this `(itemId, type, channel)` rendering back to `rendered` (`ApproveRendering.run`).
+              // The default `ITEM_LEVEL_LINES` ("이 항목이 다시 검수 대기로 돌아갑니다") would be
+              // false here: the 1차 item and every other group on this board are untouched.
+              lines={GROUP_LEVEL_LINES}
+              onUnapprove={() =>
                 run(async () => {
                   await api.approveRendering(itemId, type, channel, false);
                   await props.onGroupChanged();
                 })
               }
-            >
-              <span className={btnApprovedRest}>
-                승인됨 ✓
-              </span>
-              <span className={btnApprovedHover}>
-                승인 취소
-              </span>
-            </button>
+            />
           ) : (
             <Tip text={groupDirty ? SAVE_FIRST : undefined}>
               <button
@@ -480,7 +495,7 @@ export function OutletCard(props: {
         ) : (
           <>
             <button
-              className="text-[13px] font-medium text-muted transition-colors hover:text-ink"
+              className="inline-flex items-center text-[13px] font-medium text-muted transition-colors pointer-coarse:min-h-11 hover:text-ink"
               onClick={() => setPicking((p) => !p)}
             >
               {picking ? "− 닫기" : "+ 다른 방 추가"}
@@ -490,7 +505,7 @@ export function OutletCard(props: {
                 {addable.map((id) => (
                   <button
                     key={id}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-line bg-bg px-2 py-1 text-[13px] text-ink transition-colors hover:bg-surface"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-line bg-bg px-2 py-1 text-[13px] text-ink transition-colors pointer-coarse:min-h-11 hover:bg-surface"
                     onClick={() => {
                       setAdded((p) => [...p, id]);
                       setPicking(false);
@@ -549,9 +564,9 @@ function Source({ convertedText }: { convertedText: string }) {
       {convertedText ? (
         // No height cap / scroll here on purpose: a photo marker is normally the LAST line of the
         // converted text (`XContentSource.mediaMarkers()` appends it), so it sits near the bottom of
-        // whatever box this is — and a capped `overflow-y-auto` clips the absolutely-positioned
-        // hover-preview card in `PhotoMarker` right where it matters most, on nearly every card. The
-        // `<details>` this sits in is already collapsed by default, so the cap was a second
+        // whatever box this is — and a capped `overflow-y-auto` would clip the inline preview
+        // `MarkerText` expands right below the marker, right where it matters most, on nearly every
+        // card. The `<details>` this sits in is already collapsed by default, so the cap was a second
         // space-saving mechanism inside a section the reviewer has deliberately expanded to read —
         // and a preview that cannot be seen is worse than a taller expanded pane.
         <div className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed text-muted">
@@ -595,7 +610,7 @@ function DestinationPreview(props: {
             <button
               key={d}
               onClick={() => setTab(d)}
-              className={`rounded-[7px] px-2.5 py-1 text-[13px] font-medium transition-colors ${
+              className={`inline-flex items-center rounded-[7px] px-2.5 py-1 text-[13px] font-medium transition-colors pointer-coarse:min-h-11 ${
                 d === active ? "bg-bg text-ink shadow-sm" : "text-muted hover:text-ink"
               }`}
             >
@@ -840,12 +855,11 @@ function Row(props: {
       <div className="flex flex-wrap items-center gap-2 px-4 py-2">
         <span className="text-[14px] font-medium text-ink">{row.label}</span>
         {row.siblingCount > 1 && (
-          <span
-            className="rounded bg-bg px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-muted"
-            title={`이 방은 이 항목에서 ${row.siblingCount}건을 받습니다`}
-          >
-            {row.siblingIndex}/{row.siblingCount}
-          </span>
+          <Tip text={`이 방은 이 항목에서 ${row.siblingCount}건을 받습니다`}>
+            <span className="rounded bg-bg px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-muted">
+              {row.siblingIndex}/{row.siblingCount}
+            </span>
+          </Tip>
         )}
         <span className="text-[12px] text-faint">{row.delivery === "auto" ? "자동" : "수동"}</span>
         {row.pending && (
@@ -863,12 +877,8 @@ function Row(props: {
           </Tip>
         )}
 
-        <button
-          onClick={props.onToggle}
-          className={`rounded px-1.5 py-0.5 text-[12px] font-medium transition-colors ${
-            row.forked ? "bg-amber-soft text-amber-ink" : "text-faint hover:text-ink"
-          }`}
-          title={
+        <Tip
+          text={
             gate.readOnly
               ? "이 방에 나간 글을 봅니다 — 고칠 수 없습니다"
               : row.forked
@@ -876,10 +886,17 @@ function Row(props: {
                 : "이 방만 다른 글을 씁니다"
           }
         >
-          {gate.readOnly ? (row.forked ? "✎따로 · 보기" : "글 보기") : row.forked ? "✎따로" : "✎ 따로 쓰기"}
-        </button>
+          <button
+            onClick={props.onToggle}
+            className={`inline-flex items-center rounded px-1.5 py-0.5 text-[12px] font-medium transition-colors pointer-coarse:min-h-11 ${
+              row.forked ? "bg-amber-soft text-amber-ink" : "text-faint hover:text-ink"
+            }`}
+          >
+            {gate.readOnly ? (row.forked ? "✎따로 · 보기" : "글 보기") : row.forked ? "✎따로" : "✎ 따로 쓰기"}
+          </button>
+        </Tip>
 
-        <span className="ml-auto flex flex-wrap items-center gap-2">
+        <span className="ml-auto flex flex-wrap items-center gap-2 @max-sm:ml-0 @max-sm:flex-col @max-sm:items-stretch">
           {sent ? (
             <>
               {/*
@@ -888,18 +905,29 @@ function Row(props: {
                 that 발송됨 with a time beside it asserts something that has not happened yet.
               */}
               {row.awaitingPublish ? (
-                <Tip text={`${stampFull(row.at) ?? ""}에 예약했습니다. X는 링크가 있는 글을 즉시 게시하지 않아 2분 뒤 큐를 통해 올라갑니다. [게시 확인]을 누르면 실제 주소를 가져옵니다.`}>
+                <Tip
+                  text={`${stampFull(row.at) ?? ""}에 예약했습니다. X는 링크가 있는 글을 즉시 게시하지 않아 2분 뒤 큐를 통해 올라갑니다. [게시 확인]을 누르면 실제 주소를 가져옵니다.`}
+                  // `text` here is never `undefined` (the template literal always has a value), so
+                  // `Tip` always wraps this in `InfoPopover` — whose own root span is what actually
+                  // lays out in the row, not the `<span>` below. `@max-sm:self-start` has to ride on
+                  // this `className`, the same way `DestinationPreview`'s `ml-auto` [복사] does, or
+                  // it lands on an element `items-stretch` never touches.
+                  className="@max-sm:self-start"
+                >
                   <span className="inline-flex items-center gap-1 rounded-lg bg-amber-soft px-3.5 py-1.5 text-[13px] font-medium text-amber-ink">
                     예약됨 {stamp(row.at)}
                   </span>
                 </Tip>
               ) : (
-                <span
-                  className="inline-flex items-center gap-1 rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint"
-                  title={stampFull(row.at)}
-                >
-                  발송됨 {stamp(row.at)}
-                </span>
+                // `@max-sm:self-start` on BOTH, same reason as `DestinationPreview`'s `ml-auto` [복사]
+                // (`:641-643` below): `stampFull(row.at)` is `string | undefined`, so `Tip` renders
+                // bare children whenever a row has no stamp — leaving the span itself as the actual
+                // flex item, uncovered by a class that only ever landed on `Tip`'s own wrapper.
+                <Tip text={stampFull(row.at)} className="@max-sm:self-start">
+                  <span className="inline-flex items-center gap-1 rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint @max-sm:self-start">
+                    발송됨 {stamp(row.at)}
+                  </span>
+                </Tip>
               )}
               {row.awaitingPublish && (
                 <button
@@ -980,7 +1008,7 @@ function Row(props: {
           ) : delivered ? (
             <Tip text={`${stampFull(row.at) ?? ""} — 누르면 전달 기록이 지워집니다. 방에 붙여넣은 글은 그대로 남습니다.`}>
               <button
-                className="rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint transition-colors hover:bg-mint-soft/70 disabled:opacity-40"
+                className={btnDone}
                 disabled={busy}
                 onClick={() => run(async () => apply(await api.markOutlet(itemId, type, row.outletId, false)))}
               >
@@ -1044,13 +1072,17 @@ function Row(props: {
             both `pending` and `dropped` at once.
           */}
           {row.pending && !row.deliveryStatus && (
-            <button
-              className="text-[13px] text-faint transition-colors hover:text-ink"
-              onClick={props.onDrop}
-              title="이 행을 목록에서 뺍니다"
-            >
-              ✕
-            </button>
+            <Tip text="이 행을 목록에서 뺍니다">
+              <button
+                // Icon-only, no padding at all before this — ~17px. `min-w` alongside `min-h`
+                // because a single glyph has no text to give the box width the way a labelled
+                // button does.
+                className="inline-flex items-center justify-center text-[13px] text-faint transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11 hover:text-ink"
+                onClick={props.onDrop}
+              >
+                ✕
+              </button>
+            </Tip>
           )}
         </span>
       </div>
@@ -1096,45 +1128,49 @@ function Row(props: {
             describe a string the reviewer is no longer looking at.
           */}
           <MediaEditNoticeSlot text={fromEditor(shownDraft)} where="변환 원문" className="mt-1.5" />
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2 @max-sm:flex-col @max-sm:items-stretch">
+            {/* No `title`/`Tip` here (Task 10 removed one): its message — "저장하면 이 방은 그룹과
+                분리되어 따로 검수·발송합니다" — is already permanently visible, unconditionally, as
+                `gate.showForkHint`'s span a few lines below ("저장하면 이 방만 따로 검수·발송합니다"),
+                which renders under the identical condition (`!locked && !row.forked`). A `Tip` saying
+                the same thing again would be noise nobody needs to click through: the always-on span
+                already beats a hover/tap card for a reader who has not interacted with anything yet. */}
             {gate.showSave && (
               <button
                 className={btn}
                 disabled={gate.saveDisabled}
-                title={row.forked ? undefined : "저장하면 이 방은 그룹과 분리되어 따로 검수·발송합니다"}
                 onClick={() => run(async () => apply(await api.editOutlet(itemId, type, row.outletId, props.draft)))}
               >
                 저장
               </button>
             )}
             {gate.showCancel && (
-              <button
-                className={btn}
-                disabled={busy}
-                title={row.forked ? "고친 내용을 버리고 저장된 이 방 글로 되돌립니다" : "고친 내용을 버립니다 — 이 방은 그룹 글을 계속 씁니다"}
-                onClick={props.onCancel}
+              <Tip
+                text={
+                  row.forked
+                    ? "고친 내용을 버리고 저장된 이 방 글로 되돌립니다"
+                    : "고친 내용을 버립니다 — 이 방은 그룹 글을 계속 씁니다"
+                }
               >
-                취소
-              </button>
+                <button className={btn} disabled={busy} onClick={props.onCancel}>
+                  취소
+                </button>
+              </Tip>
             )}
             {/* Withdrawable until the room has actually been posted to; after that it is a record. */}
             {gate.showUnapprove ? (
-              <button
-                className={btnApproved}
+              // A forked room's own approval, not the item's or the group's — the default
+              // item-level copy ("검수 대기로 돌아갑니다") would be false here, so this passes its
+              // own room-scoped lines. See ApprovedButton's `lines` doc comment.
+              <ApprovedButton
                 disabled={busy}
-                title="클릭하면 이 방의 승인을 취소합니다"
-                onClick={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId, false)))}
-              >
-                <span className={btnApprovedRest}>
-                  승인됨 ✓
-                </span>
-                <span className={btnApprovedHover}>
-                  승인 취소
-                </span>
-              </button>
+                onConfirm={props.onConfirm}
+                lines={[`${row.label}의 승인만 취소됩니다.`, "항목이나 다른 방에는 영향이 없습니다."]}
+                onUnapprove={() => run(async () => apply(await api.approveOutlet(itemId, type, row.outletId, false)))}
+              />
             ) : (
               gate.showApproved && (
-                <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[13px] font-medium text-mint">
+                <span className="inline-flex items-center rounded-md bg-mint-soft px-2.5 py-1 text-[13px] font-medium text-mint @max-sm:self-start">
                   승인됨 ✓
                 </span>
               )
@@ -1154,18 +1190,19 @@ function Row(props: {
               </Tip>
             )}
             {gate.showRevert && (
-              <button
-                className={btn}
-                disabled={busy}
-                title="이 방만의 글을 지우고 그룹 글과 그룹 승인을 따릅니다"
-                onClick={() =>
-                  // Collapse on the way out: the row is no longer forked, so leaving the editor
-                  // open would show the group text under a row that no longer has its own.
-                  run(async () => apply(await api.revertOutlet(itemId, type, row.outletId), true))
-                }
-              >
-                그룹 글로 되돌리기
-              </button>
+              <Tip text="이 방만의 글을 지우고 그룹 글과 그룹 승인을 따릅니다">
+                <button
+                  className={btn}
+                  disabled={busy}
+                  onClick={() =>
+                    // Collapse on the way out: the row is no longer forked, so leaving the editor
+                    // open would show the group text under a row that no longer has its own.
+                    run(async () => apply(await api.revertOutlet(itemId, type, row.outletId), true))
+                  }
+                >
+                  그룹 글로 되돌리기
+                </button>
+              </Tip>
             )}
             {gate.showForkHint && <span className="text-[12px] text-faint">저장하면 이 방만 따로 검수·발송합니다.</span>}
             {gate.showGroupApprovalHint && (

@@ -14,7 +14,7 @@ import {
   type HeadroomView,
 } from "../types";
 import { OutletCard } from "./OutletCard";
-import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
+import { ConfirmDialog, Tip, type ConfirmRequest } from "./ConfirmDialog";
 import { KindBadge } from "./TranslationList";
 
 /**
@@ -166,7 +166,7 @@ export function OutletBoard(props: {
 
   if (!board) {
     return (
-      <div className="p-6 text-[13px] text-faint sm:p-8">
+      <div className="p-6 text-[13px] text-faint tablet:p-8">
         {error ? <span className="text-red-600">{error}</span> : "발송판을 불러오는 중…"}
       </div>
     );
@@ -197,7 +197,7 @@ export function OutletBoard(props: {
   };
 
   return (
-    <div className="mx-auto max-w-3xl p-6 sm:p-8">
+    <div className="mx-auto max-w-3xl p-6 tablet:p-8">
       <ConfirmDialog request={confirm} onCancel={() => setConfirm(null)} />
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">{error}</div>
@@ -234,20 +234,20 @@ export function OutletBoard(props: {
               const mine = rows.filter((r) => r.outletId === id);
               const ok = mine.filter(deliveredToRoom).length;
               return (
-                <button
-                  key={id}
-                  type="button"
-                  onMouseEnter={() => setHovered(id)}
-                  onMouseLeave={() => setHovered(null)}
-                  onClick={() => scrollToOutlet(id)}
-                  title={`${mine[0].label} 줄로 이동`}
-                  className={`rounded px-1 ${hovered === id ? "bg-mint-soft text-mint" : "hover:bg-bg"}`}
-                >
-                  {mine[0].label}{" "}
-                  <span className={`font-mono tabular-nums ${ok === mine.length ? "text-mint" : "text-faint"}`}>
-                    {ok}/{mine.length}
-                  </span>
-                </button>
+                <Tip key={id} text={`${mine[0].label} 줄로 이동`}>
+                  <button
+                    type="button"
+                    onMouseEnter={() => setHovered(id)}
+                    onMouseLeave={() => setHovered(null)}
+                    onClick={() => scrollToOutlet(id)}
+                    className={`rounded px-1 ${hovered === id ? "bg-mint-soft text-mint" : "hover:bg-bg"}`}
+                  >
+                    {mine[0].label}{" "}
+                    <span className={`font-mono tabular-nums ${ok === mine.length ? "text-mint" : "text-faint"}`}>
+                      {ok}/{mine.length}
+                    </span>
+                  </button>
+                </Tip>
               );
             })}
           </div>

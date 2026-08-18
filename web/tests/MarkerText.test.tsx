@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { MarkerText, MediaEditNotice, MediaEditNoticeSlot } from "../src/components/MarkerText";
 
@@ -12,16 +12,23 @@ const VIDEO = `[영상] ${VIDEO_URL}`;
 afterEach(cleanup);
 
 /**
- * The clip is mounted the first time the pointer reaches the marker, so every video assertion has to
- * hover first. `fireEvent.mouseOver`, not `mouseEnter`: React implements `onMouseEnter` by watching
- * `mouseover`/`mouseout` at the root, and a `mouseenter` event does not bubble there — dispatching it
- * would leave the handler unrun and the test asserting on an unarmed marker.
+ * Every preview — photo and video alike — is deferred-mount: nothing appears until the marker's own
+ * label is clicked, so every assertion that needs to see a mounted `<img>`/`<video>` has to open it
+ * first. `openMarker` clicks the nth button carrying that label; `openAllMarkers` clicks every button
+ * carrying it. Both are safe to call on an already-armed marker: once armed, a marker's media element
+ * stays mounted (collapsing only hides it via a class), so a repeat click never unmounts anything that
+ * is already visible — it only toggles the open/closed class.
  */
-const hoverMarker = (container: HTMLElement, label: string) => {
-  const marker = [...container.querySelectorAll("span")].find((s) => s.firstChild?.textContent === label);
-  if (!marker) throw new Error(`no ${label} marker to hover`);
-  fireEvent.mouseOver(marker);
-  return marker;
+const openMarker = (container: HTMLElement, label: string, nth = 0) => {
+  const buttons = [...container.querySelectorAll("button")].filter((b) => b.textContent === label);
+  const button = buttons[nth];
+  if (!button) throw new Error(`no ${label} marker #${nth} to open`);
+  fireEvent.click(button);
+  return button;
+};
+
+const openAllMarkers = (container: HTMLElement, label: string) => {
+  [...container.querySelectorAll("button")].filter((b) => b.textContent === label).forEach((b) => fireEvent.click(b));
 };
 
 describe("MarkerText", () => {
@@ -48,6 +55,7 @@ describe("MarkerText", () => {
     // Nothing re-derives stored text on read. Every translation and rendering saved before this
     // change carries the old spelling, and must still preview and still strip at send time.
     const { container } = render(<MarkerText text={`![](${URL})`} />);
+    openMarker(container, "[이미지]");
     expect(container.querySelector("img")!.getAttribute("src")).toBe(URL);
     expect(container.textContent).toContain("[이미지]");
   });
@@ -55,6 +63,7 @@ describe("MarkerText", () => {
   it("gives each photo marker an image to preview", () => {
     const other = "https://pbs.twimg.com/media/OTHER.jpg";
     const { container } = render(<MarkerText text={`${PHOTO}\n\n---\n\n[사진](${other})`} />);
+    openAllMarkers(container, "[사진]");
     expect([...container.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual([URL, other]);
   });
 
@@ -66,6 +75,7 @@ describe("MarkerText", () => {
 
   it("says so when the image cannot be loaded, instead of showing a broken box", () => {
     const { container } = render(<MarkerText text={PHOTO} />);
+    openMarker(container, "[사진]");
     fireEvent.error(container.querySelector("img")!);
     expect(container.querySelectorAll("img")).toHaveLength(0);
     expect(container.textContent).toContain("이미지를 불러오지 못했습니다");
@@ -77,12 +87,15 @@ describe("MarkerText", () => {
     const { container, rerender } = render(<MarkerText text={`[사진](${urlA})`} />);
 
     // First image fails
+    openMarker(container, "[사진]");
     fireEvent.error(container.querySelector("img")!);
     expect(container.querySelectorAll("img")).toHaveLength(0);
     expect(container.textContent).toContain("이미지를 불러오지 못했습니다");
 
-    // Rerender with a different url at the same position
+    // Rerender with a different url at the same position — the url is part of the key, so this
+    // remounts the marker fresh (unarmed) rather than inheriting the failure.
     rerender(<MarkerText text={`[사진](${urlB})`} />);
+    openMarker(container, "[사진]");
 
     // New image should be present, failure message should be gone
     const imgs = container.querySelectorAll("img");
@@ -98,6 +111,7 @@ describe("MarkerText", () => {
     // Item A: DUP appears twice
     const textA = `[사진](${DUP})\n\n중간\n\n[사진](${DUP})`;
     const { container, rerender } = render(<MarkerText text={textA} />);
+    openAllMarkers(container, "[사진]");
 
     // First image in item A fails
     fireEvent.error(container.querySelectorAll("img")[0]!);
@@ -106,11 +120,33 @@ describe("MarkerText", () => {
     // Item B: DUP once + OTHER
     const textB = `[사진](${OTHER})\n\n중간\n\n[사진](${DUP})`;
     rerender(<MarkerText text={textB} />);
+    // The first marker's key changed (OTHER replaces DUP at that position) so it remounts unarmed;
+    // the second marker's key is unchanged (still DUP at that position) so its prior armed, unfailed
+    // state survives the rerender untouched. Opening every "[사진]" button is safe either way.
+    openAllMarkers(container, "[사진]");
 
     // No orphaned failure message from item A
     expect(container.textContent).not.toContain("이미지를 불러오지 못했습니다");
     expect(container.querySelectorAll("img")).toHaveLength(2);
     expect([...container.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual([OTHER, DUP]);
+  });
+
+  it("사진 라벨을 탭하면 미리보기가 펼쳐지고, 다시 탭하면 접힌다", () => {
+    render(<MarkerText text={"앞줄\n[사진](https://pbs.twimg.com/x.jpg)\n뒷줄"} />);
+    expect(document.querySelector("img")).toBeNull();
+    fireEvent.click(screen.getByText("[사진]"));
+    expect(document.querySelector("img")?.getAttribute("src")).toBe("https://pbs.twimg.com/x.jpg");
+    fireEvent.click(screen.getByText("[사진]"));
+    // 접으면 감추기만 한다 — 한 번 arm된 미리보기는 언마운트되지 않는다(영상 케이스와 동일한 규칙).
+    expect(document.querySelector("img")).not.toBeNull();
+    const wrapper = screen.getByTestId("media-preview");
+    expect(wrapper.className).toContain("hidden");
+    expect(wrapper.className).not.toContain("block");
+  });
+
+  it("원본 보기 링크는 열림과 무관하게 항상 있다", () => {
+    render(<MarkerText text={"[사진](https://pbs.twimg.com/x.jpg)"} />);
+    expect(screen.getByText("원본 보기 ↗").getAttribute("href")).toBe("https://pbs.twimg.com/x.jpg");
   });
 });
 
@@ -125,29 +161,44 @@ describe("MarkerText — video markers", () => {
     expect(link.textContent).toContain("원본 보기");
   });
 
-  it("plays the clip one hover away", () => {
+  it("plays the clip one click away", () => {
     const { container } = render(<MarkerText text={VIDEO} />);
-    hoverMarker(container, "[영상]");
+    openMarker(container, "[영상]");
     expect(container.querySelector("video")!.getAttribute("src")).toBe(VIDEO_URL);
   });
 
-  it("mounts no clip until the pointer reaches the marker", () => {
-    // Otherwise a board showing a dozen markers pulls down a dozen mp4s before anyone looks at one:
-    // the popover is only `display:none`, which does not stop a media element from fetching.
+  it("영상은 열기 전에 마운트하지 않는다 — 마커 열두 개가 mp4를 전부 당겨오면 안 된다", () => {
+    render(<MarkerText text={"[영상] https://video.twimg.com/x.mp4"} />);
+    expect(document.querySelector("video")).toBeNull();
+    fireEvent.click(screen.getByText("[영상]"));
+    expect(document.querySelector("video")?.getAttribute("src")).toBe("https://video.twimg.com/x.mp4");
+  });
+
+  it("한 번 연 영상은 접어도 마운트를 유지한다 — 두 번째로 볼 때 버퍼를 버리지 않는다", () => {
+    render(<MarkerText text={"[영상] https://video.twimg.com/x.mp4"} />);
+    fireEvent.click(screen.getByText("[영상]"));
+    fireEvent.click(screen.getByText("[영상]"));
+    // 접힌 상태에서는 보이지 않지만 DOM에는 남는다.
+    expect(document.querySelector("video")).not.toBeNull();
+  });
+
+  it("mounts no clip until a marker is clicked open", () => {
+    // Otherwise a board showing a dozen markers pulls down a dozen mp4s before anyone opens one: a
+    // collapsed preview is only `display:none`, which does not stop a media element from fetching.
     const { container } = render(<MarkerText text={`${VIDEO}\n\n---\n\n${VIDEO}`} />);
     expect(container.querySelectorAll("video")).toHaveLength(0);
-    hoverMarker(container, "[영상]");
+    openMarker(container, "[영상]");
     expect(container.querySelectorAll("video")).toHaveLength(1);
   });
 
   it("never plays sound and never stops on its own", () => {
     const { container } = render(<MarkerText text={VIDEO} />);
-    hoverMarker(container, "[영상]");
+    openMarker(container, "[영상]");
     const video = container.querySelector("video")!;
     expect(video.muted).toBe(true);
     expect(video.autoplay).toBe(true);
     expect(video.loop).toBe(true);
-    // Without `playsinline` iOS Safari takes the clip fullscreen instead of playing it in the popover.
+    // Without `playsinline` iOS Safari takes the clip fullscreen instead of playing it in place.
     expect(video.hasAttribute("playsinline")).toBe(true);
   });
 
@@ -163,7 +214,7 @@ describe("MarkerText — video markers", () => {
 
   it("says so when the clip cannot be loaded, instead of showing a dead black box", () => {
     const { container } = render(<MarkerText text={VIDEO} />);
-    hoverMarker(container, "[영상]");
+    openMarker(container, "[영상]");
     fireEvent.error(container.querySelector("video")!);
     expect(container.querySelectorAll("video")).toHaveLength(0);
     expect(container.textContent).toContain("영상을 불러오지 못했습니다");
@@ -172,19 +223,21 @@ describe("MarkerText — video markers", () => {
   it("clears the failed state when a different clip is rendered at the same position", () => {
     const other = "https://video.twimg.com/amplify_video/1/vid/avc1/720x720/OTHER.mp4?tag=14";
     const { container, rerender } = render(<MarkerText text={VIDEO} />);
-    hoverMarker(container, "[영상]");
+    openMarker(container, "[영상]");
     fireEvent.error(container.querySelector("video")!);
     expect(container.textContent).toContain("영상을 불러오지 못했습니다");
 
+    // The url is part of the key, so this remounts the marker fresh (unarmed).
     rerender(<MarkerText text={`[영상] ${other}`} />);
-    hoverMarker(container, "[영상]");
+    openMarker(container, "[영상]");
     expect(container.textContent).not.toContain("영상을 불러오지 못했습니다");
     expect(container.querySelector("video")!.getAttribute("src")).toBe(other);
   });
 
   it("previews a photo and a video in the same text, each with its own original", () => {
     const { container } = render(<MarkerText text={`${PHOTO}\n\n---\n\n${VIDEO}`} />);
-    hoverMarker(container, "[영상]");
+    openMarker(container, "[사진]");
+    openMarker(container, "[영상]");
     expect(container.querySelector("img")!.getAttribute("src")).toBe(URL);
     expect(container.querySelector("video")!.getAttribute("src")).toBe(VIDEO_URL);
     expect([...container.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toEqual([

@@ -194,6 +194,9 @@ describe("OutletCard — sends closed account-wide (sendsEnabled: false)", () =>
 
     const button = screen.getByRole("button", { name: "발송 · 잠김" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    // The message now lives in an InfoPopover, which renders nothing until opened — clicking the
+    // (disabled) button still bubbles to the wrapper's click handler, the only one listening.
+    fireEvent.click(button);
     expect(screen.getByText(SENDS_CLOSED_MESSAGE)).toBeTruthy();
   });
 
@@ -205,6 +208,8 @@ describe("OutletCard — sends closed account-wide (sendsEnabled: false)", () =>
 
     const button = screen.getByRole("button", { name: "재발송" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    // See above: open the InfoPopover before reading its text.
+    fireEvent.click(button);
     expect(screen.getByText(SENDS_CLOSED_MESSAGE)).toBeTruthy();
   });
 
@@ -322,6 +327,8 @@ describe("media markers", () => {
 
   it("previews the photo in the converted source", () => {
     const { container } = mount(group({ text: "그룹 글", rows: [row()] }), { convertedText: `변환 원문\n\n${PHOTO}` });
+    // Photo previews are click-to-open now: open the marker before looking for its image.
+    fireEvent.click(screen.getByText("[이미지]"));
     expect([...container.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual([URL]);
   });
 
@@ -473,30 +480,122 @@ describe("OutletCard — 핀 고정 is offered where it exists", () => {
 });
 
 /**
+ * `승인됨 ✓`/`승인 취소` used to swap on hover; Task 6 routed it through a confirm dialog instead —
+ * and, like every other irreversible action on this card (재발송, 발송 above), through the board's
+ * one shared dialog (`props.onConfirm`) rather than a second one of its own. These pin two things a
+ * unit test can still catch without rendering the real `ConfirmDialog`: the click itself never
+ * reaches the unapprove route directly, and the copy that reaches the dialog says what THIS control
+ * actually withdraws. Fix round 1 shipped the item-level wording ("이 항목이 다시 검수 대기로
+ * 돌아갑니다") at the row-level control too, where it is false — a forked room's own approval, not
+ * the item's. The final review round found the SAME class of bug one level up: the group-level
+ * control (this file's `ITEM_LEVEL_LINES` default) also stated the item-level fact, which is false
+ * for it too — `approveRendering(..., false)` withdraws only that one channel group's approval, not
+ * the item's and not any other group's. Both cases guard against the same mistake: `ApprovedButton`'s
+ * default lines are true for exactly one caller (`TranslationDetail`'s item-level control), and every
+ * other caller has to pass its own.
+ */
+describe("OutletCard 승인 취소 — asks through the board's shared dialog, with copy scoped to what it withdraws", () => {
+  it("group-level: withdraws the whole group's approval, and says so before doing it", async () => {
+    const approveRendering: unknown[] = [];
+    const { confirms } = mount(group({ status: "approved", rows: [row()] }), {
+      api: {
+        approveRendering: async (...args: Parameters<typeof api.approveRendering>) => {
+          approveRendering.push(args);
+          return {} as Awaited<ReturnType<typeof api.approveRendering>>;
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "승인됨 ✓" }));
+    // Nothing happens on the click itself — only the shared dialog opens.
+    expect(approveRendering).toHaveLength(0);
+    expect(confirms).toHaveLength(1);
+    // `approveRendering(..., false)` (`ApproveRendering.run`) flips only THIS group's rendering
+    // back to `rendered` — the item's 1차 status and every other group are untouched. The
+    // item-level wording ("이 항목이 다시 검수 대기로 돌아갑니다") would be false here.
+    expect(said(confirms[0])).toContain("이 채널 그룹만 다시 검수 대기로 돌아갑니다");
+    expect(said(confirms[0])).toContain("항목과 다른 그룹에는 영향이 없습니다");
+    expect(said(confirms[0])).not.toContain("이 항목이 다시 검수 대기로 돌아갑니다");
+
+    confirms[0].onConfirm({ toggled: false });
+    await waitFor(() => expect(approveRendering).toHaveLength(1));
+    expect((approveRendering[0] as unknown[])[3]).toBe(false);
+  });
+
+  it("row-level: withdraws only that forked room's approval, and says so — not the item-level copy", async () => {
+    const approveOutlet: unknown[] = [];
+    const forkedRow = row({ forked: true, status: "approved" });
+    // `group.status` deliberately NOT "approved": the group-level control above renders on that
+    // condition alone, and having both controls on screen would make `getByRole` ambiguous — the
+    // row-level one (`gate.showUnapprove`) only needs the row itself forked and approved.
+    const { confirms } = mount(group({ status: "rendered", rows: [forkedRow] }), {
+      api: {
+        approveOutlet: async (...args: Parameters<typeof api.approveOutlet>) => {
+          approveOutlet.push(args);
+          return { board: board() };
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "승인됨 ✓" }));
+    expect(approveOutlet).toHaveLength(0);
+    expect(confirms).toHaveLength(1);
+    expect(said(confirms[0])).toContain(`${forkedRow.label}의 승인만 취소됩니다`);
+    expect(said(confirms[0])).toContain("항목이나 다른 방에는 영향이 없습니다");
+    // The group-level wording would be false here — this room's approval is not the item's.
+    expect(said(confirms[0])).not.toContain("검수 대기로 돌아갑니다");
+
+    confirms[0].onConfirm({ toggled: false });
+    await waitFor(() => expect(approveOutlet).toHaveLength(1));
+    expect((approveOutlet[0] as unknown[])[3]).toBe(false);
+  });
+});
+
+/**
  * "Why can't I press this" messages, which on this board are the ones a reviewer needs most and were
  * the ones that never appeared.
  *
  * Each of these hung on a native `title` whose condition ALSO sat in the control's `disabled`
- * expression — `groupApproved` on 저장, `groupDirty` on 승인하기, `reason` on 복사, `blocked` on
- * 발송/전달함, `gate.approveDisabled` on the row's 승인하기. A disabled button fires no hover, so the
- * browser never drew any of them. `ConfirmDialog`'s `Tip` already existed for exactly this and says
- * so in its own comment; these controls had simply never been moved onto it.
+ * expression — `groupDirty` on 승인하기, `reason` on 복사, `blocked` on 발송/전달함,
+ * `gate.approveDisabled` on the row's 승인하기. A disabled button fires no hover, so the browser
+ * never drew any of them. `ConfirmDialog`'s `Tip` already existed for exactly this and says so in its
+ * own comment; these controls had simply never been moved onto it.
+ *
+ * `groupApproved` on 저장 used to be in this list too (Task 10's first pass moved it onto a `Tip` here,
+ * same as the others). Fix round 1 found it already said, permanently and without any interaction, as
+ * inline text next to the textarea above (also Task 10) — the `Tip` was a second, harder-to-reach copy
+ * of the same sentence, not a second message. Dropped the `Tip`; the case below now asserts the inline
+ * text directly rather than clicking a control that no longer carries the reason.
  *
  * Asserting on `textContent` is the point: a `title` attribute is invisible to a reviewer and to
- * `textContent` alike, so a regression that puts one back fails here. What is NOT pinned is the
- * reveal itself — that is `group-hover/tip:block`, and jsdom applies no CSS.
+ * `textContent` alike, so a regression that puts one back fails here.
+ *
+ * `Tip` now renders through `InfoPopover`, whose panel is not in the DOM until opened — so each of
+ * the remaining cases clicks the (possibly disabled) control before reading the message.
+ *
+ * What that click here does NOT prove: in a real browser, a native disabled control never dispatches
+ * a click at all — no bubbling, no keyboard activation, and it drops out of the tab order. jsdom has
+ * no layout engine, so it cannot hit-test `[&_:disabled]:pointer-events-none` on `InfoPopover`'s
+ * trigger (the fix that makes a real click land on the wrapper instead of the disabled child), and
+ * `fireEvent.click` dispatches directly to the node regardless of `disabled`, bypassing the native
+ * suppression entirely. That gap is exactly what let fix round 1 ship with these six tests green while
+ * every one of these cards was still unreachable in Chromium — see `InfoPopover.test.tsx`'s
+ * "disabled 트리거" describe block for the keyboard half jsdom CAN check, and the task report for the
+ * Playwright verification of the half it cannot.
  */
 describe("OutletCard — a blocked control says why, as text rather than a dead title", () => {
   const APPROVED_LOCK = "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요.";
 
-  it("explains the 저장 lock on an approved group", () => {
+  it("explains the 저장 lock on an approved group, unconditionally rather than behind a Tip", () => {
+    // No click here: unlike the other cases below, this reason is inline text now (Task 10 fix round
+    // 1), not a `Tip` — it has to be on screen without any interaction at all.
     const { container } = mount(group({ status: "approved", rows: [row()] }));
     expect(container.textContent).toContain(APPROVED_LOCK);
   });
 
   it("stays quiet about that lock while the group is still editable", () => {
     // The scope check: without it, rendering the reason unconditionally would pass the test above and
-    // park a permanent hover card over a button the reviewer is meant to use.
+    // park a permanent notice next to a textarea the reviewer is meant to use.
     const { container } = mount(group({ status: "rendered", rows: [row()] }));
     expect(container.textContent).not.toContain(APPROVED_LOCK);
   });
@@ -504,8 +603,11 @@ describe("OutletCard — a blocked control says why, as text rather than a dead 
   it("explains a [복사] that cannot copy yet", async () => {
     // `stubFetch()` with no handler rejects the emissions call, which is the card's own tolerated
     // failure path (`api.emissions(...).catch(() => ({}))`) and leaves `segments` null — the exact
-    // state this message describes. It reached the DOM only as a `title` before.
+    // state this message describes. It reached the DOM only as a `title` before. `segments` is
+    // already null on the very first render (state starts empty, before the fetch even settles), so
+    // the click can happen immediately.
     const { container } = mount(group({ status: "rendered", rows: [row()] }));
+    fireEvent.click(screen.getByRole("button", { name: "복사" }));
     await waitFor(() => expect(container.textContent).toContain("붙여넣기용 텍스트를 아직 불러오지 못했습니다"));
   });
 });

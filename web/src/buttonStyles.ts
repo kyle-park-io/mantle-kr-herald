@@ -6,7 +6,11 @@
 // row of buttons lines up whatever mix it holds. Only the pair that swaps in place — `승인하기` and
 // the `승인됨 ✓`/`승인 취소` control — also shares a minimum width, or the card visibly resizes at the
 // moment of approval, which reads as something having gone wrong.
-const BASE = "rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors";
+//
+// `pointer-coarse:min-h-11`(44px)은 손가락용 최소 크기다. 뷰포트가 아니라 입력 장치를 보는 변형이라
+// 창을 좁힌 데스크톱에서는 버튼이 그대로고, 터치 노트북에서는 커진다 — 밀도 높은 이 보드에서
+// 브레이크포인트로 같은 일을 하면 마우스 쓰는 사람까지 뚱뚱한 버튼을 받는다.
+const BASE = "rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors pointer-coarse:min-h-11";
 /**
  * Width of the approve/approved pair ONLY. Both must carry it — either alone still jumps — and
  * nothing else should: on a two-syllable label like `발송` it just stretches the button.
@@ -26,8 +30,23 @@ export const btnDanger = `${BASE} inline-flex items-center border border-red-200
  * `승인됨 ✓` that becomes `승인 취소` on hover. Both labels sit in one grid cell so the button sizes
  * to the wider of the two and never jumps mid-hover — the same control 1차 uses, shared here so the
  * two modes cannot drift apart.
+ *
+ * 이 세 문자열을 직접 쓰지 말고 `ApprovedButton`을 쓸 것 — 터치에서 호버 스왑이 성립하지 않는
+ * 문제(손가락 아래에서 라벨이 바뀐다)를 그 컴포넌트가 확인 다이얼로그로 막는다.
  */
 export const btnApproved = `${BASE} group grid ${APPROVE_WIDTH} place-items-center bg-mint-soft text-mint hover:bg-red-50 hover:text-red-600 disabled:opacity-40`;
 /** The two labels inside `btnApproved`, stacked in the same cell. */
 export const btnApprovedRest = "col-start-1 row-start-1 whitespace-nowrap transition-opacity group-hover:opacity-0";
 export const btnApprovedHover = "col-start-1 row-start-1 whitespace-nowrap opacity-0 transition-opacity group-hover:opacity-100";
+
+/**
+ * Flat "marked done, click to undo" treatment — one label, a plain hover darken. `OutletCard`'s
+ * `전달함 ☑` (undo a manual delivery mark) is the one interactive use, but the same
+ * bg-mint-soft/text-mint pairing already marks completion on the read-only `발송됨` badge beside it,
+ * so this gives the color language a name instead of leaving the button as its own hand-copy.
+ *
+ * Not `btnApproved`: that one swaps its whole label to a red warning on hover because undoing it
+ * costs the item's approval state; undoing a delivery mark only affects this one room, so a plain
+ * hover darken is warning enough and there is no second label to stack.
+ */
+export const btnDone = `${BASE} inline-flex items-center bg-mint-soft text-mint hover:bg-mint-soft/70 disabled:opacity-40`;

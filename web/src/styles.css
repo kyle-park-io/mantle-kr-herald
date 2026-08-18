@@ -6,6 +6,14 @@
     "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
 
+  /* 이 앱의 유일한 뷰포트 경계 — 셸이 1단(드로우) → 2단(고정 사이드바)이 되는 곳이고, 헤더의
+     퍼널·시트 링크·sync 칩이 돌아오는 곳도 같은 지점이다. 기본 sm/md/lg 스케일은 버린다: 이름에
+     뜻이 없으면 "왜 이 경계인가"를 코드가 말해줄 수 없고, 쓰지도 않을 다섯 개가 어휘에 남는다.
+     단위는 반드시 rem — Tailwind 기본값이 rem이라 px를 섞으면 생성된 유틸리티의 정렬 순서가
+     어긋나 분기끼리 서로를 덮어쓴다. */
+  --breakpoint-*: initial;
+  --breakpoint-tablet: 48rem; /* 768px */
+
   /* Modern-minimal light palette — one restrained Mantle-mint accent over cool neutrals. */
   --color-bg: #f7f8fa;
   --color-surface: #ffffff;
@@ -41,6 +49,11 @@
     color: var(--color-ink);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* 한국어는 어절 단위로 끊겨야 읽힌다. `keep-all`이 단어 안에서 끊는 것을 막고,
+       `break-word`가 끊을 데 없는 긴 토큰(URL, 아이디)의 넘침을 막는다. 둘은 짝이어야 한다 —
+       `keep-all`만 두면 60자짜리 CDN url이 컨테이너를 뚫고 나간다. */
+    word-break: keep-all;
+    overflow-wrap: break-word;
   }
   /* Tailwind v4 preflight resets buttons to cursor:default; restore the pointer. */
   button:not(:disabled) {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TranslationDetail } from "../src/components/TranslationDetail";
 import type { PublishStateRow, Translation } from "../src/types";
@@ -20,6 +20,7 @@ const translation = (o: Partial<Translation> = {}): Translation => ({
 function mount(
   item: Translation,
   o: {
+    onUnapprove?: (id: string) => Promise<void>;
     onUnretire?: (id: string) => Promise<void>;
     onRetire?: (id: string) => Promise<void>;
     publishRows?: PublishStateRow[];
@@ -33,7 +34,7 @@ function mount(
       availableTargets={o.availableTargets ?? ["local"]}
       onSave={async () => {}}
       onApprove={async () => {}}
-      onUnapprove={async () => {}}
+      onUnapprove={o.onUnapprove ?? (async () => {})}
       onUnretire={o.onUnretire ?? (async () => {})}
       onRetire={o.onRetire ?? (async () => {})}
       onPublish={async () => {}}
@@ -44,9 +45,34 @@ function mount(
 
 afterEach(cleanup);
 
+describe("승인 취소", () => {
+  it("확인을 거쳐야 취소된다 — 터치에는 호버 스왑이 없고, 탭에 :hover가 걸리는 브라우저에서는 손가락 아래 라벨이 바뀐다", async () => {
+    const onUnapprove = vi.fn().mockResolvedValue(undefined);
+    mount(translation({ status: "approved" }), { onUnapprove });
+
+    fireEvent.click(screen.getByRole("button", { name: /승인됨/ }));
+    expect(onUnapprove).not.toHaveBeenCalled();
+
+    // 다이얼로그가 뜬 뒤의 확인 버튼. 트리거의 호버 라벨은 `aria-hidden`이라 이름이 겹치지 않는다.
+    fireEvent.click(screen.getByRole("button", { name: "승인 취소" }));
+    await waitFor(() => expect(onUnapprove).toHaveBeenCalledTimes(1));
+  });
+
+  it("확인을 취소하면 승인이 유지된다", () => {
+    const onUnapprove = vi.fn();
+    mount(translation({ status: "approved" }), { onUnapprove });
+
+    fireEvent.click(screen.getByRole("button", { name: /승인됨/ }));
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(onUnapprove).not.toHaveBeenCalled();
+  });
+});
+
 describe("TranslationDetail media", () => {
   it("previews the photo the source post carries", () => {
     const { container } = mount(translation());
+    // Photo previews are click-to-open now: open the marker before looking for its image.
+    fireEvent.click(screen.getByText("[이미지]"));
     expect([...container.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual([URL]);
   });
 
@@ -239,12 +265,18 @@ describe("TranslationDetail — 게시됨 (posted)", () => {
  * `group/tip` wrapper can reveal on hover.
  *
  * jsdom applies no CSS, so what these pin is the half a unit test CAN see — the message is present,
- * and it is present only when it applies. The reveal itself is CSS (`group-hover/tip:block`) and is
- * NOT pinned here, nor could it usefully be: the shape it replaces was a native `title` tooltip,
- * which the OS draws outside the DOM, so no automated check can see the old behaviour to contrast
- * against. `disabled:pointer-events-none` on the button is what keeps the reveal from depending on
- * how a given browser propagates `:hover` out of a disabled child — the hit test lands on the
- * wrapper instead. Confirm by hovering a greyed 발행 button on the deployed board.
+ * and it is present only when it applies.
+ *
+ * `Tip` now renders through `InfoPopover`, whose panel is not in the DOM until opened — so each test
+ * below clicks the (disabled) button first.
+ *
+ * What that click here does NOT prove: a real disabled control dispatches no click at all — no
+ * bubbling, no keyboard activation, and no tab stop. jsdom has no layout engine, so it cannot
+ * hit-test `[&_:disabled]:pointer-events-none` on `InfoPopover`'s trigger (the fix that makes a real
+ * click land on the wrapper instead of the disabled child), and `fireEvent.click` dispatches straight
+ * to the node regardless of `disabled`, bypassing that native suppression entirely. See
+ * `InfoPopover.test.tsx`'s "disabled 트리거" block for the keyboard half jsdom CAN check, and the task
+ * report for the Playwright check (real Chromium, tap + Tab/Enter) of the half it cannot.
  */
 describe("TranslationDetail — why a 발행 target is unavailable", () => {
   const HOSTED: ("local" | "google" | "lark")[] = ["google", "lark"];
@@ -254,6 +286,7 @@ describe("TranslationDetail — why a 발행 target is unavailable", () => {
     const { container } = mount(translation(), { availableTargets: HOSTED });
     const button = screen.getByRole("button", { name: "로컬 폴더" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    fireEvent.click(button);
     // Not `getAttribute("title")` — that is exactly the shape that did not work.
     expect(container.textContent).toContain("이 모드에서는 사용할 수 없는 타깃");
   });
@@ -269,6 +302,7 @@ describe("TranslationDetail — why a 발행 target is unavailable", () => {
   it("explains the posted lock on the 발행 buttons too", () => {
     // The same dead-`title` bug covered all three reasons, not just the unavailable-target one.
     const { container } = mount(translation({ status: "posted", postedUrl: POSTED_URL }));
+    fireEvent.click(screen.getByRole("button", { name: "로컬 폴더" }));
     expect(container.textContent).toContain("이미 X에 직접 게시된 것으로 확인되어");
   });
 });

@@ -179,6 +179,19 @@ describe("App's 링크 수집 tab", () => {
     expect(await screen.findByTestId("intake-fake")).toBeTruthy();
     expect(window.location.hash).toBe("#intake");
   });
+
+  it("탭은 축약 라벨과 전체 라벨을 둘 다 들고 있다 — 어느 쪽이 보이는지는 CSS가 정한다, 접근성 이름은 항상 전체 라벨이다", async () => {
+    stubFetch();
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+
+    await screen.findByText("1차 검수 · 번역");
+    expect(screen.getByText("1차")).toBeTruthy();
+    // `aria-label` keeps the button's accessible name at the full label regardless of which span
+    // the CSS shows, so this finds it by role+name — unambiguous even though "수집" is also the
+    // funnel's 수집 stage label (see "App's header funnel" below) once `status` loads.
+    const intakeTab = screen.getByRole("button", { name: "링크 수집" });
+    expect(within(intakeTab).getByText("수집")).toBeTruthy();
+  });
 });
 
 /**
@@ -346,20 +359,25 @@ describe("App's header funnel", () => {
   });
 
   /**
-   * A stage's own text is its own direct spans. `:scope >` rather than every descendant span,
-   * because 수집 now carries a hover card *inside* it — and the point of this assertion is that the
-   * strip a reviewer actually reads did not change. Scoping to direct children is what the original
-   * "the separator is a sibling, not a child" comment in `App.tsx` was reaching for; anything deeper
-   * would make this test fail the moment the card gained a `<span>`, which is not what it is about.
+   * A stage's own text sits on its leaf spans — spans with no `<span>` descendant of their own.
+   * Every stage's label/count used to sit directly on the stage `<div>`, but 수집's now sit two
+   * levels down, inside `InfoPopover`'s own wrapping spans (the trigger, and the span around it —
+   * see `InfoPopover.tsx`), so a `:scope > span` query alone would return only that outer wrapper and
+   * lose the "수집"/"134" split this helper is built to keep. Walking every span and keeping only the
+   * leaves finds them regardless of depth, and stays safe against the card 수집 opens: that card
+   * renders only while `InfoPopover`'s `open` state is true, and no test in this block opens it, so
+   * it never contributes a span here.
    *
-   * Spans with no text are dropped for the same reason: 번역 and 렌더 now lead with a countdown pie,
-   * which is a `<span title>` (the tooltip) wrapping an SVG that carries no text at all — deliberately,
-   * because an SVG `<title>` child would land in exactly the text this helper reads. It is a direct
-   * child, so without the filter it would join as `""` and prepend a space to every expectation below.
-   * The filter costs nothing this test is about: a pie that ever grew visible text would still appear.
+   * Spans with no text are dropped for the same reason as before: 번역 and 렌더 lead with a countdown
+   * pie, a `<span title>` (the tooltip) wrapping an SVG that carries no text at all — deliberately,
+   * because an SVG `<title>` child would land in exactly the text this helper reads. That wrapper is
+   * itself a leaf (the SVG has no `<span>` of its own), so without the filter it would join as `""`
+   * and prepend a space to every expectation below. The filter costs nothing this test is about: a
+   * pie that ever grew visible text would still appear.
    */
   const stage = (key: string) =>
-    [...screen.getByTestId(`funnel-${key}`).querySelectorAll(":scope > span")]
+    [...screen.getByTestId(`funnel-${key}`).querySelectorAll("span")]
+      .filter((s) => s.querySelector("span") === null)
       .map((s) => s.textContent ?? "")
       .filter((text) => text !== "")
       .join(" ");
@@ -425,6 +443,22 @@ describe("App's header funnel", () => {
     expect(screen.getByTestId("funnel-translated").textContent).toBe("번역23");
     expect(screen.getByTestId("funnel-rendered").textContent).toBe("렌더313건");
   });
+
+  /**
+   * 수집's own regression guard: its label/count spans sit two levels inside `InfoPopover`'s trigger
+   * span (not direct children of `funnel-collected` the way every other stage's are — see `stage()`'s
+   * own comment above), which is exactly the shape that let the stage's `gap-1.5` go missing once
+   * without any test catching it (the label and count spans still concatenate to the same text either
+   * way, `gap` is invisible to `textContent`, and `stage()`'s `.join(" ")` papers over it too). This
+   * cannot prove the gap renders — jsdom has no layout engine, see the InfoPopover verification report
+   * for the real-browser numbers — but it does pin the DOM shape a future edit could still get wrong:
+   * the label and count as two live, separately-readable text nodes, not one that swallowed the other.
+   */
+  it("수집's own text survives being wrapped by InfoPopover's trigger", async () => {
+    renderHeader(PRODUCTION_BREAKDOWN);
+    await screen.findByTestId("funnel");
+    expect(screen.getByTestId("funnel-collected").textContent).toBe("수집134");
+  });
 });
 
 /**
@@ -434,9 +468,10 @@ describe("App's header funnel", () => {
  * strip because the strip has no room for them, and because this dashboard already answers "the
  * number has a story" with a hover popover.
  *
- * The card is in the DOM whether or not the pointer is over it — it is CSS (`group-hover`) that
- * reveals it, exactly like the storage-mode popover beside it, and jsdom evaluates no CSS. So these
- * assert what the card *says*, which is the part that can be wrong.
+ * The card renders only once its `InfoPopover` is open — open/closed is React state, not CSS, and
+ * jsdom 30 implements none of the native popover API a real browser would additionally gate this on.
+ * `card()` below clicks the 수집 stage's trigger (the `수집 134` text) to open it before reading, then
+ * these assert what the card *says*, which is the part that can be wrong.
  */
 describe("App's 수집 breakdown card", () => {
   const statusWith = (breakdown: unknown) =>
@@ -476,6 +511,9 @@ describe("App's 수집 breakdown card", () => {
   const card = async (breakdown: unknown) => {
     vi.stubGlobal("fetch", statusWith(breakdown));
     render(<App onSignOut={() => {}} authEpoch={0} />);
+    // Scoped to the funnel stage rather than a bare `findByText("수집")` — the 링크 수집 tab's own
+    // short label (Task 8) is the same string, so an unscoped query would now match both.
+    fireEvent.click(within(await screen.findByTestId("funnel-collected")).getByText("수집")); // opens the 수집 stage's InfoPopover
     return await screen.findByTestId("collected-breakdown");
   };
 
@@ -627,12 +665,14 @@ describe("App's 수집 breakdown card", () => {
 /**
  * The chip beside the mode pill (Task 5's `livenessChip`), the hover card's key-by-key detail
  * (`livenessHeadline` + `probeLabel`), and the [지금 확인] button that re-probes and re-reads
- * `/api/status`. `stubFetchWithStatus` merges a `liveness` summary into an otherwise-ordinary
- * status body so each test states only what differs.
+ * `/api/status` — the chip sits on the pill itself (always in the DOM once `status` loads), but the
+ * detail and the button live inside the storage-mode `InfoPopover`, which renders only while open.
+ * `stubFetchWithStatus` merges a `liveness` summary into an otherwise-ordinary status body so each
+ * test states only what differs.
  *
- * Waits are on the [지금 확인] button (unconditionally rendered once `status` loads), not on
- * `storageMode`'s text — the hover card's own "현재 local 모드" note already repeats that word a
- * second time, so `findByText("local")`/`findByText("cloud")` would always be ambiguous here.
+ * Every test below opens the panel first with `fireEvent.click(await screen.findByText("local"))`.
+ * That click is unambiguous at the moment it runs, because the panel — whose own "현재 local 모드"
+ * line repeats the word — has not rendered yet; querying for `"local"` again afterwards would not be.
  */
 describe("App's liveness chip", () => {
   afterEach(() => {
@@ -643,6 +683,7 @@ describe("App's liveness chip", () => {
   it("shows no liveness chip when the last observation found everything alive", async () => {
     stubFetchWithStatus({ liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 7 } });
     render(<App onSignOut={() => {}} authEpoch={0} />);
+    fireEvent.click(await screen.findByText("local"));
     expect(await screen.findByRole("button", { name: "지금 확인" })).toBeTruthy();
     expect(screen.queryByText(/응답 없음/)).toBeNull();
   });
@@ -656,6 +697,7 @@ describe("App's liveness chip", () => {
   it("counts only the probes actually contacted, not every probe key this build knows about", async () => {
     stubFetchWithStatus({ liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 3 } });
     render(<App onSignOut={() => {}} authEpoch={0} />);
+    fireEvent.click(await screen.findByText("local"));
     expect(await screen.findByText(/3개 모두 응답/)).toBeTruthy();
     expect(screen.queryByText(/7개 모두 응답/)).toBeNull();
   });
@@ -683,6 +725,7 @@ describe("App's liveness chip", () => {
       },
     });
     render(<App onSignOut={() => {}} authEpoch={0} />);
+    fireEvent.click(await screen.findByText("local"));
     expect(await screen.findByText("Google 인증")).toBeTruthy();
     expect(screen.getByText("400 invalid_grant")).toBeTruthy();
   });
@@ -692,6 +735,7 @@ describe("App's liveness chip", () => {
       liveness: { observedAt: new Date().toISOString(), worst: "ok", dead: [], contacted: 7 },
     });
     render(<App onSignOut={() => {}} authEpoch={0} />);
+    fireEvent.click(await screen.findByText("local"));
     await screen.findByRole("button", { name: "지금 확인" });
     fetchMock.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
@@ -751,6 +795,7 @@ describe("App's liveness chip", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App onSignOut={() => {}} authEpoch={0} />);
+    fireEvent.click(await screen.findByText("local"));
     await screen.findByRole("button", { name: "지금 확인" });
     fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
     expect(await screen.findByText("⚠ credential probe timed out")).toBeTruthy();
@@ -795,11 +840,38 @@ describe("App's liveness chip", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App onSignOut={() => {}} authEpoch={0} />);
+    fireEvent.click(await screen.findByText("local"));
     await screen.findByRole("button", { name: "지금 확인" });
     fireEvent.click(screen.getByRole("button", { name: "지금 확인" }));
     expect(await screen.findByText("⚠ credential probe timed out")).toBeTruthy();
     // "방금 전" (reportAge's under-a-minute wording) — the preserved summary from the fixture above,
     // proof `setStatus` was not called on this failed re-check.
     expect(screen.getByText("7개 모두 응답 · 방금 전 확인")).toBeTruthy();
+  });
+});
+
+/**
+ * Task 3's own seam: the storage-mode panel used to be CSS-only (`hidden group-hover:block`), so
+ * `지금 확인` sat in the DOM — just invisible per CSS jsdom never evaluates — from the very first
+ * render. Now `InfoPopover` owns `open` as React state, so the panel is genuinely absent until a
+ * click (or hover, or Enter) puts it there. Touch has no hover path at all, which is why the pill's
+ * only *guaranteed* opener in a test is a click.
+ */
+describe("헤더의 호버 카드", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("스토리지 모드 패널이 클릭으로 열린다 — 터치에는 호버가 없다", async () => {
+    stubFetch();
+    render(<App onSignOut={() => {}} authEpoch={0} />);
+
+    // status가 실려야 pill이 그려진다.
+    await screen.findByText("local");
+    expect(screen.queryByText("지금 확인")).toBeNull();
+
+    fireEvent.click(screen.getByText("local"));
+    expect(screen.getByText("지금 확인")).toBeTruthy();
   });
 });

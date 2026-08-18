@@ -3,8 +3,10 @@ import { datePrefix, itemUrl, kstStamp } from "../types";
 import type { Translation, PublishStateRow } from "../types";
 import { StatusChip, KindBadge } from "./TranslationList";
 import { Tip } from "./ConfirmDialog";
+import { ApprovedButton } from "./ApprovedButton";
 import { MarkerText, MediaEditNoticeSlot } from "./MarkerText";
 import { diffPublished } from "../publishedDiff";
+import { btn, btnApprove } from "../buttonStyles";
 
 const TARGET_LABEL: Record<"local" | "google" | "lark", string> = {
   local: "로컬 폴더",
@@ -77,14 +79,9 @@ function PublishedCopy({ item, posted }: { item: Translation; posted: boolean })
 function OpenLink({ href, active, children }: { href: string; active: boolean; children: string }) {
   if (!active) {
     return (
-      <span className="group/tip relative cursor-not-allowed text-faint">
-        {children}
-        {/* Down-and-right, same as `Tip` and the board's other hover cards. Keeps its own compact
-            `whitespace-nowrap` styling — this is one short line beside a link, not a `w-64` card. */}
-        <span className="pointer-events-none absolute left-0 top-full z-30 mt-1.5 hidden whitespace-nowrap rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-normal text-muted shadow-md group-hover/tip:block">
-          발행을 다시 눌러야 열 수 있어요
-        </span>
-      </span>
+      <Tip text="발행을 다시 눌러야 열 수 있어요">
+        <span className="cursor-not-allowed text-faint">{children}</span>
+      </Tip>
     );
   }
   return (
@@ -152,7 +149,7 @@ export function TranslationDetail(props: {
   const stalePublish = !posted && props.publishRows.some((r) => r.synced === false);
 
   return (
-    <div className="mx-auto max-w-3xl p-6 sm:p-8">
+    <div className="mx-auto max-w-3xl p-6 tablet:p-8">
       <div className="mb-6 flex flex-wrap items-center gap-2.5">
         {props.item.sourcePostedAt && (
           <span className="font-mono text-[13px] font-medium text-faint">{datePrefix(props.item.sourcePostedAt)}</span>
@@ -209,7 +206,11 @@ export function TranslationDetail(props: {
         row, plus a pointer to the match a human already disputed.
       */}
       {!posted && props.item.postedUrl && (
-        <p className="mb-6 flex flex-wrap items-center gap-1.5 rounded-lg bg-slate-soft px-3 py-2 text-[12px] text-slate-ink">
+        // `<div>`, not `<p>`: `Tip` below can render a `<div>` panel (through `InfoPopover`) once
+        // opened, and a `<div>` nested inside a `<p>` is invalid HTML — a real browser splits the `<p>`
+        // in two right at that point, which broke this row's flex layout (`validateDOMNesting` catches
+        // it in jsdom too). Nothing here relies on `<p>`'s semantics; this was always a flex notice bar.
+        <div className="mb-6 flex flex-wrap items-center gap-1.5 rounded-lg bg-slate-soft px-3 py-2 text-[12px] text-slate-ink">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-ink" />
           되돌리기 전 게시됨으로 연결됐던 글이 있습니다 —{" "}
           <a
@@ -229,19 +230,32 @@ export function TranslationDetail(props: {
               re-asserting. Not shown when the item is already `posted`: 되돌리기 is the control
               there, and two buttons naming the same axis in opposite directions would read as a
               toggle the rest of this pane deliberately avoids. */}
-          <button
-            className="ml-auto rounded-md border border-slate-ink/25 bg-surface px-2.5 py-1 text-[12px] font-medium text-slate-ink transition-colors hover:bg-slate-soft disabled:opacity-40"
-            disabled={busy}
-            onClick={() => run(() => props.onRetire(props.item.itemId))}
-            title="이 항목을 다시 게시됨으로 표시합니다. 지금 초안이 실제 게시본과 다르면, 1차 검수에 그 차이가 표시됩니다."
+          <Tip
+            text="이 항목을 다시 게시됨으로 표시합니다. 지금 초안이 실제 게시본과 다르면, 1차 검수에 그 차이가 표시됩니다."
+            className="ml-auto"
           >
-            게시됨으로
-          </button>
-        </p>
+            <button
+              className="rounded-md border border-slate-ink/25 bg-surface px-2.5 py-1 text-[12px] font-medium text-slate-ink transition-colors pointer-coarse:min-h-11 hover:bg-slate-soft disabled:opacity-40"
+              disabled={busy}
+              onClick={() => run(() => props.onRetire(props.item.itemId))}
+            >
+              게시됨으로
+            </button>
+          </Tip>
+        </div>
       )}
 
       <section className="mb-6">
         <div className="eyebrow mb-2">원문 · source</div>
+        {/*
+          No `@container` here. The spec had `MarkerText` branch its preview popover-vs-inline on
+          this pane's width, which would have made this the queried container — the implementation
+          made the preview unconditionally inline instead (see `MarkerText.tsx`'s own comment), so
+          nothing inside this box carries an `@`-variant class to resolve against it. A container
+          with nothing querying it is not inert (`container-type: inline-size` still brings layout
+          containment), so it was removed rather than left as documentation of an intent nobody
+          reads code for.
+        */}
         <div className="rounded-xl border border-line bg-surface p-4 text-[15px] leading-relaxed whitespace-pre-wrap text-ink/80 shadow-sm">
           <MarkerText text={props.item.sourceText} />
         </div>
@@ -267,31 +281,41 @@ export function TranslationDetail(props: {
           value={korean}
           onChange={(e) => setKorean(e.target.value)}
           readOnly={approved || posted}
-          title={posted ? POSTED_LOCK : undefined}
           spellCheck={false}
         />
         {/* Same problem the "편집 중" chip above solves, and the same fix — see `MediaEditNoticeSlot`. */}
         <MediaEditNoticeSlot text={korean} where="원문" className="mt-1.5" />
+        {/* `POSTED_LOCK` used to ride this textarea's own `title` — invisible on touch. "Lock, do not
+            hide" means the reason a reviewer cannot edit belongs where they are already looking, not
+            behind a hover they may never trigger — so it is inline text now, not a tooltip. */}
+        {posted && <p className="mt-1.5 text-[12px] leading-relaxed text-faint">{POSTED_LOCK}</p>}
+        {/* Fix round 1: this used to be the enabled-only half of 저장's `title` below, but nothing
+            about it is enabled-only — it appears nowhere else in the UI, and a reviewer who has not
+            typed anything yet (저장's *default* disabled state) still benefits from knowing 저장 alone
+            never touches Drive/local files. Inline and unconditional-on-`dirty` beats a `Tip` tied to
+            저장's disabled branch, which would lose this the moment there is something to save — the
+            one time a reviewer is about to actually press it. */}
+        {!posted && !approved && (
+          <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
+            Drive/로컬 파일은 오른쪽 발행 버튼을 눌러야 갱신됩니다.
+          </p>
+        )}
       </section>
 
       <PublishedCopy item={props.item} posted={posted} />
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        {/* Split by whether the message survives its own control: `posted` and `approved` are both in
-            the `disabled` expression, so those two only reach a reviewer through `Tip`. The third is
-            the ordinary hint on a live 저장 button and stays a `title`. */}
-        <Tip
-          text={posted ? POSTED_LOCK : approved ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요." : undefined}
-        >
+        {/* `posted`/`approved` are both in 저장's `disabled` expression, so they only ever reach a
+            reviewer through `Tip` — a `title` conditioned on either never renders. The Drive/local
+            reminder that used to share this button's `title` moved to the always-visible paragraph
+            above instead (see its comment): unlike these two lock reasons, it is not about why 저장 is
+            disabled, and tying it to 저장's `Tip` would hide it in exactly the state — draft dirty,
+            about to save — where it is most worth reading. */}
+        <Tip text={posted ? POSTED_LOCK : approved ? "승인 상태에서는 편집할 수 없습니다. 먼저 승인을 취소하세요." : undefined}>
           <button
-            className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:opacity-40"
+            className={btn}
             disabled={busy || !dirty || approved || posted}
             onClick={() => run(() => props.onSave(props.item.itemId, korean))}
-            title={
-              posted || approved
-                ? undefined
-                : "편집한 번역을 저장합니다. Drive/로컬 파일은 오른쪽 발행 버튼을 눌러야 갱신됩니다."
-            }
           >
             저장
           </button>
@@ -300,41 +324,25 @@ export function TranslationDetail(props: {
           <>
             {/* Not a button — 게시됨 is a fact about this item, not a toggle a click could undo the
                 way 승인 취소 undoes approval. 되돌리기 below is the actual (distinct, deliberate)
-                undo. */}
-            <span
-              className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-slate-soft px-3.5 py-1.5 text-[13px] font-medium text-slate-ink"
-              title={POSTED_LOCK}
-            >
+                undo. No `title` here either: it used to repeat `POSTED_LOCK` verbatim, which is now
+                permanently visible as inline text beside the textarea above (Task 10) whenever
+                `posted` is true — exactly the condition this badge renders under, so a second copy
+                would only be noise. */}
+            <span className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-slate-soft px-3.5 py-1.5 text-[13px] font-medium text-slate-ink">
               게시됨 ✓
             </span>
-            <button
-              className="rounded-lg border border-line-strong bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:opacity-40"
-              disabled={busy}
-              onClick={() => run(() => props.onUnretire(props.item.itemId))}
-              title="게시 처리를 취소하고 검수 대기로 되돌립니다. 게시 기록은 남아 있어 다음 자동 확인이 다시 게시됨으로 표시하지 않습니다."
-            >
-              되돌리기
-            </button>
+            <Tip text="게시 처리를 취소하고 검수 대기로 되돌립니다. 게시 기록은 남아 있어 다음 자동 확인이 다시 게시됨으로 표시하지 않습니다.">
+              <button className={btn} disabled={busy} onClick={() => run(() => props.onUnretire(props.item.itemId))}>
+                되돌리기
+              </button>
+            </Tip>
           </>
         ) : approved ? (
-          <button
-            className="group grid min-w-[5.5rem] place-items-center rounded-lg bg-mint-soft px-3.5 py-1.5 text-[13px] font-medium text-mint transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
-            disabled={busy}
-            onClick={() => run(() => props.onUnapprove(props.item.itemId))}
-            title="클릭하면 승인을 취소합니다"
-          >
-            {/* Both labels share one grid cell, so the button sizes to the wider and never jumps on hover. */}
-            <span className="col-start-1 row-start-1 whitespace-nowrap transition-opacity group-hover:opacity-0">
-              승인됨 ✓
-            </span>
-            <span className="col-start-1 row-start-1 whitespace-nowrap opacity-0 transition-opacity group-hover:opacity-100">
-              승인 취소
-            </span>
-          </button>
+          <ApprovedButton onUnapprove={() => run(() => props.onUnapprove(props.item.itemId))} disabled={busy} />
         ) : (
           <Tip text={dirty ? "편집 내용을 먼저 저장하세요" : undefined}>
             <button
-              className="inline-flex min-w-[5.5rem] items-center justify-center rounded-lg bg-mint px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-mint-hover disabled:opacity-40"
+              className={btnApprove}
               disabled={busy || dirty}
               onClick={() => run(() => props.onApprove(props.item.itemId))}
             >
@@ -364,7 +372,7 @@ export function TranslationDetail(props: {
           return (
             <Tip key={t} text={blocked}>
               <button
-                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg disabled:border-line disabled:bg-bg disabled:text-faint disabled:opacity-60"
+                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors pointer-coarse:min-h-11 hover:bg-bg disabled:border-line disabled:bg-bg disabled:text-faint disabled:opacity-60"
                 // `posted` disables these for the same reason it disables 저장 and 승인 above: the item
                 // is terminal for the Drive path. The server refuses it too (409) — this is the half
                 // that stops a reviewer being invited into it in the first place. Leaving them live was

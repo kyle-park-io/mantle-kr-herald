@@ -1,12 +1,14 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "./api";
-import type { Translation, AppStatus, PublishStateRow } from "./types";
+import { datePrefix, type Translation, type AppStatus, type PublishStateRow } from "./types";
 import { TranslationList } from "./components/TranslationList";
 import { TranslationDetail } from "./components/TranslationDetail";
 import { RenderingsView } from "./components/RenderingsView";
+import { ListDetailShell } from "./components/ListDetailShell";
 import { IntakeView } from "./components/IntakeView";
 import { EnvironmentBanner } from "./components/EnvironmentBanner";
 import { CollectedBreakdownCard } from "./components/CollectedBreakdownCard";
+import { InfoPopover } from "./components/InfoPopover";
 import { TickPie } from "./components/TickPie";
 import { btn } from "./buttonStyles";
 import { livenessChip, livenessHeadline, probeLabel } from "./liveness";
@@ -21,11 +23,14 @@ import { CONVERT_TICK, WATCH_TICK, tickPhase, tickTooltip, type TickSchedule } f
  * quietly opens 1차 검수 instead.
  *
  * The first entry is the default, and its hash is "" — the bare url is 1차 검수.
+ *
+ * 다섯 번째 사실은 `short` — 폰에서 쓰는 축약 라벨이다. 세 탭의 전체 라벨은 390px 헤더에서 다른
+ * 컨트롤들과 함께 세 줄로 접히는데, 이 대시보드에서 헤더 세 줄은 상세 pane을 그만큼 밀어낸다.
  */
 const TABS = [
-  { id: "translations", hash: "", label: "1차 검수 · 번역" },
-  { id: "renderings", hash: "#renderings", label: "2차 검수 · 채널" },
-  { id: "intake", hash: "#intake", label: "링크 수집" },
+  { id: "translations", hash: "", label: "1차 검수 · 번역", short: "1차" },
+  { id: "renderings", hash: "#renderings", label: "2차 검수 · 채널", short: "2차" },
+  { id: "intake", hash: "#intake", label: "링크 수집", short: "수집" },
 ] as const;
 
 type Mode = (typeof TABS)[number]["id"];
@@ -236,7 +241,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
   const chip = livenessChip(status?.liveness, new Date());
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-ink">
+    <div className="flex h-dvh flex-col bg-bg text-ink">
       <EnvironmentBanner status={status} />
       <header className="shrink-0 border-b border-line bg-surface">
         {/* Every child below is `shrink-0` so a control never squishes down to illegible,
@@ -253,44 +258,16 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
           <div className="flex shrink-0 items-center gap-2.5">
             <span className="h-2.5 w-2.5 rounded-full bg-mint" />
             <span className="whitespace-nowrap text-[15px] font-semibold tracking-tight">
-              Mantle KR <span className="text-faint font-normal">Review</span>
+              Mantle KR <span className="text-faint font-normal hidden tablet:inline">Review</span>
             </span>
           </div>
 
           {status && (
-            <div className="group relative shrink-0">
-              <span
-                className={`inline-flex cursor-default items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
-                  isCloud ? "bg-mint-soft text-mint" : "bg-amber-soft text-amber-ink"
-                }`}
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${isCloud ? "bg-mint" : "bg-amber-ink"}`} />
-                {status.storageMode}
-              </span>
-              {chip && (
-                <span
-                  className={`ml-1.5 inline-flex shrink-0 items-center rounded-full px-2 py-1 text-xs font-medium ${
-                    chip.tone === "red" ? "bg-red-50 text-red-700" : "bg-amber-soft text-amber-ink"
-                  }`}
-                >
-                  ⚠ {chip.text}
-                </span>
-              )}
-              {/*
-               * Two nested boxes, not one. The outer carries the absolute positioning, `hidden
-               * group-hover:block`, and the gap to the pill as `pt-2` *padding*; the inner carries
-               * the visible border/background/shadow. Before this task the card was
-               * `pointer-events-none`, so nothing inside it could ever hold `:hover` and a gap between
-               * the pill and the card never mattered. Now [지금 확인] needs the pointer to be able to
-               * travel from the pill down into the card without crossing a dead zone — a `margin` on
-               * a single box would have left exactly that: margin sits outside an element's own
-               * hit-test area, padding sits inside it. Splitting the box keeps the visible result
-               * identical to before (the inner box still starts 8px below the pill) while making that
-               * whole 8px strip hit-testable, so a pointer crossing it in a straight line keeps
-               * `group-hover` — and the card — alive instead of dropping it mid-transit.
-               */}
-              <div className="pointer-events-auto absolute left-0 top-full z-30 hidden w-72 pt-2 group-hover:block">
-                <div className="rounded-lg border border-line bg-surface p-3 text-[12px] leading-relaxed text-muted shadow-lg">
+            <InfoPopover
+              className="shrink-0"
+              panelClassName="w-72 p-3 text-[12px] leading-relaxed text-muted"
+              panel={
+                <>
                   <p className="mb-1 font-semibold text-ink">
                     현재 <span className={isCloud ? "text-mint" : "text-amber-ink"}>{status.storageMode}</span> 모드
                   </p>
@@ -377,36 +354,72 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                       채우고 서버를 다시 실행하면 활성화됩니다.
                     </p>
                   )}
-                </div>
-              </div>
-            </div>
+                </>
+              }
+            >
+              <span
+                className={`inline-flex cursor-default items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                  isCloud ? "bg-mint-soft text-mint" : "bg-amber-soft text-amber-ink"
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${isCloud ? "bg-mint" : "bg-amber-ink"}`} />
+                {status.storageMode}
+              </span>
+              {chip && (
+                <span
+                  className={`ml-1.5 inline-flex shrink-0 items-center rounded-full px-2 py-1 text-xs font-medium ${
+                    chip.tone === "red" ? "bg-red-50 text-red-700" : "bg-amber-soft text-amber-ink"
+                  }`}
+                >
+                  ⚠ {chip.text}
+                </span>
+              )}
+            </InfoPopover>
           )}
 
           <nav className="ml-2 inline-flex shrink-0 rounded-lg border border-line bg-bg p-0.5">
-            {TABS.map(({ id, label }) => (
+            {TABS.map(({ id, label, short }) => (
               <button
                 key={id}
                 onClick={() => switchMode(id)}
-                className={`whitespace-nowrap rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors ${
+                // Without this, the accessible name would be content-derived — correctly, in a real
+                // browser: `display: none` removes a span from the a11y tree, so only whichever span
+                // the CSS currently shows is ever announced (the doubled name jsdom sees is a jsdom
+                // artifact, with no CSS applied there at all). But that means a phone's screen reader
+                // would hear only `short` — "1차" rather than "1차 검수 · 번역" — since `short` exists
+                // purely to save on-screen space, not because the shorter phrase is what a listener
+                // should hear. `aria-label` pins the announced name to the full label at every width.
+                aria-label={label}
+                className={`whitespace-nowrap rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors pointer-coarse:min-h-11 ${
                   mode === id ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
                 }`}
               >
-                {label}
+                <span className="tablet:hidden">{short}</span>
+                <span className="hidden tablet:inline">{label}</span>
               </button>
             ))}
           </nav>
 
           {/* Wraps the (desktop-only) status funnel and the sign-out control together so the whole
               group pushes to the header's right edge — on a narrow screen the funnel hides
-              (`hidden md:flex` below) but 로그아웃 still lands at the far right on its own. */}
-          <div className="ml-auto flex shrink-0 items-center gap-3">
+              (`hidden tablet:flex` below) but 로그아웃 still lands at the far right on its own.
+              `flex-wrap` on both this div and the one below it: every other control in this header
+              is narrow enough to fit a tablet-width line by itself, but sheet links + a five-stage
+              funnel + the sync badge, combined, are not — at 834px wide with a non-empty sync badge
+              this group alone measured wider than the viewport, and being `shrink-0` (like every
+              other child here, so none of them squish to illegible text) it overflowed sideways
+              instead of shrinking. The fix is the same one the outer header row already uses:
+              wrap instead of shrink, at the granularity of this group's own three chunks — sheet
+              links, the funnel, and the sync badge — each `shrink-0` below for the same reason the
+              row's own children are. */}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
             {status && (
-              <div className="hidden items-center gap-3 md:flex">
+              <div className="hidden flex-wrap items-center justify-end gap-x-3 gap-y-2 tablet:flex">
                 {/* Left of the funnel and set apart with a wider gap: these leave the dashboard,
                     while everything to the right of them reports on it. Each appears only when its id
                     is configured, so an empty GSHEET_QA_ID hides QA rather than linking nowhere. */}
                 {(status.sheetLinks.data || status.sheetLinks.qa) && (
-                  <span className="mr-3 flex items-center gap-3 text-[13px]">
+                  <span className="mr-3 flex shrink-0 items-center gap-3 text-[13px]">
                     {status.sheetLinks.data && (
                       <a
                         href={status.sheetLinks.data.url}
@@ -433,7 +446,7 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                 )}
                 <div
                   data-testid="funnel"
-                  className="flex items-center gap-1.5 text-[13px]"
+                  className="flex shrink-0 items-center gap-1.5 text-[13px]"
                   title={
                     "숫자는 항목 수, N건은 그 항목들이 만든 행 수입니다 — " +
                     "변환은 타입마다, 렌더는 채널마다, 발행은 업로드 대상마다 한 행씩 생깁니다. " +
@@ -443,9 +456,11 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                   {FUNNEL_STEPS.map(([label, key], i) => {
                     const tally = status.funnel[key];
                     // 수집 is the one stage whose number needs qualifying — see
-                    // `CollectedBreakdownCard`. The strip itself is untouched: the card is a
-                    // descendant of the stage but not one of its own two spans, so `수집 134` keeps
-                    // its value, its density, and the way a test reads one stage at a time.
+                    // `CollectedBreakdownCard`. The strip itself is untouched: `InfoPopover`'s own
+                    // trigger span *is* a wrapper around the label/count spans below, but the card it
+                    // renders (only while its popover is open) is a sibling of that trigger span, not
+                    // of the label/count spans themselves — so `수집 134` keeps its value whether the
+                    // card is open or not, and keeps its density via its own `flex gap-1.5` wrapper.
                     const collected = key === "collected";
                     // Both `undefined` on the three stages no timer feeds. The sentence is built once
                     // and used twice — as the pointer's tooltip and as the pie's accessible name —
@@ -458,23 +473,12 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                       // text is exactly its own — which is what lets a test read one stage at a time.
                       <Fragment key={key}>
                         {i > 0 && <span className="text-line-strong">·</span>}
-                        <div
-                          data-testid={`funnel-${key}`}
-                          className={`flex items-center gap-1.5${
-                            collected ? " group/collected relative cursor-help" : ""
-                          }`}
-                          // The funnel's own `title` explains items-vs-rows for every stage; over 수집
-                          // it would open on top of the card. An empty `title` is the spec's way for an
-                          // element to say it has no advisory information of its own — an omitted one
-                          // inherits the nearest ancestor's, which is exactly what has to stop here.
-                          title={collected ? "" : undefined}
-                        >
+                        <div data-testid={`funnel-${key}`} className="flex items-center gap-1.5">
                           {/* The countdown's own tooltip, on a span of its own. Same problem 수집
-                              solves two lines up and a cheaper answer: the funnel's `title` explains
+                              solves below and a cheaper answer: the funnel's `title` explains
                               items-vs-rows, and the nearest titled ancestor is what the pointer gets,
                               so a `title` here simply wins for the pixels the pie occupies — no
-                              `title=""` and no hover card needed, because this one is a sentence
-                              rather than a table. */}
+                              hover card needed, because this one is a sentence rather than a table. */}
                           {phase && tickTip && (
                             <span
                               className="flex shrink-0 cursor-help items-center"
@@ -483,28 +487,63 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                               <TickPie fraction={phase.fraction} label={tickTip} />
                             </span>
                           )}
-                          <span className="text-muted">{label}</span>
-                          <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
-                          {tally.rows !== tally.items && (
-                            <span className="font-mono text-[11px] tabular-nums text-faint">{tally.rows}건</span>
-                          )}
-                          {collected && (
-                            <CollectedBreakdownCard breakdown={status.funnel.collected.breakdown} />
+                          {/* No `title=""` on this stage any more, unlike before this task — that
+                              trick existed only to stop the funnel div's own `title` (items-vs-rows,
+                              above) from surfacing as a native OS tooltip over this stage's card. On
+                              the promoted path (native `showPopover` + CSS anchor positioning both
+                              supported) the card is in the top layer, above everything painted in
+                              normal flow including a native tooltip from an ancestor, so nothing can
+                              overlap it there. That is not true on the un-promoted path: there the
+                              card is an ordinary absolutely-positioned element with no such
+                              protection, and the funnel's `title` can still render over it on a long
+                              enough hover. Left unrestored anyway — it is a native tooltip, on a
+                              browser too old for the top layer, saying something the card's own text
+                              already covers, not a silent loss. */}
+                          {collected ? (
+                            <InfoPopover
+                              panelClassName="w-80 p-3 text-[12px] font-normal leading-relaxed text-muted"
+                              panel={<CollectedBreakdownCard breakdown={status.funnel.collected.breakdown} />}
+                            >
+                              {/* `InfoPopover`'s own trigger span is `inline-flex` with no gap of its
+                                  own (it has to work for any `children`, most of which are a single
+                                  element) — without this wrapper the three spans below sit flush
+                                  against each other (`수집134`, not `수집 134`), because JSX drops the
+                                  whitespace between adjacent JSX elements. */}
+                              <span className="flex items-center gap-1.5">
+                                <span className="text-muted">{label}</span>
+                                <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
+                                {tally.rows !== tally.items && (
+                                  <span className="font-mono text-[11px] tabular-nums text-faint">{tally.rows}건</span>
+                                )}
+                              </span>
+                            </InfoPopover>
+                          ) : (
+                            <>
+                              <span className="text-muted">{label}</span>
+                              <span className="font-mono text-xs font-semibold tabular-nums">{tally.items}</span>
+                              {tally.rows !== tally.items && (
+                                <span className="font-mono text-[11px] tabular-nums text-faint">{tally.rows}건</span>
+                              )}
+                            </>
                           )}
                         </div>
                       </Fragment>
                     );
                   })}
                 </div>
-                <span className="h-4 w-px bg-line" />
-                <span
-                  className={`inline-flex items-center gap-1.5 text-xs font-medium ${syncWarn ? "text-amber-ink" : "text-mint"}`}
-                  title="발행됨 · 재발행 필요 · 미발행"
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full ${syncWarn ? "bg-amber-ink" : "bg-mint"}`} />
-                  발행됨 {status.sync.synced}
-                  {status.sync.needsRepublish > 0 ? ` · 재발행 필요 ${status.sync.needsRepublish}` : ""}
-                  {status.sync.unpublished > 0 ? ` · 미발행 ${status.sync.unpublished}` : ""}
+                {/* One `shrink-0` wrap unit, not two — a lone divider bar wrapped onto its own line
+                    with the sync badge below it would read as a stray mark. */}
+                <span className="flex shrink-0 items-center gap-3">
+                  <span className="h-4 w-px bg-line" />
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-xs font-medium ${syncWarn ? "text-amber-ink" : "text-mint"}`}
+                    title="발행됨 · 재발행 필요 · 미발행"
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${syncWarn ? "bg-amber-ink" : "bg-mint"}`} />
+                    발행됨 {status.sync.synced}
+                    {status.sync.needsRepublish > 0 ? ` · 재발행 필요 ${status.sync.needsRepublish}` : ""}
+                    {status.sync.unpublished > 0 ? ` · 미발행 ${status.sync.unpublished}` : ""}
+                  </span>
                 </span>
               </div>
             )}
@@ -522,12 +561,21 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
       )}
 
       {mode === "translations" && (
-        <div className="flex min-h-0 flex-1">
-          <aside className="w-80 shrink-0 overflow-y-auto border-r border-line bg-surface [scrollbar-gutter:stable]">
-            <TranslationList items={items} selectedId={selectedId} onSelect={handleSelect} />
-          </aside>
-          <section className="min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-            {selected ? (
+        <ListDetailShell
+          // A human label, not the raw `itemId` (`x:2081711456320655644` truncated to illegibility
+          // in the phone bar's `truncate` span) — the list itself identifies a row by date + Korean
+          // preview (`TranslationList`'s own `preview()`), so the phone bar names the current
+          // selection the same way.
+          current={
+            selected
+              ? `${datePrefix(selected.sourcePostedAt)} ${(selected.koreanText || selected.sourceText)
+                  .replace(/\s+/g, " ")
+                  .trim()}`.trim()
+              : undefined
+          }
+          list={<TranslationList items={items} selectedId={selectedId} onSelect={handleSelect} />}
+          detail={
+            selected ? (
               <TranslationDetail
                 item={selected}
                 publishRows={publishRows.filter((r) => r.itemId === selected.itemId)}
@@ -542,9 +590,9 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
               />
             ) : (
               <EmptyState title="검수할 항목을 선택하세요" hint="왼쪽 목록에서 번역을 골라 원문과 나란히 확인하고 승인합니다." />
-            )}
-          </section>
-        </div>
+            )
+          }
+        />
       )}
 
       {mode === "renderings" && (
