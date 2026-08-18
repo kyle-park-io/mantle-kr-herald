@@ -4,6 +4,7 @@ import type { ConversionStore } from "../ports/ConversionStore";
 import type { FewShotStore } from "../ports/FewShotStore";
 import type { FormattingStore } from "../ports/FormattingStore";
 import type { LineageStore } from "../ports/LineageStore";
+import type { LineageActor } from "../domain/lineage/models";
 
 export interface ApproveRenderingInput {
   itemId: string;
@@ -27,7 +28,16 @@ export class ApproveRendering {
     private readonly conversionStore: ConversionStore,
     private readonly fewShotByType: Record<ConversionType, FewShotStore>,
     private readonly now: () => string = () => new Date().toISOString(),
-    private readonly lineage?: LineageStore,
+    // Was `lineage?: LineageStore` — dropped to `| undefined` so `actor` below can be required: TS
+    // refuses a required parameter after an optional (`?`) one, but accepts one after a parameter
+    // typed to allow `undefined`. The call-site behaviour is identical either way.
+    private readonly lineage: LineageStore | undefined,
+    /**
+     * Which kind of caller built this — see `LineageActor`. Required rather than defaulted: a new
+     * call site that inherits a neighbour's answer would mislabel human edits as machine ones, and
+     * nothing downstream could tell. One value per process; no process is sometimes a human.
+     */
+    private readonly actor: LineageActor,
   ) {}
 
   async run(input: ApproveRenderingInput): Promise<ChannelRendering | undefined> {
@@ -49,7 +59,7 @@ export class ApproveRendering {
     if (approve) await this.promoteVariant(input, at);
     if (this.lineage) {
       try {
-        await this.lineage.append({ itemId: input.itemId, stage: "rendered", variant: `${input.type}/${input.channel}`, content: updated.text, status: updated.status, at });
+        await this.lineage.append({ itemId: input.itemId, stage: "rendered", variant: `${input.type}/${input.channel}`, content: updated.text, status: updated.status, at, actor: this.actor });
       } catch (err) {
         console.warn(`[lineage] append failed for ${input.itemId}: ${(err as Error).message}`);
       }

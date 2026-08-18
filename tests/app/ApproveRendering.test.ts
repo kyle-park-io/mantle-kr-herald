@@ -51,7 +51,7 @@ function harness(renderings: ChannelRendering[], variants: ContentVariant[] = [v
 describe("ApproveRendering", () => {
   it("sets status approved + approvedAt on the matching rendering", async () => {
     const h = harness([rnd()]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     const res = await uc.run({ itemId: "x:1", type: "x", channel: "telegram" });
     expect(res?.status).toBe("approved");
     expect(res?.approvedAt).toBe("2026-05-05T00:00:00.000Z");
@@ -61,7 +61,7 @@ describe("ApproveRendering", () => {
 
   it("returns undefined when no rendering matches", async () => {
     const h = harness([rnd()]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType);
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, undefined, undefined, "agent");
     expect(await uc.run({ itemId: "x:9", type: "x", channel: "telegram" })).toBeUndefined();
   });
 
@@ -72,7 +72,7 @@ describe("ApproveRendering", () => {
    */
   it("promotes the variant into its type's few-shot corpus, using the variant's own text", async () => {
     const h = harness([rnd({ type: "kol", text: "채널용으로 다듬은 글" })], [variant({ type: "kol" })]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     await uc.run({ itemId: "x:1", type: "kol", channel: "telegram" });
     expect(h.fewShots.kol).toEqual([{ source: "한글", target: "카피", itemId: "x:1" }]);
     expect(h.fewShots.x).toHaveLength(0);
@@ -80,7 +80,7 @@ describe("ApproveRendering", () => {
 
   it("marks the variant approved too, so `pnpm status` counts it", async () => {
     const h = harness([rnd()]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     await uc.run({ itemId: "x:1", type: "x", channel: "telegram" });
     expect(h.variants()[0].status).toBe("approved");
     expect(h.variants()[0].approvedAt).toBe("2026-05-05T00:00:00.000Z");
@@ -90,7 +90,7 @@ describe("ApproveRendering", () => {
   it("approving a second channel of the same type does not duplicate the few-shot entry", async () => {
     const h = harness([rnd({ type: "announcement", channel: "telegram" }), rnd({ type: "announcement", channel: "kakao" })],
       [variant({ type: "announcement" })]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     await uc.run({ itemId: "x:1", type: "announcement", channel: "telegram" });
     await uc.run({ itemId: "x:1", type: "announcement", channel: "kakao" });
     expect(h.fewShots.announcement).toHaveLength(1);
@@ -104,7 +104,7 @@ describe("ApproveRendering", () => {
    */
   it("does not promote an x approval into the corpus", async () => {
     const h = harness([rnd({ type: "x", channel: "x" })], [variant({ type: "x" })]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     await uc.run({ itemId: "x:1", type: "x", channel: "x" });
     expect(h.fewShots.x).toEqual([]);
     expect(h.variants()[0].status).toBe("approved");
@@ -112,7 +112,7 @@ describe("ApproveRendering", () => {
 
   it("approves the rendering even when no variant sits behind it", async () => {
     const h = harness([rnd({ type: "announcement" })], []);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     const res = await uc.run({ itemId: "x:1", type: "announcement", channel: "telegram" });
     expect(res?.status).toBe("approved");
     expect(h.fewShots.announcement).toHaveLength(0);
@@ -122,7 +122,7 @@ describe("ApproveRendering", () => {
 describe("ApproveRendering — 승인 취소", () => {
   it("drops the rendering back to rendered and clears the stamp", async () => {
     const h = harness([rnd({ status: "approved", approvedAt: "2026-05-01T00:00:00.000Z" })]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     const res = await uc.run({ itemId: "x:1", type: "x", channel: "telegram", approve: false });
     expect(res?.status).toBe("rendered");
     expect(res?.approvedAt).toBeUndefined();
@@ -136,7 +136,7 @@ describe("ApproveRendering — 승인 취소", () => {
    */
   it("does not write to the few-shot corpus at all", async () => {
     const h = harness([rnd({ type: "announcement" })], [variant({ type: "announcement" })]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     await uc.run({ itemId: "x:1", type: "announcement", channel: "telegram" });
     expect(h.fewShots.announcement).toHaveLength(1);
 
@@ -151,7 +151,7 @@ describe("ApproveRendering — 승인 취소", () => {
   /** The variant's own `approved` mark records that it was promoted, so it must not move either. */
   it("does not touch the variant's status", async () => {
     const h = harness([rnd()]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     await uc.run({ itemId: "x:1", type: "x", channel: "telegram" });
     const afterApprove = { ...h.variants()[0] };
     await uc.run({ itemId: "x:1", type: "x", channel: "telegram", approve: false });
@@ -160,7 +160,7 @@ describe("ApproveRendering — 승인 취소", () => {
 
   it("re-approval upserts rather than appending", async () => {
     const h = harness([rnd({ type: "announcement" })], [variant({ type: "announcement" })]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     await uc.run({ itemId: "x:1", type: "announcement", channel: "telegram" });
     await uc.run({ itemId: "x:1", type: "announcement", channel: "telegram", approve: false });
     await uc.run({ itemId: "x:1", type: "announcement", channel: "telegram" });
@@ -169,7 +169,7 @@ describe("ApproveRendering — 승인 취소", () => {
 
   it("defaults to approving when the flag is omitted", async () => {
     const h = harness([rnd({ status: "rendered", approvedAt: undefined })]);
-    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "T");
+    const uc = new ApproveRendering(h.formatting, h.conversion, h.fewShotByType, () => "T", undefined, "agent");
     expect((await uc.run({ itemId: "x:1", type: "x", channel: "telegram" }))?.status).toBe("approved");
   });
 });

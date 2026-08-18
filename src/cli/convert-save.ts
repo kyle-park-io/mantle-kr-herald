@@ -37,7 +37,9 @@ try {
 
   const convertedText = (await readFile(file, "utf8")).trim();
 
-  const usecase = new SaveConversion(conversionStore, undefined, stores.lineageStore);
+  // "agent": `pnpm convert:save` writes the agent's converted copy — `SaveConversion`'s own doc
+  // comment notes no human eye has reviewed it yet; that happens later, at 2차, in ApproveRendering.
+  const usecase = new SaveConversion(conversionStore, undefined, stores.lineageStore, "agent");
   const res = await usecase.run({ itemId: id, type, sourceKorean, convertedText });
 
   console.log(`saved ${res.itemId}/${res.type} (run pnpm format next; approval happens in 2차)`);

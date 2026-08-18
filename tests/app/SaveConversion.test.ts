@@ -15,7 +15,7 @@ function harness() {
 describe("SaveConversion", () => {
   it("always saves as converted — the agent's copy is never self-approved", async () => {
     const h = harness();
-    const uc = new SaveConversion(h.store, () => "2026-02-02T00:00:00.000Z");
+    const uc = new SaveConversion(h.store, () => "2026-02-02T00:00:00.000Z", undefined, "agent");
     const res = await uc.run({ itemId: "x:1", type: "announcement", sourceKorean: "한글", convertedText: "카피" });
     expect(res).toEqual({ itemId: "x:1", type: "announcement" });
     expect(h.saved[0].status).toBe("converted");
@@ -32,7 +32,7 @@ describe("SaveConversion", () => {
    */
   it("refuses to save an x variant — that type is the approved translation, not something to rewrite", async () => {
     const h = harness();
-    const uc = new SaveConversion(h.store, () => "2026-02-02T00:00:00.000Z");
+    const uc = new SaveConversion(h.store, () => "2026-02-02T00:00:00.000Z", undefined, "agent");
     await expect(uc.run({ itemId: "x:1", type: "x", sourceKorean: "승인 카피", convertedText: "다시 쓴 글" }))
       .rejects.toThrow(/x/);
     expect(h.saved).toEqual([]);
@@ -46,7 +46,7 @@ describe("SaveConversion", () => {
     const h = harness();
     h.saved.push({ itemId: "x:1", type: "announcement", sourceKorean: "한글", convertedText: "옛 카피",
       status: "approved", createdAt: "2026-01-01T00:00:00.000Z", approvedAt: "2026-01-02T00:00:00.000Z" });
-    const uc = new SaveConversion(h.store, () => "2026-02-02T00:00:00.000Z");
+    const uc = new SaveConversion(h.store, () => "2026-02-02T00:00:00.000Z", undefined, "agent");
     await uc.run({ itemId: "x:1", type: "announcement", sourceKorean: "한글", convertedText: "새 카피" });
     const latest = h.saved[h.saved.length - 1];
     expect(latest.convertedText).toBe("새 카피");

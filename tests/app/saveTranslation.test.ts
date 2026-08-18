@@ -36,7 +36,7 @@ function replacingStores(seed: Translation[] = []) {
 describe("SaveTranslation", () => {
   it("stores a translation with status 'translated' and does not promote when not approved", async () => {
     const s = stores();
-    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     const res = await uc.run({ itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕", approve: false });
     expect(res).toEqual({ itemId: "x:1", promoted: false, normalizedPhotoMarkers: 0 });
     expect(s.saved[0].status).toBe("translated");
@@ -46,7 +46,7 @@ describe("SaveTranslation", () => {
 
   it("marks approved and promotes to few-shot when approved", async () => {
     const s = stores();
-    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     const res = await uc.run({ itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕", approve: true });
     expect(res.promoted).toBe(true);
     expect(s.saved[0].status).toBe("approved");
@@ -56,7 +56,7 @@ describe("SaveTranslation", () => {
 
   it("saves and approves an oversized (article-length) translation, but skips few-shot promotion", async () => {
     const s = stores();
-    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     const hugeSource = "x".repeat(2001); // one char over the promotion threshold
     const res = await uc.run({ itemId: "x:article", source: "x", sourceText: hugeSource, koreanText: "번역", approve: true });
 
@@ -71,7 +71,7 @@ describe("SaveTranslation", () => {
 
   it("still promotes a translation right at the threshold", async () => {
     const s = stores();
-    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     const atThreshold = "x".repeat(2000);
     const res = await uc.run({ itemId: "x:2", source: "x", sourceText: atThreshold, koreanText: "번역", approve: true });
 
@@ -81,7 +81,7 @@ describe("SaveTranslation", () => {
 
   it("stores isReply and refUrl on the translation when provided", async () => {
     const s = stores();
-    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     await uc.run({
       itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕",
       approve: false, isReply: true, refUrl: "https://x.com/a/status/1",
@@ -92,7 +92,7 @@ describe("SaveTranslation", () => {
 
   it("restores the [사진] label the agent dropped, and reports how many", async () => {
     const s = stores();
-    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     const res = await uc.run({
       itemId: "x:1", source: "x", sourceText: "hi\n\n[사진](https://img/a.jpg)",
       koreanText: "안녕\n\n![](https://img/a.jpg)", approve: false,
@@ -104,7 +104,7 @@ describe("SaveTranslation", () => {
 
   it("reports zero when the translation already carries the label", async () => {
     const s = stores();
-    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     const res = await uc.run({
       itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕\n\n[사진](https://img/a.jpg)", approve: false,
     });
@@ -115,7 +115,7 @@ describe("SaveTranslation", () => {
     // The corpus is inlined into every later worksheet, so promoting `![]` would teach the next
     // batch to produce it — the drift would train itself in.
     const s = stores();
-    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z");
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-05T00:00:00.000Z", undefined, "agent");
     await uc.run({
       itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕\n\n![](https://img/a.jpg)", approve: true,
     });
@@ -139,7 +139,7 @@ describe("SaveTranslation", () => {
       publishedText: "안녕하세요 여러분",
     };
     const s = replacingStores([retired]);
-    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-06T00:00:00.000Z");
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-05-06T00:00:00.000Z", undefined, "agent");
 
     await uc.run({ itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕하세요", approve: false });
 
@@ -149,5 +149,17 @@ describe("SaveTranslation", () => {
     expect(s.saved[0].postedUrl).toBe("https://x.com/0xMantleKR/status/999"); // …but the evidence stays
     expect(s.saved[0].postedAt).toBe("2026-07-31T05:39:41.000Z");
     expect(s.saved[0].publishedText).toBe("안녕하세요 여러분");
+  });
+
+  it("stamps the lineage entry with the actor it was constructed for", async () => {
+    const appended: { actor?: string }[] = [];
+    const lineage = { append: async (e: { actor?: string }) => { appended.push(e); },
+      load: async () => [], listItems: async () => [], listEvents: async () => [] };
+    const s = stores();
+    const uc = new SaveTranslation(s.translationStore, s.fewShotStore, () => "2026-08-18T00:00:00.000Z", lineage as never, "human");
+
+    await uc.run({ itemId: "x:1", source: "x", sourceText: "en", koreanText: "한국어", approve: false });
+
+    expect(appended[0].actor).toBe("human");
   });
 });

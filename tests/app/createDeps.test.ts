@@ -8,6 +8,7 @@ import { PgCollectionRepository } from "../../src/adapters/store/PgCollectionRep
 import { PgTranslateFloorReport } from "../../src/adapters/store/PgTranslateFloorReport";
 import { PgCredentialLiveness } from "../../src/adapters/store/PgCredentialLiveness";
 import { PgDeliveryLedger } from "../../src/adapters/store/PgDeliveryLedger";
+import { PgLineageStore } from "../../src/adapters/store/PgLineageStore";
 import type { Db } from "../../src/adapters/db/Db";
 import { VALID_PASSWORD_HASH } from "../support/authFixtures";
 
@@ -733,6 +734,24 @@ describe("createDeps", () => {
       db = await createTestDb();
       const deps = createDeps({ db: missingCredentialLivenessTable(db), routes: "local" });
       await expect(deps.loadStatus()).resolves.toMatchObject({ liveness: undefined });
+    });
+  });
+
+  /**
+   * The use case cannot see which process built it, so the call site is the only place the
+   * human/agent split can be checked. A dashboard save labelled "agent" would feed machine phrasing
+   * into a corpus whose whole purpose is to record what humans decided, and nothing downstream
+   * could tell.
+   */
+  describe("lineage actor", () => {
+    it("builds the dashboard's SaveTranslation as a human writer", async () => {
+      db = await createTestDb();
+      const deps = createDeps({ db, routes: "local" });
+      await deps.saveTranslation.run({
+        itemId: "x:1", source: "x", sourceText: "en", koreanText: "한국어", approve: false,
+      });
+      const entries = await new PgLineageStore(db).load("x:1");
+      expect(entries.map((e) => e.actor)).toEqual(["human"]);
     });
   });
 });

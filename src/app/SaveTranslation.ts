@@ -3,6 +3,7 @@ import type { Translation } from "../domain/translation/models";
 import type { TranslationStore } from "../ports/TranslationStore";
 import type { FewShotStore } from "../ports/FewShotStore";
 import type { LineageStore } from "../ports/LineageStore";
+import type { LineageActor } from "../domain/lineage/models";
 
 /**
  * A promoted few-shot example is inlined into every subsequent worksheet (the last `MAX_FEW_SHOTS`
@@ -32,7 +33,16 @@ export class SaveTranslation {
     private readonly translationStore: TranslationStore,
     private readonly fewShotStore: FewShotStore,
     private readonly now: () => string = () => new Date().toISOString(),
-    private readonly lineage?: LineageStore,
+    // Was `lineage?: LineageStore` — dropped to `| undefined` so `actor` below can be required: TS
+    // refuses a required parameter after an optional (`?`) one, but accepts one after a parameter
+    // typed to allow `undefined`. The call-site behaviour is identical either way.
+    private readonly lineage: LineageStore | undefined,
+    /**
+     * Which kind of caller built this — see `LineageActor`. Required rather than defaulted: a new
+     * call site that inherits a neighbour's answer would mislabel human edits as machine ones, and
+     * nothing downstream could tell. One value per process; no process is sometimes a human.
+     */
+    private readonly actor: LineageActor,
   ) {}
 
   async run(input: SaveInput): Promise<{ itemId: string; promoted: boolean; normalizedPhotoMarkers: number }> {
@@ -66,7 +76,7 @@ export class SaveTranslation {
 
     if (this.lineage) {
       try {
-        await this.lineage.append({ itemId: input.itemId, stage: "translated", content: koreanText, status: translation.status, sourceText: input.sourceText, at: timestamp });
+        await this.lineage.append({ itemId: input.itemId, stage: "translated", content: koreanText, status: translation.status, sourceText: input.sourceText, at: timestamp, actor: this.actor });
       } catch (err) {
         console.warn(`[lineage] append failed for ${input.itemId}: ${(err as Error).message}`);
       }

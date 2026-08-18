@@ -33,17 +33,17 @@ const fakeFewShotByType = Object.fromEntries(ALL_TYPES.map((t) => [t, noFewShot]
 describe("lineage capture", () => {
   it("SaveTranslation appends a translated entry with sourceText", async () => {
     const l = fakeLineage();
-    await new SaveTranslation(noTranslationStore, noFewShot, () => "T", l.store).run({
+    await new SaveTranslation(noTranslationStore, noFewShot, () => "T", l.store, "agent").run({
       itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕", approve: false,
     });
     expect(l.appended).toEqual([
-      { itemId: "x:1", stage: "translated", content: "안녕", status: "translated", sourceText: "hi", at: "T" },
+      { itemId: "x:1", stage: "translated", content: "안녕", status: "translated", sourceText: "hi", at: "T", actor: "agent" },
     ]);
   });
 
   it("SaveRendering appends a rendered entry keyed by type/channel", async () => {
     const l = fakeLineage();
-    await new SaveRendering(fakeFormatting, () => "T", l.store).run({
+    await new SaveRendering(fakeFormatting, () => "T", l.store, "agent").run({
       itemId: "x:1", type: "announcement", channel: "telegram", text: "본문",
     });
     expect(l.appended[0]).toMatchObject({ itemId: "x:1", stage: "rendered", variant: "announcement/telegram", status: "rendered", at: "T" });
@@ -51,11 +51,11 @@ describe("lineage capture", () => {
 
   it("SaveConversion appends a converted entry", async () => {
     const l = fakeLineage();
-    await new SaveConversion(fakeConversionStore, () => "T", l.store).run({
+    await new SaveConversion(fakeConversionStore, () => "T", l.store, "agent").run({
       itemId: "x:1", type: "announcement", sourceKorean: "원본KO", convertedText: "공지문",
     });
     expect(l.appended).toEqual([
-      { itemId: "x:1", stage: "converted", variant: "announcement", content: "공지문", status: "converted", at: "T" },
+      { itemId: "x:1", stage: "converted", variant: "announcement", content: "공지문", status: "converted", at: "T", actor: "agent" },
     ]);
   });
 
@@ -68,26 +68,26 @@ describe("lineage capture", () => {
       upsert: async () => {},
       listRenderedKeys: async () => new Set(),
     };
-    await new ApproveRendering(store, fakeConversionStore, fakeFewShotByType, () => "T", l.store).run({ itemId: "x:1", type: "announcement", channel: "telegram" });
+    await new ApproveRendering(store, fakeConversionStore, fakeFewShotByType, () => "T", l.store, "agent").run({ itemId: "x:1", type: "announcement", channel: "telegram" });
     expect(l.appended[0]).toMatchObject({ itemId: "x:1", stage: "rendered", variant: "announcement/telegram", content: "본문", status: "approved", at: "T" });
   });
 
   it("ApproveRendering does NOT append when the rendering is not found", async () => {
     const l = fakeLineage();
-    await new ApproveRendering(fakeFormatting, fakeConversionStore, fakeFewShotByType, () => "T", l.store).run({ itemId: "x:1", type: "announcement", channel: "telegram" });
+    await new ApproveRendering(fakeFormatting, fakeConversionStore, fakeFewShotByType, () => "T", l.store, "agent").run({ itemId: "x:1", type: "announcement", channel: "telegram" });
     expect(l.appended).toHaveLength(0);
   });
 
   it("a lineage append failure is swallowed — the save still succeeds", async () => {
     const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [], listEvents: async () => [] };
-    const res = await new SaveTranslation(noTranslationStore, noFewShot, () => "T", throwing).run({
+    const res = await new SaveTranslation(noTranslationStore, noFewShot, () => "T", throwing, "agent").run({
       itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕", approve: false,
     });
     expect(res).toEqual({ itemId: "x:1", promoted: false, normalizedPhotoMarkers: 0 });
   });
 
   it("no lineage store injected = no append, unchanged behavior", async () => {
-    const res = await new SaveTranslation(noTranslationStore, noFewShot, () => "T").run({
+    const res = await new SaveTranslation(noTranslationStore, noFewShot, () => "T", undefined, "agent").run({
       itemId: "x:1", source: "x", sourceText: "hi", koreanText: "안녕", approve: false,
     });
     expect(res).toEqual({ itemId: "x:1", promoted: false, normalizedPhotoMarkers: 0 });
@@ -116,31 +116,31 @@ const forked = (over: Partial<OutletOverride> = {}): OutletOverride => ({
 describe("lineage capture — outlet forks", () => {
   it("SaveOutletOverride appends a forked entry keyed by type/outletId, with the canonicalised text", async () => {
     const l = fakeLineage();
-    await new SaveOutletOverride(fakeOverrideStore(), () => "T", l.store).run({ ...fork, text: "첫 트윗.\n\n---\n\n둘째 트윗." });
+    await new SaveOutletOverride(fakeOverrideStore(), () => "T", l.store, "agent").run({ ...fork, text: "첫 트윗.\n\n---\n\n둘째 트윗." });
     expect(l.appended).toEqual([
       // Canonicalised, because that is what the room will actually send — recording the keystrokes
       // would preserve a text that never existed downstream.
-      { itemId: "x:1", stage: "forked", variant: "announcement/tg-blockchain", content: "첫 트윗.\n\n\n둘째 트윗.", status: "rendered", at: "T" },
+      { itemId: "x:1", stage: "forked", variant: "announcement/tg-blockchain", content: "첫 트윗.\n\n\n둘째 트윗.", status: "rendered", at: "T", actor: "agent" },
     ]);
   });
 
   it("stamps a re-edit with the time of the edit, not the fork's original createdAt", async () => {
     const l = fakeLineage();
-    await new SaveOutletOverride(fakeOverrideStore([forked({ text: "v1", createdAt: "T0" })]), () => "T2", l.store).run({ ...fork, text: "v2" });
+    await new SaveOutletOverride(fakeOverrideStore([forked({ text: "v1", createdAt: "T0" })]), () => "T2", l.store, "agent").run({ ...fork, text: "v2" });
     expect(l.appended[0]).toMatchObject({ content: "v2", at: "T2" });
   });
 
   it("appends a forked entry on approve carrying the current fork text", async () => {
     const l = fakeLineage();
-    await new SaveOutletOverride(fakeOverrideStore([forked()]), () => "T2", l.store).run({ ...fork, approve: true });
+    await new SaveOutletOverride(fakeOverrideStore([forked()]), () => "T2", l.store, "agent").run({ ...fork, approve: true });
     expect(l.appended).toEqual([
-      { itemId: "x:1", stage: "forked", variant: "announcement/tg-blockchain", content: "이 방 전용", status: "approved", at: "T2" },
+      { itemId: "x:1", stage: "forked", variant: "announcement/tg-blockchain", content: "이 방 전용", status: "approved", at: "T2", actor: "agent" },
     ]);
   });
 
   it("appends a forked entry on 승인 취소", async () => {
     const l = fakeLineage();
-    await new SaveOutletOverride(fakeOverrideStore([forked({ status: "approved", approvedAt: "T1" })]), () => "T2", l.store).run({ ...fork, approve: false });
+    await new SaveOutletOverride(fakeOverrideStore([forked({ status: "approved", approvedAt: "T1" })]), () => "T2", l.store, "agent").run({ ...fork, approve: false });
     expect(l.appended[0]).toMatchObject({ status: "rendered", content: "이 방 전용", at: "T2" });
   });
 
@@ -151,19 +151,19 @@ describe("lineage capture — outlet forks", () => {
   it("records the discarded text on revert — the one moment a fork can vanish", async () => {
     const l = fakeLineage();
     const s = fakeOverrideStore([forked({ text: "되돌리면 사라질 글", status: "approved", approvedAt: "T1" })]);
-    const res = await new SaveOutletOverride(s, () => "T2", l.store).run({ ...fork, revert: true });
+    const res = await new SaveOutletOverride(s, () => "T2", l.store, "agent").run({ ...fork, revert: true });
     expect(res).toBeUndefined();
     expect(s.rows()).toEqual([]); // the revert still happened
     expect(l.appended).toEqual([
       // `reverted`, not the record's own `approved`: the content is identical to the previous entry,
       // so the record's status would render as a no-op in `pnpm lineage`.
-      { itemId: "x:1", stage: "forked", variant: "announcement/tg-blockchain", content: "되돌리면 사라질 글", status: "reverted", at: "T2" },
+      { itemId: "x:1", stage: "forked", variant: "announcement/tg-blockchain", content: "되돌리면 사라질 글", status: "reverted", at: "T2", actor: "agent" },
     ]);
   });
 
   it("does not append when reverting a room that was never forked", async () => {
     const l = fakeLineage();
-    await new SaveOutletOverride(fakeOverrideStore(), () => "T", l.store).run({ ...fork, revert: true });
+    await new SaveOutletOverride(fakeOverrideStore(), () => "T", l.store, "agent").run({ ...fork, revert: true });
     expect(l.appended).toHaveLength(0);
   });
 
@@ -176,7 +176,7 @@ describe("lineage capture — outlet forks", () => {
   it("a lineage append failure aborts the revert — the fork survives instead of vanishing", async () => {
     const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [], listEvents: async () => [] };
     const s = fakeOverrideStore([forked({ text: "지켜져야 할 글" })]);
-    await expect(new SaveOutletOverride(s, () => "T", throwing).run({ ...fork, revert: true })).rejects.toThrow(/disk full/);
+    await expect(new SaveOutletOverride(s, () => "T", throwing, "agent").run({ ...fork, revert: true })).rejects.toThrow(/disk full/);
     expect(s.rows()).toEqual([forked({ text: "지켜져야 할 글" })]); // still there — nothing was lost
   });
 
@@ -188,7 +188,7 @@ describe("lineage capture — outlet forks", () => {
       upsert: async () => {},
       remove: async (k: string) => { removed = k; },
     };
-    await expect(new SaveOutletOverride(unreadable, () => "T", l.store).run({ ...fork, revert: true })).rejects.toThrow(/EIO/);
+    await expect(new SaveOutletOverride(unreadable, () => "T", l.store, "agent").run({ ...fork, revert: true })).rejects.toThrow(/EIO/);
     expect(removed).toBeUndefined();
     expect(l.appended).toHaveLength(0);
   });
@@ -197,7 +197,7 @@ describe("lineage capture — outlet forks", () => {
   it("a throwing lineage store leaves a text save's outcome and the override store unchanged", async () => {
     const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [], listEvents: async () => [] };
     const s = fakeOverrideStore();
-    const saved = await new SaveOutletOverride(s, () => "T", throwing).run({ ...fork, text: "이 방 전용" });
+    const saved = await new SaveOutletOverride(s, () => "T", throwing, "agent").run({ ...fork, text: "이 방 전용" });
     expect(saved).toMatchObject({ text: "이 방 전용", status: "rendered", createdAt: "T" });
     expect(s.rows()).toHaveLength(1);
   });
@@ -205,7 +205,7 @@ describe("lineage capture — outlet forks", () => {
   it("a throwing lineage store leaves an approve's outcome and the override store unchanged", async () => {
     const throwing: LineageStore = { append: async () => { throw new Error("disk full"); }, load: async () => [], listItems: async () => [], listEvents: async () => [] };
     const s = fakeOverrideStore([forked()]);
-    const res = await new SaveOutletOverride(s, () => "T2", throwing).run({ ...fork, approve: true });
+    const res = await new SaveOutletOverride(s, () => "T2", throwing, "agent").run({ ...fork, approve: true });
     expect(res).toMatchObject({ status: "approved", approvedAt: "T2" });
     expect(s.rows()[0]).toMatchObject({ status: "approved" });
   });
@@ -214,7 +214,7 @@ describe("lineage capture — outlet forks", () => {
     const s = fakeOverrideStore([forked()]);
     let reads = 0;
     const counted = { ...s, loadAll: async () => { reads++; return s.loadAll(); } };
-    await expect(new SaveOutletOverride(counted, () => "T").run({ ...fork, revert: true })).resolves.toBeUndefined();
+    await expect(new SaveOutletOverride(counted, () => "T", undefined, "agent").run({ ...fork, revert: true })).resolves.toBeUndefined();
     expect(reads).toBe(0); // the read exists to feed the lineage; with no lineage it is pure cost
     expect(s.rows()).toEqual([]);
   });
@@ -228,8 +228,8 @@ describe("lineage capture — outlet forks", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const s = fakeOverrideStore();
-      await new SaveOutletOverride(s, () => "T").run({ ...fork, text: "이 방 전용" });
-      await new SaveOutletOverride(s, () => "T2").run({ ...fork, approve: true });
+      await new SaveOutletOverride(s, () => "T", undefined, "agent").run({ ...fork, text: "이 방 전용" });
+      await new SaveOutletOverride(s, () => "T2", undefined, "agent").run({ ...fork, approve: true });
       expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();

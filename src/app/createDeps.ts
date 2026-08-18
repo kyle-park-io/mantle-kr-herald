@@ -279,7 +279,9 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
   const stores = createStores(db);
   const translationStore = stores.translationStore;
   const publishStore = stores.publishStore;
-  const saveTranslation = new SaveTranslation(translationStore, stores.fewShotStore, undefined, stores.lineageStore);
+  // "human": this instance backs both the dashboard's 1차 검수 edit and the 되돌리기 path below (line
+  // ~653) — neither is `translate:align`, which builds its own `SaveTranslation` in translate-save.ts.
+  const saveTranslation = new SaveTranslation(translationStore, stores.fewShotStore, undefined, stores.lineageStore, "human");
   const formattingStore = stores.formattingStore;
   const conversionStore = stores.conversionStore;
   // Same database the CLI uses, so `send:channels` and the dashboard read one ledger, not two.
@@ -910,8 +912,10 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     storageMode,
     formattingStore,
     conversionStore,
-    saveRendering: new SaveRendering(formattingStore, undefined, stores.lineageStore),
-    approveRendering: new ApproveRendering(formattingStore, conversionStore, stores.fewShotStoresByType, undefined, stores.lineageStore),
+    // "human": both are the dashboard's 2차 검수 write path — only a reviewer reaches these, never
+    // an agent (the agent side of 2차 is `SaveConversion`, in convert-save.ts).
+    saveRendering: new SaveRendering(formattingStore, undefined, stores.lineageStore, "human"),
+    approveRendering: new ApproveRendering(formattingStore, conversionStore, stores.fewShotStoresByType, undefined, stores.lineageStore, "human"),
     loadStatus,
     loadPublishState,
     loadTranslations,
@@ -932,7 +936,9 @@ export function createDeps(input: CreateDepsInput): ApiDeps {
     loadBoard,
     // The dashboard is the only writer of overrides, so this is the only place a fork's text can be
     // captured — and `그룹 글로 되돌리기` is the only click in the pipeline that deletes an unrecoverable text.
-    saveOutletOverride: new SaveOutletOverride(overrideStore, undefined, stores.lineageStore),
+    // "human": overrides.json above is the dashboard's own fork/edit — the comment right above this
+    // dep names it as the only writer of overrides, and no agent ever touches this path.
+    saveOutletOverride: new SaveOutletOverride(overrideStore, undefined, stores.lineageStore, "human"),
     markDelivery: new MarkDelivery(deliveryLedger),
     prepareConversionRun,
     // `collectLinkedThread`'s optionality on `ApiDeps` is the same "absent means not built here" shape

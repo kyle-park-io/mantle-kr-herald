@@ -7,7 +7,7 @@ describe("SaveRendering", () => {
   it("upserts a refined:true rendering", async () => {
     const saved: ChannelRendering[] = [];
     const store: FormattingStore = { loadAll: async () => saved, listRenderedKeys: async () => new Set(), upsert: async (r) => { saved.push(r); } };
-    const uc = new SaveRendering(store, () => "2026-04-04T00:00:00.000Z");
+    const uc = new SaveRendering(store, () => "2026-04-04T00:00:00.000Z", undefined, "agent");
     const res = await uc.run({ itemId: "x:1", type: "kol", channel: "telegram", text: "다듬은 텍스트" });
     expect(res).toEqual({ itemId: "x:1", type: "kol", channel: "telegram" });
     expect(saved[0]).toEqual({ itemId: "x:1", type: "kol", channel: "telegram", text: "다듬은 텍스트", refined: true, createdAt: "2026-04-04T00:00:00.000Z", status: "rendered" });
@@ -16,7 +16,7 @@ describe("SaveRendering", () => {
   it("canonicalises the saved text — a leading blank line and CRLF do not survive", async () => {
     const saved: ChannelRendering[] = [];
     const store: FormattingStore = { loadAll: async () => saved, listRenderedKeys: async () => new Set(), upsert: async (r) => { saved.push(r); } };
-    const uc = new SaveRendering(store, () => "2026-04-04T00:00:00.000Z");
+    const uc = new SaveRendering(store, () => "2026-04-04T00:00:00.000Z", undefined, "agent");
     await uc.run({ itemId: "x:1", type: "kol", channel: "telegram", text: "\r\n다듬은 텍스트\r\n둘째 줄" });
     expect(saved[0].text).toBe("다듬은 텍스트\n둘째 줄");
   });
