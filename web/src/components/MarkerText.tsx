@@ -48,13 +48,24 @@ import { InfoPopover } from "./InfoPopover";
  * pinned marker's own inline expansion of the same image would be redundant at best, and two copies
  * of the same `<video autoPlay>` playing on top of each other at worst.
  *
- * The peek and the pin do NOT share a mounted media element — each arms its own copy of `preview(…)`
- * independently (see `armed` and `InfoPopover`'s `keepMounted` below), so skimming a clip by hover and
- * then clicking to pin the same one fetches it twice rather than reusing the peek's buffer. Accepted:
- * the alternative — moving one DOM node between an inline position and a floating one without
- * unmounting it — needs a portal keyed off a ref that only exists once the floating panel has opened
- * at least once, which is a lot of machinery for the less common path (skim several, pin one of the
- * *others* is the more common shape this feature is for).
+ * The peek and the pin mount two separate elements for the same url — pinning a marker that was
+ * already peeked does not reuse the peek's node, and hovering one that is already pinned would not
+ * reuse the pin's (though `hoverDisabled` above means that case never arises). That used to read here
+ * as "fetches it twice," which was wrong about the part that matters: two *elements* is not two
+ * *fetches*. Measured with CDP's `Network` domain around a real hover-then-pin sequence, using
+ * cache-busted urls so the first load could not be riding on an earlier run's warm cache — a photo
+ * (18,200 bytes) produced exactly one `Network.requestWillBeSent`/`responseReceived` pair (`status:
+ * 200, fromDiskCache: false`) for the peek's `<img>`; pinning it afterward mounted a second, distinct
+ * `<img>` (confirmed by DOM identity, not the same node) already `complete: true` — with zero further
+ * `Network.*` events of any kind, not even a `fromDiskCache: true` pair, which a plain HTTP cache hit
+ * would still produce. A video (1,129,057 bytes, `status: 206`) behaved identically: one event for the
+ * peek, then a second, distinct `<video>` at `readyState: 4` with nothing on the wire for it. So
+ * skim-then-pin, the common desktop path, costs nothing beyond the first load — the renderer's own
+ * resource cache serves the second element from memory, the same mechanism that lets a page paint one
+ * `<img src>` twice for one request. A single shared DOM node (a portal keyed off a ref that only
+ * exists once the floating panel has opened at least once, moved between an inline position and a
+ * floating one) would still be more machinery, and now provably buys back nothing at the network
+ * layer — the one thing worth paying for here already comes free.
  *
  * The spec that proposed reviving hover had the preview itself branch popover-vs-inline on the source
  * pane's width, via a `@container` on the caller. This still does not do that — the peek is gated on
@@ -64,13 +75,18 @@ import { InfoPopover } from "./InfoPopover";
  * container for one to query. If this component ever does need to know its own container's width, the
  * container has to come back too.
  *
- * Mount is deferred behind `armed` (pin) and `InfoPopover`'s own `keepMounted` (peek) rather than left
- * to `preload="none"`: `autoPlay` overrides that hint the moment a `<video>` exists, and a
- * merely-hidden (`display: none`) element still fetches. A 2차 card can show a dozen markers at once,
- * so mounting eagerly would pull every photo and clip down before anyone opened one. Both are "first
- * ask" signals — a click/tap arms the pin's own copy, a first hover arms the peek's — and each, once
- * armed, stays mounted across further opens/closes of its own kind (collapsing/leaving only hides it),
- * so a second look at either is instant and never re-fetches.
+ * Mount itself is deferred until first interaction rather than left to `preload="none"`: `autoPlay`
+ * overrides that hint the moment a `<video>` exists, and a merely-hidden (`display: none`) element
+ * still fetches. A 2차 card can show a dozen markers at once, so mounting eagerly would pull every
+ * photo and clip down before anyone opened one. Each surface gates its own first mount independently —
+ * a click/tap sets the pin's own `armed`; a first hover is what makes `InfoPopover` render its panel at
+ * all (`{mounted && …}`, gated on `open` becoming true at least once, regardless of `keepMounted`).
+ * `keepMounted` only decides what happens *after* that first mount — without it, the peek's panel would
+ * unmount on every `pointerleave` the way every other `InfoPopover` panel does by default; with it,
+ * closing only hides it, so a second hover reuses the same element instead of remounting (and, per the
+ * trace above, refetching) it. A second look at either surface on its own — a second hover, or a second
+ * pin toggle — is instant and never re-fetches; only crossing from one surface to the other mounts a
+ * new element, and that crossing is the free case measured above.
  */
 function MediaMarker({
   label,
