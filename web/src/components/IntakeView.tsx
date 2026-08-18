@@ -98,7 +98,14 @@ export function IntakeView(props: { authEpoch: number; intakeEnabled: boolean })
             {pending.map((item) => (
               <li key={item.itemId} className="flex flex-col gap-1.5 px-4 py-3">
                 <div className="flex items-center gap-2">
-                  <code className="truncate font-mono text-[11px] text-faint">{item.itemId}</code>
+                  {/* Same call `TranslationList` made for its own copy of this id (see its comment by
+                      `t.itemId`): not a link here either (a plain `<code>`, no `href` to send anyone
+                      to), and the row already leads with `datePrefix(item.createdAt)` in the preview
+                      line below — unconditionally, not gated behind `tablet:` the way that row's date
+                      is, so nothing needs promoting onto this line to replace it. Dropped rather than
+                      shortened for the same reason: a shortened id is still unreadable, and the full
+                      id is only ever needed at a desk, where `tablet:` restores it. */}
+                  <code className="hidden truncate font-mono text-[11px] text-faint tablet:inline">{item.itemId}</code>
                   <KindBadge kind={item.kind} />
                 </div>
                 <p className="line-clamp-2 text-[13px] leading-snug text-ink/90">

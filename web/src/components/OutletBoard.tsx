@@ -205,7 +205,14 @@ export function OutletBoard(props: {
 
       {/* Same shape as 1차's detail header — date, the id itself as the link, kind badge — so the
           two modes read as one screen rather than two. `itemUrl` is null for a `lark:` item, which
-          is why the id still renders as plain code when there is nothing to link to. */}
+          is why the id still renders as plain code when there is nothing to link to.
+
+          The phone treatment is the same call `TranslationDetail` made for this exact shape, not a
+          new one: `board.itemId` is a link's visible text here too (same `href`/`target`/`rel`,
+          untouched), so it swaps for `원문 ↗` rather than dropping outright the way the (non-link)
+          list rows do — a link needs *something* tappable in its place, and repeating what `KindBadge`
+          already says would waste the slot. `tablet:` brings the full id back for the CLI-copy use it
+          still has at a desk. */}
       <header className="mb-5">
         <div className="flex flex-wrap items-center gap-2.5">
           {props.postedAt && (
@@ -218,10 +225,16 @@ export function OutletBoard(props: {
               rel="noreferrer"
               className="font-mono text-[13px] text-muted underline-offset-2 hover:text-mint hover:underline"
             >
-              {board.itemId}
+              <span className="tablet:hidden">원문 ↗</span>
+              <span className="hidden tablet:inline">{board.itemId}</span>
             </a>
           ) : (
-            <code className="font-mono text-[13px] text-muted">{board.itemId}</code>
+            // No `postedUrl` (a `lark:` item), so there is nothing to send the reader to — same
+            // split as `TranslationDetail`'s own no-link branch: drop the `↗`, keep the tablet-only id.
+            <code className="font-mono text-[13px] text-muted">
+              <span className="tablet:hidden">원문</span>
+              <span className="hidden tablet:inline">{board.itemId}</span>
+            </code>
           )}
           <KindBadge kind={props.kind} />
         </div>
