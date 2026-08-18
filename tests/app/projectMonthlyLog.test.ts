@@ -235,4 +235,32 @@ describe("ProjectMonthlyLog", () => {
     const price = h.batches.find((b) => b.range.startsWith("'Jul.'!I"));
     expect(price?.rows[0][0]).toBe(100);
   });
+  /**
+   * The residual the C1 fix itself introduced. Keying the append point on the link column alone
+   * made a hand-entered row invisible: a human who typed a KOL name and a `Topic` into the next
+   * free row but has not pasted the permalink yet had the next post written straight over it —
+   * and `Topic`/`Organic` survive the write, so they end up describing a *different* post, which is
+   * worse than losing them.
+   *
+   * The seed is column A (`KOL`) **or** the link column — never "any non-empty cell", which is the
+   * rule that caused C1. Column A is safe to read because the fill-down the runbook instructs
+   * (precondition 2: `Engagement Rate`, `Cost per impression`, `Duplicated?`, and `Posting date`'s
+   * number format — H, J, L and C's formatting) never touches it, so no `#DIV/0!` can appear there.
+   */
+  it("leaves a hand-entered row with a KOL name but no link alone, and appends below it", async () => {
+    const h = harness([
+      ["KOL", "followers"], ["Marine", "1"], [""], [""], HEADER,
+      // Row 6: a human started this row by hand — name and topic typed, permalink not pasted yet.
+      ["Marine", "Telegram", "46206", "", "USPXx Live launch", "1200", "4", "#DIV/0!", "100", "#DIV/0!", "yes", "0"],
+    ]);
+    const uc = new ProjectMonthlyLog(h.sheet, () => "Jul.");
+
+    const res = await uc.run({ month: "2026-07", roster, posts: [post()] });
+
+    expect(res.written).toBe(1);
+    expect(h.batches.map((b) => b.range)).toEqual([
+      "'Jul.'!A7", "'Jul.'!B7", "'Jul.'!C7", "'Jul.'!D7", "'Jul.'!F7", "'Jul.'!G7", "'Jul.'!I7",
+    ]);
+    expect(h.batches.some((b) => /6$/.test(b.range))).toBe(false); // row 6 is the human's
+  });
 });

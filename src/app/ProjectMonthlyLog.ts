@@ -79,9 +79,18 @@ export class ProjectMonthlyLog {
     // instead would silently swap which row is "the" row each time the tab grew, freezing the
     // other one's numbers forever while the summary's COUNTIF/SUMIF still counts both.
     const rowByLink = new Map<string, number>();
-    // The append point is the row after the last row carrying a **Deliverable Link** — the log's own
-    // key column — seeded at the header itself so an empty log still resolves to "the row right
-    // after the header".
+    // The append point is the row after the last row carrying either a **Deliverable Link** — the
+    // log's own key column — or a **KOL** name in column A, seeded at the header itself so an empty
+    // log still resolves to "the row right after the header".
+    //
+    // Column A earns its place in that test, and the link column alone is not enough: a human who
+    // has typed a KOL name and a `Topic` into the next free row but not yet pasted the permalink
+    // owns that row, and keying on the link alone wrote the next post straight over it. `Topic` and
+    // `Organic` survive such a write, so they would go on to describe a *different* post — worse
+    // than losing them outright. Column A is safe to read here for the reason the fill-down below
+    // is not: the migration the runbook instructs (its precondition 2 — `Engagement Rate`,
+    // `Cost per impression`, `Duplicated?`, and `Posting date`'s number format) fills H, J, L and a
+    // formatting-only change to C. It never touches A, so no formula output can appear there.
     //
     // Not "the last row where any A:Z cell is non-empty", which was the bug the final review found.
     // `getValues` sends no `valueRenderOption`, so it receives FORMATTED_VALUE: a formula over blank
@@ -89,14 +98,15 @@ export class ProjectMonthlyLog {
     // before this unit is enabled (the three formula columns, from the last log row down to 1963)
     // therefore makes every empty row look used, and the append point lands at 1964 — outside the
     // `SUMIF($A$12:$A$1963, …)` every summary number but `Posts` is computed from. The team would
-    // see post counts climb with zero views and zero cost, and the run would still exit 0.
+    // see post counts climb with zero views and zero cost, and the run would still exit 0. That is
+    // why this is two named columns rather than "any cell", which is the rule that caused it.
     let lastUsedRow = layout.headerRow;
     for (let i = layout.headerRow; i < rows.length; i++) {
       const row = rows[i]!;
       const rowNumber = i + 1;
       const link = (row[layout.columns.link] ?? "").trim();
+      if (link !== "" || (row[layout.columns.kol] ?? "").trim() !== "") lastUsedRow = rowNumber;
       if (link === "") continue;
-      lastUsedRow = rowNumber;
       const first = rowByLink.get(link);
       if (first !== undefined) {
         console.warn(
