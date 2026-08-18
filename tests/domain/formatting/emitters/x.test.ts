@@ -131,3 +131,15 @@ describe("emitXPaste link icons", () => {
     expect(segments[0].text).toBe("https://fluxion.network/trade");
   });
 });
+
+/**
+ * The rule is Telegram's, not every destination's. On X a bare `@handle` is already a link to the
+ * profile, so spelling the url out beside it would be noise on the one channel that never needed it.
+ */
+describe("emitX and X handles", () => {
+  it("leaves a bare handle exactly as written", () => {
+    const text = "맨틀은 @OpenstockInc를 통해 제공합니다.";
+    expect(emitXPaste(text).segments[0].text).toBe(text);
+    expect(emitXTypefully(text).segments[0].text).toBe(text);
+  });
+});
