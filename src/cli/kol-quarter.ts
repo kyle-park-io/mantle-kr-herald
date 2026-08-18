@@ -21,21 +21,45 @@ const auth = await createGoogleAuth(loadGoogleAuthConfig());
 const sheet = new GoogleSheetClient(auth, loadGoogleSheetConfig().spreadsheetId);
 const gateway = new TmePreviewGateway();
 
-const report = await new SweepKolQuarter(sheet, gateway).run({ quarter });
+// No rendering source is wired up to this command yet — passed explicitly (rather than defaulted
+// deep inside SweepKolQuarter) so this is a visible decision, not a silent omission. Every row this
+// run newly records gets a blank itemId/topic/matchScore; SweepKolQuarter warns about this itself.
+const report = await new SweepKolQuarter(sheet, gateway).run({ quarter, renderings: [] });
 
 console.log(`kol-quarter sweep for ${report.quarter}:`);
 for (const m of report.months) {
   const unresolvedNote = m.unresolved.length > 0 ? ` (unresolved: ${m.unresolved.join(", ")})` : "";
   console.log(`  ${m.month}: ${m.written} written${unresolvedNote}`);
+
+  // The five counters `RecordKolTelegramPosts` itself computes for this month's sweep — printed in
+  // full, same posture as kol-telegram-record.ts: a silent zero here must never be mistaken for "no
+  // posts this month" when the real story is "every channel failed" or "the sweep was truncated",
+  // either of which would otherwise surface only as a false shortfall further down this report.
+  const r = m.recorded;
+  const failureCallout = r.channelsFailed > 0 ? " — see warnings above" : "";
+  const truncationCallout = r.channelsTruncated > 0 ? " — see warnings above" : "";
+  console.log(
+    `    telegram sweep: ${r.created} created, ${r.refreshed} refreshed, ${r.channelsSwept} channel(s) swept, ` +
+      `${r.channelsFailed} channel(s) failed${failureCallout}, ${r.channelsTruncated} channel(s) truncated${truncationCallout}.`,
+  );
 }
 
-if (report.shortfalls.length > 0) {
+if (report.contractError) {
+  console.log(`shortfalls: unknown — could not read this quarter's contract targets (${report.contractError})`);
+} else if (report.shortfalls.length > 0) {
   console.log("shortfalls:");
   for (const s of report.shortfalls) {
     console.log(`  ${s.month} ${s.kolName} ${s.actual}/${s.required}`);
   }
 } else {
   console.log("shortfalls: none");
+}
+
+if (report.unmatchedContractNames.length > 0) {
+  console.log("contract names with no matching roster entry (not compared, not a shortfall):");
+  for (const u of report.unmatchedContractNames) {
+    console.log(`  ${u.month} ${u.kolName} (requires ${u.required})`);
+  }
 }
 
 if (report.unknownTargets.length > 0) {
