@@ -3,8 +3,12 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 /**
  * 보드의 호버 카드 idiom 하나. `group` + `absolute top-full` + `hidden … group-hover:block`으로
  * 손으로 쓰던 네 곳(`App.tsx`의 스토리지 패널, `CollectedBreakdownCard`, `Tip`, `OpenLink`)이 여기로
- * 모인다. `MarkerText`는 이 목록에 없다 — Task 5가 그것을 인라인 아코디언으로 바꾼다. 팝오버는
- * 정확히 그것이 설명하는 텍스트를 덮어버리기 때문이다.
+ * 모인다. `MarkerText`는 이 목록에 없었다 — Task 5가 그것을 클릭 전용 인라인 아코디언으로 바꿨다,
+ * 팝오버는 정확히 그것이 설명하는 텍스트를 덮어버리기 때문에. 이후 다른 작업이 그 결정을 데스크톱
+ * 마우스에서 되돌렸다: 호버는 이 컴포넌트를 `keepMounted`+`hoverDisabled`로 얹어 뜨는 "peek"를 열고,
+ * 클릭·탭은 여전히 `MediaMarker` 자신의 인라인 확장("pin")을 연다 — 아래 두 prop의 doc 참조. 둘은
+ * 같은 마커에서 동시에 뜨지 않는다: 핀이 열리면 `hoverDisabled`가 이 컴포넌트의 `open`을 (마운트는
+ * 유지한 채) 닫는다.
  *
  * 왜 호버만으로는 안 되는가: Tailwind v4는 `hover:`를 `@media (hover: hover)`로 감싸 내보내므로
  * 터치 기기에서는 확정적으로 열리지 않는다. 그리고 그것은 모바일만의 문제가 아니다 — 호버가
@@ -217,6 +221,8 @@ export function InfoPopover({
   className,
   panelClassName,
   role,
+  keepMounted = false,
+  hoverDisabled = false,
   children,
 }: {
   panel: ReactNode;
@@ -224,12 +230,50 @@ export function InfoPopover({
   className?: string;
   panelClassName?: string;
   role?: string;
+  /**
+   * `MarkerText`'s hover-peek is the only caller that needs this. Every other panel here is cheap
+   * text, and unmounting it on close (the default) is strictly better — less DOM sitting idle. A
+   * peek panel can hold a `<video autoPlay>`: unmounting it on every `pointerleave` would restart
+   * playback and refetch the clip on the very next hover, which is exactly what deferred mount
+   * (`MediaMarker`'s own doc comment) exists to prevent. `keepMounted` keeps the panel element in
+   * the DOM once it has opened at least once — closing afterward only hides it (a `hidden` class
+   * here; a promoted panel additionally gets a real `hidePopover()`, see the effect below) instead
+   * of removing it, so whatever lives inside `panel` is built once and reused for every later open.
+   * Default false, so none of this component's other 20+ call sites change behaviour.
+   */
+  keepMounted?: boolean;
+  /**
+   * Also for `MarkerText`: a marker can be pinned open (its own inline expansion, not this
+   * component) while the pointer is still hovering it. Without this, the floating peek stays open
+   * underneath that inline expansion — the same image shown twice, once floating over the text it
+   * was supposed to leave uncovered. `hoverDisabled` forces `open` closed (without unmounting, so a
+   * `keepMounted` panel's contents survive) and blocks `pointerenter` from reopening it, for as long
+   * as the caller says the trigger is already pinned some other way. Default false.
+   */
+  hoverDisabled?: boolean;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [everOpened, setEverOpened] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLSpanElement>(null);
   const id = useId();
+
+  // React's documented "adjust state during render" pattern (not an Effect) for both of these: an
+  // Effect version would commit a render with the panel still absent, THEN run and flip the state,
+  // THEN re-render — pushing the panel's first mount (and, below, `showPopover()`/anchor wiring) to
+  // a second paint. Calling `setState` here instead makes React discard this render and retry
+  // immediately with the new value, so `mounted` (below) is already correct on the render where
+  // `open` first becomes true. Both are guarded so they only fire on the render where they'd
+  // actually change something — otherwise this would be an infinite re-render loop, not a one-time
+  // adjustment.
+  if (keepMounted && open && !everOpened) setEverOpened(true);
+  if (hoverDisabled && open) setOpen(false);
+
+  // Once `keepMounted`, the panel stays in the DOM after the first open — `mounted` tracks "has this
+  // ever been open", `open` still tracks "should it be visible right now" (see the `hidden` class
+  // below and the effect's own show/hide branch).
+  const mounted = keepMounted ? everOpened : open;
 
   // 렌더당 한 번만 부른다 — className 계산과 아래 effect가 같은 렌더 안에서는 같은 답을 보도록.
   const promotable = supportsPromotion();
@@ -240,7 +284,10 @@ export function InfoPopover({
   const anchorName = `--ip-${id.replace(/[^a-zA-Z0-9]/g, "")}`;
 
   // 패널은 `open`일 때만 렌더되므로, 이 효과들은 반드시 `[open]`에 걸어야 한다. `[]`로 두면 마운트
-  // 시점에 `panelRef.current`가 아직 null이라 리스너가 영영 붙지 않는다.
+  // 시점에 `panelRef.current`가 아직 null이라 리스너가 영영 붙지 않는다. `keepMounted`일 때도
+  // `mounted`가 아니라 `open`에 거는 이유는 바로 위 "state during render" 조정 덕분에 `open`이
+  // 바뀌는 바로 그 렌더에서 `mounted`도 이미 같은 값으로 바뀌어 있기 때문 — 별도 커밋을 기다릴
+  // 필요가 없다.
   useEffect(() => {
     if (!open) return;
     const panelEl = panelRef.current;
@@ -315,7 +362,18 @@ export function InfoPopover({
   return (
     <span
       className={`relative inline-flex ${className ?? ""}`.trim()}
-      onPointerEnter={(e) => fromMouse(e) && setOpen(true)}
+      // The `!hoverDisabled` here does not change the end state on its own — the render-time
+      // correction above (`if (hoverDisabled && open) setOpen(false)`) would discard-and-retry any
+      // wrongly-`true` value before it ever paints, same as it does when `hoverDisabled` flips on
+      // while already open. It is here to skip that wasted extra render pass on every `pointerenter`
+      // that fires while disabled, not to fix a case the correction above would otherwise miss.
+      //
+      // What neither of these fixes: a mouse already resting on the trigger when `hoverDisabled`
+      // flips back off (e.g. `MarkerText`'s marker gets un-pinned under a stationary pointer) does
+      // not resume the peek on its own — nothing re-fires `pointerenter` just because a sibling's
+      // state changed. The pointer has to leave and re-enter. Accepted for `MarkerText`: the common
+      // path un-pins by moving the pointer to click something else first anyway.
+      onPointerEnter={(e) => !hoverDisabled && fromMouse(e) && setOpen(true)}
       onPointerLeave={(e) => fromMouse(e) && setOpen(false)}
     >
       <span
@@ -353,11 +411,11 @@ export function InfoPopover({
         // 클릭·키보드 활성화가 방해 없이 그대로 일어나고, disabled 자식이나 `<span>` 배지처럼 자기
         // 행동이 없는 자식에서는 여전히 이 래퍼가 열고 닫는다.
         onClick={(e) => {
-          if (targetsEnabledControl(e.target, e.currentTarget)) return;
+          if (hoverDisabled || targetsEnabledControl(e.target, e.currentTarget)) return;
           setOpen((v) => !v);
         }}
         onKeyDown={(e) => {
-          if (targetsEnabledControl(e.target, e.currentTarget)) return;
+          if (hoverDisabled || targetsEnabledControl(e.target, e.currentTarget)) return;
           if (e.key !== "Enter" && e.key !== " ") return;
           // Space의 기본 동작(페이지 스크롤)을 막는다 — 네이티브 버튼이라면 브라우저가 이미 하는 일.
           e.preventDefault();
@@ -371,7 +429,7 @@ export function InfoPopover({
       >
         {children}
       </span>
-      {open && (
+      {mounted && (
         <div
           ref={panelRef}
           id={id}
@@ -388,9 +446,15 @@ export function InfoPopover({
           // (`PROMOTED_STYLE_TEXT` 참조) — `promotable`이 false인 브라우저에서는 이 클래스에
           // 대응하는 규칙이 애초에 존재하지 않으므로 붙여도 무해하지만, 붙이지 않아 두 경로가 서로
           // 완전히 무관하다는 것을 코드로도 분명히 한다.
+          //
+          // `keepMounted && !open`의 `hidden`: `mounted`가 `open`과 갈라지는 것은 `keepMounted`뿐이고,
+          // 그 경우 패널은 닫혀 있는 동안에도 DOM에 남는다. promote된 경로는 `hidePopover()`(effect
+          // 참조)가 UA 스타일시트를 통해 `display: none`을 걸어 주지만, promote되지 않는 브라우저에는
+          // 그 자동 숨김이 없다 — `popover` 속성 자체를 붙이지 않기 때문이다(바로 위 주석). 이 클래스가
+          // 그 경로를 커버한다. promote된 경로에도 걸리지만 같은 결론(`display: none`)이라 무해하다.
           className={`absolute top-full ${align === "right" ? "right-0" : "left-0"} z-30 pt-1.5 max-w-[calc(100vw-2rem)] ${
             promotable ? `ip-panel ip-panel--${align === "right" ? "right" : "left"}` : ""
-          }`.trim()}
+          } ${keepMounted && !open ? "hidden" : ""}`.trim()}
         >
           {/*
             안쪽 박스. 보이는 카드 전부 — 테두리·배경·그림자·`panelClassName`(폭·패딩·글자) — 를

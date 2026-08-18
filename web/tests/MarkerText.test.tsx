@@ -150,6 +150,90 @@ describe("MarkerText", () => {
   });
 });
 
+/**
+ * Hover-peek — restores hover for non-touch pointers without giving back click-to-pin. `InfoPopover`
+ * itself already proves the pointerType gate and the `keepMounted`/`hoverDisabled` mechanics in
+ * isolation (`InfoPopover.test.tsx`); these tests pin the composition — that `MediaMarker` wires them
+ * up so hover shows media without opening the pin, and pinning suppresses the peek.
+ */
+describe("MarkerText — hover peek", () => {
+  it("마우스 호버만으로 사진 미리보기가 뜬다 — 클릭 없이, 핀은 열리지 않은 채", () => {
+    render(<MarkerText text={PHOTO} />);
+    expect(document.querySelector("img")).toBeNull();
+    fireEvent.pointerEnter(screen.getByText("[사진]"), { pointerType: "mouse" });
+    const peekImg = screen.getByTestId("media-peek").querySelector("img");
+    expect(peekImg?.getAttribute("src")).toBe(URL);
+    // The pin (inline accordion) never armed — only the peek did.
+    expect(screen.queryByTestId("media-preview")).toBeNull();
+    expect(screen.getByText("[사진]").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("손가락 호버(pointerType: touch)는 미리보기를 열지 않는다", () => {
+    render(<MarkerText text={PHOTO} />);
+    fireEvent.pointerEnter(screen.getByText("[사진]"), { pointerType: "touch" });
+    expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("포인터가 나가면 peek는 감춰지지만 마운트는 유지된다", () => {
+    render(<MarkerText text={PHOTO} />);
+    fireEvent.pointerEnter(screen.getByText("[사진]"), { pointerType: "mouse" });
+    const before = screen.getByTestId("media-peek").querySelector("img");
+    expect(screen.getByTestId("media-peek").closest(".hidden")).toBeNull();
+
+    fireEvent.pointerLeave(screen.getByText("[사진]"), { pointerType: "mouse" });
+    // Still queryable — DOM node survives, only hidden.
+    expect(screen.getByTestId("media-peek").closest(".hidden")).not.toBeNull();
+    expect(screen.getByTestId("media-peek").querySelector("img")).toBe(before);
+  });
+
+  it("두 번째 호버는 같은 img 엘리먼트를 재사용한다 — src를 다시 대입하지 않는다", () => {
+    render(<MarkerText text={PHOTO} />);
+    fireEvent.pointerEnter(screen.getByText("[사진]"), { pointerType: "mouse" });
+    const first = screen.getByTestId("media-peek").querySelector("img");
+    fireEvent.pointerLeave(screen.getByText("[사진]"), { pointerType: "mouse" });
+    fireEvent.pointerEnter(screen.getByText("[사진]"), { pointerType: "mouse" });
+    const second = screen.getByTestId("media-peek").querySelector("img");
+    expect(second).toBe(first);
+    expect(second?.getAttribute("src")).toBe(URL);
+  });
+
+  it("이미 핀으로 열린 마커에 호버해도 peek는 뜨지 않는다 — 같은 사진을 두 번 보여주지 않는다", () => {
+    render(<MarkerText text={PHOTO} />);
+    fireEvent.click(screen.getByText("[사진]")); // pins the inline accordion
+    fireEvent.pointerEnter(screen.getByText("[사진]"), { pointerType: "mouse" });
+    // The pin is the one and only visible preview.
+    expect(screen.getByTestId("media-preview").className).toContain("block");
+    // The peek never armed at all — hovering while pinned did not open it.
+    expect(screen.queryByTestId("media-peek")).toBeNull();
+  });
+
+  it("호버로 연 뒤 클릭해 핀을 열면 peek는 숨겨지고(마운트는 유지) 인라인 확장이 대신 보인다", () => {
+    render(<MarkerText text={PHOTO} />);
+    fireEvent.pointerEnter(screen.getByText("[사진]"), { pointerType: "mouse" });
+    expect(screen.getByTestId("media-peek").closest(".hidden")).toBeNull();
+
+    fireEvent.click(screen.getByText("[사진]"));
+
+    // The peek panel is still in the DOM (its <img> was never unmounted) but is now hidden.
+    expect(screen.getByTestId("media-peek").querySelector("img")).not.toBeNull();
+    expect(screen.getByTestId("media-peek").closest(".hidden")).not.toBeNull();
+    // The pin is what is actually visible now.
+    expect(screen.getByTestId("media-preview").className).toContain("block");
+  });
+
+  it("영상 마커도 같은 방식으로 peek된다 — 열기 전에는 video가 없고, 호버하면 마운트된다", () => {
+    render(<MarkerText text={VIDEO} />);
+    expect(document.querySelector("video")).toBeNull();
+    fireEvent.pointerEnter(screen.getByText("[영상]"), { pointerType: "mouse" });
+    const video = screen.getByTestId("media-peek").querySelector("video");
+    expect(video?.getAttribute("src")).toBe(VIDEO_URL);
+    // Same muted/loop/playsInline guarantees apply to the peek's copy as to the pin's.
+    expect((video as HTMLVideoElement).muted).toBe(true);
+    expect((video as HTMLVideoElement).loop).toBe(true);
+    expect(video?.hasAttribute("playsinline")).toBe(true);
+  });
+});
+
 describe("MarkerText — video markers", () => {
   it("shows the label and links to the original, without printing the raw url", () => {
     const { container } = render(<MarkerText text={`본문 첫 줄\n\n${VIDEO}`} />);

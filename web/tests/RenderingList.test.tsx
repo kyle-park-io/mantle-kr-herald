@@ -152,3 +152,59 @@ describe("RenderingList search", () => {
     expect(screen.getByText("해당하는 항목이 없습니다.")).toBeTruthy();
   });
 });
+
+/**
+ * `Rendering.text` still carries media markers verbatim — `FormatVariants` stores the joined,
+ * bold-adjusted canonical text, and only `emit()`'s per-destination formatting (never stored, only
+ * shown on send) calls `stripMedia`. So this row's preview had the identical leak `TranslationList`'s
+ * had, on the identical kind of text. Same fix (`mediaFreePreview`, `MediaBadge` — both imported from
+ * `TranslationList.tsx` rather than re-implemented).
+ */
+describe("RenderingList preview strips media markers, but the badge still says so", () => {
+  it("미리보기 텍스트에는 CDN url도 마커 라벨도 남지 않는다", () => {
+    const { container } = render(
+      <RenderingList
+        items={[r({ itemId: "x:1", text: "이번 주 소식입니다\n\n[사진](https://pbs.twimg.com/media/abc.jpg)" })]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    expect(container.textContent).toContain("이번 주 소식입니다");
+    expect(container.textContent).not.toContain("pbs.twimg.com");
+    expect(container.textContent).not.toContain("[사진]");
+  });
+
+  it("사진 두 장을 담은 행은 사진 2 배지를 보여준다", () => {
+    render(
+      <RenderingList
+        items={[r({ itemId: "x:1", text: "본문\n\n[사진](https://a.jpg)\n\n[사진](https://b.jpg)" })]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    expect(screen.getByText("사진 2")).toBeTruthy();
+  });
+
+  it("url이 없는 [영상] 마커도 영상 1 배지로 센다", () => {
+    render(<RenderingList items={[r({ itemId: "x:1", text: "본문\n\n[영상]" })]} selectedId={null} onSelect={() => {}} />);
+    expect(screen.getByText("영상 1")).toBeTruthy();
+  });
+
+  it("마커가 없는 행에는 미디어 배지가 없다", () => {
+    render(<RenderingList items={[r({ itemId: "x:1", text: "그냥 본문" })]} selectedId={null} onSelect={() => {}} />);
+    expect(screen.queryByText(/^사진 /)).toBeNull();
+    expect(screen.queryByText(/^영상 /)).toBeNull();
+  });
+
+  it("미리보기가 마커를 지워도 검색은 여전히 원문 전체(마커 포함)를 훑는다", () => {
+    const { container } = render(
+      <RenderingList
+        items={[r({ itemId: "x:1", text: "본문 [사진](https://pbs.twimg.com/media/UNIQUEMARKERWORD.jpg)" })]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    type("UNIQUEMARKERWORD");
+    expect(shownIds(container)).toEqual(["x:1"]);
+  });
+});

@@ -1,5 +1,6 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { countMediaMarkers, splitMediaMarkers } from "../media";
+import { InfoPopover } from "./InfoPopover";
 
 /**
  * The shape every media marker takes: the label, with the media one click away and the original one
@@ -19,26 +20,73 @@ import { countMediaMarkers, splitMediaMarkers } from "../media";
  * `onError` — a photo and a clip fail the same way (a dead CDN url) and both have to degrade to a
  * line of Korean rather than a broken box the reviewer has to interpret.
  *
- * Unlike the board's other hover cards (now `InfoPopover`), this one stays an inline accordion. A
- * 320px popover on a phone covers almost all of the source text it sits in, and the preview's whole
- * job is letting a reviewer compare that text against the photo — cover it and the preview has no job
- * left. So it expands downward in place instead.
+ * Two ways in, on purpose:
  *
- * The spec that proposed this had the preview itself branch popover-vs-inline on the source pane's
- * width, via a `@container` on the caller. The implementation below does not — it renders
- * unconditionally inline, at a fixed `w-full max-w-80` (see `PhotoMarker`/`VideoMarker`'s `preview`),
- * with no `@`-variant class anywhere in this file. That is the better call (a preview that changes
- * shape under the reviewer mid-scroll is its own kind of confusing), but it means the `@container`s
- * `TranslationDetail`'s 원문 pane and `OutletCard`'s `Source` used to carry for this component's sake
- * query nothing — nothing inside either one has an `@`-variant class. Both were removed; if this
- * component ever does need to know its container's width again, the container has to come back too.
+ * - **Click or tap ("pin")** opens the `armed`/`open` accordion below, in the document's own flow. A
+ *   320px popover on a phone would cover almost all of the source text it sits in, and the preview's
+ *   whole job is letting a reviewer compare that text against the photo — cover it and the preview
+ *   has no job left. This is the only path touch has, unchanged from before this file grew a second
+ *   entry point.
+ * - **Hover on a non-touch pointer ("peek")** opens `InfoPopover` — the same floating-panel component
+ *   every other hover card on the board now uses. This one was deliberately left out when the others
+ *   moved over (`InfoPopover.tsx`'s own top comment used to say so outright) because a floating panel
+ *   covers the text exactly like the popover the accordion replaced. It is reused here anyway rather
+ *   than a second hand-rolled floating implementation, but only for the *skim* path: `InfoPopover`
+ *   renders in its own `position: absolute`/top-layer box, so it never pushes the source text down —
+ *   which is exactly what a mouse crossing several markers in a row needs (no text jumping under the
+ *   cursor mid-read), and exactly why the click path stays inline instead of also moving to
+ *   `InfoPopover` (which WOULD sit over the text once pinned open for study — the one thing this
+ *   component exists to avoid).
  *
- * Mount is deferred behind `armed` rather than left to `preload="none"`: `autoPlay` overrides that
- * hint the moment a `<video>` exists, and a merely-hidden (`display: none`) element still fetches. A
- * 2차 card can show a dozen markers at once, so mounting eagerly would pull every photo and clip down
- * before anyone opened one. `onMouseEnter` used to be the arm signal; the first open now does that
- * job instead. Once armed, the preview element stays mounted — collapsing only hides it — so a
- * second look is instant and a buffered clip is not thrown away.
+ * `InfoPopover`'s own trigger already gates hover on `e.pointerType !== "touch"`; nothing here
+ * re-checks it. A touch device never fires `pointerenter` at all, so on phones the peek path is
+ * simply always closed and pin is the only way in, same as before.
+ *
+ * A marker that is already pinned open (`open` true) passes `hoverDisabled` to `InfoPopover`, which
+ * closes the peek (without unmounting it — see below) the instant a marker gets pinned and blocks
+ * `pointerenter` from reopening it until it is un-pinned again. A floating peek stacked over the
+ * pinned marker's own inline expansion of the same image would be redundant at best, and two copies
+ * of the same `<video autoPlay>` playing on top of each other at worst.
+ *
+ * The peek and the pin mount two separate elements for the same url — pinning a marker that was
+ * already peeked does not reuse the peek's node, and hovering one that is already pinned would not
+ * reuse the pin's (though `hoverDisabled` above means that case never arises). That used to read here
+ * as "fetches it twice," which was wrong about the part that matters: two *elements* is not two
+ * *fetches*. Measured with CDP's `Network` domain around a real hover-then-pin sequence, using
+ * cache-busted urls so the first load could not be riding on an earlier run's warm cache — a photo
+ * (18,200 bytes) produced exactly one `Network.requestWillBeSent`/`responseReceived` pair (`status:
+ * 200, fromDiskCache: false`) for the peek's `<img>`; pinning it afterward mounted a second, distinct
+ * `<img>` (confirmed by DOM identity, not the same node) already `complete: true` — with zero further
+ * `Network.*` events of any kind, not even a `fromDiskCache: true` pair, which a plain HTTP cache hit
+ * would still produce. A video (1,129,057 bytes, `status: 206`) behaved identically: one event for the
+ * peek, then a second, distinct `<video>` at `readyState: 4` with nothing on the wire for it. So
+ * skim-then-pin, the common desktop path, costs nothing beyond the first load — the renderer's own
+ * resource cache serves the second element from memory, the same mechanism that lets a page paint one
+ * `<img src>` twice for one request. A single shared DOM node (a portal keyed off a ref that only
+ * exists once the floating panel has opened at least once, moved between an inline position and a
+ * floating one) would still be more machinery, and now provably buys back nothing at the network
+ * layer — the one thing worth paying for here already comes free.
+ *
+ * The spec that proposed reviving hover had the preview itself branch popover-vs-inline on the source
+ * pane's width, via a `@container` on the caller. This still does not do that — the peek is gated on
+ * pointer type, not container width (`InfoPopover` uses a viewport query internally for its own
+ * narrow-screen layout, not `@container`; see its top comment for why), so no `@`-variant class exists
+ * anywhere in this file, and `TranslationDetail`'s 원문 pane and `OutletCard`'s `Source` still carry no
+ * container for one to query. If this component ever does need to know its own container's width, the
+ * container has to come back too.
+ *
+ * Mount itself is deferred until first interaction rather than left to `preload="none"`: `autoPlay`
+ * overrides that hint the moment a `<video>` exists, and a merely-hidden (`display: none`) element
+ * still fetches. A 2차 card can show a dozen markers at once, so mounting eagerly would pull every
+ * photo and clip down before anyone opened one. Each surface gates its own first mount independently —
+ * a click/tap sets the pin's own `armed`; a first hover is what makes `InfoPopover` render its panel at
+ * all (`{mounted && …}`, gated on `open` becoming true at least once, regardless of `keepMounted`).
+ * `keepMounted` only decides what happens *after* that first mount — without it, the peek's panel would
+ * unmount on every `pointerleave` the way every other `InfoPopover` panel does by default; with it,
+ * closing only hides it, so a second hover reuses the same element instead of remounting (and, per the
+ * trace above, refetching) it. A second look at either surface on its own — a second hover, or a second
+ * pin toggle — is instant and never re-fetches; only crossing from one surface to the other mounts a
+ * new element, and that crossing is the free case measured above.
  */
 function MediaMarker({
   label,
@@ -55,37 +103,54 @@ function MediaMarker({
   const [open, setOpen] = useState(false);
   const [armed, setArmed] = useState(false);
 
+  const brokenNotice = <span className="block px-1 py-0.5 text-[12px] leading-relaxed text-muted">{broken}</span>;
+
   return (
     <span className="inline">
-      <button
-        type="button"
-        onClick={() => {
-          setArmed(true);
-          setOpen((v) => !v);
-        }}
-        aria-expanded={open}
-        className="cursor-pointer text-mint underline-offset-2 hover:underline"
+      {/*
+        The peek. `keepMounted` is what lets a `<video>` inside `preview(...)` survive repeated
+        hovers instead of restarting; `hoverDisabled={open}` is what stops it from floating over the
+        pin's own inline expansion once this marker is pinned — see the doc comment above for both.
+        Wrapping the label button and the link both, not just the label: hovering the link should
+        skim the same preview the label does, and `InfoPopover`'s own `targetsEnabledControl` check
+        already keeps clicks on either from toggling this panel (see its top comment) — only its
+        hover/keyboard path fires here, and the click that lands on the button below still opens the
+        pin exactly as it always has.
+      */}
+      <InfoPopover
+        keepMounted
+        hoverDisabled={open}
+        panelClassName="w-80 p-1.5"
+        panel={
+          <span data-testid="media-peek">{failed ? brokenNotice : preview(() => setFailed(true))}</span>
+        }
       >
-        {label}
-      </button>
-      <a
-        href={url}
-        target="_blank"
-        rel="noreferrer"
-        className="ml-1.5 text-[12px] font-medium text-muted underline-offset-2 hover:text-mint hover:underline"
-      >
-        원본 보기 ↗
-      </a>
+        <button
+          type="button"
+          onClick={() => {
+            setArmed(true);
+            setOpen((v) => !v);
+          }}
+          aria-expanded={open}
+          className="cursor-pointer text-mint underline-offset-2 hover:underline"
+        >
+          {label}
+        </button>
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="ml-1.5 text-[12px] font-medium text-muted underline-offset-2 hover:text-mint hover:underline"
+        >
+          원본 보기 ↗
+        </a>
+      </InfoPopover>
       {armed && (
         <span
           data-testid="media-preview"
           className={`${open ? "block" : "hidden"} mt-1.5 rounded-lg border border-line bg-surface p-1.5`}
         >
-          {failed ? (
-            <span className="block px-1 py-0.5 text-[12px] leading-relaxed text-muted">{broken}</span>
-          ) : (
-            preview(() => setFailed(true))
-          )}
+          {failed ? brokenNotice : preview(() => setFailed(true))}
         </span>
       )}
     </span>
