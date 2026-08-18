@@ -42,7 +42,9 @@ try {
   }
 
   const text = (await readFile(file, "utf8")).trim();
-  const res = await new SaveRendering(formattingStore, undefined, stores.lineageStore).run({
+  // "agent": `pnpm format:save` is the agent's `format --refine` write path, not the dashboard's
+  // 2차 edit (that one is `createDeps.ts`'s `saveRendering`, built "human").
+  const res = await new SaveRendering(formattingStore, undefined, stores.lineageStore, "agent").run({
     itemId: match.itemId,
     type: match.type,
     channel: match.channel,

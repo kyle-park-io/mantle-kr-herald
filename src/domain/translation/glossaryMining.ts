@@ -1,4 +1,5 @@
 import type { GlossaryEntry, GlossaryDismissal, GlossaryRule } from "./models";
+import type { TextPair } from "../lineage/humanEdits";
 
 /**
  * Which terms are still waiting on a glossary DECISION — the question `translate:check` cannot ask.
@@ -14,8 +15,10 @@ import type { GlossaryEntry, GlossaryDismissal, GlossaryRule } from "./models";
  *   1. Un-glossed recurring proper nouns in the English source (`properNounOccurrences`), kept only
  *      when the term appears mid-sentence at least once — the positional rule that took the first
  *      real production run from 170 candidates to 90 (see `ProperNounOccurrence`).
- *   2. Word-level substitutions a human made between our draft and the published post
- *      (`substitutionEdits`) — the only signal that ever carries the human's own answer.
+ *   2. Word-level substitutions a human made between our draft and what actually went out
+ *      (`substitutionEdits`) — the only signal that ever carries the human's own answer. Two feeds,
+ *      one aligner: our draft against the published post, and a reviewer's own correction at 1차
+ *      검수 against the draft they started from (`humanEditPairs`, ../lineage/humanEdits.ts).
  *   3. Cross-validation against the @0xMantleKR reference corpus (`crossValidate`), which is what
  *      turns a candidate into a decision, and — more importantly — what throws two of them away.
  *
@@ -295,13 +298,18 @@ export function sentenceSimilarity(a: string, b: string): number {
   return (2 * shared) / (A.size + B.size);
 }
 
-/** One word-level edit a human made between our draft and the post that actually went out. */
+/** Which feed an edit came from — a reviewer's own correction, or whoever published the post. */
+export type EditSource = "published" | "review";
+
+/** One word-level edit a human made between a "before" text and an "after" text. */
 export interface SubstitutionEdit {
   itemId: string;
-  /** The words only our draft had. */
+  /** The words only the "before" side had. */
   draft: string;
-  /** The words only the published post had. */
+  /** The words only the "after" side had. */
   published: string;
+  /** Which feed produced this pair — see `EditSource`. */
+  source: EditSource;
 }
 
 export interface MinedTranslation {
@@ -312,20 +320,29 @@ export interface MinedTranslation {
 }
 
 /**
- * Every word-level substitution between a translation's draft and its published text.
+ * Every word-level substitution between a "before" text and an "after" text — the same question asked
+ * of two different feeds (see `EditSource`): our translation draft against the post that actually went
+ * out, and a reviewer's own correction at 1차 검수 against the draft they started from
+ * (`humanEditPairs`, ../lineage/humanEdits.ts). One aligner rather than two, because both feeds are
+ * "what did a human change, one word at a time" over a near-duplicate sentence pair, and a second copy
+ * of this sentence-matching logic would drift from this one the first time either was tuned.
  *
- * Alignment is greedy and one-directional — each draft sentence takes its best published match, and
- * a published sentence may be claimed twice. Deliberately not the Hungarian assignment it looks like
- * it wants to be: the pairs are near-duplicates of each other, so the greedy pick and the optimal one
+ * `draft`/`published` keep those field names regardless of which feed produced them: they are what the
+ * human-facing review file prints, and a feed-neutral rename would only make that file harder to read
+ * for no reader who needs it — `source` is the field that already says which feed an edit is from.
+ *
+ * Alignment is greedy and one-directional — each "before" sentence takes its best "after" match, and
+ * an "after" sentence may be claimed twice. Deliberately not the Hungarian assignment it looks like it
+ * wants to be: the pairs are near-duplicates of each other, so the greedy pick and the optimal one
  * agreed on every sentence of the real ledger, and an aligner nobody can read is a worse trade than a
  * duplicate line in a review file a human is going to read anyway.
  */
-export function substitutionEdits(translations: MinedTranslation[]): SubstitutionEdit[] {
+export function substitutionEdits(pairs: TextPair[], source: EditSource): SubstitutionEdit[] {
   const edits: SubstitutionEdit[] = [];
-  for (const t of translations) {
-    if (!t.publishedText || !t.koreanText) continue;
-    const draftSentences = sentencesOf(t.koreanText);
-    const publishedSentences = sentencesOf(t.publishedText);
+  for (const t of pairs) {
+    if (!t.after || !t.before) continue;
+    const draftSentences = sentencesOf(t.before);
+    const publishedSentences = sentencesOf(t.after);
 
     for (const draft of draftSentences) {
       let best: string | undefined;
@@ -352,7 +369,7 @@ export function substitutionEdits(translations: MinedTranslation[]): Substitutio
       if (gone.length === 0 || came.length === 0) continue;
       if (gone.length > MAX_DIFF_WORDS || came.length > MAX_DIFF_WORDS) continue;
 
-      edits.push({ itemId: t.itemId, draft: gone.join(" "), published: came.join(" ") });
+      edits.push({ itemId: t.itemId, draft: gone.join(" "), published: came.join(" "), source });
     }
   }
   return edits;
@@ -501,6 +518,11 @@ export interface GlossaryCandidate {
   occurrences: number;
   /** Substitution only. */
   itemIds?: string[];
+  /**
+   * Substitution only. Which feeds produced this pair — a reviewer's own correction is stronger
+   * evidence than an unattributed rewrite.
+   */
+  sources?: EditSource[];
   /** Absent when there was no corpus to ask. */
   corpus?: CorpusEvidence;
   /** What the corpus supports, when it supports anything. Left unset for a human to decide. */
@@ -517,6 +539,8 @@ export interface RejectedCandidate {
   draft: string;
   published: string;
   itemIds: string[];
+  /** Which feeds produced this pair — see `GlossaryCandidate.sources`. */
+  sources?: EditSource[];
   corpus: CorpusEvidence;
   reason: string;
 }
@@ -525,6 +549,13 @@ export interface MiningInput {
   /** Every tweet text in `x_threads` — the English source, deleted threads included. */
   sourceTweets: string[];
   translations: MinedTranslation[];
+  /**
+   * A reviewer's own correction at 1차 검수, one pair per item (`humanEditPairs`,
+   * ../lineage/humanEdits.ts) — the second feed into `substitutionEdits`, tagged `"review"` rather
+   * than `"published"` so a human reading the review file knows which kind of evidence they are
+   * looking at.
+   */
+  humanEdits: TextPair[];
   glossary: GlossaryEntry[];
   dismissed: GlossaryDismissal[];
   /** Every tweet text in the reference corpus. Empty when the corpus is absent. */
@@ -663,12 +694,23 @@ export function mineGlossaryCandidates(input: MiningInput): MiningResult {
   // rewrote to 튜링 테스트 before publishing (signal 2 → "transliterate it"). Emitting both puts two
   // opposite recommendations in one review file, and the human's own edit is strictly the better
   // evidence — they had the post in front of them.
-  const edits = substitutionEdits(translations);
-  const byPair = new Map<string, { draft: string; published: string; itemIds: string[] }>();
+  const publishedPairs: TextPair[] = translations
+    .filter((t) => t.publishedText && t.koreanText)
+    .map((t) => ({ itemId: t.itemId, before: t.koreanText, after: t.publishedText! }));
+  // Two feeds, one aligner (see `substitutionEdits`): our draft against what actually went out, and a
+  // reviewer's own correction at 1차 검수 against the draft they started from. Concatenated before
+  // dedup rather than mined separately, so a pair EITHER feed produced collapses to one `byPair` entry
+  // below instead of two competing candidates that say the same thing.
+  const edits = [
+    ...substitutionEdits(publishedPairs, "published"),
+    ...substitutionEdits(input.humanEdits, "review"),
+  ];
+  const byPair = new Map<string, { draft: string; published: string; itemIds: string[]; sources: EditSource[] }>();
   for (const e of edits) {
     const key = `${normalizeTerm(e.draft)} → ${normalizeTerm(e.published)}`;
-    const seen = byPair.get(key) ?? { draft: e.draft, published: e.published, itemIds: [] };
+    const seen = byPair.get(key) ?? { draft: e.draft, published: e.published, itemIds: [], sources: [] };
     if (!seen.itemIds.includes(e.itemId)) seen.itemIds.push(e.itemId);
+    if (!seen.sources.includes(e.source)) seen.sources.push(e.source);
     byPair.set(key, seen);
   }
   // Un-glossed proper nouns per item, so a substitution can suggest what its English term is called.
@@ -678,7 +720,7 @@ export function mineGlossaryCandidates(input: MiningInput): MiningResult {
     sourceTermsByItem.set(t.itemId, runs.slice(0, 6));
   }
 
-  for (const [, { draft, published, itemIds }] of byPair) {
+  for (const [, { draft, published, itemIds, sources }] of byPair) {
     const key = `${draft} → ${published}`;
     if (dismissedKeys.has(normalizeTerm(key))) continue;
     // Already decided, in either direction. A human moving AWAY from a decided form is not an open
@@ -700,6 +742,7 @@ export function mineGlossaryCandidates(input: MiningInput): MiningResult {
         draft,
         published,
         itemIds,
+        sources,
         corpus: evidence,
         reason:
           `코퍼스 "${draft}" ${evidence.ours}회 / "${published}" 0회 — 그 교정은 1회성으로 보이고 ` +
@@ -721,6 +764,7 @@ export function mineGlossaryCandidates(input: MiningInput): MiningResult {
       sourceTerms: sourceTermsByItem.get(itemIds[0]) ?? [],
       occurrences: itemIds.length,
       itemIds,
+      sources,
       corpus: evidence,
       rule: "transliterate",
       target: published,

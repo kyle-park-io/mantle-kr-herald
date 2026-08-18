@@ -2,6 +2,7 @@ import { toCanonical } from "../domain/formatting/canonical";
 import { overrideKey, type OutletOverride } from "../domain/outlet/override";
 import { outletById } from "../domain/outlet/models";
 import type { LineageStore } from "../ports/LineageStore";
+import type { LineageActor } from "../domain/lineage/models";
 import type { OutletOverrideStore } from "../ports/OutletOverrideStore";
 
 export interface SaveOutletOverrideInput {
@@ -28,7 +29,16 @@ export class SaveOutletOverride {
   constructor(
     private readonly store: OutletOverrideStore,
     private readonly now: () => string = () => new Date().toISOString(),
-    private readonly lineage?: LineageStore,
+    // Was `lineage?: LineageStore` — dropped to `| undefined` so `actor` below can be required: TS
+    // refuses a required parameter after an optional (`?`) one, but accepts one after a parameter
+    // typed to allow `undefined`. The call-site behaviour is identical either way.
+    private readonly lineage: LineageStore | undefined,
+    /**
+     * Which kind of caller built this — see `LineageActor`. Required rather than defaulted: a new
+     * call site that inherits a neighbour's answer would mislabel human edits as machine ones, and
+     * nothing downstream could tell. One value per process; no process is sometimes a human.
+     */
+    private readonly actor: LineageActor,
   ) {}
 
   async run(input: SaveOutletOverrideInput): Promise<OutletOverride | undefined> {
@@ -109,7 +119,7 @@ export class SaveOutletOverride {
     if (!this.lineage) return;
     // `<type>/<outletId>` — the group's `<type>/<channel>` shape, one axis over. A room's history
     // then diffs against its own previous version, not against the group it diverged from.
-    await this.lineage.append({ itemId: input.itemId, stage: "forked", variant: `${input.type}/${input.outletId}`, content, status, at });
+    await this.lineage.append({ itemId: input.itemId, stage: "forked", variant: `${input.type}/${input.outletId}`, content, status, at, actor: this.actor });
   }
 
   /**

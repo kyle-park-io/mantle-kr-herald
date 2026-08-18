@@ -1,6 +1,7 @@
 import type { ContentVariant, ConversionType } from "../domain/conversion/models";
 import type { ConversionStore } from "../ports/ConversionStore";
 import type { LineageStore } from "../ports/LineageStore";
+import type { LineageActor } from "../domain/lineage/models";
 
 export interface SaveConversionInput {
   itemId: string;
@@ -21,7 +22,16 @@ export class SaveConversion {
   constructor(
     private readonly conversionStore: ConversionStore,
     private readonly now: () => string = () => new Date().toISOString(),
-    private readonly lineage?: LineageStore,
+    // Was `lineage?: LineageStore` — dropped to `| undefined` so `actor` below can be required: TS
+    // refuses a required parameter after an optional (`?`) one, but accepts one after a parameter
+    // typed to allow `undefined`. The call-site behaviour is identical either way.
+    private readonly lineage: LineageStore | undefined,
+    /**
+     * Which kind of caller built this — see `LineageActor`. Required rather than defaulted: a new
+     * call site that inherits a neighbour's answer would mislabel human edits as machine ones, and
+     * nothing downstream could tell. One value per process; no process is sometimes a human.
+     */
+    private readonly actor: LineageActor,
   ) {}
 
   async run(input: SaveConversionInput): Promise<{ itemId: string; type: ConversionType }> {
@@ -51,7 +61,7 @@ export class SaveConversion {
     await this.conversionStore.upsert(variant);
     if (this.lineage) {
       try {
-        await this.lineage.append({ itemId: input.itemId, stage: "converted", variant: input.type, content: input.convertedText, status: variant.status, at: timestamp });
+        await this.lineage.append({ itemId: input.itemId, stage: "converted", variant: input.type, content: input.convertedText, status: variant.status, at: timestamp, actor: this.actor });
       } catch (err) {
         console.warn(`[lineage] append failed for ${input.itemId}: ${(err as Error).message}`);
       }

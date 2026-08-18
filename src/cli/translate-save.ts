@@ -37,7 +37,9 @@ try {
 
   const koreanText = (await readFile(file, "utf8")).trim();
 
-  const usecase = new SaveTranslation(translationStore, stores.fewShotStore, undefined, stores.lineageStore);
+  // "agent": `pnpm translate:save` is the write path for both drafting and `translate:align`
+  // (herald-watch's periodic re-pass) — no human runs this CLI directly from the dashboard.
+  const usecase = new SaveTranslation(translationStore, stores.fewShotStore, undefined, stores.lineageStore, "agent");
   const res = await usecase.run({
     itemId: item.id,
     source: item.source,

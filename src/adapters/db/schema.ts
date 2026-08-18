@@ -33,6 +33,9 @@ export const ALTERED_COLUMNS: readonly { table: string; column: string; type: st
   // `published_text` — the live post's body, filled in by the same reconcile match that fills in
   // `posted_url`/`posted_at` above; a later task backfills existing rows, so this starts null.
   { table: "translations", column: "published_text", type: "text" },
+  // `actor` — who wrote the entry. `lineage` predates it, so every existing row is null and stays
+  // null; see the 2026-08-18 human-edit-signal spec for why no backfill is possible.
+  { table: "lineage", column: "actor", type: "text" },
 ];
 
 /**
@@ -222,6 +225,12 @@ const STATEMENTS: readonly string[] = [
     source_text text,
     at text not null
   )`,
+
+  // `actor` — declared in `ALTERED_COLUMNS` above, generated here too (same idempotent-migration
+  // shape as `auth_attempts.last_attempt_at` and `translations.posted_url`/`posted_at` below): a
+  // database that already has `lineage` (every install predating 2026-08-18) still gets the column
+  // via `add column if not exists`, and stays null forever on rows written before it existed.
+  ...ALTERED_COLUMNS.filter((c) => c.table === "lineage").map(alterColumnStatement),
 
   // auth_attempts — the failed-login counter behind the dashboard's one shared credential
   // (domain/auth/attemptLimiter.ts). Two layers share this one table, distinguished by `id`: the

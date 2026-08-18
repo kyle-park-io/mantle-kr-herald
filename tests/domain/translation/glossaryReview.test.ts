@@ -21,6 +21,7 @@ const OPTS = {
   now: "2026-08-17T06:53:00.000Z",
   sourceTweetCount: 523,
   translationCount: 14,
+  reviewerEditCount: 6,
 };
 
 const RESULT: MiningResult = {
@@ -142,6 +143,64 @@ describe("renderCandidateReview", () => {
     expect(String(none[0]._근거)).not.toContain("줄·문장 첫머리");
     // ...and the sentence it does print says what was removed and how it comes back, not just a number.
     expect(String(render()[0]._근거)).toContain("문장 중간");
+  });
+});
+
+describe("the substitution source label", () => {
+  it("says which feed a substitution came from, so the reader knows how strong the evidence is", () => {
+    const rows = renderCandidateReview(
+      {
+        candidates: [{
+          key: "구매하신 → 구매한", signal: "substitution", tier: "A", term: "구매한",
+          draft: "구매하신", published: "구매한", occurrences: 1, itemIds: ["x:1"], sources: ["review"],
+        }],
+        rejected: [],
+        corpus: { state: "missing" },
+      } as never,
+      { path: "/tmp/c.json", now: "2026-08-18T00:00:00.000Z", sourceTweetCount: 0, translationCount: 0, reviewerEditCount: 1 },
+    );
+    expect(JSON.stringify(rows)).toContain("검수 수정");
+  });
+});
+
+describe("the header's provenance sentence", () => {
+  /**
+   * The header used to name two inputs (source tweets, published translations) while stdout already
+   * named three. A week whose only substitutions came from the reviewer feed would then print
+   * "발행본이 있는 번역 0건에서 뽑았습니다" directly above a list of substitution candidates — a false
+   * sentence, since a substitution plainly WAS found, just not from that feed.
+   */
+  it("names all three feeds, so a reviewer-only week isn't described as having found nothing", () => {
+    const header = render({ ...RESULT, candidates: [], rejected: [] })[0];
+    expect(header._근거).toContain(`${OPTS.reviewerEditCount}건`);
+    expect(header._근거).toContain("검수");
+    // The two feeds the header already named must still both be there.
+    expect(header._근거).toContain(`${OPTS.sourceTweetCount}트윗`);
+    expect(header._근거).toContain(`${OPTS.translationCount}건`);
+  });
+});
+
+describe("the rejected row's source label", () => {
+  /**
+   * Without this, a rejection the reviewer made themselves (규모→사이즈, corpus 13:0) renders
+   * identically to an anonymous downstream copyedit — the human can't tell it was their own call
+   * being overruled, which is the one rejection most worth them revisiting.
+   */
+  it("says which feed produced a rejected pair, reusing the candidate rows' label", () => {
+    const rows = renderCandidateReview(
+      {
+        candidates: [],
+        rejected: [{
+          key: "규모 → 사이즈", draft: "규모", published: "사이즈", itemIds: ["x:1"],
+          sources: ["review"], corpus: { ours: 13, theirs: 0 },
+          reason: '코퍼스 "규모" 13회 / "사이즈" 0회 — 그 교정은 1회성으로 보입니다.',
+        }],
+        corpus: { state: "missing" },
+        sentenceInitialOnly: 0,
+      } as never,
+      { ...OPTS, reviewerEditCount: 1 },
+    );
+    expect(JSON.stringify(rows)).toContain("검수 수정");
   });
 });
 

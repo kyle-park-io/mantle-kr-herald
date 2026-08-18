@@ -38,6 +38,17 @@ describe("renderLineage", () => {
     ]);
     expect(out.indexOf("translated")).toBeLessThan(out.indexOf("converted"));
   });
+
+  it("names who wrote an entry, and says so when nobody recorded it", () => {
+    const out = renderLineage([
+      { itemId: "x:1", stage: "translated", content: "초안", status: "translated", actor: "agent", at: "2026-08-18T00:00:00.000Z" },
+      { itemId: "x:1", stage: "translated", content: "검수본", status: "approved", actor: "human", at: "2026-08-18T01:00:00.000Z" },
+      { itemId: "x:1", stage: "translated", content: "옛 행", status: "translated", at: "2026-08-18T02:00:00.000Z" },
+    ]);
+    expect(out).toContain("· 에이전트");
+    expect(out).toContain("· 사람");
+    expect(out).not.toContain("· undefined");
+  });
 });
 
 /**

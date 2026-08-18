@@ -35,6 +35,7 @@ import {
   type MiningInput,
 } from "../../../src/domain/translation/glossaryMining";
 import type { GlossaryEntry } from "../../../src/domain/translation/models";
+import type { TextPair } from "../../../src/domain/lineage/humanEdits";
 
 const NOW = "2026-08-11T12:00:00.000Z";
 
@@ -141,6 +142,7 @@ const SOURCE_TWEETS: string[] = [
 const input = (over: Partial<MiningInput> = {}): MiningInput => ({
   sourceTweets: SOURCE_TWEETS,
   translations: TRANSLATIONS,
+  humanEdits: [],
   glossary: GLOSSARY,
   dismissed: [],
   corpusTweets: CORPUS_TWEETS,
@@ -357,19 +359,30 @@ describe("the recurrence floor", () => {
 
 // ── signal 2 ─────────────────────────────────────────────────────────────────────────────────────
 
+// `substitutionEdits` now takes the generic `TextPair` (before/after) rather than `MinedTranslation`
+// (koreanText/publishedText) — see EditSource. The fixtures below are still `MinedTranslation`,
+// because they are shared with the `mineGlossaryCandidates` tests further down this file; this helper
+// is the one place that reshapes them into the pair the function actually consumes, so the fixtures
+// themselves stay untouched.
+const asPublishedPair = (t: MinedTranslation): TextPair => ({
+  itemId: t.itemId,
+  before: t.koreanText,
+  after: t.publishedText ?? "",
+});
+
 describe("substitutionEdits", () => {
   it("finds a one-word correction a human made once, with no frequency threshold at all", () => {
     // The run's best find. `mine2.cjs` required three or more occurrences and found NOTHING; this
     // edit exists exactly once in the whole ledger. A human editing a proper noun right before
     // publishing is the strongest evidence this pipeline produces, and it is almost never repeated.
-    expect(substitutionEdits([TRANSLATIONS[0]])).toEqual([
-      { itemId: "x:2083206182484005059", draft: "낸슨", published: "난센" },
+    expect(substitutionEdits([asPublishedPair(TRANSLATIONS[0])], "published")).toEqual([
+      { itemId: "x:2083206182484005059", draft: "낸슨", published: "난센", source: "published" },
     ]);
   });
 
   it("finds an English-to-Korean correction as a single multi-word pair", () => {
-    expect(substitutionEdits([TRANSLATIONS[1]])).toEqual([
-      { itemId: "x:2081000000000000001", draft: "Turing Test", published: "튜링 테스트" },
+    expect(substitutionEdits([asPublishedPair(TRANSLATIONS[1])], "published")).toEqual([
+      { itemId: "x:2081000000000000001", draft: "Turing Test", published: "튜링 테스트", source: "published" },
     ]);
   });
 
@@ -378,7 +391,7 @@ describe("substitutionEdits", () => {
     // every unedited sentence of every published post.
     expect(SENTENCE_MATCH_MAX).toBe(0.995);
     const untouched = { ...TRANSLATIONS[0], publishedText: TRANSLATIONS[0].koreanText };
-    expect(substitutionEdits([untouched])).toEqual([]);
+    expect(substitutionEdits([asPublishedPair(untouched)], "published")).toEqual([]);
   });
 
   it("ignores two sentences that are not the same sentence", () => {
@@ -392,7 +405,7 @@ describe("substitutionEdits", () => {
       publishedText: "이번 주 커뮤니티 콜은 목요일에 열립니다",
     };
     expect(sentenceSimilarity(unrelated.koreanText, unrelated.publishedText!)).toBeLessThan(SENTENCE_MATCH_MIN);
-    expect(substitutionEdits([unrelated])).toEqual([]);
+    expect(substitutionEdits([asPublishedPair(unrelated)], "published")).toEqual([]);
   });
 
   it("ignores a rewrite, which carries no term decision", () => {
@@ -406,7 +419,7 @@ describe("substitutionEdits", () => {
     };
     const score = sentenceSimilarity(rewritten.koreanText, rewritten.publishedText!);
     expect(score).toBeGreaterThanOrEqual(SENTENCE_MATCH_MIN);
-    expect(substitutionEdits([rewritten])).toEqual([]);
+    expect(substitutionEdits([asPublishedPair(rewritten)], "published")).toEqual([]);
   });
 
   it("ignores a pure insertion and a pure deletion", () => {
@@ -418,11 +431,24 @@ describe("substitutionEdits", () => {
       koreanText: "맨틀 네트워크의 예치 자산이 늘었습니다",
       publishedText: "맨틀 네트워크의 예치 자산이 크게 늘었습니다",
     };
-    expect(substitutionEdits([inserted])).toEqual([]);
+    expect(substitutionEdits([asPublishedPair(inserted)], "published")).toEqual([]);
   });
 
   it("skips a row with no published text — nobody has captured what went out", () => {
-    expect(substitutionEdits([{ ...TRANSLATIONS[0], publishedText: undefined }])).toEqual([]);
+    expect(substitutionEdits([asPublishedPair({ ...TRANSLATIONS[0], publishedText: undefined })], "published")).toEqual(
+      [],
+    );
+  });
+
+  it("mines a reviewer's edit with the same aligner, tagged as review evidence", () => {
+    const edits = substitutionEdits(
+      [{ itemId: "x:1", before: "가장 최근에 구매하신 토큰화 자산은 무엇입니까?", after: "가장 최근에 구매한 토큰화 자산은 무엇인가요?" }],
+      "review",
+    );
+    // The brief predicted trailing "?" on both sides; `sentencesOf` splits on `[\n.!?]+`, which
+    // consumes the terminator as a delimiter rather than keeping it, so the aligner's sentences —
+    // and therefore its words — never carry one. Corrected to what the aligner actually produces.
+    expect(edits).toEqual([{ itemId: "x:1", draft: "구매하신 무엇입니까", published: "구매한 무엇인가요", source: "review" }]);
   });
 });
 
@@ -684,5 +710,76 @@ describe("a degraded corpus", () => {
     expect(result.candidates.every((c) => c.tier === "B")).toBe(true);
     expect(byKey(result, "RWA")!.corpus).toEqual({ ours: 24 });
     expect(result.rejected.map((r) => r.key)).toContain("규모 → 사이즈");
+  });
+});
+
+// ── the third signal: a reviewer's own correction ───────────────────────────────────────────────────
+//
+// `humanEdits` (Task 3's `humanEditPairs`) is the second feed into the same substitution aligner —
+// see the merge comment above `byPair` in glossaryMining.ts. These fixtures do not reuse
+// TRANSLATIONS/CORPUS_TWEETS above: they only need to prove the feed is read and tagged, not repeat
+// the rejection-rule or tiering coverage already pinned further up this file.
+describe("the reviewer-edit feed", () => {
+  it("raises a candidate from a reviewer's edit alone, and says where it came from", () => {
+    // No published pair anywhere in this input — if a substitution shows up at all, it can only have
+    // come from `humanEdits`.
+    const result = mineGlossaryCandidates({
+      sourceTweets: ["Openstock pre-IPO access"],
+      translations: [{ itemId: "x:1", sourceText: "Openstock pre-IPO access", koreanText: "오픈스톡 프리 IPO 접근" }],
+      humanEdits: [{ itemId: "x:1", before: "프리 IPO 접근 권한이 있습니다", after: "프리 IPO 이용 권한이 있습니다" }],
+      glossary: [entry("Mantle", "translate", "맨틀")],
+      dismissed: [],
+      corpusTweets: [],
+      corpusRuns: [],
+      now: "2026-08-18T00:00:00.000Z",
+    });
+    const sub = result.candidates.find((c) => c.signal === "substitution");
+    expect(sub?.sources).toEqual(["review"]);
+  });
+
+  /** The same pair seen in both feeds is stronger evidence, not two findings. */
+  it("merges a pair that both feeds produced, keeping both sources", () => {
+    const result = mineGlossaryCandidates({
+      sourceTweets: [],
+      translations: [
+        { itemId: "x:1", sourceText: "en", koreanText: "구매하신 자산이 좋습니다", publishedText: "구매한 자산이 좋습니다" },
+      ],
+      humanEdits: [{ itemId: "x:2", before: "구매하신 자산이 좋습니다", after: "구매한 자산이 좋습니다" }],
+      glossary: [entry("Mantle", "translate", "맨틀")],
+      dismissed: [],
+      corpusTweets: [],
+      corpusRuns: [],
+      now: "2026-08-18T00:00:00.000Z",
+    });
+    const sub = result.candidates.find((c) => c.signal === "substitution");
+    expect(sub?.sources).toEqual(["published", "review"]);
+    expect(sub?.itemIds).toEqual(["x:1", "x:2"]);
+  });
+
+  /**
+   * Every other reviewer-edit test above passes `corpusTweets: []`, which leaves `haveCorpus` false
+   * and `evidence` undefined — the `REJECT_MIN_OURS` branch (glossaryMining.ts) never runs for a
+   * review-feed pair in any of them, and neither does `decidedForms`/`dismissedKeys`. This is the one
+   * that actually exercises the rejection rule against the new feed, so a change that special-cases
+   * `source: "review"` in that branch would be caught here.
+   */
+  it("rejects a reviewer's edit the same way it rejects a published one, when the corpus argues against it", () => {
+    const corpusTweets = repeat("이 정도 규모의 자산은 흔치 않습니다.", REJECT_MIN_OURS);
+    const result = mineGlossaryCandidates({
+      sourceTweets: [],
+      translations: [],
+      humanEdits: [
+        { itemId: "x:9", before: "거래 전에 포지션 규모 제한을 확인하세요", after: "거래 전에 포지션 사이즈 제한을 확인하세요" },
+      ],
+      glossary: [entry("Mantle", "translate", "맨틀")],
+      dismissed: [],
+      corpusTweets,
+      corpusRuns: [],
+      now: "2026-08-18T00:00:00.000Z",
+    });
+    expect(result.candidates.find((c) => c.signal === "substitution")).toBeUndefined();
+    expect(result.rejected).toEqual([
+      expect.objectContaining({ key: "규모 → 사이즈", sources: ["review"] }),
+    ]);
   });
 });

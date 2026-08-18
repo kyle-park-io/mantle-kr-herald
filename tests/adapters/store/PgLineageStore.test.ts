@@ -133,4 +133,30 @@ describe("PgLineageStore", () => {
     db = await createTestDb();
     expect(await new PgLineageStore(db).listEvents()).toEqual([]);
   });
+
+  it("round-trips the actor, and leaves it absent when nothing said who", async () => {
+    db = await createTestDb();
+    const s = new PgLineageStore(db);
+    await s.append(entry({ content: "v1", actor: "agent" }));
+    await s.append(entry({ content: "v2", actor: "human" }));
+    await s.append(entry({ content: "v3" }));
+
+    const got = await s.load("x:1");
+    expect(got.map((e) => e.actor)).toEqual(["agent", "human", undefined]);
+  });
+
+  /**
+   * `listEvents` exists to answer rollup questions without pulling `content`, and "who edited this"
+   * is exactly such a question — an actor that only `load()` could see would force the miner to
+   * read every version of every item's copy to find out.
+   */
+  it("projects the actor into listEvents, still without the text columns", async () => {
+    db = await createTestDb();
+    const s = new PgLineageStore(db);
+    await s.append(entry({ content: "v1", actor: "human" }));
+
+    const events = await s.listEvents();
+    expect(events[0].actor).toBe("human");
+    expect(events[0]).not.toHaveProperty("content");
+  });
 });

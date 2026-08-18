@@ -1,4 +1,4 @@
-import type { CorpusStatus, GlossaryCandidate, MiningResult, RejectedCandidate } from "./glossaryMining";
+import type { CorpusStatus, EditSource, GlossaryCandidate, MiningResult, RejectedCandidate } from "./glossaryMining";
 
 /**
  * The file `glossary:mine` leaves for a human — the one artifact of the whole job.
@@ -47,6 +47,23 @@ export function corpusSummary(corpus: CorpusStatus): string {
   }
 }
 
+/** Korean label for `EditSource`, printed on every substitution row — see `candidateEntry`. */
+const SOURCE_LABEL = { published: "게시 수정", review: "검수 수정" } as const;
+
+/**
+ * Which feed(s) produced a pair, joined for display. Shared by `candidateEntry` and `rejectedEntry`:
+ * a reviewer's own correction (검수 수정) is stronger evidence than an unattributed difference between
+ * our draft and whatever got posted (게시 수정) — the reviewer had the draft in front of them and chose
+ * the words on purpose, where a published-only pair could just as easily be someone else's copyedit
+ * downstream of us. Both labels together mean both feeds independently produced the same pair, which
+ * is stronger evidence than either alone. A REJECTED pair needs this exactly as much as a surviving
+ * one: without it, a reviewer's own call being overruled by the corpus (규모→사이즈, 13:0) renders
+ * indistinguishably from an anonymous downstream copyedit, and that is the one rejection most worth
+ * the human revisiting.
+ */
+const sourceLabel = (sources: EditSource[] | undefined): string =>
+  (sources ?? []).map((s) => SOURCE_LABEL[s]).join(" + ");
+
 function candidateEntry(c: GlossaryCandidate): Record<string, unknown> {
   const entry: Record<string, unknown> = { term: c.term };
   if (c.signal === "substitution") {
@@ -55,6 +72,7 @@ function candidateEntry(c: GlossaryCandidate): Record<string, unknown> {
     // `term`, which must match the ENGLISH source (`checkGlossary` matches against `sourceText`).
     entry._초안_발행 = `${c.draft} → ${c.published}`;
     entry._원문_후보 = c.sourceTerms ?? [];
+    entry._근거 = sourceLabel(c.sources);
   }
   if (c.rule) entry.rule = c.rule;
   if (c.target) entry.target = c.target;
@@ -65,7 +83,10 @@ function candidateEntry(c: GlossaryCandidate): Record<string, unknown> {
 }
 
 function rejectedEntry(r: RejectedCandidate): Record<string, unknown> {
-  return { _기각: r.key, _근거: r.reason, _항목: r.itemIds };
+  // `_근거` is already the reason the corpus argued against this pair; the feed attribution gets its
+  // own key rather than overloading that one. See `sourceLabel`'s comment for why a rejected row
+  // needs this at all.
+  return { _기각: r.key, _근거: r.reason, _출처: sourceLabel(r.sources), _항목: r.itemIds };
 }
 
 export interface ReviewFileOptions {
@@ -76,6 +97,14 @@ export interface ReviewFileOptions {
   /** How many source tweets and translation pairs the candidates were mined from. */
   sourceTweetCount: number;
   translationCount: number;
+  /**
+   * How many reviewer edits at 1차 검수 (`humanEditPairs`) fed the same substitution signal. Without
+   * this, the header names only two inputs while a third genuinely produces candidates below it: a
+   * week whose only substitutions came from the reviewer feed would print "발행본이 있는 번역 0건에서
+   * 뽑았습니다" directly above a list of substitution candidates — a false sentence, not merely an
+   * incomplete one.
+   */
+  reviewerEditCount: number;
 }
 
 /**
@@ -105,8 +134,11 @@ export function renderCandidateReview(result: MiningResult, opts: ReviewFileOpti
         "term은 반드시 **원문(영어) 표기**여야 합니다 — 용어집 검사는 원문 텍스트에 대고 매칭합니다. " +
         "치환 후보의 term에는 사람이 고쳐 쓴 한국어가 들어 있으니, `_원문_후보`를 보고 영어 쪽으로 바꿔 주세요.",
       _근거:
-        `수집된 원문 ${opts.sourceTweetCount}트윗과 발행본이 있는 번역 ${opts.translationCount}건에서 ` +
-        `뽑았습니다. ${corpusSummary(corpus)}${positionalNote(result.sentenceInitialOnly)}`,
+        // Three feeds, all named — a week whose substitutions came only from 1차 검수 edits must not
+        // read as though nothing was found there (see `reviewerEditCount`'s doc comment).
+        `수집된 원문 ${opts.sourceTweetCount}트윗, 발행본이 있는 번역 ${opts.translationCount}건, ` +
+        `검수에서 사람이 고친 ${opts.reviewerEditCount}건에서 뽑았습니다. ${corpusSummary(corpus)}` +
+        `${positionalNote(result.sentenceInitialOnly)}`,
       _신뢰도: "A = 코퍼스 증거 압도적 · B = 표본이 작거나, 코퍼스가 혼용이거나, 표기를 사람이 채워야 함",
       _이건_아니다_싶으면:
         'translation/glossary-dismissed.json에 {"term": "<아래 _후보 값>", "note": "왜", "dismissedAt": "YYYY-MM-DD"}를 ' +

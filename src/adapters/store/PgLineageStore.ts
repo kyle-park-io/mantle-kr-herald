@@ -1,6 +1,6 @@
 import type { Db } from "../db/Db";
 import { omitNulls } from "../db/omitNulls";
-import type { LineageEntry, LineageEvent, LineageStage } from "../../domain/lineage/models";
+import type { LineageActor, LineageEntry, LineageEvent, LineageStage } from "../../domain/lineage/models";
 import type { LineageStore, LineageSummary } from "../../ports/LineageStore";
 
 /** The shape a row from `lineage` (see `src/adapters/db/schema.ts`) comes back as. */
@@ -11,6 +11,7 @@ interface LineageRow {
   content: string;
   status: string | null;
   source_text: string | null;
+  actor: string | null;
   at: string;
 }
 
@@ -22,6 +23,7 @@ function toLineageEntry(row: LineageRow): LineageEntry {
     content: row.content,
     status: row.status,
     sourceText: row.source_text,
+    actor: row.actor as LineageActor,
     at: row.at,
   });
 }
@@ -33,7 +35,7 @@ interface LineageSummaryRow {
 }
 
 /** `LineageRow` without the two text columns — see `listEvents`. */
-type LineageEventRow = Pick<LineageRow, "item_id" | "stage" | "status" | "at">;
+type LineageEventRow = Pick<LineageRow, "item_id" | "stage" | "status" | "actor" | "at">;
 
 /**
  * `LineageStore` backed by the `lineage` table. Replaces `JsonlLineageStore`, which appended one
@@ -60,8 +62,8 @@ export class PgLineageStore implements LineageStore {
 
   async append(entry: LineageEntry): Promise<void> {
     await this.db.query(
-      `insert into lineage (item_id, stage, variant, content, status, source_text, at)
-       values ($1, $2, $3, $4, $5, $6, $7)`,
+      `insert into lineage (item_id, stage, variant, content, status, source_text, actor, at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         entry.itemId,
         entry.stage,
@@ -69,6 +71,7 @@ export class PgLineageStore implements LineageStore {
         entry.content,
         entry.status ?? null,
         entry.sourceText ?? null,
+        entry.actor ?? null,
         entry.at,
       ],
     );
@@ -76,7 +79,7 @@ export class PgLineageStore implements LineageStore {
 
   async load(itemId: string): Promise<LineageEntry[]> {
     const rows = await this.db.query<LineageRow>(
-      `select item_id, stage, variant, content, status, source_text, at
+      `select item_id, stage, variant, content, status, source_text, actor, at
        from lineage
        where item_id = $1
        order by ordinal`,
@@ -95,10 +98,16 @@ export class PgLineageStore implements LineageStore {
    */
   async listEvents(): Promise<LineageEvent[]> {
     const rows = await this.db.query<LineageEventRow>(
-      `select item_id, stage, status, at from lineage order by ordinal`,
+      `select item_id, stage, status, actor, at from lineage order by ordinal`,
     );
     return rows.map((r) =>
-      omitNulls({ itemId: r.item_id, stage: r.stage as LineageStage, status: r.status, at: r.at }),
+      omitNulls({
+        itemId: r.item_id,
+        stage: r.stage as LineageStage,
+        status: r.status,
+        actor: r.actor as LineageActor,
+        at: r.at,
+      }),
     );
   }
 
