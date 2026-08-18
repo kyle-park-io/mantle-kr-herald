@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emitKakaoPaste, KAKAO_FOLD } from "../../../../src/domain/formatting/emitters/kakao";
+import { dotBullets, emitKakaoPaste, KAKAO_FOLD } from "../../../../src/domain/formatting/emitters/kakao";
 import { toCanonical } from "../../../../src/domain/formatting/canonical";
 
 describe("emitKakaoPaste", () => {
@@ -47,5 +47,48 @@ describe("emitKakaoPaste", () => {
     const canonical = toCanonical("a\n\n---\n\nb");
     const r = emitKakaoPaste(canonical);
     expect(r.segments).toHaveLength(1);
+  });
+});
+
+/**
+ * KakaoTalk parses no markup, so a `-` written as a list marker arrives as a literal hyphen sitting
+ * in the reader's message — it reads as a dash, not as a list. `•` is what a bullet looks like when
+ * nothing is going to render it for you. The guide's own skeleton (`conversion/kakao_notice.md` §4)
+ * has the writer type `- 항목: 값`, so the swap belongs here rather than in the prompt.
+ */
+describe("dotBullets", () => {
+  it("swaps a line-leading list marker for a bullet", () => {
+    expect(dotBullets("[배경]\n- 프리 IPO 단계가 핵심 역할\n- 투자 기회 확대"))
+      .toBe("[배경]\n• 프리 IPO 단계가 핵심 역할\n• 투자 기회 확대");
+  });
+
+  it("keeps the indentation a nested item was written with", () => {
+    expect(dotBullets("  - 안쪽 항목")).toBe("  • 안쪽 항목");
+  });
+
+  it("leaves a hyphen in the middle of a line alone", () => {
+    const line = "프리 IPO - 24시간 거래까지";
+    expect(dotBullets(line)).toBe(line);
+  });
+
+  /** `---` is this pipeline's post separator, not a bullet. It has no space after the hyphen. */
+  it("leaves a separator line alone", () => {
+    expect(dotBullets("가\n---\n나")).toBe("가\n---\n나");
+  });
+
+  it("leaves a leading hyphen that is not a marker alone", () => {
+    expect(dotBullets("-30% 하락")).toBe("-30% 하락");
+  });
+});
+
+describe("emitKakaoPaste and bullets", () => {
+  it("emits the bullet the reader sees", () => {
+    expect(emitKakaoPaste("[배경]\n- 항목: 값").segments[0].text).toBe("[배경]\n• 항목: 값");
+  });
+
+  /** One character for one character, so nothing about this can push a notice over the fold. */
+  it("costs nothing against the 500-character fold", () => {
+    const body = "[배경]\n- 항목: 값\n- 항목: 값";
+    expect(emitKakaoPaste(body).segments[0].length).toBe([...body].length);
   });
 });
