@@ -1,4 +1,5 @@
 import { BOLD, MD_LINK, flattenPostBoundaries, linksToLabel, linksToPlain, stripBold } from "../canonical";
+import { linkXHandles } from "../xHandles";
 import type { EmitResult } from "./types";
 
 /** sendMessage's text limit, counted after entity parsing. https://core.telegram.org/bots/api */
@@ -20,7 +21,10 @@ function single(text: string, visibleLength: number): EmitResult {
  * emit plain text — `*bold*` here would show up as literal asterisks.
  */
 export function emitTelegramPaste(canonical: string): EmitResult {
-  const flattened = flattenPostBoundaries(canonical);
+  // `linkXHandles` before anything else, in both emitters: it emits `[label](url)` markdown, so the
+  // steps below have to see its output rather than the raw canonical text. Telegram resolves a bare
+  // `@handle` against its own usernames, which is why this is a Telegram concern — see xHandles.ts.
+  const flattened = linkXHandles(flattenPostBoundaries(canonical));
   const text = linksToPlain(stripBold(flattened));
   return single(text, [...text].length);
 }
@@ -35,7 +39,8 @@ export function emitTelegramPaste(canonical: string): EmitResult {
  * too.
  */
 export function emitTelegramBot(canonical: string): EmitResult {
-  const flattened = flattenPostBoundaries(canonical);
+  // See `emitTelegramPaste` — same call, same reason, same required position.
+  const flattened = linkXHandles(flattenPostBoundaries(canonical));
   const escaped = flattened
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

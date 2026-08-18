@@ -99,3 +99,31 @@ describe("emitTelegramBot", () => {
     expect(r.segments[0].text).toBe('<a href="https://x.io">"따옴표"</a>');
   });
 });
+
+/**
+ * The destination half of `linkXHandles` — that module decides *which* handles get a link, these
+ * two decide what that link looks like where it lands. Telegram reads a bare `@RWA_xyz` as one of
+ * its own usernames, so on both paths the X profile has to be spelled out; only the bot path can
+ * spell it as a real link.
+ */
+describe("Telegram destinations and X handles", () => {
+  it("gives the bot a real hyperlink, with the handle still the visible label", () => {
+    const r = emitTelegramBot("맨틀은 @OpenstockInc를 통해 제공합니다.");
+    expect(r.segments[0].text).toBe('맨틀은 <a href="https://x.com/OpenstockInc">@OpenstockInc</a>를 통해 제공합니다.');
+  });
+
+  it("counts only what the bot's reader sees, so linking a handle does not spend the 4096 budget", () => {
+    const plain = "맨틀은 @OpenstockInc를 통해 제공합니다.";
+    expect(emitTelegramBot(plain).segments[0].length).toBe([...plain].length);
+  });
+
+  it("spells the url out for the paste path, which has no markup to hang a link on", () => {
+    const r = emitTelegramPaste("맨틀은 @OpenstockInc를 통해 제공합니다.");
+    expect(r.segments[0].text).toBe("맨틀은 @OpenstockInc (https://x.com/OpenstockInc)를 통해 제공합니다.");
+  });
+
+  it("counts the url it pasted — those characters really are in the message", () => {
+    const r = emitTelegramPaste("@OpenstockInc");
+    expect(r.segments[0].length).toBe([..."@OpenstockInc (https://x.com/OpenstockInc)"].length);
+  });
+});
