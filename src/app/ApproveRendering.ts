@@ -73,6 +73,10 @@ export class ApproveRendering {
     const variant = (await this.conversionStore.loadAll()).find((v) => v.itemId === input.itemId && v.type === input.type);
     if (!variant) return; // A rendering with no variant behind it: approve it, but there is nothing to teach.
     await this.conversionStore.upsert({ ...variant, status: "approved", approvedAt: variant.approvedAt ?? at });
+    // `x` is the approved translation verbatim (`PrepareConversions` writes it; no agent runs), so
+    // the example would be a `원문 == 변환` pair that teaches nothing. Marking the variant approved
+    // still matters — `pnpm status` counts it — but the corpus stays out of it.
+    if (input.type === "x") return;
     await this.fewShotByType[input.type].add({ source: variant.sourceKorean, target: variant.convertedText, itemId: input.itemId });
   }
 }

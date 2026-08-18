@@ -25,6 +25,24 @@ describe("PrepareConversionRun", () => {
     expect(written).toEqual([]);
   });
 
+  /**
+   * Picking `x` alone leaves `pending` empty — but a variant row was still written, straight from
+   * the approved translation. Reporting only `pending: 0` would put "대기 중인 항목이 없습니다"
+   * under a button that had just done exactly what the operator asked for.
+   */
+  it("reports the x rows the passthrough wrote, even though no worksheet was needed", async () => {
+    const written: string[] = [];
+    const passthrough = [{ itemId: "x:1", type: "x", sourceKorean: "승인 카피" }];
+    const prepare = { run: async () => ({ worksheet: "", pending: [], passthrough }) };
+    const uc = new PrepareConversionRun(prepare as never, async (p) => { written.push(p); }, "/ws", () => "STAMP");
+
+    const res = await uc.run({ itemId: "x:1", types: ["x"] });
+
+    expect(res.passthrough).toBe(1);
+    expect(res.pending).toBe(0);
+    expect(written).toEqual([]);
+  });
+
   it("passes the item and types through as a selector", async () => {
     let seen: unknown;
     const prepare = { run: async (sel: unknown) => { seen = sel; return { worksheet: "w", pending: [{ itemId: "x:1", type: "casual", sourceKorean: "s" }] }; } };

@@ -25,6 +25,20 @@ export class SaveConversion {
   ) {}
 
   async run(input: SaveConversionInput): Promise<{ itemId: string; type: ConversionType }> {
+    /**
+     * `x` is the approved translation verbatim — `PrepareConversions` writes that row itself and
+     * keeps the type out of the worksheet entirely, so nothing should ever arrive here asking to
+     * replace it. This is the door that would still be open if it did not refuse:
+     * `src/cli/convert-save.ts` falls back to an already-saved variant's `sourceKorean` when the
+     * pair is missing from `pending.json`, and the passthrough always leaves one saved. A refusal
+     * rather than a silent no-op, because the caller has a file it believes it just wrote.
+     */
+    if (input.type === "x") {
+      throw new Error(
+        `Refusing to save an x variant for ${input.itemId}: x goes out as the 1차-approved translation, ` +
+          `verbatim — there is nothing to convert. Change the Korean in 1차 검수, or edit this card in 2차 검수.`,
+      );
+    }
     const timestamp = this.now();
     const variant: ContentVariant = {
       itemId: input.itemId,

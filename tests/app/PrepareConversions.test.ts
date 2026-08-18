@@ -6,8 +6,11 @@ import type { TranslationConfig } from "../../src/ports/TranslationConfig";
 import type { ConversionConfig } from "../../src/ports/ConversionConfig";
 import type { ConversionStore } from "../../src/ports/ConversionStore";
 import type { FewShotStore } from "../../src/ports/FewShotStore";
-import { ALL_TYPES, type ConversionType } from "../../src/domain/conversion/models";
+import { ALL_TYPES, type ContentVariant, type ConversionType } from "../../src/domain/conversion/models";
 import type { Translation, Locale } from "../../src/domain/translation/models";
+
+/** Every type the agent is still asked for — i.e. all of them but the `x` passthrough. */
+const REWRITTEN = ALL_TYPES.filter((t) => t !== "x");
 
 const locale: Locale = { dateFormat: "d", numberFormat: "n", currency: "USD", unit: "u", honorific: "합니다체" };
 
@@ -30,6 +33,14 @@ const fewShotByType = (): Record<ConversionType, FewShotStore> => {
 const convStore = (keys: string[] = []): ConversionStore => ({
   loadAll: async () => [], upsert: async () => {}, listConvertedKeys: async () => new Set(keys),
 });
+/** `convStore`, plus the rows it was asked to write — the x passthrough's only observable output. */
+function recordingConvStore(keys: string[] = []): { store: ConversionStore; written: ContentVariant[] } {
+  const written: ContentVariant[] = [];
+  return {
+    store: { loadAll: async () => [], upsert: async (v) => { written.push(v); }, listConvertedKeys: async () => new Set(keys) },
+    written,
+  };
+}
 
 describe("PrepareConversions", () => {
   it("fans approved translations into all types by default, skipping already-converted (itemId,type)", async () => {
@@ -53,8 +64,8 @@ describe("PrepareConversions", () => {
       translationStore([tr("x:1", "approved", "a"), tr("x:2", "approved", "b")]),
       glossaryStore, config, conversionConfig, fewShotByType(), convStore(),
     );
-    const { pending } = await uc.run({ types: ["x"], ids: ["x:2"], limit: 5 });
-    expect(pending).toEqual([{ itemId: "x:2", type: "x", sourceKorean: "b" }]);
+    const { pending } = await uc.run({ types: ["announcement"], ids: ["x:2"], limit: 5 });
+    expect(pending).toEqual([{ itemId: "x:2", type: "announcement", sourceKorean: "b" }]);
   });
 
   it("counts --limit by source item, keeping all types for each selected item (no type dropped)", async () => {
@@ -63,8 +74,8 @@ describe("PrepareConversions", () => {
       glossaryStore, config, conversionConfig, fewShotByType(), convStore(),
     );
     const { pending } = await uc.run({ limit: 2 });
-    // 2 items selected × ALL_TYPES; pr present for both selected items
-    expect(pending).toHaveLength(2 * ALL_TYPES.length);
+    // 2 items selected × every rewritten type; pr present for both selected items
+    expect(pending).toHaveLength(2 * REWRITTEN.length);
     expect(pending.filter((p) => p.type === "pr").map((p) => p.itemId)).toEqual(["x:1", "x:2"]);
   });
 
@@ -80,7 +91,7 @@ describe("PrepareConversions", () => {
       glossaryStore, config, conversionConfig, fewShotByType(), convStore(done),
     );
     const { pending } = await uc.run({ limit: 1 });
-    expect(pending).toEqual(ALL_TYPES.map((type) => ({ itemId: "x:2", type, sourceKorean: "아직 변환 안 됨" })));
+    expect(pending).toEqual(REWRITTEN.map((type) => ({ itemId: "x:2", type, sourceKorean: "아직 변환 안 됨" })));
   });
 
   it("filters by since against approvedAt (older items excluded)", async () => {
@@ -90,8 +101,8 @@ describe("PrepareConversions", () => {
       translationStore([older, newer]),
       glossaryStore, config, conversionConfig, fewShotByType(), convStore(),
     );
-    const { pending } = await uc.run({ types: ["x"], since: "2026-03-01T00:00:00.000Z" });
-    expect(pending).toEqual([{ itemId: "x:2", type: "x", sourceKorean: "new" }]);
+    const { pending } = await uc.run({ types: ["announcement"], since: "2026-03-01T00:00:00.000Z" });
+    expect(pending).toEqual([{ itemId: "x:2", type: "announcement", sourceKorean: "new" }]);
   });
 
   it("caps the fan-out at maxVariants, and the worksheet carries only what survived the cap", async () => {
@@ -104,21 +115,66 @@ describe("PrepareConversions", () => {
       glossaryStore, config, conversionConfig, fewShotByType(), convStore(),
     );
     const { worksheet, pending } = await uc.run({ maxVariants: 4 });
-    expect(pending).toEqual(ALL_TYPES.slice(0, 4).map((type) => ({ itemId: "x:1", type, sourceKorean: "승인 카피" })));
+    expect(pending).toEqual(REWRITTEN.slice(0, 4).map((type) => ({ itemId: "x:1", type, sourceKorean: "승인 카피" })));
     // The worksheet has to be cut with the same knife. It is what the agent reads, and `pending.json`
     // is what the tick counts the agent's saves against — a section for a dropped pair asks the agent
     // to save a variant nobody is expecting, on top of the ones it was actually given.
-    for (const type of ALL_TYPES.slice(4)) expect(worksheet, `section for ${type}`).not.toContain(`guide-${type}`);
+    for (const type of REWRITTEN.slice(4)) expect(worksheet, `section for ${type}`).not.toContain(`guide-${type}`);
+  });
+
+  /**
+   * `x` is not a rewrite. The item is a translation of a tweet, so the Korean the 1차 reviewer
+   * approved IS the post — handing it to the agent re-opens wording a human already signed off,
+   * which is exactly what production had been doing: every one of the ten `x` variants on
+   * 2026-08-18 differed from its own `sourceKorean`.
+   */
+  it("saves the x variant from the approved translation itself, and never asks the agent for it", async () => {
+    const { store, written } = recordingConvStore();
+    const uc = new PrepareConversions(
+      translationStore([tr("x:1", "approved", "승인 카피")]),
+      glossaryStore, config, conversionConfig, fewShotByType(), store, () => "2026-05-05T00:00:00.000Z",
+    );
+    const { worksheet, pending, passthrough } = await uc.run({ types: ["x"] });
+    expect(pending).toEqual([]);
+    expect(passthrough).toEqual([{ itemId: "x:1", type: "x", sourceKorean: "승인 카피" }]);
+    expect(worksheet).not.toContain("guide-x");
+    expect(written).toEqual([{
+      itemId: "x:1", type: "x", sourceKorean: "승인 카피", convertedText: "승인 카피",
+      status: "converted", createdAt: "2026-05-05T00:00:00.000Z",
+    }]);
+  });
+
+  /**
+   * `maxVariants` is arithmetic against `claude -p`'s ten-minute cap (`ConvertTick`), and a
+   * passthrough spends none of it — no worksheet section to read, no save to wait for. Counting x
+   * against the ceiling would silently cut one rewrite per tick to buy nothing.
+   */
+  it("does not spend the maxVariants ceiling on x", async () => {
+    const { store, written } = recordingConvStore();
+    const uc = new PrepareConversions(
+      translationStore([tr("x:1", "approved", "승인 카피")]),
+      glossaryStore, config, conversionConfig, fewShotByType(), store, () => "2026-05-05T00:00:00.000Z",
+    );
+    const { pending, passthrough } = await uc.run({ maxVariants: 4 });
+    const rewritten = ALL_TYPES.filter((t) => t !== "x");
+    expect(pending).toEqual(rewritten.slice(0, 4).map((type) => ({ itemId: "x:1", type, sourceKorean: "승인 카피" })));
+    expect(passthrough).toEqual([{ itemId: "x:1", type: "x", sourceKorean: "승인 카피" }]);
+    expect(written).toHaveLength(1);
   });
 
   it("never offers a posted translation for conversion", async () => {
     // A `posted` item was already retired by the reconcile flow — offering it back for conversion
     // would let it re-enter a pipeline whose whole job is to stop it being sent again.
+    const { store, written } = recordingConvStore();
     const uc = new PrepareConversions(
       translationStore([tr("x:1", "approved", "승인 카피"), tr("x:2", "posted", "이미 게시됨")]),
-      glossaryStore, config, conversionConfig, fewShotByType(), convStore(),
+      glossaryStore, config, conversionConfig, fewShotByType(), store,
     );
-    const { pending } = await uc.run({ types: ["x"] });
-    expect(pending).toEqual([{ itemId: "x:1", type: "x", sourceKorean: "승인 카피" }]);
+    const { pending, passthrough } = await uc.run({ types: ["x"] });
+    expect(pending).toEqual([]);
+    // The passthrough writes a variant row without waiting for an agent, so "never offered" has to
+    // mean "no row written", not merely "not put on the worksheet".
+    expect(passthrough).toEqual([{ itemId: "x:1", type: "x", sourceKorean: "승인 카피" }]);
+    expect(written.map((v) => v.itemId)).toEqual(["x:1"]);
   });
 });

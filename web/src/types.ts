@@ -630,6 +630,12 @@ export interface FormatWarning {
 export interface ConvertPrepareReply {
   worksheetPath: string;
   pending: number;
+  /**
+   * Variants written without an agent — the `x` type, saved straight from the approved translation.
+   * Counted apart from `pending` because it asks nothing of the operator: a run that produced only
+   * these has `pending: 0` and is finished, not empty.
+   */
+  passthrough: number;
   archived?: string;
 }
 

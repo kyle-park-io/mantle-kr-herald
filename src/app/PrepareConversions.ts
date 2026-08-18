@@ -35,6 +35,21 @@ export interface PendingVariant {
   sourceKorean: string;
 }
 
+/**
+ * The one type the agent never sees.
+ *
+ * `x` goes to @0xMantleKR, and the item it comes from is a tweet — so the Korean the 1차 reviewer
+ * approved already IS the post. Every other type is a rewrite for a different audience (a Telegram
+ * 공지, a KOL brief, a press release); `x` is the same text arriving at its own account. Handing it
+ * to the agent re-opened wording a human had signed off on, and it showed: on 2026-08-18 all ten
+ * `x` variants in production differed from their own `sourceKorean`, and the six `conversion:x`
+ * few-shot rows were teaching the rewrite back into every later run.
+ *
+ * Enforced here rather than in `conversion/x.md` because a prompt is a request and this is a rule —
+ * the guide now documents it for the 2차 reviewer instead of asking the agent to honour it.
+ */
+const PASSTHROUGH_TYPE: ConversionType = "x";
+
 const DEFAULT_LIMIT = 20;
 const MAX_FEW_SHOTS = 8;
 
@@ -46,9 +61,10 @@ export class PrepareConversions {
     private readonly conversionConfig: ConversionConfig,
     private readonly fewShotByType: Record<ConversionType, FewShotStore>,
     private readonly conversionStore: ConversionStore,
+    private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
-  async run(selector: ConversionSelector): Promise<{ worksheet: string; pending: PendingVariant[] }> {
+  async run(selector: ConversionSelector): Promise<{ worksheet: string; pending: PendingVariant[]; passthrough: PendingVariant[] }> {
     const approved = (await this.translationStore.loadAll()).filter((t) => t.status === "approved");
     const convertedKeys = await this.conversionStore.listConvertedKeys();
     const types = selector.types ?? ALL_TYPES;
@@ -77,13 +93,26 @@ export class PrepareConversions {
     selected = selected.slice(0, selector.limit ?? DEFAULT_LIMIT);
 
     // Fan out each selected translation to its not-yet-converted types (type-major, so
-    // the worksheet sections stay grouped by type).
+    // the worksheet sections stay grouped by type). `x` splits off here: it is written straight
+    // from the approved Korean instead of joining the agent's pile — see `PASSTHROUGH_TYPE`.
     const fanned: PendingVariant[] = [];
+    const passthrough: PendingVariant[] = [];
     for (const type of types) {
       for (const t of selected) {
         if (convertedKeys.has(`${t.itemId}:${type}`)) continue;
-        fanned.push({ itemId: t.itemId, type, sourceKorean: t.koreanText });
+        (type === PASSTHROUGH_TYPE ? passthrough : fanned).push({ itemId: t.itemId, type, sourceKorean: t.koreanText });
       }
+    }
+
+    // Written before the worksheet is even assembled, and deliberately outside the `maxVariants`
+    // slice below: that ceiling is arithmetic against `claude -p`'s ten-minute cap, and a row this
+    // loop writes costs the agent nothing — no section to read, no save to wait for.
+    const at = this.now();
+    for (const p of passthrough) {
+      await this.conversionStore.upsert({
+        itemId: p.itemId, type: p.type, sourceKorean: p.sourceKorean, convertedText: p.sourceKorean,
+        status: "converted", createdAt: at,
+      });
     }
 
     // The ceiling, applied to the fan-out and to nothing else — see `maxVariants` for why it cannot
@@ -106,6 +135,6 @@ export class PrepareConversions {
     }
 
     const worksheet = assembleConversionWorksheet(sections);
-    return { worksheet, pending: candidates };
+    return { worksheet, pending: candidates, passthrough };
   }
 }

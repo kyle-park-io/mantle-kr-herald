@@ -18,6 +18,21 @@ import { ConfirmDialog, Tip, type ConfirmRequest } from "./ConfirmDialog";
 import { KindBadge } from "./TranslationList";
 
 /**
+ * What `[변환 준비]` reports for the rows it wrote by itself. `x` goes to the 맨틀 한국 계정 and the
+ * item is a translated tweet, so the approved Korean already IS the post — the server saves that
+ * variant on the spot and no agent is involved. Without this the run came back `pending: 0` and the
+ * board said "대기 중인 항목이 없습니다", which reads as a failure right after a success.
+ */
+function PassthroughNote({ count }: { count: number }) {
+  return (
+    <p className="text-[13px] text-faint">
+      X {count}건을 승인된 번역 그대로 저장했습니다 — 에이전트가 할 일은 없습니다.{" "}
+      <code className="font-mono">pnpm format --only-missing</code> 을 실행하면 여기에 카드가 생깁니다.
+    </p>
+  );
+}
+
+/**
  * The 2차 surface: one card per `(type, channel)` group, each listing the rooms that receive it.
  * Review and delivery happen in the same place, so the reviewer never has to hold "which room did
  * this already go to" in their head.
@@ -366,6 +381,7 @@ export function OutletBoard(props: {
                         워크시트 준비됨 — 에이전트에게 변환을 요청하세요:{" "}
                         <code className="font-mono text-ink">{prepareResult.worksheetPath}</code>
                       </p>
+                      {prepareResult.passthrough > 0 && <PassthroughNote count={prepareResult.passthrough} />}
                       {prepareResult.archived && (
                         <p className="text-[12px] font-medium text-amber-ink">
                           ⚠ 이전에 준비했던 미저장 배치는 보관되었습니다 —{" "}
@@ -374,6 +390,8 @@ export function OutletBoard(props: {
                         </p>
                       )}
                     </div>
+                  ) : prepareResult.passthrough > 0 ? (
+                    <PassthroughNote count={prepareResult.passthrough} />
                   ) : (
                     <p className="text-[13px] text-faint">
                       대기 중인 항목이 없습니다 — 승인된 원문이 없거나 이미 변환된 상태입니다. 이미 변환됐다면{" "}

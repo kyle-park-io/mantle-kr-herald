@@ -27,12 +27,19 @@ export class PrepareConversionRun {
     private readonly savePending: (pending: PendingVariant[]) => Promise<string | undefined> = async () => undefined,
   ) {}
 
-  async run(input: { itemId: string; types: ConversionType[] }): Promise<{ worksheetPath: string; pending: number; archived?: string }> {
-    const { worksheet, pending } = await this.prepare.run({ ids: [input.itemId], types: input.types });
-    if (pending.length === 0) return { worksheetPath: "", pending: 0 };
+  /**
+   * `passthrough` counts the rows `PrepareConversions` wrote by itself — the `x` type, saved from
+   * the approved translation with no agent involved. It is reported separately because it needs the
+   * opposite of what `pending` needs from the operator: nothing at all. A run that produced only
+   * these is finished, not empty.
+   */
+  async run(input: { itemId: string; types: ConversionType[] }): Promise<{ worksheetPath: string; pending: number; passthrough: number; archived?: string }> {
+    const { worksheet, pending, passthrough } = await this.prepare.run({ ids: [input.itemId], types: input.types });
+    const passthroughCount = passthrough?.length ?? 0;
+    if (pending.length === 0) return { worksheetPath: "", pending: 0, passthrough: passthroughCount };
     const worksheetPath = join(this.worksheetDir, `batch-${this.stamp()}.md`);
     await this.writeFile(worksheetPath, worksheet);
     const archived = await this.savePending(pending);
-    return { worksheetPath, pending: pending.length, ...(archived ? { archived } : {}) };
+    return { worksheetPath, pending: pending.length, passthrough: passthroughCount, ...(archived ? { archived } : {}) };
   }
 }
