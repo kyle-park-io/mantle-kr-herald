@@ -350,8 +350,15 @@ export function TranslationDetail(props: {
             </button>
           </Tip>
         )}
+      </div>
 
-        <span className="mx-1 h-5 w-px bg-line" />
+      {/* Its own row, not appended to the review-action row above: those answer "what to do with
+          this translation" (저장/승인/되돌리기) while this answers "where to publish it" — two
+          different kinds of action that used to wrap as one blob, landing the boundary between them
+          wherever the viewport happened to put it. A row break makes the boundary the same at every
+          width, so the old inline divider (`mx-1 h-5 w-px bg-line`) that separated them within one
+          line is gone — there is no longer an adjacent element on the same line for it to separate. */}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <span className="text-[11px] font-medium text-faint">발행</span>
         {(["local", "google", "lark"] as const).map((t) => {
           const usable = props.availableTargets.includes(t);

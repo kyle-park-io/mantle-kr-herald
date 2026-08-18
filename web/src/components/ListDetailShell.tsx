@@ -99,12 +99,15 @@ export function ListDetailShell({
             닫을 것이 없다. */}
         <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface px-3 py-2 tablet:hidden">
           <span className="text-[13px] font-medium text-muted">목록</span>
+          {/* 테두리 없이 글리프만 — 히트 영역은 44x44로 유지하되(손가락이 닿아야 하니까),
+              보이는 무게는 옆의 작은 `목록` 라벨에 맞춘다. 테두리를 두르면 이 작은 헤더에서
+              닫기 버튼이 제목보다 무거워 보인다. */}
           <button
             type="button"
             ref={closeRef}
             onClick={() => setOpen(false)}
             aria-label="목록 닫기"
-            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-line-strong bg-surface text-[15px] text-ink"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-[18px] leading-none text-muted transition-colors hover:bg-bg hover:text-ink"
           >
             ×
           </button>
