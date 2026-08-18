@@ -13,7 +13,7 @@ import { conversionSelectorFrom } from "./convertPrepareSelector";
 import { ALL_TYPES } from "../domain/conversion/models";
 import { archiveFile } from "../shared/store/archive";
 import { writeJsonFileAtomic } from "../shared/store/jsonFile";
-import { NOTHING_TO_CONVERT_LINE, preparedVariantsLine } from "./convertPrepareLines";
+import { NOTHING_TO_CONVERT_LINE, passthroughVariantsLine, preparedVariantsLine } from "./convertPrepareLines";
 import { paths } from "../paths";
 
 // Parsed in its own module so it can be tested — see `conversionSelectorFrom`'s own comment for why
@@ -33,7 +33,7 @@ try {
     stores.conversionStore,
   );
 
-  const { worksheet, pending } = await usecase.run(selector);
+  const { worksheet, pending, passthrough } = await usecase.run(selector);
 
   // An empty batch writes nothing at all — no worksheet, no archive, no pending.json — and says so.
   //
@@ -69,6 +69,8 @@ try {
       `Fill each 변환 section, then run: pnpm convert:save --id <id> --type <${ALL_TYPES.join("|")}> --file <ko.txt>`,
     );
   }
+  // Under either branch, never in place of one: the first line is a contract with `ConvertTick`.
+  if (passthrough.length > 0) console.log(passthroughVariantsLine(passthrough.length));
 } finally {
   await db.close();
 }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OutletBoard } from "../src/components/OutletBoard";
 import type { BoardView, HeadroomView } from "../src/types";
@@ -141,5 +141,55 @@ describe("OutletBoard's [변환 준비] where the deployment cannot convert", ()
     await screen.findByText(/아직 변환 안 됨/);
     expect(screen.getByRole("button", { name: "변환 준비" })).toBeTruthy();
     expect(screen.getByRole("checkbox")).toBeTruthy();
+  });
+});
+
+/**
+ * `x` is written straight from the approved translation, with no agent and no worksheet, so a run
+ * over `x` alone comes back `pending: 0` — the same number an empty run reports. Reading only that
+ * number, the board told the operator "대기 중인 항목이 없습니다 — 승인된 원문이 없거나 이미 변환된
+ * 상태입니다" immediately after writing the variant they had just asked for, and pointed them at
+ * `pnpm format --only-missing` as if something had gone wrong.
+ */
+describe("OutletBoard's [변환 준비] over the x passthrough", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("reports the saved x variant instead of claiming nothing was waiting", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/board")) {
+        return new Response(JSON.stringify({ itemId: "2026-07-30-a", groups: [], unconverted: ["x"] }), { status: 200 });
+      }
+      if (url.endsWith("/api/typefully/quota")) {
+        return new Response(JSON.stringify({ headroom: { available: 3, used: 1, remaining: 4, inFlight: 0, resetsAt: "2026-08-01" } }), { status: 200 });
+      }
+      if (url.endsWith("/convert-prepare")) {
+        return new Response(JSON.stringify({ worksheetPath: "", pending: 0, passthrough: 1 }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <OutletBoard
+        itemId="2026-07-30-a"
+        convertedByType={{}}
+        onGroupChanged={async () => {}}
+        onDirtyChange={() => {}}
+        authEpoch={0}
+        sendsEnabled={true}
+        conversionEnabled={true}
+      />,
+    );
+
+    await screen.findByText(/아직 변환 안 됨/);
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "변환 준비" }));
+
+    await screen.findByText(/1건을 승인된 번역 그대로 저장했습니다/);
+    expect(screen.queryByText(/대기 중인 항목이 없습니다/)).toBeNull();
   });
 });

@@ -18,7 +18,7 @@ import type { Translation } from "../../src/domain/translation/models";
 import { formatStatus, pipelineStages } from "../../src/status/pipeline";
 import type { TranslateFloorStatus } from "../../src/status/translateFloor";
 import { tickOutcome } from "../../src/cli/tickOutcome";
-import { preparedVariantsLine, NOTHING_TO_CONVERT_LINE } from "../../src/cli/convertPrepareLines";
+import { preparedVariantsLine, passthroughVariantsLine, NOTHING_TO_CONVERT_LINE } from "../../src/cli/convertPrepareLines";
 import {
   ONLY_MISSING_FLAG,
   formattedRenderingsLine,
@@ -176,6 +176,24 @@ describe("ConvertTick", () => {
     // No agent pass means nothing to verify: the saved-something check must not spend two extra
     // database reads on a batch nobody was ever asked to convert. `format` still runs — see
     // "formats even when this tick prepared nothing" below for why that is not the same decision.
+    expect(ran).toEqual([prepareCall(1), FORMAT_CALL]);
+  });
+
+  it("does not spend an agent turn on a fire whose only work was the x passthrough", async () => {
+    // `x` is written straight from the approved translation (`PrepareConversions`), so a fire with
+    // nothing but `x` left prints the passthrough line under a `prepared 0` — no worksheet, nothing
+    // for the agent. The tick parses stdout with line-anchored regexes, so this pins that the extra
+    // line cannot be read as work: calling `claude -p` here would spend a subscription turn on an
+    // empty worksheet, and failing the tick on an unrecognised line would page the operator nightly.
+    const { run, agent, ran, calls } = pipeline({
+      prepare: [NOTHING_TO_CONVERT_LINE, passthroughVariantsLine(2)].join("\n"),
+      format: NOTHING_TO_FORMAT_LINE,
+    });
+
+    const report = await new ConvertTick(run, agent).run();
+
+    expect(report.ok).toBe(true);
+    expect(calls).toEqual([]);
     expect(ran).toEqual([prepareCall(1), FORMAT_CALL]);
   });
 
