@@ -30,20 +30,24 @@ export function SearchBox(props: { value: string; onChange: (value: string) => v
         title="초성으로도 찾습니다 — ㅁㅌ 로 맨틀. 치는 도중(맨ㅌ, 맨트)에도 걸립니다."
         aria-label="검색"
         // `pr-7`(28px)은 지우기 버튼의 원래 폭(px-1 한 글자, ~20px) 기준. `pointer-coarse:`가 그
-        // 버튼을 `min-w-11`(44px)로 키우면 이 여백도 같이 키워야 한다 — 아니면 버튼이 입력 끝에서
-        // 타이핑한 글자 위로 겹쳐 앉고, 그 글자를 탭한 손가락은 캐럿을 놓는 게 아니라 검색어를 지운다.
-        className="w-full rounded-lg border border-line bg-surface py-1 pl-2 pr-7 pointer-coarse:pr-12 text-[13px] text-ink outline-none placeholder:text-faint focus:border-mint"
+        // 버튼을 `px-2`(2글자 폭에 가까운 ~28px)로 키우면 이 여백도 그 실제 폭에 맞춰 같이 키운다
+        // (`pr-9`, 36px) — 아니면 버튼이 입력 끝에서 타이핑한 글자 위로 겹쳐 앉고, 그 글자를 탭한
+        // 손가락은 캐럿을 놓는 게 아니라 검색어를 지운다. 44px(`min-w-11`)까지 키우지 않는 이유는
+        // 버튼 자체의 주석에 있다.
+        className="w-full rounded-lg border border-line bg-surface py-1 pl-2 pr-7 pointer-coarse:pr-9 text-[13px] text-ink outline-none placeholder:text-faint focus:border-mint"
       />
       {props.value !== "" && (
         <button
           type="button"
           onClick={() => props.onChange("")}
           aria-label="검색어 지우기"
-          // ~20px otherwise (a single glyph with `px-1`) — this sits inside the drawer, the phone's
-          // primary list surface, so it needs the same `pointer-coarse:` floor as everything else a
-          // finger can reach there. `min-h`/`min-w` (not padding) so the box grows without shifting
-          // the × off-center.
-          className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-center rounded px-1 text-[15px] leading-none text-faint transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11 hover:text-ink"
+          // `pointer-coarse:min-h-11` gives the tap a full 44px of vertical room — free, since it
+          // fits inside the input's own row height and touches nothing above or below. Width is not
+          // grown to match: horizontal space is what the typed text competes for, and clearing a
+          // search is a cheap, instantly-recoverable mistap, not a control that warrants a 44px
+          // square the way a send button would. `pointer-coarse:px-2` (vs. the default `px-1`) is a
+          // modest widen instead — the input's `pr-9` above matches this actual width, not 44px.
+          className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-center rounded px-1 pointer-coarse:px-2 text-[15px] leading-none text-faint transition-colors pointer-coarse:min-h-11 hover:text-ink"
         >
           ×
         </button>

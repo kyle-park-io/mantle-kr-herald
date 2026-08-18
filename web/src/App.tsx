@@ -377,7 +377,13 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
             </InfoPopover>
           )}
 
-          <nav className="ml-2 inline-flex shrink-0 rounded-lg border border-line bg-bg p-0.5">
+          {/* `order-last` + `w-full` on phone: this nav sorts after the ml-auto group below (which
+              holds 로그아웃) in flex order, so on a narrow phone it wraps onto its own second line —
+              logo, storage pill and 로그아웃 share line one, the tab strip spans all of line two —
+              instead of 로그아웃 alone being the thing that runs out of room and wraps. `tablet:`
+              resets both back to source order and content width, restoring the single-line layout
+              this row already had at 48rem+ (unchanged by this fix). */}
+          <nav className="order-last ml-0 w-full inline-flex shrink-0 rounded-lg border border-line bg-bg p-0.5 tablet:order-none tablet:ml-2 tablet:w-auto">
             {TABS.map(({ id, label, short }) => (
               <button
                 key={id}
@@ -390,7 +396,11 @@ export function App({ onSignOut, authEpoch }: { onSignOut: () => void; authEpoch
                 // purely to save on-screen space, not because the shorter phrase is what a listener
                 // should hear. `aria-label` pins the announced name to the full label at every width.
                 aria-label={label}
-                className={`whitespace-nowrap rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors pointer-coarse:min-h-11 ${
+                // `flex-1` on phone: the strip now spans the full line (see the `nav` comment above),
+                // so the three tabs divide that width evenly instead of clumping to the left with
+                // dead space beside them. `tablet:flex-none` reverts to content-sized tabs in the
+                // row's normal single-line layout.
+                className={`flex-1 whitespace-nowrap rounded-[7px] px-3 py-1 text-[13px] font-medium transition-colors pointer-coarse:min-h-11 tablet:flex-none ${
                   mode === id ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
                 }`}
               >
