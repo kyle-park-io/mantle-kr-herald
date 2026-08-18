@@ -160,21 +160,38 @@ export function TranslationList(props: {
                   }`}
                 >
                   <div className="flex items-center gap-2">
+                    {/* Dropping the id on phone (below) left this line with nothing on its left —
+                        badges floating alone, right-aligned, above a ragged blank run. The
+                        `[YYMMDD]` prefix moves up from the preview line to fill that spot: it is
+                        the thing a reviewer's eye already goes to first, so promoting it costs
+                        nothing new to read. `tablet:hidden` here / `tablet:inline` on the copy
+                        still in the preview paragraph below swap the two back at 48rem+, where the
+                        id (still `tablet:inline`) is the row's left anchor and the date stays where
+                        it always sat, inline with the preview text. Absent for a `lark:` item (no
+                        joined source item, so no `sourcePostedAt`) — the badges' `ml-auto` is then
+                        conditional too, so they sit flush left instead of floating right of a blank
+                        run in that case as well. */}
+                    {t.sourcePostedAt && (
+                      <span className="font-mono text-[11px] text-faint tablet:hidden">{datePrefix(t.sourcePostedAt)}</span>
+                    )}
                     {/* `x:2081711456320655933` is 20 characters of grey monospace nobody reads on a
                         phone — it identifies nothing to a human, and this row already leads with
-                        one line down: the `[YYMMDD]` prefix + Korean preview below. Dropped
-                        entirely at phone width rather than shortened, the same call
-                        `TranslationDetail.tsx` already made for its own copy of this id (see its
-                        comment by the `원문` link) — a shortened id is still unreadable, and the
-                        full id is only ever needed "at a desk", where `tablet:` restores it. */}
+                        one line down: the `[YYMMDD]` prefix (now on this line, see above) +
+                        Korean preview below. Dropped entirely at phone width rather than
+                        shortened, the same call `TranslationDetail.tsx` already made for its own
+                        copy of this id (see its comment by the `원문` link) — a shortened id is
+                        still unreadable, and the full id is only ever needed "at a desk", where
+                        `tablet:` restores it. */}
                     <code className="hidden truncate font-mono text-[11px] text-faint tablet:inline">{t.itemId}</code>
-                    <span className="ml-auto flex items-center gap-1.5">
+                    <span className={`flex items-center gap-1.5 tablet:ml-auto ${t.sourcePostedAt ? "ml-auto" : ""}`}>
                       <KindBadge kind={t.kind} />
                       <StatusChip status={t.status} />
                     </span>
                   </div>
                   <p className="line-clamp-2 text-[13px] leading-snug text-ink/90">
-                    {t.sourcePostedAt && <span className="mr-1 font-mono text-faint">{datePrefix(t.sourcePostedAt)}</span>}
+                    {t.sourcePostedAt && (
+                      <span className="mr-1 hidden font-mono text-faint tablet:inline">{datePrefix(t.sourcePostedAt)}</span>
+                    )}
                     {preview(t)}
                   </p>
                 </button>
