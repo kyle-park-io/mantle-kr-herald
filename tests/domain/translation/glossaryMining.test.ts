@@ -35,6 +35,7 @@ import {
   type MiningInput,
 } from "../../../src/domain/translation/glossaryMining";
 import type { GlossaryEntry } from "../../../src/domain/translation/models";
+import type { TextPair } from "../../../src/domain/lineage/humanEdits";
 
 const NOW = "2026-08-11T12:00:00.000Z";
 
@@ -357,19 +358,30 @@ describe("the recurrence floor", () => {
 
 // ── signal 2 ─────────────────────────────────────────────────────────────────────────────────────
 
+// `substitutionEdits` now takes the generic `TextPair` (before/after) rather than `MinedTranslation`
+// (koreanText/publishedText) — see EditSource. The fixtures below are still `MinedTranslation`,
+// because they are shared with the `mineGlossaryCandidates` tests further down this file; this helper
+// is the one place that reshapes them into the pair the function actually consumes, so the fixtures
+// themselves stay untouched.
+const asPublishedPair = (t: MinedTranslation): TextPair => ({
+  itemId: t.itemId,
+  before: t.koreanText,
+  after: t.publishedText ?? "",
+});
+
 describe("substitutionEdits", () => {
   it("finds a one-word correction a human made once, with no frequency threshold at all", () => {
     // The run's best find. `mine2.cjs` required three or more occurrences and found NOTHING; this
     // edit exists exactly once in the whole ledger. A human editing a proper noun right before
     // publishing is the strongest evidence this pipeline produces, and it is almost never repeated.
-    expect(substitutionEdits([TRANSLATIONS[0]])).toEqual([
-      { itemId: "x:2083206182484005059", draft: "낸슨", published: "난센" },
+    expect(substitutionEdits([asPublishedPair(TRANSLATIONS[0])], "published")).toEqual([
+      { itemId: "x:2083206182484005059", draft: "낸슨", published: "난센", source: "published" },
     ]);
   });
 
   it("finds an English-to-Korean correction as a single multi-word pair", () => {
-    expect(substitutionEdits([TRANSLATIONS[1]])).toEqual([
-      { itemId: "x:2081000000000000001", draft: "Turing Test", published: "튜링 테스트" },
+    expect(substitutionEdits([asPublishedPair(TRANSLATIONS[1])], "published")).toEqual([
+      { itemId: "x:2081000000000000001", draft: "Turing Test", published: "튜링 테스트", source: "published" },
     ]);
   });
 
@@ -378,7 +390,7 @@ describe("substitutionEdits", () => {
     // every unedited sentence of every published post.
     expect(SENTENCE_MATCH_MAX).toBe(0.995);
     const untouched = { ...TRANSLATIONS[0], publishedText: TRANSLATIONS[0].koreanText };
-    expect(substitutionEdits([untouched])).toEqual([]);
+    expect(substitutionEdits([asPublishedPair(untouched)], "published")).toEqual([]);
   });
 
   it("ignores two sentences that are not the same sentence", () => {
@@ -392,7 +404,7 @@ describe("substitutionEdits", () => {
       publishedText: "이번 주 커뮤니티 콜은 목요일에 열립니다",
     };
     expect(sentenceSimilarity(unrelated.koreanText, unrelated.publishedText!)).toBeLessThan(SENTENCE_MATCH_MIN);
-    expect(substitutionEdits([unrelated])).toEqual([]);
+    expect(substitutionEdits([asPublishedPair(unrelated)], "published")).toEqual([]);
   });
 
   it("ignores a rewrite, which carries no term decision", () => {
@@ -406,7 +418,7 @@ describe("substitutionEdits", () => {
     };
     const score = sentenceSimilarity(rewritten.koreanText, rewritten.publishedText!);
     expect(score).toBeGreaterThanOrEqual(SENTENCE_MATCH_MIN);
-    expect(substitutionEdits([rewritten])).toEqual([]);
+    expect(substitutionEdits([asPublishedPair(rewritten)], "published")).toEqual([]);
   });
 
   it("ignores a pure insertion and a pure deletion", () => {
@@ -418,11 +430,24 @@ describe("substitutionEdits", () => {
       koreanText: "맨틀 네트워크의 예치 자산이 늘었습니다",
       publishedText: "맨틀 네트워크의 예치 자산이 크게 늘었습니다",
     };
-    expect(substitutionEdits([inserted])).toEqual([]);
+    expect(substitutionEdits([asPublishedPair(inserted)], "published")).toEqual([]);
   });
 
   it("skips a row with no published text — nobody has captured what went out", () => {
-    expect(substitutionEdits([{ ...TRANSLATIONS[0], publishedText: undefined }])).toEqual([]);
+    expect(substitutionEdits([asPublishedPair({ ...TRANSLATIONS[0], publishedText: undefined })], "published")).toEqual(
+      [],
+    );
+  });
+
+  it("mines a reviewer's edit with the same aligner, tagged as review evidence", () => {
+    const edits = substitutionEdits(
+      [{ itemId: "x:1", before: "가장 최근에 구매하신 토큰화 자산은 무엇입니까?", after: "가장 최근에 구매한 토큰화 자산은 무엇인가요?" }],
+      "review",
+    );
+    // The brief predicted trailing "?" on both sides; `sentencesOf` splits on `[\n.!?]+`, which
+    // consumes the terminator as a delimiter rather than keeping it, so the aligner's sentences —
+    // and therefore its words — never carry one. Corrected to what the aligner actually produces.
+    expect(edits).toEqual([{ itemId: "x:1", draft: "구매하신 무엇입니까", published: "구매한 무엇인가요", source: "review" }]);
   });
 });
 
