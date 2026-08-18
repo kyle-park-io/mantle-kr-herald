@@ -146,6 +146,44 @@ describe("TwitterApiSourceGateway", () => {
     expect(http.calls[0].params?.tweet_ids).toBe("1,2");
   });
 
+  /**
+   * twitterapi.io caps `/twitter/tweets` at 50 ids and answers a longer list with
+   * `HTTP 400: max 50 tweet_ids per request, please batch into multiple calls`. Measured on
+   * 2026-08-19: `pnpm impressions:record` with no arguments failed on every run, because
+   * `history` held 74 x rows and `RecordImpressions` handed all 74 to this method at once.
+   *
+   * The chunking lives here, not in the callers, because the cap belongs to the endpoint. Three
+   * callers had to know it independently and two got it wrong — `RecordImpressions` chunked not at
+   * all, `ReconcileDeletions` chunked at 100 — while only `BackfillVideoUrls` picked 50. A future
+   * fourth caller cannot forget a rule the adapter enforces.
+   */
+  it("fetchByIds splits a request the endpoint would reject, and merges the pages", async () => {
+    const ids = Array.from({ length: 74 }, (_, i) => String(i + 1));
+    const http = new FakeHttpClient((_path, params) => ({
+      status: "success",
+      tweets: (params?.tweet_ids ?? "").split(",").map((id) => raw(id)),
+    }));
+    const gw = new TwitterApiSourceGateway(http);
+
+    const tweets = await gw.fetchByIds(ids);
+
+    expect(http.calls).toHaveLength(2);
+    for (const call of http.calls) {
+      expect(call.params?.tweet_ids?.split(",").length).toBeLessThanOrEqual(50);
+    }
+    // Every id comes back exactly once — a chunk boundary must not drop or duplicate one.
+    expect(tweets.map((t) => t.id)).toEqual(ids);
+  });
+
+  it("fetchByIds makes one request when the ids fit inside the endpoint's cap", async () => {
+    const http = new FakeHttpClient(() => ({ status: "success", tweets: [raw("1"), raw("2")] }));
+    const gw = new TwitterApiSourceGateway(http);
+
+    await gw.fetchByIds(["1", "2"]);
+
+    expect(http.calls).toHaveLength(1);
+  });
+
   it("fetchArticle calls /twitter/article with a snake_case tweet_id and returns the blocks", async () => {
     const http = new FakeHttpClient(() => ({
       status: "success",

@@ -55,12 +55,19 @@ export class RecordImpressions {
       if (v !== undefined) viewCountById.set(t.id, v);
     }
 
-    let updated = 0;
     let skipped = 0;
-    let failed = 0;
     const failures: ImpressionFailure[] = [];
     const stamp = this.now().toISOString();
 
+    /**
+     * Collected first, written once. The Sheets API allows 60 write requests per minute per user, so
+     * one `updateValues` per row stops fitting the moment a sweep passes about sixty rows: measured
+     * against production on 2026-08-19, a 74-row run took an HTTP 429 on the last row after three
+     * attempts and reported it as a failed post. `batchUpdateValues` sends the same narrow H:I
+     * ranges — nothing here widens what a row write touches — in a single request.
+     */
+    const updates: { range: string; rows: string[][] }[] = [];
+    const postIds: string[] = [];
     for (const { row, rowNumber } of eligible) {
       const postId = row[3];
       const viewCount = viewCountById.get(postId);
@@ -69,15 +76,24 @@ export class RecordImpressions {
         skipped += 1;
         continue;
       }
-      try {
-        await this.sheet.updateValues(`history!H${rowNumber}:I${rowNumber}`, [[String(viewCount), stamp]]);
-        updated += 1;
-      } catch (err) {
-        failed += 1;
-        failures.push({ postId, error: err instanceof Error ? err.message : String(err) });
-      }
+      updates.push({ range: `history!H${rowNumber}:I${rowNumber}`, rows: [[String(viewCount), stamp]] });
+      postIds.push(postId);
     }
 
-    return { updated, skipped, failed, failures };
+    if (updates.length === 0) return { updated: 0, skipped, failed: 0, failures: [] };
+
+    /**
+     * One request means one outcome: either every row landed or none did. Reporting the whole batch
+     * against each post it carried keeps `failures` answering the same question it did per-row —
+     * which posts have no impressions recorded — rather than leaving the operator to infer it.
+     */
+    try {
+      await this.sheet.batchUpdateValues(updates);
+      return { updated: updates.length, skipped, failed: 0, failures: [] };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      for (const postId of postIds) failures.push({ postId, error });
+      return { updated: 0, skipped, failed: updates.length, failures };
+    }
   }
 }
