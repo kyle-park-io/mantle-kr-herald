@@ -1,0 +1,155 @@
+# deploy/herald-kol-weekly.service
+#
+# systemd --user unit for one `pnpm kol:quarter` — the seventh scheduled unit in this project, and
+# the only one that measures people rather than the pipeline. It reads the live roster (`kol-map`,
+# read-only) and the current quarter's contract tab (` Q<n> KOL 계약 리스트`, read-only), then for
+# each of the quarter's three months pages every active KOL's public Telegram preview
+# (`https://t.me/s/<handle>`) until it covers that month, upserts what it finds into
+# `kol-telegram-posts`, projects the monthly log, and prints each KOL's actual post count against
+# their contract target (src/app/SweepKolQuarter.ts). No `--quarter` is passed below: the command
+# defaults to `currentQuarter(new Date())` (src/cli/kol-quarter.ts), so this file does not need a
+# quarterly edit — the same fire that swept 2026-Q3 in August sweeps 2026-Q4 in November unchanged.
+#
+# WHY WEEKLY, not daily or on-demand. `SweepKolQuarter`'s own doc comment states the property this
+# schedule leans on: every run re-fetches each channel's *entire* month window from scratch, so a
+# month already swept earlier in the quarter is re-verified, not left stale, and a KOL who posts
+# late in the month is caught on the next fire rather than undercounted forever by a run that only
+# looked at "since last time". That makes the choice of cadence a pure cost/latency trade, not a
+# correctness one, and weekly is the same trade herald-translate-check.timer already argues for a
+# report with no cursor: a shortfall found today and not read until Thursday costs nothing, but daily
+# would run this quarter's most expensive query (see the arithmetic below) seven times for six extra
+# reads nobody asked for.
+#
+# WHAT THIS UNIT NEVER DOES: send or publish anything, and never notify. `kol:quarter` prints its
+# report to stdout only — unlike `translate:check`/`glossary:mine`, it has no `--notify` flag today,
+# so the ONLY place a human reads this run's shortfalls is the run log the wrapper below leaves
+# under `%h/.herald/logs/herald-kol-weekly/`, exactly as if this line read `--notify` and nobody had
+# subscribed. That is a real gap (a shortfall found on a Tuesday morning nobody is watching stays
+# unread until someone thinks to look), and deliberately not this task's problem to close — adding a
+# `--notify` here implies a flag `kol-quarter.ts` does not have, and inventing the send path is a
+# separate decision for whoever owns the ops-alert budget next. What this unit's own scope must never
+# do is invent that flag by chaining a second command after it, and `tests/deploy/kolWeekly.test.ts`
+# holds the ExecStart= count at one for exactly that reason. Nor does the unit ever write to
+# `kol-map`, `KOL list`, the contract tab, or a monthly tab's summary block — `SweepKolQuarter` reads
+# all four and writes only `kol-telegram-posts` and the monthly log's machine-owned cells, but that
+# is enforced in the application, not by this file, so it is worth restating here rather than assumed.
+#
+# NOT installed by any committed script. Copying this into ~/.config/systemd/user/ and running
+# `systemctl --user daemon-reload` is a human-supervised step (see the team runbook), same as the six
+# units already in this directory.
+#
+# Machine-specific by design, not templated: node and pnpm are reached through `%h/.herald/bin` on
+# the one machine this runs on — see the PATH= comment below, and herald-watch.service's longer
+# version of it.
+
+[Unit]
+Description=Mantle KR Herald weekly KOL contract sweep — `pnpm kol:quarter`
+# The same templated hook every scheduled unit uses. `%n` expands to this unit's own name before
+# systemd resolves the OnFailure= target, so the alert names this unit and tails this unit's
+# journal, never another's — the `OnFailure=bar@%n.service` idiom `man systemd.unit` documents.
+#
+# Worth stating plainly here because `kol:quarter` has no `--notify`: this hook is the ONLY signal
+# this unit ever sends anywhere. A shortfall, an unmatched contract name, or a truncated channel are
+# all printed and nothing more — they are findings, not failures, and correctly so (a real contract
+# has exceptions a human resolves, the same posture herald-translate-check.service's header argues
+# for its own two reports). So a non-zero exit here can mean only one thing: the run itself broke —
+# bad Google auth, an unreadable quarter string, an exception `registerErrorHandler` had to catch —
+# never that a KOL fell short. That also means this alert is the one and only thing standing between
+# a broken weekly sweep and a quarter's worth of silently stale `kol-telegram-posts` rows.
+OnFailure=herald-notify-failure@%n.service
+
+[Service]
+Type=oneshot
+# The deploy checkout — merged `main` only, never a development checkout. Same reasoning as every
+# other unit here: whatever is checked out here IS what production runs at the next fire, and on
+# 2026-08-07 a unit pointed at the development checkout ran an unmerged branch's query against
+# production. tests/deploy/workingDirectory.test.ts fails if this line ever names a development
+# checkout again.
+WorkingDirectory=%h/.herald/app
+
+# node and pnpm are reached through %h/.herald/bin, a directory of symlinks, NOT an nvm version
+# directory — see herald-watch.service's own PATH comment for the 2026-08-09 rebuild that made this
+# necessary. node must be reachable even though pnpm is named by absolute path below: pnpm's own
+# file starts `#!/usr/bin/env node`, and `env` resolves that through this PATH. `claude` is
+# deliberately not on this path — `kol:quarter` spawns no agent, the same posture as
+# herald-creds.service and herald-x-reconcile.service and herald-translate-check.service, and unlike
+# the two units that run `claude -p`.
+Environment=PATH=%h/.herald/bin:/home/kyle/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# The scheduler's own artifact tree, set for the same reason every sibling sets it: one shared root
+# so a future artifact this command writes lands where herald-deploy.sh's copies land, not inside the
+# deploy checkout that deploy resets. Currently inert, and worth saying so rather than leaving the
+# reader to assume otherwise: neither kol-quarter.ts, SweepKolQuarter.ts, RecordKolTelegramPosts.ts,
+# LoadKolMap.ts nor TmePreviewGateway.ts reads or writes anything OUTPUT_DIR-relative today — every
+# read and write this command makes goes through the Sheets API. This is the same posture
+# herald-translate-check.timer's header describes for `translate:check` before `glossary:mine`
+# joined it: a variable set ahead of a need rather than because of one, kept rather than dropped so
+# every scheduled command shares one root and this file does not need a second edit the day
+# `kol:quarter` grows a local file of its own.
+Environment=HERALD_OUTPUT_DIR=%h/.herald/output
+
+# Exactly two lines — DATABASE_URL and HERALD_DB_ENV=production — chmod 600, created by Kyle by hand
+# (a production connection string does not pass through an agent session). This command never opens
+# a database — every read and write goes through the Sheets API via loadGoogleAuthConfig() /
+# loadGoogleSheetConfig() — so DATABASE_URL is genuinely unused, but the file is still required
+# reading here for the reason every other unit needs it: nothing else overrides .env's local-Docker
+# defaults, and the Google Sheets spreadsheet id and credentials this command needs come from the
+# same .env this file sits next to, resolved via kol-quarter.ts's own
+# `tsx --env-file-if-exists=.env` (see package.json's `kol:quarter` script).
+EnvironmentFile=%h/.herald/prod.env
+
+# Outer bound on a wedged run, sized for the one thing that makes this unit unlike its six siblings:
+# real per-page network pagination against an external site, not a handful of database round trips.
+#
+#   1050 page fetches, worst case. Three months (monthsOfQuarter) times the currently active roster
+#   (7 channels) times DEFAULT_MAX_PAGES (50, TmePreviewGateway.ts) is 3 x 7 x 50 = 1050. Budgeting
+#   near the cap for EVERY channel-month rather than the ~12 pages a typical month needs (236
+#   posts/month observed at ~20 posts/page, per TmePreviewGateway.ts's own DEFAULT_MAX_PAGES
+#   comment) is deliberate, not pessimistic for its own sake: that same comment explains that a
+#   re-sweep of an earlier month has to page through every later month's posts just to reach it, so
+#   July's sweep run in the third month of the quarter pages through August and September first —
+#   exactly the shape this cap exists to survive, and exactly the shape a real fire hits every week
+#   after the quarter's first one.
+#
+#   2s budgeted per page fetch: 1050 x 2s = 2100s. Generous against a single GET of a small preview
+#   page plus retry-on-429/5xx backoff (`defaultFetchText`, TmePreviewGateway.ts: up to 3 attempts,
+#   1s then 2s of backoff between them) — most pages finish in a fraction of that, so this budget
+#   already carries slack for the occasional throttled page without needing a separate retry term.
+#
+#   ~20 Sheets round trips at 5s each = 100s. One roster load, one contract-tab read, then per month
+#   (x3): the posts tab's header/data read and batched update+append flush inside
+#   RecordKolTelegramPosts, a raw re-read of that month's window, and ProjectMonthlyLog's own
+#   read+write — roughly six calls a month. 5s is generous against a normal Sheets API round trip;
+#   there is no cold-compute wake to pay here the way the Neon-backed units budget for, since Sheets
+#   has no autosuspend.
+#
+#   2100 + 100 = 2200s, rounded up to 2400s (40 minutes) for scheduling and process-startup margin.
+#
+# The upper bound matters far less here than for an hourly unit: even this generous a number is
+# 2400 / 604800 = under 0.4% of the weekly fire period, nowhere near the "timeout at or under half
+# the period" ceiling tests/deploy/translateCheckTiming.test.ts holds for herald-translate-check.
+# There would still be headroom if this cadence were ever tightened to daily (2400 is under half of
+# 86400 too), which is the point of writing the arithmetic out rather than just the number: the next
+# person tightening the cadence can check this bound instead of guessing whether 2400 still fits.
+TimeoutStartSec=2400
+
+# Wrapped in deploy/herald-run-logged.sh for the reason every unit in this directory is: journald on
+# this box holds roughly eight minutes of history (it rotates on every backwards clock step, and
+# this machine's WSL2 host sync and timesyncd both step the clock constantly), so a report printed at
+# 07:30 on Tuesday is unreadable well before anyone thinks to look for it. It matters more here than
+# for most siblings, precisely because of the gap the header above names: `kol:quarter` has no
+# `--notify`, so `%h/.herald/logs/herald-kol-weekly/` is not a supplement to a Telegram summary, it
+# is the ENTIRE record of what a healthy run found — every shortfall, every unmatched contract name,
+# every truncated channel. `%n` is this unit's own name and keys the per-unit log directory, the same
+# key deploy/herald-notify-failure.sh derives its fallback excerpt from, so the two agree without
+# either hardcoding a unit list. tests/deploy/runLogging.test.ts holds the wrapper's own contract —
+# the command's exit status reaches systemd unchanged, since a wrapper that swallowed it would switch
+# this unit's one alert path off permanently and invisibly.
+#
+# No `--quarter`, for the reason the header above gives: the command's own default already rolls the
+# quarter over, and pinning one here would silently stop sweeping the day the real quarter changed.
+#
+# Ordering note for whoever installs this: the wrapper lives in the deploy checkout, so
+# `bash deploy/herald-deploy.sh` must have run (landing this commit in %h/.herald/app) BEFORE this
+# unit file is copied into ~/.config/systemd/user/.
+ExecStart=%h/.herald/app/deploy/herald-run-logged.sh %n %h/.herald/bin/pnpm kol:quarter
