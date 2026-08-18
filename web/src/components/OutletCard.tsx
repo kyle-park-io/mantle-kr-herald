@@ -355,7 +355,18 @@ export function OutletCard(props: {
               interaction rather than needing to know to hover/tap 저장 first. */}
           {groupApproved && <p>{APPROVED_LOCK}</p>}
         </div>
-        <div className="mt-2.5 flex flex-wrap items-center gap-2 @max-sm:flex-col @max-sm:items-stretch">
+        {/* No `@max-sm:` here, unlike the two room-level action rows below — measured in a real
+            browser at a 332-342px card width (390px phone, drawer closed): 저장/승인하기(or
+            `ApprovedButton`)/복사 sum to ~209px of natural width against ~308px of content width, a
+            ~100px margin that holds across both the unapproved (저장/승인하기/복사) and approved
+            (저장/승인됨 ✓/복사) label sets. `flex-wrap` (already here) is what absorbs anything
+            narrower still — three 44px `pointer-coarse` targets keep their own row instead of each
+            claiming one, which is most of why 2차's card height was inflated. The per-room primary
+            span and the room editor's footer row keep `@max-sm:flex-col` — their own worst-case
+            combinations (예약됨 배지 + 게시 확인 + 재발송; 저장 + 취소 + the `showForkHint` sentence)
+            measured to 298px and 305px against the same ~308px, a margin too thin to trust against a
+            different browser's font metrics or a longer timestamp. */}
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
           <button
             className={btn}
             disabled={busy || !groupDirty || groupApproved}
