@@ -1,10 +1,11 @@
 import type { SheetClient } from "../ports/SheetClient";
 import type { KolMapEntry } from "../domain/kol/models";
-import { KOL_MAP_HEADER } from "../domain/kol/models";
+import { KOL_MAP_HEADER, KOL_LIST_HEADER } from "../domain/kol/models";
 import { extractTelegramHandle } from "../domain/metrics/handles";
 
-// The kol-map tab is coupled to the team workbook; update here if the tab is renamed.
-const KOL_MAP_RANGE = "'kol-map'!A:Z";
+// The roster lives in the humans' `KOL list` tab; `kol-map` is retired (see the 2026-08-19
+// kol-quarter-tracking spec). Update here if the tab is renamed.
+const KOL_MAP_RANGE = "'KOL list'!A:Z";
 const SEED_DOC = "docs/ko/kol-map-seed.md";
 
 /**
@@ -22,11 +23,24 @@ function headerText(field: keyof KolMapEntry): string {
   return name.toLowerCase();
 }
 
+/**
+ * `KolMapEntry.tgHandle` has no column of that name in `KOL list` — the tab's existing, empty
+ * `Social media link` column (already read by `LoadRoster` for X handles) is read instead, since
+ * `extractTelegramHandle` accepts every form a human might paste there. This can't go through
+ * `headerText()` above, which matches a header cell against a `KolMapEntry` field *name*, and
+ * "Social media link" isn't one — so it's matched against the literal header text instead.
+ */
+function requireHeader(header: readonly string[], text: string): string {
+  const name = header.find((h) => h === text);
+  if (!name) throw new Error(`KOL_LIST_HEADER no longer declares a "${text}" column`);
+  return name.toLowerCase();
+}
+
 const COL_KOL_ID = headerText("kolId");
-const COL_TG_HANDLE = headerText("tgHandle");
 const COL_SHEET_LABEL = headerText("sheetLabel");
 const COL_PRICE = headerText("pricePerPost");
 const COL_ACTIVE = headerText("active");
+const COL_TG_HANDLE = requireHeader(KOL_LIST_HEADER, "Social media link");
 
 /** A leading currency symbol Sheets' FORMATTED_VALUE rendering may prepend to a rate cell. */
 const CURRENCY_PREFIX = /^(?:US\$|\$|₩)\s*/i;
@@ -70,7 +84,7 @@ export class LoadKolMap {
     const activeIdx = header.indexOf(COL_ACTIVE);
     if (kolIdIdx < 0 || tgHandleIdx < 0 || sheetLabelIdx < 0 || priceIdx < 0 || activeIdx < 0) {
       throw new Error(
-        `'kol-map' is missing a required column (need ${KOL_MAP_HEADER.map((h) => `"${h}"`).join(", ")}) — see ${SEED_DOC}`,
+        `'KOL list' is missing a required column (need ${KOL_LIST_HEADER.map((h) => `"${h}"`).join(", ")}) — see ${SEED_DOC}`,
       );
     }
     const out: KolMapEntry[] = [];
@@ -88,7 +102,7 @@ export class LoadKolMap {
         // Without this warning a mistyped cell drops the channel from the sweep and the run still
         // reports a clean "0 created", which reads as "this KOL posted nothing about Mantle".
         console.warn(
-          `[kol-telegram] 'kol-map' row ${rowNumber} (${kolId}): unusable tgHandle ` +
+          `[kol-telegram] 'KOL list' row ${rowNumber} (${kolId}): unusable tgHandle ` +
             `${JSON.stringify(handleCell)} — this channel was NOT swept. Accepted forms: ` +
             `https://t.me/<handle>, t.me/<handle>, @<handle>, or a bare <handle> ` +
             `(5-32 characters of A-Z a-z 0-9 _). See ${SEED_DOC}`,
@@ -99,7 +113,7 @@ export class LoadKolMap {
       const price = parsePrice(row[priceIdx] ?? "");
       if (price === undefined) {
         console.warn(
-          `[kol-telegram] 'kol-map' row ${rowNumber} (${kolId}): pricePerPost ` +
+          `[kol-telegram] 'KOL list' row ${rowNumber} (${kolId}): pricePerPost ` +
             `${JSON.stringify((row[priceIdx] ?? "").trim())} is not a number — this channel's rows ` +
             `get a blank pricePerPost. Fix the cell and re-run: a row whose pricePerPost is still ` +
             `blank is filled on the next run, but one that already carries a number is not. ` +
@@ -129,9 +143,9 @@ export class LoadKolMap {
       const message = (err as Error)?.message ?? "";
       if (/HTTP 400/.test(message)) {
         throw new Error(
-          `The 'kol-map' tab does not exist in the configured workbook (GSHEET_ID). Create a tab ` +
-            `named exactly 'kol-map' with the header row ` +
-            `${KOL_MAP_HEADER.join(" | ")} and seed it — see ${SEED_DOC}. ` +
+          `The 'KOL list' tab does not exist in the configured workbook (GSHEET_ID). Create a tab ` +
+            `named exactly 'KOL list' with the header row ` +
+            `${KOL_LIST_HEADER.join(" | ")} and seed it — see ${SEED_DOC}. ` +
             `(Sheets reported: ${message})`,
           { cause: err },
         );

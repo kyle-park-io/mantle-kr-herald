@@ -1,0 +1,62 @@
+# deploy/herald-kol-weekly.timer
+#
+# Fires herald-kol-weekly.service once a week, Tuesday at 07:30.
+#
+# WHY WEEKLY: see herald-kol-weekly.service's own header. `SweepKolQuarter` re-derives every month
+# of the quarter from scratch on every fire (no cursor, no "since last time"), so the cadence is a
+# pure cost/latency trade — how stale a shortfall is allowed to sit before someone reads the run log
+# — not a correctness one. Weekly is the same trade herald-translate-check.timer already made for a
+# report with the same shape.
+#
+# WHY TUESDAY, and not Monday. herald-translate-check.timer already owns Monday morning for the
+# glossary digest, and the two reports have nothing to do with each other — one reads translations
+# and a glossary file, this one pages Telegram and reads a Sheets contract tab — so there is no
+# reading-order reason to couple them. Landing both on the same morning buys nothing and doubles the
+# reading a human does in one sitting for no shared payoff, which is the same "don't stack unrelated
+# reports" argument the reasoning below makes for the write-quota reason specifically: this unit's
+# `RecordKolTelegramPosts` half writes to `kol-telegram-posts` in the SAME workbook
+# herald-translate-check's `glossary:mine` half only ever reads from, under the same
+# 60-writes-per-minute-per-user Sheets quota RecordKolTelegramPosts.ts's own comment budgets against
+# (~112-200 writes over 7-13 channels, batched). A second weekly sweep sharing Monday's slot would
+# still be running against a cold connection precisely when the OTHER weekly report is also reading
+# that spreadsheet, for no reason grounded in either report's own inputs.
+#
+# WHY 07:30. Measured human activity on this pipeline spans 10:00-04:00 KST (the same window every
+# other daily/weekly timer in this directory schedules against), so 07:30 sits in the same quiet gap
+# herald-translate-check's 06:53 and herald-creds's 06:23 already use, just later in that gap so this
+# unit's own (much longer, see the service file's TimeoutStartSec= arithmetic) run has finished well
+# before the working day starts rather than still paging Telegram into it.
+#
+# THE MINUTE IS :30, not :23. An earlier draft of this file picked `Tue *-*-* 07:23:00` to echo
+# herald-creds.timer's own hour digits, and that was wrong: herald-creds.timer already fires at
+# `*-*-* 06:23:00`, and tests/deploy/credsTiming.test.ts's own collision check compares ONLY the
+# minute field across every timer in this directory, deliberately ignoring the hour — two units
+# sharing a minute buy nothing and only invite two pnpm processes starting at once, which the test's
+# own comment argues is a risk worth guarding against regardless of which hour either happens to run
+# in. `:23` would have failed that test the moment this file existed, not because of anything specific
+# to this unit's own schedule but because credsTiming.test.ts (and translateCheckTiming.test.ts)
+# enumerate deploy/*.timer dynamically rather than listing units by name. `:30` sits in the widest gap
+# on the minute clock among every OnCalendar= already in this directory — :07/:37 (convert), :17
+# (watch), :23 (creds), :41 (x-reconcile), :47 (backup), :53 (translate-check) — 7 minutes clear of its
+# nearest neighbours on either side (:23 and :37), rather than merely "not equal to" one of them.
+#
+# Verified before committing: `systemd-analyze calendar --iterations=3 'Tue *-*-* 07:30:00'`
+# normalises to itself and elapses Tue 2026-08-25, Tue 09-01, Tue 09-08 — exactly seven days apart.
+#
+# NOT installed by any committed script — see herald-kol-weekly.service's header.
+
+[Unit]
+Description=Timer for herald-kol-weekly.service — weekly Mantle KR Herald KOL contract sweep
+
+[Timer]
+OnCalendar=Tue *-*-* 07:30:00
+# Runs once on the next boot/login if the machine was off (or the user manager wasn't running —
+# WSL2's usual failure mode) through the scheduled fire, instead of silently skipping it. Same
+# reasoning as every other timer in this directory, and it bites the same way it does for
+# herald-translate-check.timer: a missed fire on this cadence costs the whole week's sweep, and a
+# week with no run looks exactly like a week with nothing to report. This coalesces — a machine off
+# for three weeks fires this once on login, not three times.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

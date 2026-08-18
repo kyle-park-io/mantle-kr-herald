@@ -1217,16 +1217,16 @@ systemd가 순서를 맞춰 주니 신경 쓸 일이 없어집니다.
 - **재시작을 넘겨서까지 확실히 멈춰 있어야 하면** — `systemctl --user disable --now
   herald-watch.timer`. `enable` 자체를 해제하므로 재시작해도 돌아오지 않습니다.
 
-**여섯 개를 한꺼번에 멈출 때** — 사고 대응처럼 파이프라인 전체를 세워야 하는 경우입니다.
-유닛 이름을 여섯 번 칠 필요는 없지만, **`stop`과 `disable`은 문법이 다릅니다.**
+**일곱 개를 한꺼번에 멈출 때** — 사고 대응처럼 파이프라인 전체를 세워야 하는 경우입니다.
+유닛 이름을 일곱 번 칠 필요는 없지만, **`stop`과 `disable`은 문법이 다릅니다.**
 
 ```bash
 systemctl --user stop  'herald-*.timer'   # 일시 정지 — 글롭이 됩니다
 systemctl --user start 'herald-*.timer'   # 다시 켜기
 
 # 재시작을 넘겨서까지 멈출 때는 글롭이 안 되므로 중괄호 확장을 씁니다
-systemctl --user disable --now herald-{watch,convert,x-reconcile,creds,translate-check,backup}.timer
-systemctl --user enable  --now herald-{watch,convert,x-reconcile,creds,translate-check,backup}.timer
+systemctl --user disable --now herald-{watch,convert,x-reconcile,creds,translate-check,backup,kol-weekly}.timer
+systemctl --user enable  --now herald-{watch,convert,x-reconcile,creds,translate-check,backup,kol-weekly}.timer
 ```
 
 `stop`·`start`·`status`처럼 **이미 로드된 유닛**을 다루는 명령은 글롭을 받지만, `enable`·`disable`은
@@ -1235,7 +1235,7 @@ supported for this.`가 그 메시지입니다. 모르고 `disable --now 'herald
 실패하고 타이머는 계속 돕니다.** 여기서 나올 수 있는 사고는 하나뿐인데, 그게 제일 흔한 것이기도
 합니다 — 에러를 흘려보고 멈춘 줄 알고 자리를 뜨는 것.
 
-여섯이 전부 멈췄는지는 `systemctl --user list-timers 'herald-*'`로 확인하세요 — `disable`까지 한
+일곱이 전부 멈췄는지는 `systemctl --user list-timers 'herald-*'`로 확인하세요 — `disable`까지 한
 뒤라면 이 목록에서 아예 사라집니다.
 
 ### 한 tick이 몇 건씩 처리할지 (HERALD_WATCH_BATCH)
@@ -1503,12 +1503,13 @@ pnpm x:reconcile --since 7d
 `~/.config/systemd/user/`의 사본이고, `deploy/`가 아닙니다.** 저장소 쪽만 고치고
 `daemon-reload`를 돌려도 설치된 유닛은 바뀌지 않습니다.
 
-**이 목록이 이 저장소의 완전한 설치 목록입니다 — 파일 열세 개.** 여섯 스케줄러(`herald-backup`
-포함)의 서비스·타이머 열두 개와 공용 실패 훅 하나입니다. 한때 이 자리에 네 개짜리 목록이 있었는데,
-`herald-watch.timer`와 `herald-convert.*`가 빠져 있었고 그 셋은 다른 절의 산문으로만 언급돼
-있었습니다 — 그대로 따르면 **타이머 없는 서비스**가 깔립니다. 설치는 된 것처럼 보이고 영원히 아무
-것도 안 도는, 이 §6이 통째로 막으려는 그 실패입니다. 필요 없는 파일을 다시 복사하는 비용은
-없으므로(같은 내용이면 덮어쓰기일 뿐입니다), 하나만 새로 깔 때도 이 목록을 통째로 쓰세요.
+**이 목록이 이 저장소의 완전한 설치 목록입니다 — 파일 열다섯 개.** 일곱 스케줄러(`herald-backup`,
+`herald-kol-weekly` 포함)의 서비스·타이머 열네 개와 공용 실패 훅 하나입니다. 한때 이 자리에 네
+개짜리 목록이 있었는데, `herald-watch.timer`와 `herald-convert.*`가 빠져 있었고 그 셋은 다른 절의
+산문으로만 언급돼 있었습니다 — 그대로 따르면 **타이머 없는 서비스**가 깔립니다. 설치는 된 것처럼
+보이고 영원히 아무 것도 안 도는, 이 §6이 통째로 막으려는 그 실패입니다. 필요 없는 파일을 다시
+복사하는 비용은 없으므로(같은 내용이면 덮어쓰기일 뿐입니다), 하나만 새로 깔 때도 이 목록을 통째로
+쓰세요.
 
 ```bash
 cp deploy/herald-watch.service deploy/herald-watch.timer \
@@ -1517,11 +1518,45 @@ cp deploy/herald-watch.service deploy/herald-watch.timer \
    deploy/herald-creds.service deploy/herald-creds.timer \
    deploy/herald-translate-check.service deploy/herald-translate-check.timer \
    deploy/herald-backup.service deploy/herald-backup.timer \
+   deploy/herald-kol-weekly.service deploy/herald-kol-weekly.timer \
    deploy/herald-notify-failure@.service \
    ~/.config/systemd/user/
 rm -f ~/.config/systemd/user/herald-notify-failure.service   # 템플릿과 같이 두면 안 됩니다
 systemctl --user daemon-reload
 ```
+
+`herald-kol-weekly`의 `enable --now`는 이 블록 다음이 아니라 [`capabilities.md`](capabilities.md)
+§5-P가 가리키는 배포 안내([`schedulers.md`](schedulers.md)의 표 참고)를 따르세요 — 다른 여섯과
+달리 이 유닛은 §6에 전용 절이 없습니다(사람이 검토할 결과를 매주 콘솔/실행 로그에만 남기고 시트
+데이터를 바꾸는 유닛이라, 켜기 전에 `pnpm tsx src/cli/kol-roster-migrate.ts`로 로스터 이관 계획을
+먼저 사람이 읽어야 합니다). **켜기 전 확인할 세 가지 사전 조건**, 셋 다 사람이 손으로 하는 일이라
+`enable`이 대신 검사해 주지 않습니다:
+
+1. **로스터** — `KOL list`에서 `kolId`가 있고 `active`가 켜져 있으며 `Social media link`로 텔레그램
+   핸들을 읽어낼 수 있는 행만 스윕 대상입니다. `kol-roster-migrate`는 이제 핸들이 먼저, **핸들로 못
+   붙인 행만** 이름(대소문자·공백을 지운 형태 — `SweepKolQuarter`가 계약 이름을 맞출 때 쓰는 그
+   함수 그대로)으로 붙입니다. 이름 매칭은 미리 보기에 **어떤 키로 붙었는지**가 찍히므로 사람이
+   `--yes` 전에 한 줄씩 확인하세요(`Marine`과 `Marshall`은 다른 이름이라 안 붙습니다 — 그건 정상).
+   로스터가 비면 `kol:quarter`는 **0이 아닌 코드로 끝나 `OnFailure=` 알림이 뜹니다** — 예전처럼
+   조용히 성공 종료하지 않습니다.
+2. **월별 탭의 수식·서식** — `Jul.`/`Aug.`/`Sep.` 각 탭의 로그 영역에서 세 수식 컬럼(`Engagement
+   Rate`=`G/F`, `Cost per impression`=`I/F`, `Duplicated?`=`COUNTIF(D:D,D행)`)과 `Posting date`의
+   날짜 서식을, 이미 채워진 마지막 로그 행부터 요약의 `SUMIF($A$12:$A$1963, …)`가 닿는 **1963행까지**
+   사람이 한 번 채워 내려야 합니다(스펙의 마이그레이션 2단계 — 값 API는 `RAW`라 기계가 수식을 쓸 수
+   없어서 사람 몫입니다). **실측(2026-08-19): `Aug.`/`Sep.`는 두 비율 컬럼이 17행에서, `Duplicated?`는
+   31행에서 이미 멈춰 있습니다** — 그 아래로는 전부 비어 있습니다. 이 단계를 건너뛰면 `herald-kol-weekly`가
+   써 넣는 새 로그 행은 **값은 들어가지만 `Engagement Rate`·`Cost per impression`이 빈 칸으로 남고**,
+   `Posting date`도 서식이 안 이어진 행에서는 `07/03/26`이 아니라 `46206` 같은 원시 시리얼로 보입니다 —
+   실행 자체는 매주 조용히 성공 종료하므로, 이 확인은 `enable` 전에 한 번, 그리고 로스터에 KOL을 새로
+   추가할 때마다(요약 블록이 자라 로그 헤더 행이 밀릴 수 있으므로) 사람이 직접 해야 합니다. 로그 영역은
+   **1963행에서 끝납니다**(요약의 `SUMIF`가 닿는 마지막 행). 기계는 그 아래로는 절대 쓰지 않고, 그 행이
+   다 차면 남은 게시물을 보고한 뒤 **0이 아닌 코드로 끝냅니다** — 덮어쓰기 대신 알림입니다.
+3. **분기가 바뀌면 `GSHEET_ID`를 사람이 옮겨야 합니다.** 명령은 분기를 스스로 넘기지만
+   (`currentQuarter`), `GSHEET_ID`는 분기당 워크북 **하나**를 가리킵니다. 10월 1일부터는 Q3 워크북에
+   없는 `Oct.` 탭을 읽으려다 매주 실패합니다(그게 의도된 동작입니다 — 지난 분기 탭에 조용히 계속 쓰는
+   것보다 낫습니다). 새 분기 첫 화요일 전에 `~/.herald/prod.env`의 `GSHEET_ID`를 새 워크북으로 바꾸고,
+   그 워크북에도 위 2번의 수식·서식 채우기를 해 두세요. 자세한 건 `deploy/herald-kol-weekly.service`
+   헤더에 적혀 있습니다.
 
 `.sh` 스크립트는 여기에 없습니다 — 위 "설치" 절 4번이 설명하듯, 유닛의 `ExecStart=`가 배포 체크아웃
 안의 경로를 직접 가리키고 있어서 복사본은 애초에 실행되지 않습니다.

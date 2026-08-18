@@ -1,5 +1,22 @@
 # `kol-map` 시딩 제안 (kol-map-seed.md)
 
+> **2026-08-19 업데이트 — 로스터는 이제 `KOL list`에 있습니다.** 이 문서가 제안한 `kol-map` 탭은
+> 실제로 만들어져 한동안 로스터의 원본이었지만 지금은 **은퇴**했습니다. `LoadKolMap`은 더 이상
+> `kol-map`을 읽지 않고 사람이 관리하는 `KOL list` 탭을 읽습니다 — `kolId`/`sheetLabel`/
+> `pricePerPost`/`active` 네 컬럼이 새로 생기고, 텔레그램 핸들은 그 탭에 이미 있던
+> `Social media link` 컬럼에서 읽습니다. **아래 표와 그 아래 설명은 지금은 은퇴한 `kol-map` 탭이
+> 어떻게 시딩됐는지를 남긴 기록**이지, `KOL list`를 세팅하는 절차가 아닙니다.
+>
+> 로스터를 `kol-map`에서 `KOL list`로 옮기는 일회성 스크립트는 `src/cli/kol-roster-migrate.ts`이고
+> `--yes` 없이 돌리면 계획만 출력합니다(자세한 입출력은 [`artifacts.md`](artifacts.md)의
+> `pnpm kol-roster-migrate` 행 참고). 이 스크립트는 `kol-map`의 각 행을 `tgHandle`로 `KOL list`의
+> `Social media link`와 짝지을 뿐, 이름으로 추측하지 않습니다 — **2026-08-19 기준 `KOL list`의
+> `Social media link`는 모든 행이 빈 칸이라, 이관 스크립트가 핸들로 짝지을 수 있는 행이 하나도
+> 없습니다.** 아래 표의 `tgHandle`을 사람이 `KOL list`의 맞는 행에 먼저 채워 넣어야(또는 조인 방식을
+> 다시 정해야) 이관이 실제로 뭔가를 옮깁니다. `kol-map` 자체는 지워지지 않고 `A1`에
+> `(은퇴 — KOL list로 이관)`만 남습니다 — 이관 결과에 동의하지 않는 사람이 원본을 다시 볼 수 있게
+> 하기 위해서입니다.
+
 **이 문서는 제안(proposal)입니다. 워크북에는 아무것도 쓰지 않았습니다.** 아래 표는
 `2026 Q3 KR Work Sheet`를 읽기 전용으로 조회해 만들었을 뿐이고, `kol-map` 탭 자체도 아직
 만들어지지 않았습니다(2026-07-30 기준 확인). 사람이 각 KOL의 **실제 계약서**와 가격을 대조해

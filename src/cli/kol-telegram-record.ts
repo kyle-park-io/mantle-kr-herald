@@ -56,13 +56,19 @@ try {
 
   // The "did anything happen?" guard. A run that read nothing at all otherwise prints a summary of
   // five zeroes that looks exactly like a clean, successful month with no KOL coverage. Every way of
-  // getting here is a setup fault, not a quiet month: no `kol-map` row is marked active, or every
-  // row's tgHandle cell was unusable (each of those is named in a warning above).
+  // getting here is a setup fault, not a quiet month: no `KOL list` row is marked active, or every
+  // row's `Social media link` cell was unusable (each of those is named in a warning above).
+  //
+  // `KOL list`, not `kol-map`: this command has read the humans' roster tab since the 2026-08-19
+  // roster move (`LoadKolMap`), and `kol-map` is retired. Naming the retired tab sent a reader to
+  // edit a tab nothing reads — most likely on the very day this fires for real, since the roster
+  // migration leaves `KOL list` unplaced until it is run.
   if (result.channelsSwept === 0) {
     console.warn(
       `[kol-telegram] no channel was swept — nothing was read and nothing was written. ` +
-        `'kol-map' has no row that is both active and carries a usable tgHandle. ` +
-        `Set active to true on the contracted channels and check any handle warnings above; ` +
+        `'KOL list' has no row that is both active and carries a usable Social media link. ` +
+        `Run \`pnpm kol-roster-migrate\` (preview, then --yes) if the roster has not been placed yet, ` +
+        `set active to true on the contracted channels, and check any handle warnings above; ` +
         `see docs/ko/kol-map-seed.md.`,
     );
   }

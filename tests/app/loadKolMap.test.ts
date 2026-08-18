@@ -17,12 +17,14 @@ function sheetWith(rows: string[][]): { sheet: SheetClient; ranges: string[] } {
   return { sheet, ranges };
 }
 
-const HEADER = ["kolId", "tgHandle", "sheetLabel", "pricePerPost", "active"];
+// "Social media link", not "tgHandle": the roster now lives in the humans' `KOL list` tab, whose
+// handle column already existed under that name (see LoadKolMap's COL_TG_HANDLE).
+const HEADER = ["kolId", "Social media link", "sheetLabel", "pricePerPost", "active"];
 
 describe("LoadKolMap", () => {
   it("maps columns by header name, not position", async () => {
     const { sheet } = sheetWith([
-      ["sheetLabel", "kolId", "active", "tgHandle", "pricePerPost"],
+      ["sheetLabel", "kolId", "active", "Social media link", "pricePerPost"],
       ["Marine", "marine", "TRUE", "https://t.me/marshallog", "100"],
     ]);
     expect(await new LoadKolMap(sheet).run()).toEqual([
@@ -161,7 +163,7 @@ describe("LoadKolMap", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("says the kol-map tab does not exist instead of surfacing a bare HTTP 400", async () => {
+  it("says the KOL list tab does not exist instead of surfacing a bare HTTP 400", async () => {
     // The very first real run happens before anyone has created the tab.
     const sheet: SheetClient = {
       getValues: async () => { throw new Error("Sheets getValues failed: HTTP 400"); },
@@ -171,7 +173,7 @@ describe("LoadKolMap", () => {
       createSpreadsheet: async () => ({ spreadsheetId: "x" }),
       ensureTab: async () => {},
     };
-    await expect(new LoadKolMap(sheet).run()).rejects.toThrow(/'kol-map' tab does not exist.*kol-map-seed\.md/s);
+    await expect(new LoadKolMap(sheet).run()).rejects.toThrow(/'KOL list' tab does not exist.*kol-map-seed\.md/s);
   });
 
   it("passes a non-400 sheet error through untouched", async () => {
@@ -193,6 +195,45 @@ describe("LoadKolMap", () => {
 
   it("throws a named error when a required column is absent", async () => {
     const { sheet } = sheetWith([["kolId", "sheetLabel"], ["a", "A"]]);
-    await expect(new LoadKolMap(sheet).run()).rejects.toThrow(/tgHandle/);
+    // The message must name the tab it actually reads and the column it actually needs — this
+    // regressed to naming the retired 'kol-map' tab and its "tgHandle" column when LoadKolMap
+    // moved to 'KOL list', which is not where the handle lives there ("Social media link" is).
+    await expect(new LoadKolMap(sheet).run()).rejects.toThrow(
+      /'KOL list' is missing a required column.*"Social media link"/,
+    );
+  });
+
+  /**
+   * The roster moved out of the machine-only `kol-map` tab into the humans' `KOL list`, which is
+   * what lets a monthly-tab row be resolved through a declared roster instead of a guessed name.
+   * `Social media link` was already there and empty, and `extractTelegramHandle` already reads all
+   * four spellings a human might put in it, so no new handle column was added.
+   */
+  it("reads the roster from 'KOL list', taking the handle from Social media link", async () => {
+    const { sheet } = sheetWith([
+      ["KOL", "KOL Type", "Social media", "Content Price", "Social media link", "Note",
+       "kolId", "sheetLabel", "pricePerPost", "active"],
+      ["In contract"],
+      ["Marshall", "General", "Telegram", "150", "https://t.me/marshallog", "",
+       "marine", "Marine", "100", "TRUE"],
+      ["Cek", "General", "Telegram", "125", "@airdr0p_lab", "",
+       "cek", "CEK", "60", "TRUE"],
+    ]);
+
+    const entries = await new LoadKolMap(sheet).run();
+
+    expect(entries).toEqual([
+      { kolId: "marine", tgHandle: "marshallog", sheetLabel: "Marine", pricePerPost: 100, active: true },
+      { kolId: "cek", tgHandle: "airdr0p_lab", sheetLabel: "CEK", pricePerPost: 60, active: true },
+    ]);
+  });
+
+  it("skips a section row like 'In contract', which carries no kolId", async () => {
+    const { sheet } = sheetWith([
+      ["KOL", "Social media link", "kolId", "sheetLabel", "pricePerPost", "active"],
+      ["In contract"],
+      ["Marshall", "https://t.me/marshallog", "marine", "Marine", "100", "TRUE"],
+    ]);
+    expect((await new LoadKolMap(sheet).run()).map((e) => e.kolId)).toEqual(["marine"]);
   });
 });
