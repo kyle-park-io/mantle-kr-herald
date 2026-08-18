@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ProjectMonthlyLog } from "../../src/app/ProjectMonthlyLog";
 import type { SheetClient } from "../../src/ports/SheetClient";
 
@@ -86,6 +86,48 @@ describe("ProjectMonthlyLog", () => {
     expect(res.written).toBe(0);
     expect(res.unresolved).toEqual(["gmb"]);
     expect(h.batches).toEqual([]);
+  });
+
+  /**
+   * `RecordKolTelegramPosts.upsert`'s `appendedThisRun` guard exists for the same reason: a row
+   * this run itself just allocated does not exist on the sheet yet, so nothing but this run's own
+   * bookkeeping can notice a second post reaching for a second, empty row on the same link.
+   */
+  it("gives one row to two posts sharing a deliverableLink, neither already in the log", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness([["KOL"], [""], [""], HEADER]);
+    const uc = new ProjectMonthlyLog(h.sheet, () => "Jul.");
+
+    const res = await uc.run({
+      month: "2026-07",
+      roster,
+      posts: [post({ views: 2800 }), post({ views: 3100 })],
+    });
+
+    expect(res.written).toBe(1); // one row touched, not one per post
+    const rowsTouched = new Set(h.batches.map((b) => b.range.match(/(\d+)$/)?.[1]));
+    expect(rowsTouched.size).toBe(1);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  /** Keep-first, same policy and warning as `RecordKolTelegramPosts.indexByLink` — keeping the
+   *  last-seen row instead would swap which row is "the" row on a later run and freeze the other. */
+  it("keeps the earlier of two log rows that already share a deliverableLink, and warns", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness([
+      ["KOL", "followers"], ["Marine", "1"], [""], [""], HEADER,
+      ["Marine", "Telegram", "46206", "https://t.me/marshallog/22794", "", "1000", "1", "", "100"],
+      ["Marine", "Telegram", "46206", "https://t.me/marshallog/22794", "", "900", "1", "", "100"],
+    ]);
+    const uc = new ProjectMonthlyLog(h.sheet, () => "Jul.");
+
+    const res = await uc.run({ month: "2026-07", roster, posts: [post({ views: 2800 })] });
+
+    expect(res.written).toBe(1);
+    expect(h.batches.every((b) => b.range.endsWith("6"))).toBe(true); // the earlier row, not row 7
+    expect(warn.mock.calls.flat().join(" ")).toMatch(/duplicate.*Deliverable Link/i);
+    warn.mockRestore();
   });
 
   it("is idempotent — a second run writes the same cells and adds no row", async () => {
