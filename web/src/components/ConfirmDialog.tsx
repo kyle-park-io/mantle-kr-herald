@@ -176,11 +176,32 @@ export function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest |
  * and keydown, merely bubbling up through it, were treated as if they had originated on the
  * wrapper itself.
  *
- * The rule now is what it has actually become: every advisory string — reachable or not, on a
- * disabled control or an enabled one — goes through `Tip`, never a native `title`. Not just because
- * a `disabled` control never fires hover reliably, but because a plain `title` is unreachable on
- * touch at all, on any control, disabled or not. Write it down here so the next person does not
- * have to re-derive it the way this fix round had to.
+ * The rule is not "always `Tip`, never a native `title`" — seven native `title=` attributes survive
+ * at HEAD (`App.tsx:429, 440, 450, 485, 540`, `OutletCard.tsx:548`, `SearchBox.tsx:30`), left there
+ * on purpose by the tooltip grading in `0e7a8ed`. Five of the seven sit inside the header's status
+ * funnel, which is `hidden tablet:flex` — a desktop-only, mouse-only surface, where a native hover
+ * tooltip works. The sixth is `SearchBox`'s input: wrapping it in `Tip` would toggle the card closed
+ * on every caret click, because a click inside the input is itself the interaction the card would
+ * have to get out of the way of. The seventh (`OutletCard.tsx:548`) is an ordinary hint on a button
+ * that is live when the `title` is present at all — not an explanation of why the button won't
+ * respond, so it never had the reliability problem this rule exists to solve.
+ *
+ * Nor does "goes through `Tip`" mean "works on touch." After this fix round, `Tip` on an *enabled*
+ * control is reachable by mouse (hover) and by keyboard (the wrapper is its own tab stop ahead of
+ * the child, so Enter/Space on the wrapper toggles it) — but not by tap. A tap's click event targets
+ * the child directly, `targetsEnabledControl` sees an enabled control under the pointer and lets the
+ * click through instead of toggling, and `fromMouse` excludes `pointerType === "touch"` from the
+ * hover path too. So `Tip` on an enabled control is strictly better than a native `title` (touch
+ * still gets nothing from either, but mouse and keyboard both work here, where a `title` only gives
+ * mouse) — it is not the "reachable everywhere" fix the previous wording implied.
+ *
+ * The rule that actually holds: reach for `Tip` when the advisory's condition can coincide with the
+ * control being disabled (a native `title` there never fires), or when touch or keyboard need to
+ * reach the message on an enabled control. A plain `title` is still fine where the surface is
+ * mouse-only by construction (desktop-only chrome) or where routing the interaction through `Tip`'s
+ * click-handling would fight the control's own primary use (`SearchBox`). Write it down here so the
+ * next person does not have to re-derive it the way this fix round had to — and so it does not
+ * quietly expire again the way the old absolute version did (Critical 1).
  *
  * `text: undefined` renders `children` alone rather than an empty card, so a call site can pass a
  * conditional straight through (`text={dirty ? SAVE_FIRST : undefined}`) without wrapping the

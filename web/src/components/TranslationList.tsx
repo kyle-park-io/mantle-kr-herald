@@ -123,7 +123,18 @@ export function TranslationList(props: {
                 filter === f ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
               }`}
             >
-              {label} <span className="font-mono text-[11px] tabular-nums text-faint">{count(f)}</span>
+              {/* Same trap `App.tsx` documents on 수집134: this button became `inline-flex` for
+                  `pointer-coarse:min-h-11` to size it, and a whitespace-only text run between two
+                  JSX elements is not rendered as an anonymous flex item — so the space between
+                  `{label}` and the count span was dropping (전체12, not 전체 12). The literal space
+                  in `{label} <span>` below stays — it is what keeps the accessible name "전체 3",
+                  not "전체3" — but since that text run still renders as zero-width once this wrapper
+                  is itself a flex container, `gap-[3.34px]` supplies the visible space instead.
+                  `gap-[3.34px]` rather than a step on the spacing scale: that is the measured width
+                  of the space it replaces at this button's own `text-[12px]`, not just "some" gap. */}
+              <span className="flex items-center gap-[3.34px]">
+                {label} <span className="font-mono text-[11px] tabular-nums text-faint">{count(f)}</span>
+              </span>
             </button>
           ))}
         </div>

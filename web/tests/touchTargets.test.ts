@@ -60,7 +60,7 @@ const normalize = (s: string) => s.replace(/\s+/g, " ").trim();
  * "다음 태그가 어디서 시작하는가"를 아무 `<`나 잡아서 답하면 뚫린다: `disabled={n < 3}`처럼 JSX
  * 표현식 안의 비교 연산자도 `<`다. 이 저장소(그리고 Prettier 기본값)의 스타일은 비교 연산자
  * 앞뒤에 공백을 두므로(`n < 3`, `i < len`), 실제 태그 시작(`<button`, `</div`, `<Icon`, …)만 골라내는
- * 값싼 방법은 "`<` 바로 뒤에 공백이 아니라 글자·`/`가 오는" 자리만 taggerdms 후보로 본다.
+ * 값싼 방법은 "`<` 바로 뒤에 공백이 아니라 글자·`/`가 오는" 자리만 태그 시작 후보로 본다.
  */
 function findNextTagOpen(source: string, from: number): number {
   const rest = source.slice(from);

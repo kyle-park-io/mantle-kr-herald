@@ -29,7 +29,10 @@ export function SearchBox(props: { value: string; onChange: (value: string) => v
         // 아니다. 여기서는 잘리지 않는다.
         title="초성으로도 찾습니다 — ㅁㅌ 로 맨틀. 치는 도중(맨ㅌ, 맨트)에도 걸립니다."
         aria-label="검색"
-        className="w-full rounded-lg border border-line bg-surface py-1 pl-2 pr-7 text-[13px] text-ink outline-none placeholder:text-faint focus:border-mint"
+        // `pr-7`(28px)은 지우기 버튼의 원래 폭(px-1 한 글자, ~20px) 기준. `pointer-coarse:`가 그
+        // 버튼을 `min-w-11`(44px)로 키우면 이 여백도 같이 키워야 한다 — 아니면 버튼이 입력 끝에서
+        // 타이핑한 글자 위로 겹쳐 앉고, 그 글자를 탭한 손가락은 캐럿을 놓는 게 아니라 검색어를 지운다.
+        className="w-full rounded-lg border border-line bg-surface py-1 pl-2 pr-7 pointer-coarse:pr-12 text-[13px] text-ink outline-none placeholder:text-faint focus:border-mint"
       />
       {props.value !== "" && (
         <button
