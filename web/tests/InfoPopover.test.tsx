@@ -341,3 +341,109 @@ describe("InfoPopover — 활성(enabled) 자식 트리거", () => {
     expect(screen.queryByText("설명입니다")).toBeNull();
   });
 });
+
+/**
+ * `keepMounted` — `MarkerText`의 hover-peek 전용 옵션(그 파일의 `MediaMarker` doc 참조). 기본값
+ * `false`에서는 이 블록 이전의 모든 테스트가 이미 증명하는 대로 닫힐 때 패널이 언마운트된다 — 이
+ * 블록은 `true`일 때만 갈라지는 부분(마운트가 살아남는지, 같은 DOM 노드를 재사용하는지)만 새로
+ * 검증한다.
+ */
+describe("InfoPopover — keepMounted", () => {
+  it("keepMounted가 없으면(기본값) 닫힐 때 패널이 DOM에서 사라진다", () => {
+    render(
+      <InfoPopover panel={<span>설명입니다</span>}>
+        <span>열기</span>
+      </InfoPopover>,
+    );
+    fireEvent.pointerEnter(screen.getByText("열기"), { pointerType: "mouse" });
+    expect(screen.getByText("설명입니다")).toBeTruthy();
+    fireEvent.pointerLeave(screen.getByText("열기"), { pointerType: "mouse" });
+    expect(screen.queryByText("설명입니다")).toBeNull();
+  });
+
+  it("keepMounted면 닫혀도 패널이 DOM에 남고, hidden 클래스로만 감춘다", () => {
+    render(
+      <InfoPopover keepMounted panel={<span data-testid="p">설명입니다</span>}>
+        <span>열기</span>
+      </InfoPopover>,
+    );
+    fireEvent.pointerEnter(screen.getByText("열기"), { pointerType: "mouse" });
+    expect(screen.getByTestId("p").closest(".hidden")).toBeNull();
+
+    fireEvent.pointerLeave(screen.getByText("열기"), { pointerType: "mouse" });
+    // 여전히 쿼리 가능해야 한다 — `queryByText`가 아니라 `getByTestId`를 쓰는 이유는 바로 그것,
+    // 언마운트되었다면 이 호출 자체가 실패한다.
+    expect(screen.getByTestId("p").closest(".hidden")).not.toBeNull();
+  });
+
+  it("keepMounted면 다시 열어도 같은 DOM 노드를 재사용한다 — 언마운트·리마운트가 없다", () => {
+    render(
+      <InfoPopover keepMounted panel={<span data-testid="p">설명입니다</span>}>
+        <span>열기</span>
+      </InfoPopover>,
+    );
+    fireEvent.pointerEnter(screen.getByText("열기"), { pointerType: "mouse" });
+    const first = screen.getByTestId("p");
+    fireEvent.pointerLeave(screen.getByText("열기"), { pointerType: "mouse" });
+    fireEvent.pointerEnter(screen.getByText("열기"), { pointerType: "mouse" });
+    const second = screen.getByTestId("p");
+    expect(second).toBe(first);
+  });
+
+  it("keepMounted가 아닌 다른 인스턴스는 영향받지 않는다 — 기본값이 여전히 기본값이다", () => {
+    // 이 저장소의 20여 다른 InfoPopover 호출처가 아무것도 바뀌지 않았다는 것을 한 번 더 못박는다.
+    render(
+      <InfoPopover panel={<span>A</span>}>
+        <span>열기 A</span>
+      </InfoPopover>,
+    );
+    fireEvent.click(screen.getByText("열기 A"));
+    expect(screen.getByText("A")).toBeTruthy();
+    fireEvent.click(screen.getByText("열기 A"));
+    expect(screen.queryByText("A")).toBeNull();
+  });
+});
+
+/**
+ * `hoverDisabled` — 마찬가지로 `MarkerText` 전용. 핀(다른 메커니즘으로 이미 펼쳐진 상태)이 떠 있는
+ * 동안 이 컴포넌트의 호버 패널이 얹혀 뜨는 것을 막는다.
+ */
+describe("InfoPopover — hoverDisabled", () => {
+  it("hoverDisabled면 마우스가 들어와도 열리지 않는다", () => {
+    render(
+      <InfoPopover hoverDisabled panel={<span>설명입니다</span>}>
+        <span>열기</span>
+      </InfoPopover>,
+    );
+    fireEvent.pointerEnter(screen.getByText("열기"), { pointerType: "mouse" });
+    expect(screen.queryByText("설명입니다")).toBeNull();
+  });
+
+  it("열려 있는 도중 hoverDisabled가 켜지면 (마운트는 유지한 채) 즉시 닫힌다", () => {
+    const { rerender } = render(
+      <InfoPopover keepMounted panel={<span data-testid="p">설명입니다</span>}>
+        <span>열기</span>
+      </InfoPopover>,
+    );
+    fireEvent.pointerEnter(screen.getByText("열기"), { pointerType: "mouse" });
+    expect(screen.getByTestId("p").closest(".hidden")).toBeNull();
+
+    rerender(
+      <InfoPopover keepMounted hoverDisabled panel={<span data-testid="p">설명입니다</span>}>
+        <span>열기</span>
+      </InfoPopover>,
+    );
+    // 언마운트가 아니라 hidden으로 감춘 것 — `getByTestId`가 여전히 성공한다.
+    expect(screen.getByTestId("p").closest(".hidden")).not.toBeNull();
+  });
+
+  it("hoverDisabled가 아닌 인스턴스는 평소처럼 호버로 열린다", () => {
+    render(
+      <InfoPopover panel={<span>설명입니다</span>}>
+        <span>열기</span>
+      </InfoPopover>,
+    );
+    fireEvent.pointerEnter(screen.getByText("열기"), { pointerType: "mouse" });
+    expect(screen.getByText("설명입니다")).toBeTruthy();
+  });
+});

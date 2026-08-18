@@ -165,3 +165,77 @@ describe("TranslationList search", () => {
     expect(screen.getByText("해당하는 항목이 없습니다.")).toBeTruthy();
   });
 });
+
+describe("TranslationList preview strips media markers, but the badge still says so", () => {
+  it("미리보기 텍스트에는 CDN url도 마커 라벨도 남지 않는다", () => {
+    const { container } = render(
+      <TranslationList
+        items={[
+          t({
+            itemId: "x:1",
+            koreanText: "이번 주 생태계 하이라이트를 확인해보세요\n\n[사진](https://pbs.twimg.com/media/abc.jpg)",
+          }),
+        ]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    expect(container.textContent).toContain("이번 주 생태계 하이라이트를 확인해보세요");
+    expect(container.textContent).not.toContain("pbs.twimg.com");
+    expect(container.textContent).not.toContain("[사진]");
+  });
+
+  it("사진 두 장을 담은 행은 사진 2 배지를 보여준다", () => {
+    render(
+      <TranslationList
+        items={[
+          t({
+            itemId: "x:1",
+            koreanText: "본문\n\n[사진](https://a.jpg)\n\n[사진](https://b.jpg)",
+          }),
+        ]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    expect(screen.getByText("사진 2")).toBeTruthy();
+  });
+
+  /**
+   * `countMediaMarkers`'s own comment: a `[영상]` saved before the collect change captured its mp4
+   * still counts as a video — the badge tells a reviewer what the post *contains*, not what the
+   * detail pane can play. A url-less marker must still produce `영상 1`, not nothing.
+   */
+  it("url이 없는 [영상] 마커도 영상 1 배지로 센다", () => {
+    render(
+      <TranslationList items={[t({ itemId: "x:1", koreanText: "본문\n\n[영상]" })]} selectedId={null} onSelect={() => {}} />,
+    );
+    expect(screen.getByText("영상 1")).toBeTruthy();
+  });
+
+  it("마커가 없는 행에는 미디어 배지가 없다", () => {
+    render(<TranslationList items={[t({ itemId: "x:1", koreanText: "그냥 본문" })]} selectedId={null} onSelect={() => {}} />);
+    expect(screen.queryByText(/^사진 /)).toBeNull();
+    expect(screen.queryByText(/^영상 /)).toBeNull();
+  });
+
+  it("미리보기가 마커를 지워도 검색은 여전히 원문 전체(마커 포함)를 훑는다", () => {
+    // Same contract `TranslationList.tsx:93`'s own comment documents — this pins that stripping the
+    // *preview* did not also strip what search reads.
+    const { container } = render(
+      <TranslationList
+        items={[
+          t({
+            itemId: "x:1",
+            koreanText: "본문",
+            sourceText: "본문 [사진](https://pbs.twimg.com/media/UNIQUEMARKERWORD.jpg)",
+          }),
+        ]}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    type("UNIQUEMARKERWORD");
+    expect(shownIds(container)).toEqual(["x:1"]);
+  });
+});

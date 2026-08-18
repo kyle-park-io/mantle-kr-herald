@@ -2,7 +2,7 @@ import { useState } from "react";
 import { compileQuery } from "../hangulSearch";
 import { ALL_CHANNELS, ALL_TYPES, CHANNEL_LABEL, TYPE_LABEL, datePrefix, type Rendering } from "../types";
 import { SearchBox } from "./SearchBox";
-import { KindBadge } from "./TranslationList";
+import { KindBadge, MediaBadge, mediaFreePreview } from "./TranslationList";
 
 const STATUS_FILTERS: ["all" | Rendering["status"], string][] = [
   ["all", "전체"],
@@ -39,6 +39,14 @@ interface ItemRow {
   approved: number;
   total: number;
   preview: string;
+  /**
+   * The first card's text, unstripped — same source `preview` is built from, before `mediaFreePreview`
+   * drops the marker lines. `MediaBadge` needs the markers themselves to count, so it reads this
+   * rather than `preview`. Scoped to the first card for the same reason `preview` is (see below): a
+   * marker on a later card is not reflected here either, which is the existing "preview is first-card
+   * only" limitation this row's own comment already accepts, not a new one.
+   */
+  mediaText: string;
   /**
    * 검색이 훑는 문자열 — itemId와, 상태·채널·타입 셀렉트를 **통과해 살아남은** 카드들의 문구.
    * `toItemRows`는 이미 그 셀렉트들로 좁혀진 `matching` 위에서 불리므로, 필터에 걸러진 카드의
@@ -100,7 +108,11 @@ export function toItemRows(renderings: Rendering[]): ItemRow[] {
         groups: ordered.map((r) => ({ type: r.type, channel: r.channel, approved: r.status === "approved" })),
         approved: ordered.filter((r) => r.status === "approved").length,
         total: ordered.length,
-        preview: (ordered[0]?.text ?? "").replace(/\s+/g, " ").trim(),
+        // `Rendering.text` still carries media markers verbatim — `emit()` strips them per
+        // destination at send time (`stripMedia`), but that never touches the stored, reviewed
+        // text this list reads. Same leak `TranslationList.tsx`'s `preview` had, same fix.
+        preview: mediaFreePreview(ordered[0]?.text ?? ""),
+        mediaText: ordered[0]?.text ?? "",
         haystack: [itemId, ...ordered.map((r) => r.text)].join(" "),
       };
     })
@@ -203,6 +215,7 @@ export function RenderingList(props: {
                     <code className="hidden truncate font-mono text-[11px] text-faint tablet:inline">{row.itemId}</code>
                     <span className={`flex items-center gap-1.5 tablet:ml-auto ${row.postedAt ? "ml-auto" : ""}`}>
                       <KindBadge kind={row.kind} />
+                      <MediaBadge text={row.mediaText} />
                       {/* The count only when it says something: `승인 2/3` is the state a reviewer
                           has to come back to, and a bare 대기 chip would hide it. */}
                       {/* No `title` here (Task 10 removed one): its text — "채널 문구 N건 중 M건

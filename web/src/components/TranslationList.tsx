@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { compileQuery } from "../hangulSearch";
+import { countMediaMarkers, splitMediaMarkers } from "../media";
 import { datePrefix, type Translation } from "../types";
 import { SearchBox } from "./SearchBox";
 
@@ -56,7 +57,59 @@ export function KindBadge({ kind }: { kind?: "post" | "article" }) {
   );
 }
 
-const preview = (t: Translation) => (t.koreanText || t.sourceText).replace(/\s+/g, " ").trim();
+/**
+ * Same border/rounded/text vocabulary as `KindBadge` beside it, so a row's badge cluster reads as
+ * one family rather than two. Counts what the row's own text *contains* (`countMediaMarkers`'s own
+ * comment), not what a reader can actually play — a `[영상]` saved before the collect change
+ * captured its mp4 still shows `영상 1` here; the reviewer only learns it has no preview once they
+ * open the item (`MediaEditNotice`). That is on purpose: a reviewer scanning the list is deciding
+ * which rows to open, and "this row has a video" is true regardless of whether that video previews.
+ */
+export function MediaBadge({ text }: { text: string }) {
+  const { photos, videos } = countMediaMarkers(text);
+  if (photos === 0 && videos === 0) return null;
+  return (
+    <>
+      {photos > 0 && (
+        <span className="inline-flex shrink-0 items-center rounded-md border border-line px-1.5 py-0.5 text-[11px] font-medium text-muted">
+          사진 {photos}
+        </span>
+      )}
+      {videos > 0 && (
+        <span className="inline-flex shrink-0 items-center rounded-md border border-line px-1.5 py-0.5 text-[11px] font-medium text-muted">
+          영상 {videos}
+        </span>
+      )}
+    </>
+  );
+}
+
+/**
+ * The list preview used to be `(koreanText || sourceText).replace(/\s+/g, " ").trim()` — the raw
+ * stored text, markers and all. An item carrying a photo then rendered its marker's CDN url verbatim
+ * in the row (`[사진](https://pbs.twimg.com/media/…`), which is not a preview of anything a reviewer
+ * reads, it is the same 60-character-url problem `MarkerText`'s own doc comment already solved for
+ * the detail pane. `splitMediaMarkers` (also `media.ts`, also what `MarkerText` and the send path
+ * both key off) gives the same clean split here rather than a second regexp that could drift from
+ * theirs. Dropping the marker lines entirely would erase the one signal that told a reviewer the item
+ * has media at all — `MediaBadge` above is what keeps that visible, next to the row, instead of
+ * inside the preview text.
+ *
+ * Exported because `RenderingList.tsx`'s row preview had the identical leak on the identical kind of
+ * text (`Rendering.text` still carries markers verbatim — `FormatVariants`/`emit()` only strips them
+ * per destination at send time, never in what gets stored and shown here) — same fix, so it reuses
+ * this function rather than a second copy of it.
+ */
+export function mediaFreePreview(text: string): string {
+  return splitMediaMarkers(text)
+    .filter((s) => s.kind === "text")
+    .map((s) => s.text)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const preview = (t: Translation) => mediaFreePreview(t.koreanText || t.sourceText);
 
 /**
  * Newest first, by the date the row actually shows — its `[YYMMDD]` prefix, which is the *source*
@@ -185,6 +238,7 @@ export function TranslationList(props: {
                     <code className="hidden truncate font-mono text-[11px] text-faint tablet:inline">{t.itemId}</code>
                     <span className={`flex items-center gap-1.5 tablet:ml-auto ${t.sourcePostedAt ? "ml-auto" : ""}`}>
                       <KindBadge kind={t.kind} />
+                      <MediaBadge text={t.koreanText || t.sourceText} />
                       <StatusChip status={t.status} />
                     </span>
                   </div>
