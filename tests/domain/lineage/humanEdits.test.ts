@@ -42,6 +42,23 @@ describe("humanEditPairs", () => {
     ])).toEqual([{ itemId: "x:1", before: "정렬본", after: "검수본" }]);
   });
 
+  /**
+   * The exact contamination scenario `docs/ko/review.md` §3 reaches: a reviewer edits and saves
+   * without approving (human "B"), `translate:align` rewrites it two hours later (agent "C"), then
+   * the reviewer approves without touching the text again (a second human entry carrying "C"'s
+   * content). Taking "the last human entry anywhere" would pair against "C" and mine the align
+   * pass's own wording as if the reviewer had chosen it. The pair must stop at "B" — the first agent
+   * entry ends the human's run, even though a later human entry follows it.
+   */
+  it("ends the human run at the next agent entry, even when a later human entry follows it", () => {
+    expect(humanEditPairs([
+      e({ content: "A", actor: "agent" }),
+      e({ content: "B", actor: "human" }),
+      e({ content: "C", actor: "agent" }),
+      e({ content: "C", actor: "human" }),
+    ])).toEqual([{ itemId: "x:1", before: "A", after: "B" }]);
+  });
+
   it("yields nothing when no human ever touched it", () => {
     expect(humanEditPairs([e({ content: "초안", actor: "agent" })])).toEqual([]);
   });
@@ -60,5 +77,19 @@ describe("humanEditPairs", () => {
 
   it("yields nothing when a human entry has no agent entry before it", () => {
     expect(humanEditPairs([e({ content: "사람이 처음 쓴 글", actor: "human" })])).toEqual([]);
+  });
+
+  /**
+   * The spec's §6 "No 2차 edits" boundary: a per-channel edit (`SaveRendering`'s `stage: "rendered"`)
+   * has no English source to anchor a glossary term against, and `createDeps.ts` constructs that use
+   * case with `actor: "human"` — so human-actor `rendered` rows genuinely exist in the table. This
+   * module owns "which entries count" (see the module doc comment), so it — not a caller — has to be
+   * the one that refuses a non-`translated` stage.
+   */
+  it("ignores a human entry from a different stage, e.g. a 2차 rendered edit", () => {
+    expect(humanEditPairs([
+      e({ stage: "translated", content: "정렬본", actor: "agent" }),
+      e({ stage: "rendered", content: "채널별 문구", actor: "human" }),
+    ])).toEqual([]);
   });
 });

@@ -111,17 +111,23 @@ try {
   const sourceTweets = threads.flatMap((t) => t.tweets.map((tw) => tw.text ?? ""));
   const corpusTweets = corpusThreads.flatMap((t) => t.tweets.map((tw) => tw.text ?? ""));
 
-  // The second substitution feed: what a reviewer changed at 1차 검수, one pair per item. One `load()`
-  // per item rather than a whole-table read — `listEvents` (`LineageStore.listEvents`) deliberately
-  // drops `content` to keep a whole-table scan cheap, and the diff `humanEditPairs` runs needs the
-  // text. `stage === "translated"` only: a per-channel (`converted`) edit has no English source to
-  // anchor a term against and must not be mined.
-  const lineageItems = await stores.lineageStore.listItems();
+  // The second substitution feed: what a reviewer changed at 1차 검수, one pair per item
+  // (`humanEditPairs`, which owns deciding which entries count — including the `stage === "translated"`
+  // rule, since a per-channel `rendered` edit has no English source to anchor a term against).
+  //
+  // `listEvents` first, not a `load()` per item: it's the cheap projection that leaves `content` out
+  // (`LineageStore.listEvents`), and only an item with a human-authored `translated` entry can ever
+  // produce a pair — most items never see one. Filtering here means the full copy of every version of
+  // every OTHER item never crosses the wire; `humanEditPairs` still re-derives the exact same rule
+  // from the real entries once `load()` gets them, so this is a cheaper way to pick which items are
+  // worth asking, not a second copy of the rule.
+  const events = await stores.lineageStore.listEvents();
+  const itemsWithHumanEdit = new Set(
+    events.filter((e) => e.stage === "translated" && e.actor === "human").map((e) => e.itemId),
+  );
   const humanEdits: TextPair[] = (
     await Promise.all(
-      lineageItems.map(async (s) =>
-        humanEditPairs((await stores.lineageStore.load(s.itemId)).filter((e) => e.stage === "translated")),
-      ),
+      [...itemsWithHumanEdit].map(async (itemId) => humanEditPairs(await stores.lineageStore.load(itemId))),
     )
   ).flat();
 
@@ -145,6 +151,7 @@ try {
       now,
       sourceTweetCount: sourceTweets.length,
       translationCount: translations.filter((t) => t.publishedText).length,
+      reviewerEditCount: humanEdits.length,
     }),
   );
 

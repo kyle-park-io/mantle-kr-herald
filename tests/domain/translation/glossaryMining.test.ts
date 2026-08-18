@@ -755,4 +755,31 @@ describe("the reviewer-edit feed", () => {
     expect(sub?.sources).toEqual(["published", "review"]);
     expect(sub?.itemIds).toEqual(["x:1", "x:2"]);
   });
+
+  /**
+   * Every other reviewer-edit test above passes `corpusTweets: []`, which leaves `haveCorpus` false
+   * and `evidence` undefined — the `REJECT_MIN_OURS` branch (glossaryMining.ts) never runs for a
+   * review-feed pair in any of them, and neither does `decidedForms`/`dismissedKeys`. This is the one
+   * that actually exercises the rejection rule against the new feed, so a change that special-cases
+   * `source: "review"` in that branch would be caught here.
+   */
+  it("rejects a reviewer's edit the same way it rejects a published one, when the corpus argues against it", () => {
+    const corpusTweets = repeat("이 정도 규모의 자산은 흔치 않습니다.", REJECT_MIN_OURS);
+    const result = mineGlossaryCandidates({
+      sourceTweets: [],
+      translations: [],
+      humanEdits: [
+        { itemId: "x:9", before: "거래 전에 포지션 규모 제한을 확인하세요", after: "거래 전에 포지션 사이즈 제한을 확인하세요" },
+      ],
+      glossary: [entry("Mantle", "translate", "맨틀")],
+      dismissed: [],
+      corpusTweets,
+      corpusRuns: [],
+      now: "2026-08-18T00:00:00.000Z",
+    });
+    expect(result.candidates.find((c) => c.signal === "substitution")).toBeUndefined();
+    expect(result.rejected).toEqual([
+      expect.objectContaining({ key: "규모 → 사이즈", sources: ["review"] }),
+    ]);
+  });
 });
