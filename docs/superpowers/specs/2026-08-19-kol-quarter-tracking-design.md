@@ -53,7 +53,7 @@ do that before assuming a cell is free.
 | `Social` / `Social media platform` | — (constant `Telegram`) | machine |
 | `Posting date` | `postedAt` | machine |
 | `Deliverable Link` | `deliverableLink` | machine |
-| `Topic` | `topic` | **human**, blank-only backfill |
+| `Topic` | `topic` | **human**, never written (amended — see below) |
 | `Content Views` | `views` | machine |
 | `Engagements` | `engagements` | machine |
 | `Engagement Rate` | — | formula `=G12/F12` |
@@ -62,7 +62,8 @@ do that before assuming a cell is free.
 | `Organic` | — | **human**, never written |
 | `Duplicated?` | — | formula `=COUNTIF(D:D,D12)` |
 
-So the sweep's job is to fill seven value columns of the log, plus `Topic` on a blank-only basis. Every number the request asked for
+So the sweep's job is to fill **seven value columns** of the log — `Topic` included in an earlier
+draft, and amended out of scope below. Every number the request asked for
 falls out of formulas that already exist. **The summary block is never written.**
 
 ## Decisions
@@ -191,9 +192,19 @@ log region.
 ## Migration, done once
 
 1. Copy `kol-map`'s 13 rows into `KOL list`'s four new columns, matching on the handle in
-   `Social media link`; write the handle into that column where it is blank. Report every row that
-   cannot be placed — six have no `sheetLabel`, and some of those name KOLs absent from the monthly
-   tabs entirely.
+   `Social media link` **first** and, only for a row no handle placed, on a normalised name
+   (`normalizeKolName` over `sheetLabel` then `kolId`, against `KOL list`'s `KOL` column — the same
+   fold §4's contract join uses); write the handle into `Social media link` where it is blank.
+   Report every row that cannot be placed — six have no `sheetLabel`, and some of those name KOLs
+   absent from the monthly tabs entirely.
+
+   The name fallback is not optional dressing: `Social media link` is blank on **all 63 live rows**,
+   so a handle-only join places 0 of 13 and leaves `LoadKolMap` returning `[]` — an empty roster
+   that both `kol:quarter` and `kol-telegram:record` sweep silently. It is safe *here* and nowhere
+   else in this design because this step previews and a human reads every proposed placement before
+   `--yes` writes anything; the preview names the key each row matched on, so a wrong name match is
+   something a reader can catch. `"Marine"`/`"Marshall"` must stay unmatched — the fold is
+   case/whitespace only, never fuzzy.
 2. Fill the three formula columns and the `Posting date` number format down the log region of each
    monthly tab, to the row the summary's `SUMIF` already reaches (`1963`).
 3. Mark `kol-map` row 1 retired.
@@ -210,15 +221,77 @@ per tab.
   reported), and a KOL with no handle (not swept).
 - The projection: a post already in the log is updated in place by `Deliverable Link`, `Topic` and
   `Organic` survive a refresh, and no cell outside the seven value columns is written — the last one
-  asserted by capturing every range the writer sends (the seven, plus `Topic` only while blank).
+  asserted by capturing every range the writer sends (the seven, and never `Topic`).
+- The append point: a log whose formula columns have been filled down (so blank rows read back as
+  `#DIV/0!`, not `""`) still appends directly under the last row carrying a `Deliverable Link`; and
+  a log whose rows reach 1963 refuses to allocate another rather than overwriting 1963 or writing
+  1964.
+- A post a human marked `reject` in `kol-telegram-posts` reaches neither the log nor the contract
+  count.
+- The log's `Price per posting` comes from the recorded row's own `pricePerPost`, and only falls
+  back to the roster's rate when that row carries none.
 - Idempotence: two consecutive runs produce identical cells.
 
 ## Risk
 
 **The machine now writes into a workbook the team edits by hand**, which no part of this pipeline did
-before. The mitigation is that its write surface is a declared allowlist — seven value columns plus a blank-only `Topic` — addressed
+before. The mitigation is that its write surface is a declared allowlist — seven value columns — addressed
 **by header name**, and the writer refuses to run when an expected header is missing or has moved
 rather than writing to a guessed column index — the rule `RecordKolTelegramPosts` already follows.
 The failure this prevents is the one that would be least visible: a column inserted by a human
 shifting every subsequent write one cell to the right, silently, into cells holding someone's
 formulas.
+
+## Amendment — 2026-08-19, after the final whole-branch review
+
+Three things this document said that the shipped code deliberately does not do. The code's choice is
+the safer one in each case, so the spec is amended to it rather than the code being bent back.
+
+### `Topic` is never written, not "backfilled while blank"
+
+The mapping table above originally gave `Topic` to the machine on a blank-only basis, and the
+Testing section asked for a range assertion that allowed it. `logCells`
+(`src/domain/kol/monthlyLog.ts`) emits the seven value columns and nothing else, and a test pins
+that column E is never inside any range the projection sends.
+
+Why the narrower rule is right: **a human-owned column in a human tab is not the machine's to
+backfill.** The blank-only `topic` backfill that does exist belongs to `kol-telegram-posts` — a
+machine-owned tab, where a blank cell means "the machine has not filled this yet" and the human's
+own verdict lives in a different column (`confirmed`). In the monthly log there is no such
+separation: `Topic` is free text the team writes about their own deliverable, in a tab they edit
+while this command is running, and "blank" there means "nobody has written it yet", which is a
+statement about a person's work, not about a pipeline's progress. Keeping the write surface at
+exactly seven columns also keeps the §Risk mitigation a flat allowlist with no conditional member —
+the one property that makes writing into this workbook defensible at all.
+
+### The append point is found from `Deliverable Link`, and clamped to row 1963
+
+Migration step 2 (fill the three formula columns down to 1963) and an append point computed as "the
+last row where any cell is non-empty" cannot both be right: `getValues` sends no
+`valueRenderOption`, so a filled-down formula over blank inputs reads back as `#DIV/0!` rather than
+`""`, and every filled row looks used. The first run after the required migration would have
+appended at 1964 — counted by `Posts` (`=COUNTIF(A11:A, …)`, open-ended) and invisible to
+`Views`/`Engagement`/`Total Cost` (`SUMIF($A$12:$A$1963, …)`).
+
+So the writer finds the append point from the log's **own key column** — the same `Deliverable Link`
+the sheet's `Duplicated?` formula treats as the key — and **row 1963 is a hard ceiling**
+(`LOG_LAST_ROW`). When the log is genuinely full at 1963 the run refreshes the rows that already
+exist, writes no new row, reports every post it could not place, and **exits non-zero** so the
+weekly timer's `OnFailure=` fires. It never overwrites row 1963 and never writes 1964: a full log is
+a thing for a human to decide about (extend the summary formulas' range, or archive the tab), and
+both silent alternatives corrupt a number the team invoices from.
+
+### A rejected post is neither logged nor billed
+
+`confirmed = "reject"` was already a real policy in `RecordKolTelegramPosts` (it refuses to refresh
+a rejected row, and refuses it as a source of an inherited topic) but nothing downstream read it, so
+the projection wrote the rejected post into the monthly log with its price and the contract
+comparison credited it — and a human deleting the log row got it re-appended the next Tuesday, since
+the link then looked unknown. The sweep now filters on the same shared predicate (`isRejected`)
+before projecting and before counting, so `reject` is the human's undo.
+
+Relatedly, the log's `Price per posting` is taken from the recorded row's own `pricePerPost` and
+falls back to the roster's rate only when that row carries none — the mapping table above always
+said `Price per posting` ← `kol-telegram-posts.pricePerPost`, and re-deriving it from the live
+roster would have reverted a human's per-row correction weekly and retro-priced months already
+invoiced whenever a rate changed in `KOL list`.

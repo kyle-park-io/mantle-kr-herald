@@ -1,14 +1,27 @@
 # deploy/herald-kol-weekly.service
 #
 # systemd --user unit for one `pnpm kol:quarter` — the seventh scheduled unit in this project, and
-# the only one that measures people rather than the pipeline. It reads the live roster (`kol-map`,
-# read-only) and the current quarter's contract tab (` Q<n> KOL 계약 리스트`, read-only), then for
+# the only one that measures people rather than the pipeline. It reads the live roster (`KOL list`,
+# read-only — `kol-map` was retired into that tab on 2026-08-19 and nothing reads it any more) and
+# the current quarter's contract tab (` Q<n> KOL 계약 리스트`, read-only), then for
 # each of the quarter's three months pages every active KOL's public Telegram preview
 # (`https://t.me/s/<handle>`) until it covers that month, upserts what it finds into
 # `kol-telegram-posts`, projects the monthly log, and prints each KOL's actual post count against
 # their contract target (src/app/SweepKolQuarter.ts). No `--quarter` is passed below: the command
-# defaults to `currentQuarter(new Date())` (src/cli/kol-quarter.ts), so this file does not need a
-# quarterly edit — the same fire that swept 2026-Q3 in August sweeps 2026-Q4 in November unchanged.
+# defaults to `currentQuarter(new Date())` (src/cli/kol-quarter.ts), so this file needs no quarterly
+# edit of its own.
+#
+# THE QUARTER ROLLOVER IS AN OPERATOR STEP, and it is this unit's one scheduled maintenance. The
+# command's default rolls the quarter over on its own, but `GSHEET_ID` names ONE quarterly workbook
+# (`2026 Q3 KR Work Sheet`, which carries `Jul.`/`Aug.`/`Sep.` and ` Q3 KOL 계약 리스트` and nothing
+# else). So from Oct 1 the default becomes `2026-Q4`, `tabForMonth("2026-10")` asks for `Oct.` in the
+# Q3 workbook, `getValues` throws, and this unit fails every Tuesday — noisily, via the OnFailure=
+# hook below, which is the intended behaviour rather than a silent wrong-quarter sweep. Before the
+# first Tuesday of a new quarter, whoever owns this pipeline must point `GSHEET_ID` (in
+# `%h/.herald/prod.env`) at the new quarter's workbook, and that workbook needs the same shape: the
+# three monthly tabs with their log headers, the quarter's contract tab, and the per-row formula
+# fill-down the runbook's pre-enable checklist describes. Pinning `--quarter` here instead would
+# only trade a loud failure for a sweep that silently kept filling last quarter's tabs.
 #
 # WHY WEEKLY, not daily or on-demand. `SweepKolQuarter`'s own doc comment states the property this
 # schedule leans on: every run re-fetches each channel's *entire* month window from scratch, so a
@@ -52,10 +65,14 @@ Description=Mantle KR Herald weekly KOL contract sweep — `pnpm kol:quarter`
 # this unit ever sends anywhere. A shortfall, an unmatched contract name, or a truncated channel are
 # all printed and nothing more — they are findings, not failures, and correctly so (a real contract
 # has exceptions a human resolves, the same posture herald-translate-check.service's header argues
-# for its own two reports). So a non-zero exit here can mean only one thing: the run itself broke —
-# bad Google auth, an unreadable quarter string, an exception `registerErrorHandler` had to catch —
-# never that a KOL fell short. That also means this alert is the one and only thing standing between
-# a broken weekly sweep and a quarter's worth of silently stale `kol-telegram-posts` rows.
+# for its own two reports). So a non-zero exit here never means a KOL fell short. It means the run
+# itself did not do its job, in one of three ways: it broke (bad Google auth, an unreadable quarter
+# string, a `getValues` that threw — including the quarter-rollover throw described above), or it
+# swept NOTHING (`kol:quarter` exits 1 when the roster carries no usable row or no channel was
+# swept — otherwise a roster that was never migrated reports five zeroes a week, forever, and looks
+# exactly like a quarter in which no KOL posted), or a monthly tab's log region is full at row 1963
+# and posts could not be given a row. That also means this alert is the one and only thing standing
+# between a broken weekly sweep and a quarter's worth of silently stale `kol-telegram-posts` rows.
 OnFailure=herald-notify-failure@%n.service
 
 [Service]

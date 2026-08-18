@@ -1,11 +1,33 @@
 import type { SheetClient } from "../ports/SheetClient";
 import type { KolMapEntry, KolTelegramRow } from "../domain/kol/models";
-import { findLogLayout, logCells } from "../domain/kol/monthlyLog";
+import { findLogLayout, logCells, LOG_LAST_ROW } from "../domain/kol/monthlyLog";
 
 export interface ProjectionResult {
   month: string;
   written: number; // log rows created or refreshed
   unresolved: string[]; // kolIds with no sheetLabel — reported, never guessed
+  /** Deliverable links this run could not give a row to because the log region is full at
+   *  `LOG_LAST_ROW`. Reported, never written past the ceiling and never written over row
+   *  `LOG_LAST_ROW` itself — see `run`. A non-empty list fails the run at the CLI. */
+  overflow: string[];
+}
+
+/**
+ * The price a recorded `kol-telegram-posts` row already carries, or `undefined` when it carries
+ * none (or something unreadable — a blank cell and a junk cell both mean "this row has no price of
+ * its own", and the roster's is the only other number available).
+ *
+ * This exists so the log is priced from the row that was recorded at the time, not re-derived from
+ * the live roster every week: `RecordKolTelegramPosts` backfills `pricePerPost` blank-only and its
+ * refresh cannot reach column K, precisely so a human can correct one row's price. Re-deriving here
+ * would revert that correction weekly, and would retro-price July and August the moment a rate
+ * changes in `KOL list` in September — moving `Total Cost` for months already invoiced.
+ */
+function recordedPrice(raw: unknown): number | undefined {
+  const text = String(raw ?? "").trim();
+  if (text === "") return undefined;
+  const n = Number(text.replace(/,/g, ""));
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /** 0-based column index → A1 letter. Only ever called with indices `findLogLayout` returned. */
@@ -40,7 +62,10 @@ export class ProjectMonthlyLog {
     posts: KolTelegramRow[];
   }): Promise<ProjectionResult> {
     const tab = this.tabForMonth(input.month);
-    const rows = await this.sheet.getValues(`${tab}!A:Z`);
+    // Quoted, like every other range in this feature: the live tabs are named `Jul.`/`Aug.`/`Sep.`
+    // and an unquoted A1 range ending in `.` is not a range Sheets is obliged to read the way this
+    // code means it.
+    const rows = await this.sheet.getValues(`'${tab}'!A:Z`);
     const layout = findLogLayout(rows);
     const rosterByKolId = new Map(input.roster.map((r) => [r.kolId, r]));
 
@@ -54,16 +79,24 @@ export class ProjectMonthlyLog {
     // instead would silently swap which row is "the" row each time the tab grew, freezing the
     // other one's numbers forever while the summary's COUNTIF/SUMIF still counts both.
     const rowByLink = new Map<string, number>();
-    // The last used row, seeded at the header itself so an empty log (no data rows at all) still
-    // resolves to "the row right after the header". Trailing blank rows are real in the live
-    // tabs, so this walks the rows actually read rather than trusting `rows.length`.
+    // The append point is the row after the last row carrying a **Deliverable Link** — the log's own
+    // key column — seeded at the header itself so an empty log still resolves to "the row right
+    // after the header".
+    //
+    // Not "the last row where any A:Z cell is non-empty", which was the bug the final review found.
+    // `getValues` sends no `valueRenderOption`, so it receives FORMATTED_VALUE: a formula over blank
+    // inputs comes back as the string `#DIV/0!`, never as `""`. The fill-down the runbook REQUIRES
+    // before this unit is enabled (the three formula columns, from the last log row down to 1963)
+    // therefore makes every empty row look used, and the append point lands at 1964 — outside the
+    // `SUMIF($A$12:$A$1963, …)` every summary number but `Posts` is computed from. The team would
+    // see post counts climb with zero views and zero cost, and the run would still exit 0.
     let lastUsedRow = layout.headerRow;
     for (let i = layout.headerRow; i < rows.length; i++) {
       const row = rows[i]!;
       const rowNumber = i + 1;
-      if (row.some((cell) => (cell ?? "").trim() !== "")) lastUsedRow = rowNumber;
       const link = (row[layout.columns.link] ?? "").trim();
       if (link === "") continue;
+      lastUsedRow = rowNumber;
       const first = rowByLink.get(link);
       if (first !== undefined) {
         console.warn(
@@ -79,6 +112,7 @@ export class ProjectMonthlyLog {
     let nextFreeRow = lastUsedRow + 1;
 
     const unresolved: string[] = [];
+    const overflow: string[] = [];
     // Rows actually touched this run, not posts processed: `ProjectionResult.written` documents
     // "log rows created or refreshed", and two posts sharing a link (see below) resolve to one row.
     const writtenRows = new Set<number>();
@@ -101,6 +135,24 @@ export class ProjectMonthlyLog {
       const link = post.deliverableLink;
       let row = rowByLink.get(link);
       if (row === undefined) {
+        // The log region ends at `LOG_LAST_ROW`. A post that cannot be given a row inside it is
+        // reported and left unwritten: row 1963 already belongs to a real post, so overwriting it
+        // would destroy that row's numbers, and writing 1964 would bill nothing while `Posts` still
+        // counted it. Both are worse than a run that fails loudly with the tab intact.
+        if (nextFreeRow > LOG_LAST_ROW) {
+          if (overflow.length === 0) {
+            console.warn(
+              `[kol-quarter] '${tab}' log region is full: row ${LOG_LAST_ROW} is the last row the ` +
+                `summary's SUMIF($A$12:$A$${LOG_LAST_ROW}, …) reads, and every row up to it already ` +
+                `carries a Deliverable Link. No row was written past it and no existing row was ` +
+                `overwritten — posts with no room are listed below and stay unlogged until a human ` +
+                `extends the summary formulas' range (and the three per-row formula columns) past ` +
+                `row ${LOG_LAST_ROW}, or archives this tab.`,
+            );
+          }
+          overflow.push(link);
+          continue;
+        }
         row = nextFreeRow++;
         rowByLink.set(link, row);
         assignedThisRun.add(link);
@@ -122,9 +174,10 @@ export class ProjectMonthlyLog {
         link,
         views: post.views,
         engagements: post.engagements,
-        pricePerPost: entry.pricePerPost,
+        // The recorded row's own price first, the roster's only as a fallback — see `recordedPrice`.
+        pricePerPost: recordedPrice(post.pricePerPost) ?? entry.pricePerPost,
       })) {
-        updates.push({ range: `${tab}!${columnLetter(cell.column)}${row}`, rows: [[cell.value]] });
+        updates.push({ range: `'${tab}'!${columnLetter(cell.column)}${row}`, rows: [[cell.value]] });
       }
       writtenRows.add(row);
     }
@@ -145,6 +198,6 @@ export class ProjectMonthlyLog {
       await this.sheet.batchUpdateValues(updates as unknown as { range: string; rows: string[][] }[]);
     }
 
-    return { month: input.month, written, unresolved };
+    return { month: input.month, written, unresolved, overflow };
   }
 }

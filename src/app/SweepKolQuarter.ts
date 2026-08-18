@@ -1,7 +1,8 @@
 import type { SheetClient } from "../ports/SheetClient";
 import type { TelegramChannelGateway } from "../ports/TelegramChannelGateway";
 import type { KolMapEntry, KolTelegramRow } from "../domain/kol/models";
-import { KOL_TELEGRAM_HEADER } from "../domain/kol/models";
+import { KOL_TELEGRAM_HEADER, isRejected } from "../domain/kol/models";
+import { normalizeKolName } from "../domain/kol/names";
 import type { MatchCandidate } from "../domain/kol/attribution";
 import { parseContractDeliverables } from "../domain/kol/contractDeliverables";
 import type { DeliverableTarget } from "../domain/kol/contractDeliverables";
@@ -110,18 +111,6 @@ export function countPostsByKolName(posts: KolTelegramRow[], roster: KolMapEntry
 }
 
 /**
- * Loosely folds a KOL name so the contract tab's spelling can be matched against the roster's,
- * without pretending the two are the same string. On live data they disagree only by case and
- * incidental whitespace (`"Enjoy hobby"` vs `"Enjoyhobby"`), never by substance, so this is
- * deliberately narrow: it does not fuzzy-match, transliterate, or strip punctuation. A pair that
- * still disagrees after this is a genuinely different name, not a formatting accident, and is
- * reported as unmatched rather than guessed at.
- */
-function normalizeKolName(name: string): string {
-  return name.trim().toLowerCase().replace(/\s+/g, "");
-}
-
-/**
  * One month's actual counts against that month's contract targets. A `count` requirement the
  * actual falls short of is a shortfall; `unlimited` produces nothing; `unreadable` — a deliverable
  * cell the contract parser could not make sense of — goes to `unknownTargets` rather than being
@@ -191,10 +180,18 @@ export function compareAgainstContract(
 
 export interface QuarterReport {
   quarter: string;
+  /** How many usable roster rows `LoadKolMap` produced. `0` is the state this feature ships into
+   *  until the migration places `KOL list`'s rows, and it is indistinguishable from a genuinely
+   *  quiet quarter in every other counter — see `emptySweepFailure`. */
+  rosterSize: number;
   months: {
     month: string;
     written: number;
     unresolved: string[];
+    /** Deliverable links with no room left in the log region — see `ProjectionResult.overflow`. */
+    overflow: string[];
+    /** Posts a human marked `reject`, excluded from both the log and the contract count. */
+    rejected: number;
     /** The underlying Telegram sweep's own counters for this month — surfaced here rather than
      *  discarded, because a truncated or partly-failed sweep undercounts posts, which becomes a
      *  false shortfall in this very report while the run itself still exits 0. */
@@ -212,6 +209,38 @@ export interface QuarterReport {
    * `shortfalls` as an all-clear.
    */
   contractError: string | undefined;
+}
+
+/**
+ * The "did anything happen?" guard, in the shape `kol-telegram-record.ts:61` already uses for the
+ * same state — and the reason it returns a message rather than warning in place: `kol:quarter` runs
+ * unattended on a weekly timer whose `OnFailure=herald-notify-failure@%n.service` is the only
+ * signal it ever sends, so this has to end in a non-zero exit at the CLI, not just a line in a log
+ * nobody opens.
+ *
+ * Both states it catches are setup faults, never a quiet quarter: a roster of zero usable rows
+ * (`KOL list` carries no row that is both `active` and has a readable `Social media link`), or a
+ * roster that produced no swept channel at all. Either way the run prints a page of zeroes that
+ * reads exactly like "no KOL posted about Mantle this quarter".
+ */
+export function emptySweepFailure(report: QuarterReport): string | undefined {
+  const channelsSwept = report.months.reduce((n, m) => n + m.recorded.channelsSwept, 0);
+  if (report.rosterSize === 0) {
+    return (
+      "no usable roster row — 'KOL list' has no row that is both active and carries a readable " +
+      "Social media link, so this run swept nothing and wrote nothing. Run " +
+      "`pnpm kol-roster-migrate` (preview, then --yes) to place the roster, then check any handle " +
+      "warnings above; see docs/ko/kol-map-seed.md."
+    );
+  }
+  if (channelsSwept === 0) {
+    return (
+      `no channel was swept from a roster of ${report.rosterSize} row(s) — nothing was read and ` +
+      "nothing was written. Set active to true on the contracted channels in 'KOL list' and check " +
+      "any handle warnings above; see docs/ko/kol-map-seed.md."
+    );
+  }
+  return undefined;
 }
 
 /**
@@ -285,12 +314,26 @@ export class SweepKolQuarter {
 
       const window = monthWindow(month);
       const rawRows = await this.sheet.getValues(`${TELEGRAM_POSTS_TAB}!A2:Z`);
-      const posts = rawRows
+      const inWindow = rawRows
         .map(rowToKolTelegramRow)
         .filter((p) => p.postedAt >= window.startISO && p.postedAt < window.endExclusiveISO);
 
+      // A human's `reject` is honoured all the way to the money: a rejected post is neither
+      // projected into the log (where its `Price per posting` would be summed into `Total Cost`)
+      // nor counted toward the contract. Same definition the sibling sweep already refuses to
+      // refresh on — see `isRejected`.
+      const posts = inWindow.filter((p) => !isRejected(p.confirmed));
+      const rejected = inWindow.length - posts.length;
+
       const projection = await new ProjectMonthlyLog(this.sheet, this.resolveTab).run({ month, roster, posts });
-      months_.push({ month, written: projection.written, unresolved: projection.unresolved, recorded });
+      months_.push({
+        month,
+        written: projection.written,
+        unresolved: projection.unresolved,
+        overflow: projection.overflow,
+        rejected,
+        recorded,
+      });
 
       const counts = countPostsByKolName(posts, roster);
       const cmp = compareAgainstContract(month, counts, targets, roster);
@@ -299,6 +342,14 @@ export class SweepKolQuarter {
       unmatchedContractNames.push(...cmp.unmatchedContractNames);
     }
 
-    return { quarter: input.quarter, months: months_, shortfalls, unknownTargets, unmatchedContractNames, contractError };
+    return {
+      quarter: input.quarter,
+      rosterSize: roster.length,
+      months: months_,
+      shortfalls,
+      unknownTargets,
+      unmatchedContractNames,
+      contractError,
+    };
   }
 }

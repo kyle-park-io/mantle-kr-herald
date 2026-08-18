@@ -38,6 +38,23 @@ export interface KolTelegramRow {
 }
 
 /**
+ * A human's `reject` verdict on a `kol-telegram-posts` row: "this is not a deliverable".
+ *
+ * One definition, shared, because three places act on it and they must agree. `RecordKolTelegramPosts`
+ * refuses to refresh a rejected row and refuses it as a source of an inherited topic; `SweepKolQuarter`
+ * must additionally keep it out of the monthly log and out of the contract count, or the next weekly
+ * run writes the rejected post back with a price in `Price per posting` — `Total Cost` bills it, the
+ * contract comparison credits it, and a human deleting the log row by hand only gets it re-appended.
+ *
+ * Exact match on the documented cell value (`KolTelegramRow.confirmed`), which is what
+ * `RecordKolTelegramPosts` has always compared: a looser test here would start rejecting rows the
+ * sibling still refreshes.
+ */
+export function isRejected(confirmed: string): boolean {
+  return confirmed === "reject";
+}
+
+/**
  * Column order for the `kol-telegram-posts` tab (A-M). This is the single source of truth for
  * where each field lives; nothing else may hardcode a column letter derived from it. Later tasks
  * (the sheet writer, the upsert-by-deliverableLink matcher) index into rows by position, so

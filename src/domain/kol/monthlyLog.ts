@@ -29,6 +29,17 @@ const ACCEPTED: Record<LogColumn, string[]> = {
 
 const norm = (s: string) => s.trim().toLowerCase();
 
+/**
+ * The last row of the log region — the row the summary block's own
+ * `SUMIF($A$12:$A$1963, …)` reaches, read off the live workbook.
+ *
+ * A log row below it is invisible to `Views`, `Engagement` and `Total Cost`, while `Posts`
+ * (`=COUNTIF(A11:A, …)`, open-ended) still counts it: the team would watch post counts climb
+ * against zero views and zero cost. So this is a hard ceiling on where a new row may be allocated,
+ * not a hint — and a full log is reported rather than written past or written over.
+ */
+export const LOG_LAST_ROW = 1963;
+
 /** The header row is the first row that carries every column above. */
 export function findLogLayout(rows: string[][]): LogLayout {
   for (const [i, row] of rows.entries()) {

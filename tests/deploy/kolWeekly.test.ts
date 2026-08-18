@@ -30,4 +30,26 @@ describe("herald-kol-weekly", () => {
   it("never sends or publishes", () => {
     for (const word of ["send:", "drive:publish", "format "]) expect(service).not.toContain(word);
   });
+  /**
+   * The header is the only place an operator reads before installing this unit, so a false claim in
+   * it is an operational fault, not a typo. This one said the roster comes from `kol-map` — retired
+   * since the 2026-08-19 roster move, and `LoadKolMap` has read `'KOL list'` ever since.
+   */
+  it("names 'KOL list' as the roster it reads, not the retired kol-map", () => {
+    const header = service.split("[Unit]")[0]!;
+    expect(header).toMatch(/roster \(`KOL list`/);
+    expect(header).not.toMatch(/roster \(`kol-map`/);
+  });
+
+  /**
+   * The other false claim: "the same fire that swept 2026-Q3 in August sweeps 2026-Q4 in November
+   * unchanged". `GSHEET_ID` names ONE quarterly workbook, so from Oct 1 the command's own
+   * `currentQuarter` default asks for `Oct.` in the Q3 workbook, `getValues` throws, and the run
+   * dies every Tuesday until someone repoints it. That is an operator step, and it belongs in the
+   * header rather than in the surprise.
+   */
+  it("states the quarter rollover as an operator step instead of claiming the unit never needs an edit", () => {
+    expect(service).toContain("GSHEET_ID");
+    expect(service).not.toContain("sweeps 2026-Q4 in November unchanged");
+  });
 });

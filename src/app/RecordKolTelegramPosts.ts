@@ -1,7 +1,7 @@
 import type { SheetClient } from "../ports/SheetClient";
 import type { TelegramChannelGateway } from "../ports/TelegramChannelGateway";
 import type { ChannelPost, KolMapEntry } from "../domain/kol/models";
-import { KOL_TELEGRAM_HEADER } from "../domain/kol/models";
+import { KOL_TELEGRAM_HEADER, isRejected } from "../domain/kol/models";
 import { isMantleCandidate } from "../domain/kol/candidacy";
 import { sumReactions, formatReactions } from "../domain/kol/reactions";
 import { bestMatch } from "../domain/kol/attribution";
@@ -234,7 +234,7 @@ export class RecordKolTelegramPosts {
     const idx = linkIndex.get(link);
     if (idx !== undefined) {
       const existing = rows[idx];
-      if (existing[IDX.confirmed] === "reject") return "reject";
+      if (isRejected(existing[IDX.confirmed])) return "reject";
 
       const updated = [...existing];
       updated[IDX.views] = String(post.views);
@@ -373,7 +373,7 @@ export class RecordKolTelegramPosts {
   private applyInheritedTopic(row: string[], rows: string[][]): void {
     if (row[IDX.itemId] === "" || row[IDX.topic] !== "") return;
     for (const r of rows) {
-      if (r[IDX.confirmed] === "reject") continue;
+      if (isRejected(r[IDX.confirmed])) continue;
       if (r[IDX.itemId] === row[IDX.itemId] && r[IDX.topic] !== "") {
         row[IDX.topic] = r[IDX.topic];
         return;

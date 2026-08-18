@@ -4,8 +4,10 @@ import {
   tabForMonth,
   countPostsByKolName,
   compareAgainstContract,
+  emptySweepFailure,
   SweepKolQuarter,
 } from "../../src/app/SweepKolQuarter";
+import type { QuarterReport } from "../../src/app/SweepKolQuarter";
 import type { KolMapEntry, KolTelegramRow } from "../../src/domain/kol/models";
 import type { DeliverableTarget } from "../../src/domain/kol/contractDeliverables";
 import type { SheetClient } from "../../src/ports/SheetClient";
@@ -166,7 +168,10 @@ describe("compareAgainstContract", () => {
  * `parseContractDeliverables`, `RecordKolTelegramPosts`, and `ProjectMonthlyLog` all run for real
  * against these rows, exactly as they would against a live workbook. Only the transport is fake.
  */
-function fixtureSheet(tabs: Record<string, string[][]>): SheetClient {
+function fixtureSheet(
+  tabs: Record<string, string[][]>,
+  written?: { range: string; rows: string[][] }[],
+): SheetClient {
   const store = new Map(Object.entries(tabs).map(([tab, rows]) => [tab, rows.map((r) => [...r])]));
   const tabOf = (range: string): string => {
     const name = range.slice(0, range.indexOf("!"));
@@ -184,7 +189,9 @@ function fixtureSheet(tabs: Record<string, string[][]>): SheetClient {
       store.set(tab, [...(store.get(tab) ?? []), ...rows.map((r) => [...r])]);
     },
     updateValues: async () => {}, // only exercised for the kol-telegram-posts header, already present here
-    batchUpdateValues: async () => {}, // ProjectMonthlyLog's cell writes — not this test's concern
+    batchUpdateValues: async (updates) => {
+      written?.push(...updates.map((u) => ({ range: u.range, rows: u.rows.map((r) => [...r]) })));
+    },
     createSpreadsheet: async () => ({ spreadsheetId: "x" }),
     ensureTab: async () => {},
   };
@@ -319,5 +326,101 @@ describe("SweepKolQuarter (fixture integration — mocks no collaborator, only t
     expect(report.shortfalls).toEqual([]);
     expect(report.unknownTargets).toEqual([]);
     expect(report.unmatchedContractNames).toEqual([]);
+  });
+
+  /**
+   * A `reject` is the human's verdict, and it has to reach the money. `RecordKolTelegramPosts`
+   * already refuses to refresh a rejected row (`:237`) and refuses it as a topic source (`:376`);
+   * without the same rule here the next Tuesday run writes the rejected post into the monthly log
+   * with `pricePerPost` in column I, so `Total Cost` bills it and `compareAgainstContract` credits
+   * it — and deleting the log row by hand does not help, because the link then looks unknown and
+   * the row is re-appended on the next run.
+   */
+  it("never projects or credits a post a human marked reject", async () => {
+    const tabs = quarterFixtureTabs();
+    const posts = tabs["kol-telegram-posts"]!;
+    posts[2]![12] = "reject"; // Marine's second July post — the `confirmed` column
+    const written: { range: string; rows: string[][] }[] = [];
+    const sheet = fixtureSheet(tabs, written);
+
+    const report = await new SweepKolQuarter(sheet, quietGateway).run({ quarter: "2026-Q3", renderings: [] });
+
+    // Not written into `Jul.` at all — not its link, and not its price.
+    const values = written.flatMap((w) => w.rows.flat().map(String));
+    expect(values).not.toContain("https://t.me/marshallog/2");
+    expect(values).toContain("https://t.me/marshallog/1"); // the accepted post still lands
+
+    // And not counted toward July's contract: Marine delivered 1 of the 2 required, not 2.
+    expect(report.shortfalls).toContainEqual({ month: "2026-07", kolName: "Marine", actual: 1, required: 2 });
+    expect(report.months.find((m) => m.month === "2026-07")!.rejected).toBe(1);
+  });
+
+  /**
+   * The roster is empty on merge day (the migration places 0 of 13 rows until it can match on a
+   * name), and a sweep of nothing prints a page of zeroes and exits 0 — the weekly timer would
+   * report success forever while doing nothing at all.
+   */
+  it("reports the roster size, so a sweep of nothing is distinguishable from a quiet quarter", async () => {
+    const tabs = quarterFixtureTabs();
+    tabs["KOL list"] = [KOL_LIST_HEADER_ROW]; // header only: every row was left unplaced
+    const report = await new SweepKolQuarter(fixtureSheet(tabs), quietGateway).run({
+      quarter: "2026-Q3",
+      renderings: [],
+    });
+
+    expect(report.rosterSize).toBe(0);
+    expect(report.months.every((m) => m.recorded.channelsSwept === 0)).toBe(true);
+    expect(emptySweepFailure(report)).toMatch(/KOL list/);
+  });
+
+  it("reports a real roster's size", async () => {
+    const report = await new SweepKolQuarter(fixtureSheet(quarterFixtureTabs()), quietGateway).run({
+      quarter: "2026-Q3",
+      renderings: [],
+    });
+    expect(report.rosterSize).toBe(3);
+    expect(emptySweepFailure(report)).toBeUndefined();
+  });
+});
+
+/**
+ * The sibling command already guards `channelsSwept === 0` (`kol-telegram-record.ts:61`), because
+ * five zeroes look exactly like a clean month with no KOL coverage. `kol:quarter` runs unattended
+ * on a weekly timer, so the same state must additionally exit non-zero — that exit is the only
+ * thing `OnFailure=herald-notify-failure@%n.service` ever fires on.
+ */
+describe("emptySweepFailure", () => {
+  const report = (over: Partial<QuarterReport> = {}): QuarterReport => ({
+    quarter: "2026-Q3",
+    rosterSize: 1,
+    months: [
+      {
+        month: "2026-07",
+        written: 0,
+        unresolved: [],
+        overflow: [],
+        rejected: 0,
+        recorded: { created: 0, refreshed: 0, channelsSwept: 1, channelsFailed: 0, channelsTruncated: 0 },
+      },
+    ],
+    shortfalls: [],
+    unknownTargets: [],
+    unmatchedContractNames: [],
+    contractError: undefined,
+    ...over,
+  });
+
+  it("fails a run whose roster carried no usable row", () => {
+    expect(emptySweepFailure(report({ rosterSize: 0 }))).toMatch(/KOL list/);
+  });
+
+  it("fails a run that swept no channel even though the roster is not empty", () => {
+    const r = report();
+    r.months[0]!.recorded.channelsSwept = 0;
+    expect(emptySweepFailure(r)).toBeTruthy();
+  });
+
+  it("passes a run that actually swept a channel", () => {
+    expect(emptySweepFailure(report())).toBeUndefined();
   });
 });
