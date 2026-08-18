@@ -23,17 +23,21 @@ function tweet(id: string, viewCount?: number): SourceTweet {
 /** A history data row: [itemId, type, channel, postId, url, status, publishedAt, impressions, impressionsAt]. */
 function sheetHarness(existing: string[][]) {
   const updated: { range: string; rows: string[][] }[] = [];
+  const batches: { range: string; rows: string[][] }[][] = [];
   const sheet: SheetClient = {
     getValues: async () => existing,
     appendValues: async () => {},
     updateValues: async (range, rows) => {
       updated.push({ range, rows });
     },
-    batchUpdateValues: async () => {},
+    batchUpdateValues: async (updates) => {
+      batches.push(updates);
+      for (const u of updates) updated.push(u);
+    },
     createSpreadsheet: async () => ({ spreadsheetId: "x" }),
     ensureTab: async () => {},
   };
-  return { sheet, updated };
+  return { sheet, updated, batches };
 }
 
 function source(tweets: SourceTweet[]) {
@@ -51,6 +55,39 @@ function source(tweets: SourceTweet[]) {
 }
 
 describe("RecordImpressions", () => {
+  /**
+   * The Sheets API allows 60 write requests per minute per user. One `updateValues` per row does not
+   * fit inside that: measured against production on 2026-08-19, a 74-row sweep took an HTTP 429 on
+   * the last row after three attempts and reported it as a failure. `batchUpdateValues` exists for
+   * exactly this — see its doc comment on `SheetClient` — and it keeps the write as narrow as the
+   * per-row call was, touching only H and I.
+   */
+  it("writes every row in one request, not one request per row", async () => {
+    const rows = Array.from({ length: 74 }, (_, i) => [
+      `x:${i}`, "x", "x", `tw${i}`, "u", "posted", "2026-08-10T00:00:00.000Z", "", "",
+    ]);
+    const h = sheetHarness(rows);
+    const s = source(rows.map((_, i) => tweet(`tw${i}`, 100 + i)));
+
+    const res = await new RecordImpressions(h.sheet, s.gw, NOW).run();
+
+    expect(res.updated).toBe(74);
+    expect(h.batches).toHaveLength(1);
+    expect(h.batches[0]).toHaveLength(74);
+    // Still only H and I — the batch must not widen what a row write touches.
+    for (const u of h.batches[0]) expect(u.range).toMatch(/^history!H\d+:I\d+$/);
+  });
+
+  it("writes nothing at all when no eligible row has a view count", async () => {
+    const h = sheetHarness([["x:1", "x", "x", "tw1", "u", "posted", "2026-07-20T00:00:00.000Z", "", ""]]);
+    const s = source([]); // the tweet came back deleted — nothing to record
+
+    const res = await new RecordImpressions(h.sheet, s.gw, NOW).run();
+
+    expect(res.skipped).toBe(1);
+    expect(h.batches).toEqual([]);
+  });
+
   it("writes viewCount + timestamp to H/I of the matching X row, and nowhere else", async () => {
     const h = sheetHarness([["x:1", "x", "x", "tw1", "u", "posted", "2026-07-20T00:00:00.000Z", "", ""]]);
     const s = source([tweet("tw1", 1234)]);
@@ -136,20 +173,25 @@ describe("RecordImpressions", () => {
     expect(res).toEqual({ updated: 0, skipped: 1, failed: 0, failures: [] });
   });
 
-  it("isolates a per-row update failure and still writes the others", async () => {
+  /**
+   * Deliberately replaces an earlier test that pinned per-row failure isolation — one row throwing
+   * while the others still wrote. That property was traded away on 2026-08-19 for the batched write,
+   * and the trade is one-directional: the isolation guarded a failure mode the Sheets API does not
+   * really have (one range refused while its neighbours succeed), while the 429 it cost us was
+   * measured in production on a 74-row sweep. One request means one outcome, so every post the
+   * batch carried is reported — an operator asking "which posts have no impressions" gets the same
+   * answer shape as before.
+   */
+  it("reports every post in the batch when the single write fails", async () => {
     const existing = [
       ["x:1", "x", "x", "twA", "u", "posted", "2026-07-20T00:00:00.000Z", "", ""],
       ["x:2", "x", "x", "twB", "u", "posted", "2026-07-20T00:00:00.000Z", "", ""],
     ];
-    const updated: { range: string; rows: string[][] }[] = [];
     const sheet: SheetClient = {
       getValues: async () => existing,
       appendValues: async () => {},
-      updateValues: async (range, rows) => {
-        if (range === "history!H2:I2") throw new Error("boom");
-        updated.push({ range, rows });
-      },
-      batchUpdateValues: async () => {},
+      updateValues: async () => { throw new Error("must not be called — the write is batched"); },
+      batchUpdateValues: async () => { throw new Error("HTTP 429 (after 3 attempts)"); },
       createSpreadsheet: async () => ({ spreadsheetId: "x" }),
       ensureTab: async () => {},
     };
@@ -157,9 +199,9 @@ describe("RecordImpressions", () => {
 
     const res = await new RecordImpressions(sheet, s.gw, NOW).run();
 
-    expect(updated).toEqual([{ range: "history!H3:I3", rows: [["2", STAMP]] }]);
-    expect(res.updated).toBe(1);
-    expect(res.failed).toBe(1);
-    expect(res.failures).toEqual([{ postId: "twA", error: "boom" }]);
+    expect(res.updated).toBe(0);
+    expect(res.failed).toBe(2);
+    expect(res.failures.map((f) => f.postId)).toEqual(["twA", "twB"]);
+    expect(res.failures[0].error).toContain("429");
   });
 });
