@@ -26,18 +26,21 @@ function walk(dir: string): string[] {
 }
 
 /**
- * `BASE`의 지오메트리는 arbitrary 값 셋(3.5/1.5 패딩 + 13px 글자)이 한 버튼에 같이 나타난다는
+ * `BASE`의 지오메트리는 arbitrary 값 셋(3.5/1.5 패딩 + 13px 글자)이 한 태그에 같이 나타난다는
  * 사실로 알아본다 — `rounded-lg`·`font-medium`·`transition-colors` 낱개는 이 코드베이스 다른
  * 곳에도 흔해서 지문이 못 된다. 이 셋이 같이 나타나면 `buttonStyles.ts`를 베낀 것이다: import하지
- * 않고 값을 손으로 다시 쳤다는 뜻.
+ * 않고 값을 손으로 다시 쳤다는 뜻. `<button>`만이 아니라 `<span>` 같은 읽기 전용 배지도 이렇게
+ * 베낄 수 있다 — `게시됨 ✓`/`예약됨`/`발송됨`이 그랬다: 버튼 이웃과 지오메트리를 손으로 맞췄다가
+ * `pointer-coarse:min-h-11`이 `BASE`에 추가됐을 때 같이 못 자라서 터치에서만 어긋났다. 그래서
+ * 아래는 태그 이름을 가리지 않고 모든 여는 태그를 훑는다.
  */
 const GEOMETRY_FINGERPRINT = ["px-3.5", "py-1.5", "text-[13px]"];
 
 /**
- * 파일 통째가 아니라 클래스 문자열 자체로 예외를 건다 — 그래야 이 파일에 새 손 카피 버튼이 생겨도
- * 가려지지 않는다. 줄바꿈·들여쓰기 차이는 무시하도록 비교 전에 공백을 한 칸으로 접는다(아래
- * `normalize`); 그래서 이 문자열이 조금이라도 "내용이" 바뀌면(포맷팅 말고) 다시 걸린다 — 리뷰 없이
- * 조용히 계속 봐주는 일은 없다.
+ * 파일 통째가 아니라 클래스 문자열 자체로 예외를 건다 — 그래야 이 파일에 새 손 카피 태그(버튼이든
+ * 배지 `<span>`이든)가 생겨도 가려지지 않는다. 줄바꿈·들여쓰기 차이는 무시하도록 비교 전에 공백을
+ * 한 칸으로 접는다(아래 `normalize`); 그래서 이 문자열이 조금이라도 "내용이" 바뀌면(포맷팅 말고)
+ * 다시 걸린다 — 리뷰 없이 조용히 계속 봐주는 일은 없다.
  *
  * `ConfirmDialog.tsx`의 `확인` 하나만 여기 있다. `취소`는 `btn`과 색이 정확히 같아 이제 그 export를
  * import해서 쓴다(더는 손 카피가 아니라 이 목록에 없다). `확인`은 danger 여부로 색이 갈리는데 mint
@@ -68,12 +71,14 @@ function findNextTagOpen(source: string, from: number): number {
   return m ? from + m.index : -1;
 }
 
-/** `<button` 태그 하나에 딸린 className 리터럴(따옴표 문자열이든, 템플릿 리터럴이든, 그 템플릿이
- *  `{}`로 한 번 더 감싸여 있든)을 뽑는다. `className={someExport}`처럼 식별자 하나뿐이면 훑을 리터럴이
- *  없다는 뜻이므로 건너뛴다 — 그런 경우는 이미 공유 export를 쓰고 있다는 신호다. */
-function extractButtonClassNames(source: string): string[] {
+/** 여는 태그 하나(`<button`·`<span`·`<Foo`, 뭐든)에 딸린 className 리터럴(따옴표 문자열이든, 템플릿
+ *  리터럴이든, 그 템플릿이 `{}`로 한 번 더 감싸여 있든)을 뽑는다. `className={someExport}`처럼
+ *  식별자 하나뿐이면 훑을 리터럴이 없다는 뜻이므로 건너뛴다 — 그런 경우는 이미 공유 export를 쓰고
+ *  있다는 신호다(`` `${badge} …` ``처럼 export가 템플릿 안에 섞여도 마찬가지: 그 자리엔 `px-3.5`
+ *  같은 토큰이 리터럴로 나타나지 않으므로 지문에 안 걸린다). */
+function extractClassNames(source: string): string[] {
   const found: string[] = [];
-  for (const m of source.matchAll(/<button\b/g)) {
+  for (const m of source.matchAll(/<[a-zA-Z][\w.]*/g)) {
     const start = m.index;
     const nextTag = findNextTagOpen(source, start + 1);
     const clsIdx = source.indexOf("className=", start);
@@ -98,12 +103,12 @@ function extractButtonClassNames(source: string): string[] {
   return found;
 }
 
-it("BASE의 지오메트리를 손으로 다시 베낀 <button>이 없다", () => {
+it("BASE의 지오메트리를 손으로 다시 베낀 태그가 없다", () => {
   const offenders: string[] = [];
   for (const path of walk(SRC).filter((p) => (p.endsWith(".tsx") || p.endsWith(".ts")) && !p.endsWith("buttonStyles.ts"))) {
     const shortPath = path.replace(SRC, "web/src");
     const source = readFileSync(path, "utf8");
-    for (const cls of extractButtonClassNames(source)) {
+    for (const cls of extractClassNames(source)) {
       if (!GEOMETRY_FINGERPRINT.every((token) => cls.includes(token))) continue;
       const exempted = EXEMPT.some((e) => path.endsWith(e.file) && normalize(cls) === normalize(e.className));
       if (exempted) continue;
@@ -112,10 +117,12 @@ it("BASE의 지오메트리를 손으로 다시 베낀 <button>이 없다", () =
   }
   expect(
     offenders,
-    "이 <button>들이 buttonStyles.ts의 BASE 지오메트리(px-3.5/py-1.5/text-[13px])를 손으로 다시 " +
-      "베꼈다 — 고칠 방법: 색이 `btn`/`btnPrimary`/`btnDanger`/`btnApprove`/`btnApproved` 중 하나와 " +
-      "맞으면 그 export를 import해서 쓰고, 정말 새로운 배색이면 buttonStyles.ts에 export를 새로 " +
-      "추가하라. 한 파일에 한 번뿐인 진짜 일회성이면(여러 파일이 따로 썩는 위험이 없으면) EXEMPT에 " +
-      "정확한 클래스 문자열과 이유를 함께 올려라 — 파일 전체가 아니라 그 버튼 하나만 빠지도록.",
+    "이 태그들이 buttonStyles.ts의 BASE 지오메트리(px-3.5/py-1.5/text-[13px])를 손으로 다시 " +
+      "베꼈다 — `<button>`뿐 아니라 `게시됨 ✓` 같은 읽기 전용 `<span>` 배지도 걸린다. 고칠 방법: " +
+      "색이 `btn`/`btnPrimary`/`btnDanger`/`btnApprove`/`btnApproved` 중 하나와 맞는 버튼이면 그 " +
+      "export를 import해서 쓰고, 버튼 옆에 나란히 서는 읽기 전용 배지면 `badge`를 import해서 그 위에 " +
+      "배경·글자색·레이아웃만 얹어라. 정말 새로운 배색이면 buttonStyles.ts에 export를 새로 추가하라. " +
+      "한 파일에 한 번뿐인 진짜 일회성이면(여러 파일이 따로 썩는 위험이 없으면) EXEMPT에 정확한 " +
+      "클래스 문자열과 이유를 함께 올려라 — 파일 전체가 아니라 그 태그 하나만 빠지도록.",
   ).toEqual([]);
 });

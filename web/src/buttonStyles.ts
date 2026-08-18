@@ -17,6 +17,19 @@ const BASE = "rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors
  */
 const APPROVE_WIDTH = "min-w-[5.5rem] justify-center";
 
+/**
+ * Geometry-only match for `BASE`, for read-only status spans that sit beside these buttons in the
+ * same row — `게시됨 ✓`, `예약됨`, `발송됨` — and must stand exactly as tall as their neighbours.
+ * It is `BASE` unaltered, not a fresh hand-copy of it: a hand-copy is exactly how this drifted
+ * before this existed — a badge kept `rounded-lg px-3.5 py-1.5 text-[13px] font-medium` but was
+ * typed before `pointer-coarse:min-h-11` existed, so on a fine pointer the two matched by
+ * accident and on touch the badge stayed 31.5px while the buttons around it grew to 44px.
+ * Importing this instead of retyping the classes means the next change to `BASE` reaches the
+ * badges too. Callers add their own background/text color and layout (min-width, gap, alignment)
+ * on top.
+ */
+export const badge = BASE;
+
 export const btn = `${BASE} inline-flex items-center border border-line-strong bg-surface text-ink hover:bg-bg disabled:cursor-default disabled:opacity-40`;
 
 export const btnPrimary = `${BASE} inline-flex items-center bg-mint text-white hover:bg-mint-hover disabled:opacity-40`;
