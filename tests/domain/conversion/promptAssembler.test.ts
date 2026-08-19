@@ -63,6 +63,19 @@ describe("assembleTypeSection", () => {
     expect(out).toContain("### x:1");
     expect(out).toContain("### x:2");
   });
+
+  // A conversion section never includes `translation/style-guide.md` — see `assembleTypeSection`,
+  // which assembles the per-type guide, the glossary and the locale and nothing else. So
+  // `locale.json` is the only steering file a cross-channel notation rule can be written in once
+  // and still reach all seven conversion types as well as the translation prompt.
+  it("carries the locale's punctuation rule into every type's section", () => {
+    const out = assembleTypeSection({
+      type: "announcement", guideText: "공지 역할·스타일", glossary,
+      locale: { ...locale, punctuation: "줄표(—)는 쓰지 않습니다." }, fewShots,
+      items: [{ itemId: "x:1", sourceKorean: "원문 카피" }],
+    });
+    expect(out).toContain("줄표(—)는 쓰지 않습니다.");
+  });
 });
 
 describe("assembleConversionWorksheet", () => {

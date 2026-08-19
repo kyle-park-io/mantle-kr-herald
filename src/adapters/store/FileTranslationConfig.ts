@@ -10,6 +10,7 @@ const DEFAULT_LOCALE: Locale = {
   currency: "USD",
   unit: "미터법",
   honorific: "합니다체",
+  punctuation: "줄표(—, –, ―)는 쓰지 않고 콜론(:)·쉼표·괄호로 씁니다.",
 };
 
 export class FileTranslationConfig implements TranslationConfig {
