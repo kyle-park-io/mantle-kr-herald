@@ -42,6 +42,13 @@ export interface Locale {
   currency: string;
   unit: string;
   honorific: string;
+  /**
+   * Punctuation the Korean copy may and may not use. Optional because `readJsonFile` replaces
+   * `DEFAULT_LOCALE` wholesale instead of merging into it (see `shared/store/jsonFile.ts`), so
+   * every `locale.json` and stored locale written before this field existed parses without it —
+   * `renderLocale` drops the line rather than printing `undefined` as a rule.
+   */
+  punctuation?: string;
 }
 
 export interface FewShotExample {

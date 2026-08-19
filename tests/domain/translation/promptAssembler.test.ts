@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assembleSharedContext, assembleItemBlock } from "../../../src/domain/translation/promptAssembler";
+import { assembleSharedContext, assembleItemBlock, renderLocale } from "../../../src/domain/translation/promptAssembler";
 import type { SharedContext } from "../../../src/domain/translation/models";
 import type { ContentItem } from "../../../src/domain/translation/contentItem";
 
@@ -13,6 +13,23 @@ const ctx: SharedContext = {
   locale: { dateFormat: "YYYY년 M월 D일", numberFormat: "commas", currency: "USD", unit: "metric", honorific: "합니다체" },
   fewShots: [{ source: "Mantle mainnet", target: "맨틀 메인넷" }],
 };
+
+describe("renderLocale", () => {
+  it("renders the punctuation rule as its own labelled line", () => {
+    expect(renderLocale({ ...ctx.locale, punctuation: "줄표(—)는 쓰지 않습니다." }))
+      .toContain("- 문장부호: 줄표(—)는 쓰지 않습니다.");
+  });
+
+  // `readJsonFile` replaces DEFAULT_LOCALE wholesale rather than merging into it, so a
+  // `locale.json` written before this field existed — and every stored locale in the database —
+  // parses to `punctuation: undefined`. The line has to disappear, not print the word "undefined"
+  // into the prompt as a notation rule the agent would try to follow.
+  it("omits the punctuation line when the locale carries no rule", () => {
+    const out = renderLocale(ctx.locale);
+    expect(out).not.toContain("문장부호");
+    expect(out).not.toContain("undefined");
+  });
+});
 
 describe("assembleSharedContext", () => {
   it("includes role, each glossary term (with rule/target), style guide, locale, and few-shots — once", () => {

@@ -7,14 +7,21 @@ export function renderGlossaryEntry(e: GlossaryEntry): string {
   return `- ${e.term} → ${e.rule}${target}${note}`;
 }
 
+/**
+ * Shared by the translation prompt and — via `conversion/promptAssembler.ts` — every conversion
+ * type's section. A conversion section carries no style guide, so `locale.json` is the one steering
+ * file where a notation rule can be written once and reach both sides.
+ */
 export function renderLocale(l: Locale): string {
-  return [
+  const lines = [
     `- 날짜: ${l.dateFormat}`,
     `- 숫자: ${l.numberFormat}`,
     `- 통화: ${l.currency}`,
     `- 단위: ${l.unit}`,
     `- 존대: ${l.honorific}`,
-  ].join("\n");
+  ];
+  if (l.punctuation) lines.push(`- 문장부호: ${l.punctuation}`);
+  return lines.join("\n");
 }
 
 /** Element ①②③④⑤ assembled once per batch (never repeated per item). */
