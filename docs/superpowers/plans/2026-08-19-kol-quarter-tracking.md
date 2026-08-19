@@ -1091,14 +1091,24 @@ This is the spec's migration step 2, and it is a **human** step — the machine 
 stop at row 17 today, so row 18 onward would show blank `Engagement Rate` and `Cost per impression`.
 
 In each of `Jul.`, `Aug.`, `Sep.`, select the last log row that already has them and fill down to
-row **1963** — the row the summary's `SUMIF($A$12:$A$1963, …)` already reaches, so nothing beyond it
-would be counted anyway. The three formulas, as they read on `Jul.` row 12:
+the **last row of the grid**. Not to row 1963: the summary's `SUMIF($A$12:$A$1963, …)` names that
+row, but on this workbook `Jul.` has 999 rows and `Aug.`/`Sep.` have 1000, so 1963 is past the end
+of the sheet. Sheets tolerates the over-long reference by treating the missing rows as blank, and
+`values.batchUpdate` refuses a write past the grid — so the real ceiling is the row count, and
+`LOG_LAST_ROW = 1963` is a guard that the API's own limit reaches first. Add rows before relying on
+it. The three formulas, as they read on `Jul.` row 12:
 
 | column | formula |
 | --- | --- |
-| `Engagement Rate` (H) | `=G12/F12` |
-| `Cost per impression` (J) | `=I12/F12` |
+| `Engagement Rate` (H) | `=IFERROR(G12/F12,"")` |
+| `Cost per impression` (J) | `=IFERROR(I12/F12,"")` |
 | `Duplicated?` (L) | `=COUNTIF(D:D,D12)` |
+
+`IFERROR` is not cosmetic here. Filled over blank rows, the bare `=G12/F12` returns `#DIV/0!`, and
+`getValues` reads FORMATTED_VALUE — so every empty row reads as occupied. That is exactly the append
+-point bug described above; the wrap removes the trap at the source rather than relying on the
+reader to dodge it. Applied to the live Q3 workbook on 2026-08-19 (5,932 cells; summary values
+verified byte-identical before and after).
 
 Fill the `Posting date` column's **number format** down the same range in the same action, or a
 written serial renders as `46206` instead of `07/03/26`.
