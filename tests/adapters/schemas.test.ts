@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeTweet, parseArticleContents, parseTweetList } from "../../src/adapters/twitterapi/schemas";
+import { normalizeTweet, parseArticle, parseTweetList } from "../../src/adapters/twitterapi/schemas";
 
 const rawTweet = {
   id: "2071473308198158423",
@@ -303,9 +303,12 @@ describe("normalizeTweet — quoted-tweet link", () => {
   });
 });
 
-describe("parseArticleContents", () => {
+describe("parseArticle", () => {
+  /** The blocks alone, for the tests below that are only about block handling. */
+  const blocksOf = (data: unknown) => parseArticle(data)?.blocks ?? [];
+
   it("extracts the content blocks from a GET /twitter/article response", () => {
-    const blocks = parseArticleContents({
+    const blocks = blocksOf({
       status: "success",
       msg: "success",
       article: {
@@ -327,13 +330,51 @@ describe("parseArticleContents", () => {
     expect(blocks[3].url).toBe("https://pbs.twimg.com/media/x.jpg");
   });
 
-  it("returns an empty array when the response has no article or no contents", () => {
-    expect(parseArticleContents({ status: "error", msg: "not found", article: null })).toEqual([]);
-    expect(parseArticleContents({ article: { title: "t" } })).toEqual([]);
+  it("carries the article's own title, excerpt and cover image, not just its blocks", () => {
+    // These three are the whole reason this returns an ArticleBody. A tweet from
+    // `/twitter/tweet/thread_context` — the endpoint 링크 수집 reads — has no `article` key, so
+    // this response is the only place they exist for a linked article: `renderArticle` needs the
+    // title and `pgXArticleMeta` reads the cover to send the translation back out as an X Article.
+    expect(
+      parseArticle({
+        article: {
+          title: "A Comprehensive Guide",
+          preview_text: "In 2026, there are plenty of chains",
+          cover_media_img_url: "https://pbs.twimg.com/media/cover.jpg",
+          contents: [{ type: "unstyled", text: "body" }],
+        },
+      }),
+    ).toEqual({
+      title: "A Comprehensive Guide",
+      previewText: "In 2026, there are plenty of chains",
+      coverImageUrl: "https://pbs.twimg.com/media/cover.jpg",
+      blocks: [{ type: "unstyled", text: "body" }],
+    });
+  });
+
+  it("answers undefined for a tweet that is not an article", () => {
+    // The live shape, quoted: a plain tweet id answers `{"article":null,"status":"failed"}`. This
+    // has to be distinguishable from an article whose every block was malformed, which is what a
+    // bare `[]` could not say — `CollectLinkedThread` warns "keeping link only" for the second and
+    // must stay silent about the first.
+    expect(parseArticle({ status: "failed", msg: "article not found", article: null })).toBeUndefined();
+  });
+
+  it("returns an article with no blocks when the response carries no contents", () => {
+    expect(parseArticle({ article: { title: "t" } })).toEqual({
+      title: "t",
+      previewText: undefined,
+      coverImageUrl: undefined,
+      blocks: [],
+    });
+  });
+
+  it("keeps an article that arrived without a title rather than dropping its body", () => {
+    expect(parseArticle({ article: { contents: [{ type: "unstyled", text: "body" }] } })?.title).toBe("");
   });
 
   it("skips a malformed block instead of rejecting the whole article", () => {
-    const blocks = parseArticleContents({
+    const blocks = blocksOf({
       article: { contents: [{ type: "unstyled", text: "kept" }, { text: "no type" }, { type: "unstyled", text: "also kept" }] },
     });
     expect(blocks.map((b) => b.text)).toEqual(["kept", "also kept"]);
@@ -344,7 +385,7 @@ describe("parseArticleContents", () => {
     // plain z.object, so a key twitterapi.io adds to a range in the future would be silently
     // stripped and, since blocks are never re-fetched once stored, unrecoverable without a
     // re-collect.
-    const blocks = parseArticleContents({
+    const blocks = blocksOf({
       article: {
         contents: [
           {
@@ -361,7 +402,7 @@ describe("parseArticleContents", () => {
   it("keeps an unrecognised key (e.g. entityRanges) on the stored block instead of discarding it", () => {
     // The design spec's "Known limitations" names entityRanges as the one thing it cannot yet map
     // correctly — but the mapping can only ever be corrected later if the key survives collection.
-    const blocks = parseArticleContents({
+    const blocks = blocksOf({
       article: {
         contents: [
           { type: "unstyled", text: "hi", entityRanges: [{ offset: 0, length: 2, key: 0 }] },

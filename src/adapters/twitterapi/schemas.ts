@@ -58,12 +58,26 @@ const ArticleSummaryRaw = z
   .passthrough();
 
 /**
- * GET /twitter/article. Only `contents` is read: the rest of the payload duplicates the tweet
- * with different types (e.g. `viewCount` is a string here and a number on the tweet endpoint),
- * so nothing else is worth binding to.
+ * GET /twitter/article. Four fields are read — `contents` plus the same three `ArticleSummaryRaw`
+ * binds — and the rest of the payload is left alone because it duplicates the tweet with different
+ * types (e.g. `viewCount` is a string here and a number on the tweet endpoint).
+ *
+ * The three summary fields were once skipped on the grounds that a caller always already had them
+ * from the search response. Only one caller does. `/twitter/tweet/thread_context`, which is what
+ * `fetchThread` and therefore 링크 수집 read, carries no `article` key at all — so on that path
+ * this response is the *only* place the title and cover image exist, and binding just `contents`
+ * meant a linked article could never be reassembled into an `ArticleBody`.
  */
 const ArticleResponse = z.object({
-  article: z.object({ contents: z.array(z.unknown()).nullish() }).passthrough().nullish(),
+  article: z
+    .object({
+      title: z.string().nullish(),
+      preview_text: z.string().nullish(),
+      cover_media_img_url: z.string().nullish(),
+      contents: z.array(z.unknown()).nullish(),
+    })
+    .passthrough()
+    .nullish(),
 });
 
 const TweetRaw = z
@@ -219,12 +233,22 @@ export function parseTweetList(data: unknown): {
 }
 
 /**
- * Validate a GET /twitter/article payload and return its content blocks. A block that fails
+ * Validate a GET /twitter/article payload and return the whole article. A block that fails
  * validation is skipped with a warning rather than rejecting the article, mirroring how
  * `TwitterApiSourceGateway.normalizeOrSkip` treats a malformed tweet.
+ *
+ * `undefined` — not an empty article — for a tweet that is not one: the endpoint answers a plain
+ * tweet with a null `article`, and a caller has to be able to tell "no article here" from "an
+ * article whose every block was malformed". The blocks-only predecessor could not, which is why
+ * `CollectAuthoredContent` had to test `blocks.length === 0` and guess which it meant.
+ *
+ * `title` is nullish on the wire but required on `ArticleBody`, so an article that arrives without
+ * one gets `""` rather than being thrown away — `renderArticle` omits an empty title's heading,
+ * and the body is the thing worth keeping.
  */
-export function parseArticleContents(data: unknown): ArticleBlock[] {
+export function parseArticle(data: unknown): ArticleBody | undefined {
   const parsed = ArticleResponse.parse(data);
+  if (!parsed.article) return undefined;
   const blocks: ArticleBlock[] = [];
   for (const raw of parsed.article?.contents ?? []) {
     const result = ArticleBlockRaw.safeParse(raw);
@@ -241,7 +265,12 @@ export function parseArticleContents(data: unknown): ArticleBlock[] {
     // apply to fresh object literals).
     blocks.push(result.data);
   }
-  return blocks;
+  return {
+    title: parsed.article.title ?? "",
+    previewText: parsed.article.preview_text ?? undefined,
+    coverImageUrl: parsed.article.cover_media_img_url ?? undefined,
+    blocks,
+  };
 }
 
 const UserProfileData = z

@@ -55,8 +55,8 @@ class FakeGateway implements SourceGateway {
     this.batches.push(ids);
     return ids.map((id) => this.live.get(id)).filter((t): t is SourceTweet => t !== undefined);
   }
-  async fetchArticle(): Promise<[]> {
-    return [];
+  async fetchArticle(): Promise<undefined> {
+    return undefined;
   }
   async fetchUserProfile(): Promise<UserProfile> {
     return { userName: "stub" };

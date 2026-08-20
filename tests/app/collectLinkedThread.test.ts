@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   CollectLinkedThread,
+  INTAKE_ARTICLE_BODY,
   INTAKE_BAD_URL,
   INTAKE_LINKED_REPLY,
   INTAKE_NOT_FOUND,
@@ -12,7 +13,7 @@ import { SWEPT_ACCOUNT } from "../../src/domain/sweptAccount";
 import type { SourceGateway } from "../../src/ports/SourceGateway";
 import type { CollectionRepository } from "../../src/ports/CollectionRepository";
 import type { TranslationStore } from "../../src/ports/TranslationStore";
-import type { ArticleBlock, CollectedThread, SourceTweet } from "../../src/domain/models";
+import type { ArticleBlock, ArticleBody, CollectedThread, SourceTweet } from "../../src/domain/models";
 
 const tweet = (over: Partial<SourceTweet> = {}): SourceTweet => ({
   id: "100",
@@ -33,7 +34,7 @@ function fakeGateway(over: Partial<SourceGateway> = {}): SourceGateway {
     fetchAuthoredTweets: () => { throw new Error("not arranged"); },
     fetchThread: async () => { throw new Error("not arranged"); },
     fetchByIds: async () => { throw new Error("not arranged"); },
-    fetchArticle: async () => [] as ArticleBlock[],
+    fetchArticle: async () => undefined,
     fetchUserProfile: async () => { throw new Error("not arranged"); },
     ...over,
   } as SourceGateway;
@@ -433,7 +434,7 @@ describe("CollectLinkedThread", () => {
     const uc = new CollectLinkedThread(
       fakeGateway({
         fetchThread: async () => [tweet({ article: { title: "t" } as SourceTweet["article"] })],
-        fetchArticle: async (id) => { asked = id; return blocks; },
+        fetchArticle: async (id) => { asked = id; return { title: "fetched", blocks }; },
       }),
       fakeRepo(),
       fakeTranslations(),
@@ -442,5 +443,144 @@ describe("CollectLinkedThread", () => {
     await uc.run(URL_100);
 
     expect(asked).toBe("100");
+  });
+
+  /**
+   * The link-intake counterpart of the test above, and the one that was missing.
+   *
+   * `fetchThread`'s endpoint (`/twitter/tweet/thread_context`) does not carry the `article`
+   * summary that `advanced_search` attaches, so an article arrives here as an ordinary tweet whose
+   * whole text is the expanded `x.com/i/article/<id>` link. Gating the body fetch on `t.article`
+   * being present therefore never fired on this path: every article pasted into 링크 수집 was
+   * stored as that bare link, and the 원문 a reviewer opened held one url and nothing else.
+   */
+  it("fetches the article for a tweet that carries an article link but no article metadata", async () => {
+    const article: ArticleBody = {
+      title: "A Comprehensive Guide",
+      previewText: "In 2026, there are plenty of chains",
+      coverImageUrl: "https://pbs.twimg.com/media/cover.jpg",
+      blocks: [{ type: "unstyled", text: "body" }],
+    };
+    let asked = "";
+    const repo = fakeRepo();
+    const uc = new CollectLinkedThread(
+      fakeGateway({
+        fetchThread: async () => [tweet({ text: "https://x.com/i/article/900" })],
+        fetchArticle: async (id) => { asked = id; return article; },
+      }),
+      repo,
+      fakeTranslations(),
+    );
+
+    await uc.run(URL_100);
+
+    // Asked for the body by the TWEET's id, which is what GET /twitter/article takes.
+    expect(asked).toBe("100");
+    // Stored whole, not just the blocks: `pgXArticleMeta` reads `coverImageUrl` to send the
+    // translation back out as an X Article, and `renderArticle` needs the title.
+    expect(repo.rows[0].tweets[0].article).toEqual(article);
+  });
+
+  it("leaves a tweet that merely mentions articles alone", async () => {
+    // The guard is the article url's own shape, not the word: a post *about* articles must not
+    // cost an API call, and must not be filed as one.
+    let called = false;
+    const repo = fakeRepo();
+    const uc = new CollectLinkedThread(
+      fakeGateway({
+        fetchThread: async () => [tweet({ text: "read my article at https://mirror.xyz/post" })],
+        fetchArticle: async () => { called = true; return undefined; },
+      }),
+      repo,
+      fakeTranslations(),
+    );
+
+    await uc.run(URL_100);
+
+    expect(called).toBe(false);
+    expect(repo.rows[0].tweets[0].article).toBeUndefined();
+  });
+
+  it("leaves a tweet that links to an article among its own words alone", async () => {
+    // The line between "this tweet IS an article" and "this tweet points at one". Publishing an X
+    // Article produces a tweet whose text is nothing but the article's url, so text either side of
+    // the link means a person wrote a post that cites an article — the post's own words are the
+    // 원문, and pulling someone else's article body in under this author's name would replace them.
+    let called = false;
+    const repo = fakeRepo();
+    const uc = new CollectLinkedThread(
+      fakeGateway({
+        fetchThread: async () => [tweet({ text: "great read 👇 https://x.com/i/article/900" })],
+        fetchArticle: async () => { called = true; return undefined; },
+      }),
+      repo,
+      fakeTranslations(),
+    );
+
+    await uc.run(URL_100);
+
+    expect(called).toBe(false);
+    expect(repo.rows[0].tweets[0].article).toBeUndefined();
+  });
+
+  describe("an article whose body cannot be read", () => {
+    // The door `fillArticleBodies` alone would leave open. A root tweet that is an article carries
+    // no words of its own — its text is the article's url — so an article stored without its body
+    // is an item whose 원문 is one link, which is exactly the failure this whole area removes.
+    // Warning and collecting anyway (what `CollectAuthoredContent` does, where the tweet keeps a
+    // title and an excerpt from the search response) would answer "수집됐습니다" for nothing.
+
+    it("refuses when the article fetch fails, before anything is stored", async () => {
+      const repo = fakeRepo();
+      const uc = new CollectLinkedThread(
+        fakeGateway({
+          fetchThread: async () => [tweet({ text: "https://x.com/i/article/900" })],
+          fetchArticle: async () => { throw new Error("HTTP 502"); },
+        }),
+        repo,
+        fakeTranslations(),
+      );
+
+      await expect(uc.run(URL_100)).rejects.toThrow(INTAKE_ARTICLE_BODY);
+      expect(repo.calls.upsert).toBe(0);
+    });
+
+    it("refuses when the endpoint has no article for it", async () => {
+      // `{"article":null}` — the live answer for a tweet the endpoint cannot resolve an article
+      // for. Nothing to retry into is still nothing to translate.
+      const repo = fakeRepo();
+      const uc = new CollectLinkedThread(
+        fakeGateway({
+          fetchThread: async () => [tweet({ text: "https://x.com/i/article/900" })],
+          fetchArticle: async () => undefined,
+        }),
+        repo,
+        fakeTranslations(),
+      );
+
+      await expect(uc.run(URL_100)).rejects.toThrow(INTAKE_ARTICLE_BODY);
+      expect(repo.calls.upsert).toBe(0);
+    });
+
+    it("collects when the missing body belongs to a tweet further down the thread", async () => {
+      // Only the root collapses the whole 원문 to a link. A later article that loses its body
+      // costs that block; the root's own text is still there to translate, so this is a warning,
+      // not a refusal.
+      const repo = fakeRepo();
+      const uc = new CollectLinkedThread(
+        fakeGateway({
+          fetchThread: async () => [
+            tweet(),
+            tweet({ id: "101", text: "https://x.com/i/article/900", isReply: true }),
+          ],
+          fetchArticle: async () => undefined,
+        }),
+        repo,
+        fakeTranslations(),
+      );
+
+      expect((await uc.run(URL_100)).outcome).toBe("collected");
+      expect(repo.rows[0].tweets[1].article).toBeUndefined();
+    });
   });
 });

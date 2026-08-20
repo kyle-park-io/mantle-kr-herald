@@ -131,7 +131,11 @@ export class CollectAuthoredContent {
         continue;
       }
       try {
-        const blocks = await this.source.fetchArticle(t.id);
+        // Only the blocks are taken. The title, excerpt and cover already on `t.article` came from
+        // the search response that marked this tweet an article in the first place, and that is the
+        // record the rest of the pipeline has always stored — this call is here for the one field
+        // the search response never carries.
+        const blocks = (await this.source.fetchArticle(t.id))?.blocks ?? [];
         if (blocks.length === 0) {
           console.warn(`[collect] article ${t.id} returned no content blocks — keeping link only`);
           continue;

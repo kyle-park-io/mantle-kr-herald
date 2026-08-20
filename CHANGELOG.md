@@ -436,6 +436,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **링크 수집 can read an X Article again — it never could.** Every article pasted into the tab was
+  stored as a bare `https://x.com/i/article/<id>` link and nothing else, and since an article's own
+  tweet has no words beside that link, the 원문 a reviewer opened held one url. Found on 2026-08-20
+  with `x.com/Defi_Warhol/status/2089763809766371715`, a 79-block Mantle infrastructure guide whose
+  worksheet arrived 44 characters long; the thread's other fifteen tweets were strangers' replies,
+  so `flattenXThreads` filtered them all away and left the link alone on the page.
+
+  **The two collectors read different endpoints, and only one of them is told what an article is.**
+  `CollectAuthoredContent` reads `advanced_search`, whose tweets carry an `article` summary
+  (title, excerpt, cover); `CollectLinkedThread` reads `/twitter/tweet/thread_context`, which
+  carries no `article` key on anything it returns. Both then called `fillArticleBodies`, and both
+  gated it on `if (!t.article) continue` — a condition the second path can never satisfy, so
+  `fetchArticle` was not merely failing there, it was never called. Verified against the live API:
+  the same tweet id comes back with the summary from `advanced_search`, without it from
+  `thread_context`, and `GET /twitter/article` answers with all 79 blocks either way. The fact was
+  already written down — `LocalJsonStore.mergeTweet`'s comment says `thread_context` omits the
+  field, and guards the *store* against it — but nothing connected it to the intake door.
+
+  So the gate is now the article's own url: a tweet whose entire text is `x.com/i/article/<number>`
+  **is** an X Article, which is what publishing one produces. Anchored at both ends deliberately —
+  a tweet with words either side of the link is a person citing an article, and those words are the
+  원문 that fetching would replace with someone else's body.
+
+  `SourceGateway.fetchArticle` widens from `ArticleBlock[]` to `ArticleBody | undefined` to carry
+  that: on the linked path this response is the only place the title and cover image exist, and
+  they are both load-bearing downstream — `renderArticle` needs the title for the `# ` heading, and
+  `pgXArticleMeta` reads `coverImageUrl` to decide whether the translation goes back out as an X
+  Article at all. `undefined` rather than `[]` for a non-article, because the live answer is
+  `{"article":null}` and a caller has to tell that apart from an article whose every block was
+  malformed. `CollectAuthoredContent` takes `?.blocks` and is otherwise unchanged: the summary it
+  already holds stays the record.
+
+  **A root article whose body cannot be read is now refused** (`INTAKE_ARTICLE_BODY`), before
+  anything is written. `CollectAuthoredContent` warns and collects in the same situation and is
+  right to — its tweet keeps a title and an excerpt from the search response — but here there is no
+  such consolation, and "수집됐습니다" for an item with nothing in it is the failure this file's
+  other three refusals exist to prevent. Only the root: a body-less article further down a thread
+  costs that block while the root's own text still carries the worksheet, so that stays a warning.
+  `fillArticleBodies` also moved behind the reply guards and now runs over the chosen conversation
+  rather than everything `fetchThread` returned, which can include an unrelated second thread.
+
+  Re-collection fixes the rows already stored: `mergeTweet` returns the incoming tweet outright
+  when the stored one has no article, so pasting the same link again fills the body in.
+
 - **The conversion tick bounds the *variants* one `claude -p` call is given, not just the items.**
   `HERALD_CONVERT_BATCH` counts source items and its floor is 1, so it could not describe the shape
   that actually times out: one item with all seven types unconverted is seven pieces of copy for a
