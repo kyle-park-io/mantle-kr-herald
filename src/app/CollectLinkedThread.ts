@@ -9,6 +9,29 @@ import { assembleThreads } from "../domain/threadAssembler";
 import { meetsTranslateFloor } from "../domain/translation/translateFloor";
 import { isCommenterReply } from "../adapters/content/XContentSource";
 
+/**
+ * Whether a tweet IS an X Article — the only signal for it that survives
+ * `/twitter/tweet/thread_context`, which unlike `advanced_search` attaches no `article` key to
+ * anything it returns. Publishing an X Article produces a tweet whose text is the article's own
+ * url and nothing else, and `expandUrls` turns the stored `t.co` back into it.
+ *
+ * **Anchored at both ends, and that is the rule rather than an implementation detail.** A tweet
+ * with words either side of the link is a person citing an article: those words are the 원문, and
+ * fetching would replace them with someone else's article body under this author's name. Only a
+ * tweet that is *nothing but* the link has no words of its own to lose — which is also what makes
+ * `INTAKE_ARTICLE_BODY` safe to refuse on, since for exactly these tweets a missing body leaves an
+ * item with no content at all.
+ *
+ * Not a `/g` regex, deliberately — `.test()` on a shared global regex carries `lastIndex` between
+ * calls, which would make it answer `false` for every second article in a thread.
+ */
+const X_ARTICLE_TWEET = /^https:\/\/x\.com\/i\/article\/\d+$/;
+
+/** Whether this tweet is an X Article, by the rule `X_ARTICLE_TWEET` states. */
+function isArticleTweet(t: SourceTweet): boolean {
+  return X_ARTICLE_TWEET.test(t.text.trim());
+}
+
 export const INTAKE_BAD_URL = "x.com/<계정>/status/<번호> 형태의 주소가 필요합니다";
 export const INTAKE_NOT_FOUND = "그 글을 가져올 수 없습니다 — 삭제됐거나 비공개일 수 있습니다";
 export const INTAKE_REPLY = "이 글은 다른 대화에 단 답글이라 파이프라인에 올릴 수 없습니다";
@@ -28,6 +51,27 @@ export const INTAKE_REPLY = "이 글은 다른 대화에 단 답글이라 파이
  */
 export const INTAKE_LINKED_REPLY =
   "이 주소는 스레드 안의 답글이라 번역 대상에서 빠집니다 — 스레드 본문 글 주소를 넣어 주세요";
+
+/**
+ * The third silent-failure door, and the one the other two's shape argued for.
+ *
+ * An X Article's tweet has no words of its own — its whole text is the article's url (see
+ * `X_ARTICLE_TWEET`). So a root article stored without its body is an item whose 원문 is one link
+ * and nothing else, which is what a reviewer opened on 2026-08-20 after pasting
+ * `x.com/Defi_Warhol/status/2089763809766371715`: the thread's other sixteen tweets were
+ * strangers' replies, `flattenXThreads` filtered them all away, and the worksheet held a bare
+ * `https://x.com/i/article/…`.
+ *
+ * `CollectAuthoredContent` warns and collects in the same situation, and is right to: its tweets
+ * come from `advanced_search`, so a body-less article still keeps the title and excerpt that
+ * response carried. Here there is no such consolation, and answering "수집됐습니다" for an item
+ * with nothing in it is the failure this file's other refusals exist to prevent.
+ *
+ * Refused only for the ROOT. A body-less article further down a thread costs that block while the
+ * root's own text still gives the worksheet something to translate, so that one stays a warning.
+ */
+export const INTAKE_ARTICLE_BODY =
+  "이 글은 X 아티클인데 본문을 가져오지 못했습니다 — 링크만 남아 번역할 것이 없어 넣지 않았습니다. 잠시 후 다시 시도해 주세요";
 
 /**
  * The one refusal that carries a value, so it is a function where its neighbours above are
@@ -103,8 +147,6 @@ export class CollectLinkedThread {
     const tweets = await this.gateway.fetchThread(linkedTweetId);
     if (tweets.length === 0) throw new Error(INTAKE_NOT_FOUND);
 
-    await this.fillArticleBodies(tweets);
-
     // Matched by *containment*, not by root id: a link to the second tweet of a thread carries that
     // tweet's id, and `assembleThreads` keys threads by conversationId, so comparing the two told the
     // operator the thread was "deleted or private" when it was neither — and everything below then
@@ -129,6 +171,15 @@ export class CollectLinkedThread {
     // guard rather than an assertion so the type says so too.
     const linked = thread.tweets.find((t) => t.id === linkedTweetId);
     if (linked && isCommenterReply(linked)) throw new Error(INTAKE_LINKED_REPLY);
+
+    // After the guards above, and over this conversation's tweets rather than everything
+    // `fetchThread` returned: the response can carry a second, unrelated conversation (one showed
+    // up in the 2026-08-20 sample), and fetching article bodies for tweets about to be discarded
+    // buys a request per stray link and nothing else.
+    await this.fillArticleBodies(thread.tweets);
+    if (isArticleTweet(thread.tweets[0]) && !thread.tweets[0].article?.blocks?.length) {
+      throw new Error(INTAKE_ARTICLE_BODY);
+    }
 
     const itemId = `x:${thread.rootId}`;
     const [existing, translatedIds] = await Promise.all([
@@ -211,12 +262,52 @@ export class CollectLinkedThread {
     throw new Error(intakeBelowFloorMessage(floor));
   }
 
-  /** An article's body is a second call — the thread response marks the tweet as an article but
-   *  never carries its blocks. Mirrors `CollectAuthoredContent.fillArticleBodies`. */
+  /**
+   * An article's body is a second call — no tweet payload ever carries its blocks. Mirrors
+   * `CollectAuthoredContent.fillArticleBodies`, including its per-tweet tolerance: a body that
+   * cannot be fetched costs the body, not the collection.
+   *
+   * **What it does NOT gate on is `t.article`**, and that is the whole repair. This path's tweets
+   * come from `/twitter/tweet/thread_context`, which — unlike the `advanced_search` response the
+   * other collector reads — carries no `article` key at all, so `normalizeTweet` leaves
+   * `t.article` undefined for an article and the old `if (!t.article) continue` skipped every one
+   * of them. Measured on the link that found this (`x.com/Defi_Warhol/status/2089763809766371715`,
+   * a 79-block Mantle guide): `advanced_search` returns that tweet with its article summary
+   * attached, `thread_context` returns the same tweet without it, and `GET /twitter/article`
+   * answers for it either way. The article was therefore stored as its bare
+   * `https://x.com/i/article/<id>` link and nothing else — and since every other tweet in that
+   * conversation was a stranger's reply, `flattenXThreads` filtered the rest away and put a 원문
+   * of exactly one url in front of a reviewer.
+   *
+   * `isArticleTweet` is what it gates on instead — the article's own url, which is the only trace
+   * of it that survives that endpoint. `t.article` is still honoured where it exists, so a caller
+   * holding a search-shaped tweet gets the behaviour it always had.
+   *
+   * The tolerance here is real but narrow: the root's missing body is refused by the caller
+   * (`INTAKE_ARTICLE_BODY`), because a root article has no words of its own and the item would be
+   * empty. Everything below the root keeps the warn-and-continue that `CollectAuthoredContent`
+   * uses, since the root's text still carries the worksheet.
+   */
   private async fillArticleBodies(tweets: SourceTweet[]): Promise<void> {
     for (const t of tweets) {
-      if (!t.article || (t.article.blocks?.length ?? 0) > 0) continue;
-      t.article = { ...t.article, blocks: await this.gateway.fetchArticle(t.id) };
+      if ((t.article?.blocks?.length ?? 0) > 0) continue;
+      if (!t.article && !isArticleTweet(t)) continue;
+      try {
+        const fetched = await this.gateway.fetchArticle(t.id);
+        if (!fetched || (fetched.blocks?.length ?? 0) === 0) {
+          console.warn(`[intake] article ${t.id} returned no content blocks — keeping link only`);
+          continue;
+        }
+        // Anything the tweet already knew wins over the article endpoint's copy of it; only the
+        // blocks are unconditionally the fetched ones. On this path the tweet knows nothing, so
+        // this is where the title and cover image come from — `renderArticle` needs the first and
+        // `pgXArticleMeta` reads the second to send the translation back out as an X Article.
+        t.article = { ...fetched, ...t.article, blocks: fetched.blocks };
+      } catch (err) {
+        console.warn(
+          `[intake] article body fetch failed for ${t.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 }

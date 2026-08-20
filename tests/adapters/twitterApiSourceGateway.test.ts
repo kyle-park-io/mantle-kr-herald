@@ -184,19 +184,30 @@ describe("TwitterApiSourceGateway", () => {
     expect(http.calls).toHaveLength(1);
   });
 
-  it("fetchArticle calls /twitter/article with a snake_case tweet_id and returns the blocks", async () => {
+  it("fetchArticle calls /twitter/article with a snake_case tweet_id and returns the whole article", async () => {
     const http = new FakeHttpClient(() => ({
       status: "success",
-      article: { title: "T", contents: [{ type: "header-one", text: "Hello" }, { type: "divider" }] },
+      article: {
+        title: "T",
+        cover_media_img_url: "https://pbs.twimg.com/media/cover.jpg",
+        contents: [{ type: "header-one", text: "Hello" }, { type: "divider" }],
+      },
     }));
     const gw = new TwitterApiSourceGateway(http);
 
-    const blocks = await gw.fetchArticle("2042617042537451733");
+    const article = await gw.fetchArticle("2042617042537451733");
 
     expect(http.calls).toEqual([
       { path: "/twitter/article", params: { tweet_id: "2042617042537451733" } },
     ]);
-    expect(blocks).toEqual([{ type: "header-one", text: "Hello" }, { type: "divider" }]);
+    // The metadata travels with the blocks because for a linked article this response is the only
+    // place it exists — `thread_context` tweets carry no article key at all.
+    expect(article).toEqual({
+      title: "T",
+      previewText: undefined,
+      coverImageUrl: "https://pbs.twimg.com/media/cover.jpg",
+      blocks: [{ type: "header-one", text: "Hello" }, { type: "divider" }],
+    });
   });
 
   // --- the page cap is injected, not read from the environment here ----------------------------

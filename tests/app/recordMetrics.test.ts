@@ -30,7 +30,7 @@ function gateway(followersByHandle: Record<string, number>, tweetsByHandle: Reco
     fetchAuthoredTweets: (h: string) => tw(h) as ReturnType<SourceGateway["fetchAuthoredTweets"]>,
     fetchThread: async () => [],
     fetchByIds: async () => [],
-    fetchArticle: async () => [],
+    fetchArticle: async () => undefined,
   };
 }
 

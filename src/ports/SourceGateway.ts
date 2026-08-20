@@ -1,4 +1,4 @@
-import type { ArticleBlock, SourceTweet, UserProfile } from "../domain/models";
+import type { ArticleBody, SourceTweet, UserProfile } from "../domain/models";
 
 export interface SourceGateway {
   /**
@@ -13,11 +13,17 @@ export interface SourceGateway {
   /** Existence check: returns only tweets still alive among the given ids. */
   fetchByIds(ids: string[]): Promise<SourceTweet[]>;
   /**
-   * Body blocks for an X Article tweet. The search response marks a tweet as an article but never
-   * includes its body, so this is a second call per article. Returns [] for a tweet that is not
-   * an article.
+   * The X Article carried by a tweet — metadata and body blocks together. A tweet payload never
+   * includes an article's body, so this is a second call per article. `undefined` for a tweet that
+   * is not an article.
+   *
+   * It returns the metadata as well as the blocks because the two callers know different amounts
+   * going in. `CollectAuthoredContent` reads `advanced_search`, whose tweets carry the title,
+   * excerpt and cover already, and wants only the body. `CollectLinkedThread` reads
+   * `thread_context`, whose tweets carry no article key whatsoever — for it this call is the only
+   * source of any of it, and a blocks-only answer left it unable to build an `ArticleBody` at all.
    */
-  fetchArticle(tweetId: string): Promise<ArticleBlock[]>;
+  fetchArticle(tweetId: string): Promise<ArticleBody | undefined>;
   /** Account profile (followers / statusesCount) for a handle. */
   fetchUserProfile(userName: string): Promise<UserProfile>;
 }

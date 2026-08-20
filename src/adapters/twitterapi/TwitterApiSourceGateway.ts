@@ -1,7 +1,7 @@
-import type { ArticleBlock, SourceTweet, UserProfile } from "../../domain/models";
+import type { ArticleBody, SourceTweet, UserProfile } from "../../domain/models";
 import type { SourceGateway } from "../../ports/SourceGateway";
 import type { IHttpClient } from "../../shared/http/IHttpClient";
-import { normalizeTweet, parseArticleContents, parseTweetList, parseUserProfile } from "./schemas";
+import { normalizeTweet, parseArticle, parseTweetList, parseUserProfile } from "./schemas";
 
 /**
  * Safety backstop so a non-terminating cursor or a full-history/large-thread crawl can never loop
@@ -139,9 +139,9 @@ export class TwitterApiSourceGateway implements SourceGateway {
     return out;
   }
 
-  async fetchArticle(tweetId: string): Promise<ArticleBlock[]> {
+  async fetchArticle(tweetId: string): Promise<ArticleBody | undefined> {
     const data = await this.client.get<unknown>("/twitter/article", { tweet_id: tweetId });
-    return parseArticleContents(data);
+    return parseArticle(data);
   }
 
   /** Account profile (followers / statusesCount) for a handle, used for volume/cost estimation
